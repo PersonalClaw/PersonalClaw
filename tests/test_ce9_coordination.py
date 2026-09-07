@@ -52,7 +52,9 @@ _DAG = _REPO_ROOT / "docs" / "roadmap" / "atomic" / "dag.json"
 #: records this note. Not derived from the file under test: the point is to pin the
 #: coordination block's "the adoption half has no owner atom" claim against ``dag.json``
 #: independently, so minting a fourth reds here rather than silently outdating the prose.
-_ATOMS_NAMING_THE_SEAM = frozenset({"WF2AUT-8", "CE-7", "CE-9"})
+_ATOMS_NAMING_THE_SEAM = frozenset({"WF2AUT-8", "CE-7", "CE-9", "CE-10"})
+#: ``CE-10`` joined on 2026-09-07: the adoption half now HAS an owner atom. This set is still
+#: the tripwire for a FIFTH atom appearing quietly — it just no longer pins "nobody owns it".
 
 #: Phrasings that put a shipped seam back into the future. Each one appeared verbatim in the
 #: guide or the plan before this note landed.

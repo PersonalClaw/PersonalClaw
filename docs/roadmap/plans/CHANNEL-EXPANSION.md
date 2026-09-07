@@ -579,12 +579,41 @@ whole bar available at the time, because the trigger seam had not landed yet.
 | Core exposes an app-registered trigger-source seam | `WF2AUT-8` (WORKFLOWS-V2-AUTOMATION-SUBSTRATE) | **DISCHARGED**, verified above |
 | Each vendor channel app declares its `trigger_source` provider | the apps repo, per app | **OUTSTANDING**, `0/4` |
 
-**The second half has no owner atom anywhere in `dag.json`.** Exactly three atoms name the seam:
-`WF2AUT-8` (shipped it), `CE-7` (wrote the "trigger-source-when-available" checklist into the guide), and
-`CE-9` (records this note). None of the three requires any app to actually declare one, and `CE-9`'s clause
-asks only for the coordination line. The substrate plan is `done`, so it will not pick the adoption up.
-Filed as [#2557](https://github.com/PersonalClaw/PersonalClaw/issues/2557) rather than minted here, since
-minting an atom is an owner edit.
+**The second half now HAS an owner atom: `CE-10`, minted 2026-09-07.** It did not when this note
+landed, and the history is worth keeping because it is how the hole stayed open. Exactly three atoms named
+the seam: `WF2AUT-8` (shipped it), `CE-7` (wrote the "trigger-source-when-available" checklist into the
+guide), and `CE-9` (records this note). None of the three required any app to actually declare one, and
+`CE-9`'s clause asks only for the coordination line — so a shipped seam had no scheduled adopter, and the
+substrate plan being `done` meant nothing would ever pick it up. Filed as
+[#2557](https://github.com/PersonalClaw/PersonalClaw/issues/2557) and then minted as `CE-10`, whose
+`done_when` requires adoption to be **measured** at 4/4 from the installed manifests rather than asserted,
+and requires the zero-hit set below to still be zero afterwards — so closing it cannot be done by adding
+bespoke glue.
 
 `CE-9`'s third clause is **MET** by this note plus the machine-checked negative. What is *not* met, and was
 never in the clause, is adoption.
+
+- **2026-09-07 — the 2026-08-28 ruling is finally executed in `dag.json`, and the cycle is gone.**
+  That ruling ends "The `dag.json` dep edit follows in the next tracking batch." It never did, so the
+  `CE-9` ⇄ `ET-7` cycle sat in the graph for ten days and the dag's own derived block kept reporting it
+  (filed as #2551). `CE-9`'s dep on `EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board` and
+  its `resolved_edges` entry are both dropped now — both edits together, because `regen_dag_derived.py`
+  refuses a resolution naming a dep the plan no longer has. Nothing real is lost: the bounty-board half
+  was `ET-7`'s own output (circular), and the scaffold half shipped from `ET-1`, which `ET-7` already
+  lists as a direct dep. The surviving edge is `ET-7` → `CE-9`, which is the ordering the ruling argued
+  for on the merits — a wants-list does not need a bounty board in order to exist; the board references
+  the list.
+- **`ET-7`'s dep label stops claiming this plan owns the channel scaffold template.** It never did:
+  the scaffold is `ET-1`'s, and the wants-list itself landed under ECOSYSTEM-TOOLING's own
+  `docs/maintainers/`. The label is now `EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) the channel
+  bounties draw from`. `ET-7`'s `done_when` prose is deliberately **left alone** — rewriting acceptance
+  criteria to match a discovery is how a roadmap starts agreeing with itself; the discrepancy is recorded
+  in `ET-7`'s `blocked_reason` where the next reader hits it.
+- **`CE-9` is `blocked`, not `todo`.** Two of its three clauses are met and evidenced in-tree (PR #2559);
+  the remaining one is the owner approving the risk-policy paragraph and the three issues being posted.
+  It was reading as startable agent work, which it is not.
+- **`CE-10` minted — a shipped seam with nobody scheduled to adopt it.** Adoption of `WF2AUT-8`'s
+  trigger-source seam is **0/4** across the shipped channel apps, and the only implementer anywhere is a
+  test fixture. `CE-9`'s "no bespoke event glue shipped" clause passes today for the wrong reason: not
+  because the apps route through the seam, but because nothing routes anywhere. Recording only that true
+  negative would read as a discharged obligation, so the gap gets an atom instead of a footnote.

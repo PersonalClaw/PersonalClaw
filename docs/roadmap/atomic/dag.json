@@ -5376,7 +5376,7 @@
       "plan": "CHANNEL-EXPANSION",
       "code": "CE",
       "status": "in_progress",
-      "summary": "CHANNEL-EXPANSION is DESIGNED and fully unstarted (no core trust seam, no channel apps, no kit/guide/CLI). 9 atoms, all todo: 1 core trust seam, 1 Slack migration, 3 channel apps (Telegram/Discord/email), plus a conformance kit, guide, Slack full-pattern, and ramp-coordination atom. Cross-plan edges to INBOX-NOTIFICATIONS-UNIFICATION (agent_request inbox kind), ECOSYSTEM-TOOLING (channel scaffold), and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (trigger source).",
+      "summary": "CHANNEL-EXPANSION decomposed into 10 atoms (CE-1..CE-10): 8 done (core trust seam; Slack migration; three channel apps Telegram/Discord/email; conformance kit; channel guide; Slack brought to the full vendor-completeness pattern), 1 blocked (CE-9 ramp coordination — its scaffold-registration and trigger-source clauses are MET and evidenced in-tree per PR #2559; only the owner's risk-policy approval and the posting of the three community issues remain), 1 todo (CE-10, minted 2026-09-07: adopt the trigger-source seam in the shipped channel apps, because WF2AUT-8's seam landed with 0/4 adopters and no atom in the whole dag required one — issue #2557). Cross-plan edges to INBOX-NOTIFICATIONS-UNIFICATION (agent_request inbox kind) and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (trigger source). The former edge to ECOSYSTEM-TOOLING's bounty board was CUT per the owner's 2026-08-28 ruling in this plan — the ruling whose own follow-up line was never executed — which is what broke the CE-9 ⇄ ET-7 cycle.",
       "atoms": [
         {
           "id": "CE-1",
@@ -5478,12 +5478,23 @@
         {
           "id": "CE-9",
           "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Sessions 7-8 — Ramp: T7.3 + Amendment T7.6; Design §S7-8; owner task 5 (risk-policy approval)",
           "done_when": "WhatsApp/Signal/Matrix GitHub issues live and labeled community-tier with the risk-policy paragraph and guide+kit links (after owner approves the risk-policy paragraph); the `channel` template is registered with ECOSYSTEM-TOOLING's scaffold (or a DISCOVERY note filed if the scaffold has not landed); a coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE records the app-registered trigger-source forward obligation with no bespoke early event glue shipped",
           "deps": [
             "CE-7",
-            "EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board",
+            "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types"
+          ],
+          "blocked_reason": "OWNER-GATED on one clause; the other two are MET and evidenced in-tree (verified 2026-09-06, PR #2559 merged 00be7c0ea). CLAUSE 2 — the `channel` template registered with ECOSYSTEM-TOOLING's scaffold — MET, and satisfied BY CONSTRUCTION rather than by an edit: ET-1's type table is DERIVED from PROVIDER_TYPES plus the provider registry, so there was never a registration to make and no DISCOVERY note is warranted. Re-verified live from a clean tmp dir rather than taken from another PR's word: `personalclaw app new my-whatsapp --type channel` emits exactly six files, provider.py imports ChannelTransportProvider from personalclaw.sdk.channel and subclasses it, the generated tests pass 7/7, and `--list-types` prints 19 runtime-derived types carrying both `channel` and `trigger_source`. CLAUSE 3 — the coordination line, with no bespoke early event glue — MET BY #2559, and it was NOT met before: the only line that existed was future-tense in the substrate's own plan ('the unified TriggerService must accept'), while this plan's cross-refs said 'once ... exposes' and the channel guide told contributors 'until it lands'. The seam had in fact shipped. Verified against code rather than the substrate plan's log: `trigger_source` is in PROVIDER_TYPES AND has a registered TriggerSourceTypeHandler wired in get_provider_registry(), with tests/test_trigger_sources.py green at 33 passed including an end-to-end declared-source-fires-an-event-trigger case. THE NEGATIVE HALF HOLDS BUT FOR AN UNCOMFORTABLE REASON, so it is recorded both ways rather than as a pass: across PersonalClawApps, emit_event / SourceEvent / event_bus / register_source / dispatch_event / triggers.json are ALL zero hits and the four channel apps' inbound loops all terminate in personalclaw.sdk.channel.run_chat — so no bespoke glue shipped. But it holds because NOTHING exists at all: adoption is 0/4 and the only implementer anywhere is a test fixture. Recording only the true negative would have read as a discharged obligation, so #2559's COORDINATION block states both halves in a table with the apps half marked OUTSTANDING, machine-checked by tests/test_ce9_coordination.py. That gap is now atom CE-10 and issue #2557. CLAUSE 1 REMAINS OWNER-ONLY: docs/maintainers/community-bounty-drafts.md still marks the shared risk-policy paragraph PENDING OWNER APPROVAL, with all three drafts carrying a placeholder where it goes. Independently confirmed the labels do not exist yet — `gh label list` has neither `bounty` nor `community-tier`. Nothing was posted and no label was created. SMALLEST REMAINING UNIT: the owner approves or edits that paragraph, the three drafts are posted as issues labeled community-tier + bounty (creating both labels), and the approval is recorded in this plan's execution log."
+        },
+        {
+          "id": "CE-10",
+          "title": "Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation)",
+          "status": "todo",
+          "scope": "Gap filled 2026-09-07 — WF2AUT-8's seam shipped with zero adopters and no atom in the dag required one (issue #2557)",
+          "done_when": "Each shipped channel app declares a `trigger_source` provider so an `app:<name>:<event>` trigger arms from real inbound traffic rather than from a test fixture; adoption is MEASURED at 4/4 by a test that reads the installed manifests rather than asserting a count, so a regression reds in either direction; the conformance kit's completeness advisory stops firing on those apps for a missing source; and no bespoke event glue is added — the apps reach the bus only through WF2AUT-8's registered TriggerSourceTypeHandler, with the zero-hit set (emit_event, SourceEvent, event_bus, register_source, dispatch_event, triggers.json) still zero in the apps repo afterwards.",
+          "deps": [
+            "CE-8",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types"
           ]
         }
@@ -6616,7 +6627,7 @@
           "deps": [
             "ET-1",
             "ET-2",
-            "EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the channel bounties reference"
+            "EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) the channel bounties draw from"
           ],
           "blocked_reason": "OWNER-GATED (inventory correction 2026-09-07). ET-7 carried no blocked_reason and therefore sat in the ready frontier as available agent work. It never was. Its done_when requires ≥6 bounty GitHub ISSUES LIVE plus a showcase thread seeded in the community surface — publishing community solicitations to a public org is an owner action an agent must not take. The channel third is doubly gated: CE-9 owns the WhatsApp/Signal/Matrix issues and CE-9's own done_when defers them until 'the owner approves the risk-policy paragraph', which docs/maintainers/community-bounty-drafts.md still marks PENDING OWNER APPROVAL. THE AGENT-BUILDABLE HALF IS SHIPPED (PR #2550): docs/maintainers/app-bounty-wants-list.md carries nine wanted apps spanning channels, providers and sources, with the three links every filed issue needs (scaffold command, guide, conformance bar) and both owner gates stated up front. Each row is admitted on one of two grounds and says which — its provider type is a real PROVIDER_TYPES member with no app implementing it (measured across the 54 apps in PersonalClawApps plus the four ET-6 exemplar org repos), or CHANNEL-EXPANSION T7.3 names it; a type core already covers with builtins is not a gap and gets no row. tests/test_bounty_wants_list.py makes the list executable rather than prose that rots silently: every row's type must be in PROVIDER_TYPES AND must actually scaffold, resolved through cli_app_new's runtime type table rather than PROVIDER_TYPES again, because a type can be a valid manifest value while the generator cannot emit it. So the issues are drafted and machine-checked; only the publishing is owner-side. DEP DEFECT, recorded for the cycle fix: this atom's ext dep names CHANNEL-EXPANSION as the wants-list's owner, but the list shipped under ECOSYSTEM-TOOLING's own docs/maintainers/. The CE-9 ⇄ ET-7 cycle is filed as #2551."
         },
@@ -7952,8 +7963,8 @@
         ]
       },
       {
-        "id": "CE-9",
-        "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
+        "id": "CE-10",
+        "title": "Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation)",
         "plan": "CE",
         "gate": [
           "ext"
@@ -8195,6 +8206,7 @@
       "CE-8",
       "CE-7",
       "CE-9",
+      "CE-10",
       "CE2-1",
       "CE2-2",
       "CE2-3",
@@ -8759,11 +8771,6 @@
     ],
     "cycles": [
       [
-        "CE-9",
-        "ET-7",
-        "CE-9"
-      ],
-      [
         "CRE-4",
         "DIST-3",
         "DIST-1",
@@ -9205,11 +9212,11 @@
       },
       {
         "atom": "CE-9",
-        "ext_ref": "EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board",
-        "to_atom": "ET-7"
+        "ext_ref": "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types",
+        "to_atom": "WF2AUT-8"
       },
       {
-        "atom": "CE-9",
+        "atom": "CE-10",
         "ext_ref": "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types",
         "to_atom": "WF2AUT-8"
       },
@@ -9365,7 +9372,7 @@
       },
       {
         "atom": "ET-7",
-        "ext_ref": "EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the channel bounties reference",
+        "ext_ref": "EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) the channel bounties draw from",
         "to_atom": "CE-9"
       },
       {
@@ -9949,11 +9956,11 @@
       {
         "code": "CE",
         "plan": "CHANNEL-EXPANSION",
-        "total_atoms": 9,
+        "total_atoms": 10,
         "done": 8,
         "in_progress": 0,
         "todo": 1,
-        "blocked": 0
+        "blocked": 1
       },
       {
         "code": "WS",
@@ -10136,6 +10143,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 850
+    "edge_count": 851
   }
 }
