@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX } from 'lucide-react'
+import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX, RefreshCw } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { TextArea, FieldError } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
@@ -146,11 +146,25 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
+  const [loadErr, setLoadErr] = useState('')
+  const [reloads, setReloads] = useState(0)
+  // 🔴 A FAILED READ MUST NOT LOOK LIKE AN EMPTY NOTE, BECAUSE THIS EDITOR OVERWRITES THE FILE.
+  // This used to `.catch(() => { setContent(''); setDraft('') })`, which conflates "the GET
+  // failed" with "there is no note yet": the field rendered blank with no error, so a user whose
+  // read had failed typed into what looked like an empty note and Save PUT it over the real one.
+  // `dirty` is `content !== null && draft !== content`, so the empty-string content is precisely
+  // what armed the button — leaving `content` null makes `dirty` unreachable and the overwrite
+  // impossible until a read has actually succeeded. This is the same defect the save path below
+  // already fixed one state earlier: two situations told apart only by a missing signal.
   useEffect(() => {
     let alive = true
-    api.agentMetadata(agentName).then((c) => { if (alive) { setContent(c); setDraft(c) } }).catch(() => { if (alive) { setContent(''); setDraft('') } })
+    setContent(null)
+    setLoadErr('')
+    api.agentMetadata(agentName)
+      .then((c) => { if (alive) { setContent(c); setDraft(c) } })
+      .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not load the routing note') })
     return () => { alive = false }
-  }, [agentName])
+  }, [agentName, reloads])
   const dirty = content !== null && draft !== content
   const save = async () => {
     setBusy(true)
@@ -164,7 +178,12 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   return (
     <Section label="Routing notes">
       <p className="mb-1.5 text-on-surface-low text-[0.75rem]">A short "when to use this agent" note the auto-router reads to pick between agents.</p>
-      {content === null ? <Skeleton className="h-16 w-full rounded-md" /> : (
+      {loadErr ? (
+        <div className="flex flex-col items-start gap-2">
+          <p role="alert" data-type="caption" className="text-danger">Couldn’t load this note, so it isn’t safe to edit — saving now could overwrite what’s on disk. {loadErr}</p>
+          <Button size="sm" onClick={() => setReloads((n) => n + 1)}><RefreshCw size={14} /> Try again</Button>
+        </div>
+      ) : content === null ? <Skeleton className="h-16 w-full rounded-md" /> : (
         <div className="flex flex-col gap-2">
           <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
             placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
