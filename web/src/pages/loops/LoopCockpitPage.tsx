@@ -777,7 +777,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       else if (e.key === 'Escape') { e.preventDefault(); setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }
                     }}
                     placeholder="Guide the next cycle — focus an angle, or answer the agent's question."
-                    data-type="body-s" className="w-full bg-transparent outline-none text-on-surface placeholder:text-on-surface-low min-h-[60px] resize-y" />
+                    // 🔑 `outline-none` with no replacement on either the control or its container.
+                    // `autoFocus` hides half the defect — focus ARRIVES here on open — but Tab to
+                    // Cancel/Send and Shift+Tab back and there was no indicator, which is the state a
+                    // keyboard user actually spends time in.
+                    // 🪤 Element ring, not container ring, for the same reason as the session-peek
+                    // composer: this container also holds the error line and the button row, so
+                    // `focus-within` would light the whole box when Send takes focus.
+                    data-type="body-s" className="w-full bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-primary text-on-surface placeholder:text-on-surface-low min-h-[60px] resize-y" />
                   {nudgeError && (
                     <p role="alert" data-type="body-s" className="mt-1" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
                   )}

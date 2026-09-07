@@ -400,7 +400,20 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
           placeholder="Quick reply…"
           rows={2}
           aria-label="Quick reply"
-          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
+          // 🔑 `outline-none` WITH NO REPLACEMENT ON EITHER SIDE. It lives in `@layer utilities`,
+          // which beats the global `:focus-visible` rule in `@layer base` — so Tab into the session
+          // peek panel and the caret landed here with NO visible indicator at all.
+          // 🪤 THE RING GOES ON THE CONTROL, NOT THE CONTAINER, even though this is a transparent
+          // input inside a box-drawing container — normally `focusRingPerElement`'s `focus-within`
+          // case. The container also holds the button row directly below, so a container ring would
+          // paint the whole composer whenever Open or Send takes focus: the exact ambiguity that rail
+          // records for `CodePlanReview`'s shared box.
+          // The pre-existing raw 0.8125rem size on this control is deliberately left alone —
+          // converting it to a data-type role is a type-scale change, and moving that ratchet inside
+          // a focus fix would muddle both. (Written without spelling the utility: the type-scale
+          // scanner counts the pattern wherever it appears, comments included, so naming it here
+          // would have raised the ceiling by one. It did, on the first draft of this comment.)
+          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low"
         />
         <div className="flex items-center gap-s">
           <Button variant="ghost" size="xs" onClick={onOpen} title="Open the full chat UI"
