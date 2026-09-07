@@ -371,10 +371,16 @@ def _kinds_written_under(package: str) -> set[str]:
                 continue
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name not in ("write", "breaker_trip", "watcher_reaped", "verdict"):
+            if name != "write":
                 continue
-            # `journal.write(BREAKER_TRIP, ...)` — the kind is the first positional argument, given
-            # either as the imported constant or as its literal string.
+            # Only the ARGUMENT counts, never the calling method's name. An earlier version also
+            # credited a kind when a call was NAMED for it (`journal.breaker_trip(...)`), and a
+            # mutation measured the cost: emptying `LoopJournal.breaker_trip`'s body so it wrote a
+            # different kind entirely left the breaker rail green, because the call SITES still
+            # spelled the method name. A method named for a kind it no longer writes is exactly the
+            # drift this scan exists to catch. Both producers reach their kind through the argument
+            # anyway — `self.write(BREAKER_TRIP, ...)` on the loop side (an `ast.Name`) and
+            # `journal.write(journal_mod.WATCHER_REAPED, ...)` on the run side (an `ast.Attribute`).
             for arg in node.args[:1]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     written.add(arg.value)
@@ -382,9 +388,6 @@ def _kinds_written_under(package: str) -> set[str]:
                     written.add(arg.id.lower())
                 elif isinstance(arg, ast.Attribute):
                     written.add(arg.attr.lower())
-            # A typed emitter names the kind in the method name itself.
-            if name in ("breaker_trip", "watcher_reaped"):
-                written.add(name)
     return written
 
 
@@ -489,24 +492,50 @@ def test_the_rails_agree_with_the_ledgers_own_step_aggregate(run_home):
     assert len(rows) == int(J.run_totals(run_id)["steps_completed"])
 
 
-def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home):
-    """One ledger, two nouns: the run rails read the kinds the loop rails read.
+def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home, monkeypatch, tmp_path):
+    """One ledger, two nouns: the run rails read exactly the kinds the LOOP rails read.
 
     The atom's clause is "one ledger". If the run-side findings rail read a different kind than
-    `loop/files.py::get_findings`, the retirement would be a rename of two different things — so
-    the shared kind is pinned against the loop module's own imported constants.
+    `loop/files.py::get_findings`, the retirement would be a rename of two different things.
+
+    BEHAVIOURAL, because a substring version of this was measured to be vacuous: repointing
+    `get_findings` at `judge_verdict` left it green, since both constant NAMES still appeared
+    elsewhere in the module. So this drives the real loop rails over a real loop ledger and asks
+    which kind each one actually picks up.
     """
-    from personalclaw.ledger import JUDGE_VERDICT, STEP_COMPLETED
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop.journal import LoopJournal
 
-    # The loop rails' kinds, read from the loop module rather than restated.
-    loop_source = (_SRC / "loop" / "files.py").read_text(encoding="utf-8")
-    assert "STEP_COMPLETED" in loop_source and "JUDGE_VERDICT" in loop_source
+    # The isolation seam PP-16 seam 4b established. A loop id is eight hex chars
+    # (`files._LOOP_ID_RE`); anything else resolves to no dir at all and every read returns [].
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path / "loophome")
+    loop_id = "abcd1234"
 
-    findings = findings_rail([{"kind": STEP_COMPLETED, "ts": "t", "node_id": "n"}])
-    verdicts = verdict_rail([{"kind": JUDGE_VERDICT, "ts": "t", "node_id": "n"}])
-    assert len(findings) == 1 and len(verdicts) == 1
-    # And the projections are PURE: same input, same output, no hidden state.
-    assert findings_rail([{"kind": STEP_COMPLETED, "ts": "t", "node_id": "n"}]) == findings
+    # One of each kind on ONE loop, so a rail that read the wrong one picks up the other's row
+    # rather than finding nothing — which is what makes the two assertions below discriminating.
+    journal = LoopJournal.open(loop_id)
+    journal.cycle(1, {"cycle": 1, "summary": "the finding"})
+    journal.verdict({"cycle": 1, "verdict": "PASS", "marginal_value": 0.5})
+
+    loop_findings = loop_files.get_findings(loop_id)
+    loop_verdicts = loop_files.get_verdicts(loop_id)
+    assert len(loop_findings) == 1, "vacuity floor: the LOOP findings rail projected nothing"
+    assert len(loop_verdicts) == 1, "vacuity floor: the LOOP verdict rail projected nothing"
+    assert (
+        loop_findings[0].get("summary") == "the finding"
+    ), "the loop findings rail is not reading step_completed's carried finding any more"
+    assert (
+        loop_verdicts[0].get("verdict") == "PASS"
+    ), "the loop verdict rail is not reading judge_verdict any more"
+
+    # The run rails, over the SAME ledger file. Same kinds in, same row counts out — which is the
+    # equality the noun retirement rests on.
+    events = loop_files.read_jsonl(loop_id, "events.jsonl")
+    assert len(findings_rail(events)) == len(loop_findings)
+    assert len(verdict_rail(events)) == len(loop_verdicts)
+    # And the loop's own ROI axis survives the run-side projection, since a loop verdict row
+    # carries it flat.
+    assert verdict_rail(events)[0]["marginal_value"] == pytest.approx(0.5)
 
 
 def test_a_secret_written_through_the_journal_never_reaches_the_rails(run_home):
@@ -593,15 +622,40 @@ def test_a_raw_row_that_bypassed_the_writer_is_still_redacted_on_read(run_home, 
     ), f"a {rail} row that bypassed the writer reached the payload un-redacted"
 
 
-def test_introspection_stays_pure_over_event_lists(run_home):
-    """The two rails add no store and no I/O — the module's stated doctrine.
+def test_the_rails_carry_no_state_between_calls(run_home):
+    """The two rails add no store, no I/O and no cache — the module's stated doctrine.
 
-    Asserted structurally: the rail functions accept an event list and are callable with no home on
-    disk at all. A projection that reached for a store would raise here.
+    Three properties, because "pure" asserted as "it returns something" is not asserted at all —
+    an earlier version of this test survived a mutation that added a module-level cache:
+
+    1. **No hidden input.** The projections take an event list and are called here with no run on
+       disk, so one that reached for a store would raise rather than quietly read a real home.
+    2. **No hidden output.** Two calls on equal-but-distinct inputs agree, and the second call is
+       unaffected by MUTATING the first call's returned rows — so nothing is shared or cached.
+    3. **The argument is not modified.** A projection that edited its input in place would corrupt
+       the event list its caller is about to hand to the next rail; `ledger_rails` passes the same
+       list to all three.
     """
-    monkey_free = [{"kind": "step_completed", "ts": "t", "node_id": "n", "cost_usd": 1.0}]
-    assert introspection.findings_rail(monkey_free)[0]["cost_usd"] == 1.0
-    assert introspection.verdict_rail(monkey_free) == []
-    assert (
-        introspection.rail_totals(introspection.findings_rail(monkey_free), []).steps_completed == 1
-    )
+
+    def events():
+        return [{"kind": "step_completed", "ts": "t", "node_id": "n", "cost_usd": 1.0}]
+
+    first = introspection.findings_rail(events())
+    assert first[0]["cost_usd"] == 1.0
+    assert introspection.verdict_rail(events()) == []
+
+    # Poison the first result. A cache would hand the poisoned row back on the next call.
+    first[0]["cost_usd"] = 999.0
+    first.append({"kind": "smuggled"})
+    second = introspection.findings_rail(events())
+    assert len(second) == 1, "a second call returned rows the first call appended — state leaked"
+    assert second[0]["cost_usd"] == 1.0, "a second call returned the first call's mutated row"
+
+    # And the input list survives untouched, keys and all.
+    original = events()
+    snapshot = [dict(row) for row in original]
+    introspection.findings_rail(original)
+    introspection.verdict_rail(original)
+    introspection.rail_coverage(original)
+    assert original == snapshot, "a rail modified the event list its caller still holds"
+    assert introspection.rail_totals(introspection.findings_rail(original), []).steps_completed == 1
