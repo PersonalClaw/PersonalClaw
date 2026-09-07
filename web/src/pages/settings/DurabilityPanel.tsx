@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { epochSeconds } from '../../lib/epoch'
-import { AlertTriangle, History, HardDriveDownload, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { AlertTriangle, History, HardDriveDownload, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
   api,
   type DurabilityArchive,
@@ -725,8 +725,7 @@ function ArchiveSection({ snaps, onChanged }: {
                 <DomainCounts counts={a.domains} />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Button variant="secondary" size="sm" ariaLabel={`Preview restore: ${a.name}`}
-                    onClick={() => preview(a)} disabled={busy !== ''}>
-                    {busy === a.id ? <><Loader2 size={14} className="animate-spin" /> Working…</> : 'Preview restore'}
+                    onClick={() => preview(a)} loading={busy === a.id} loadingLabel="Working…" disabled={busy !== ''}>Preview restore
                   </Button>
                   <Button variant="secondary" size="sm" ariaLabel={`Merge-restore: ${a.name}`}
                     onClick={() => mergeRestore(a)} disabled={busy !== ''}>
@@ -1010,10 +1009,9 @@ function ConflictsSection({ read, onChanged }: {
                   {/* Three near-identical choices per conflict, and a wrong pick overwrites an edit —
                       so which ROW you are answering has to be in the name. `c.entity_id` is what the row
                       displays and what the confirm body and the toast already say. */}
-                  <Button variant="secondary" size="sm" disabled={busy !== ''}
+                  <Button variant="secondary" size="sm" loading={busy === c.id} loadingLabel="Writing…" disabled={busy !== ''}
                     ariaLabel={`${CHOICE_LABELS.keep_local}: ${c.entity_id}`}
-                    onClick={() => resolve(c, 'keep_local')}>
-                    {busy === c.id ? <><Loader2 size={14} className="animate-spin" aria-hidden /> Writing…</> : CHOICE_LABELS.keep_local}
+                    onClick={() => resolve(c, 'keep_local')}>{CHOICE_LABELS.keep_local}
                   </Button>
                   <Button variant="secondary" size="sm" disabled={busy !== ''}
                     ariaLabel={`${CHOICE_LABELS.take_remote}: ${c.entity_id}`}
@@ -1175,10 +1173,7 @@ function RunButton({ label, icon: Icon, busy, disabled, onClick }: {
   label: string; icon: typeof ShieldCheck; busy: boolean; disabled: boolean; onClick: () => void
 }) {
   return (
-    <Button variant="secondary" size="xs" onClick={onClick} disabled={disabled} className="gap-1.5">
-      {busy
-        ? <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden />
-        : <Icon size={12} className="shrink-0" aria-hidden />}
+    <Button variant="secondary" size="xs" onClick={onClick} loading={busy} disabled={disabled} className="gap-1.5"><Icon size={12} className="shrink-0" aria-hidden />
       {label}
     </Button>
   )

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
-import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star, ExternalLink, RotateCcw, Filter } from 'lucide-react'
+import { Sparkles, Send, Check, XCircle, BellOff, Star, ExternalLink, RotateCcw, Filter } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -196,10 +196,10 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
               ) : undefined}>
               <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
               <div className="mt-2 flex flex-wrap items-center gap-s">
-                <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
+                <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
                 {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
-                <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}
-                  disabledReason={!draft.trim() ? 'Write a reply first' : undefined}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
+                <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim()}
+                  disabledReason={!draft.trim() ? 'Write a reply first' : undefined}><Send size={14} /> Send reply</Button>
               </div>
             </Section>
           ) : item.draft ? (
@@ -219,8 +219,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
         <div data-type="body-s" className="flex flex-wrap items-center gap-s rounded-md border border-outline-variant/40 px-m py-s">
           <Filter size={14} style={{ color: 'var(--color-warn)' }} />
           <span className="text-on-surface-low">A second-opinion check flagged this claim, so its notification was withheld. Restore to deliver it.</span>
-          <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} disabled={!!busy}>
-            {busy === 'restore' ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Restore
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} loading={busy === 'restore'} disabled={!!busy}><RotateCcw size={14} /> Restore
           </Button>
         </div>
       )}
@@ -333,8 +332,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
             </details>
           )}
           <div className="flex flex-wrap items-center gap-s">
-            <Button size="sm" onClick={() => act('accept')} disabled={!!busy}>
-              {busy === 'accept' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Install skill
+            <Button size="sm" onClick={() => act('accept')} loading={busy === 'accept'} disabled={!!busy}><Check size={14} /> Install skill
             </Button>
             <Button size="sm" variant="ghost" onClick={() => act('reject')} disabled={!!busy}>
               <XCircle size={14} /> Reject

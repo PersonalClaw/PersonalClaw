@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { GraduationCap, Loader2, Check, X, Pencil } from 'lucide-react'
+import { GraduationCap, Check, X, Pencil } from 'lucide-react'
 import { api, type EphemeralDraft } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
@@ -149,11 +149,9 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => promote('agent')} disabled={!!busy}>
-          {busy === 'agent' ? <Loader2 size={13} className="animate-spin" /> : null} This agent
+        <Button size="sm" onClick={() => promote('agent')} loading={busy === 'agent'} disabled={!!busy}>This agent
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => promote('global')} disabled={!!busy}>
-          {busy === 'global' ? <Loader2 size={13} className="animate-spin" /> : null} All agents
+        <Button variant="secondary" size="sm" onClick={() => promote('global')} loading={busy === 'global'} disabled={!!busy}>All agents
         </Button>
         <Button variant="ghost" size="sm" onClick={forget} disabled={!!busy}>
           <X size={13} /> Forget

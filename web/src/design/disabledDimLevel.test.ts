@@ -42,10 +42,23 @@ const walk = (d: string): string[] =>
     return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
   })
 
+/** 🪤 Comments BLANKED IN PLACE — identical length, so the reported line numbers still match the
+ *  file, while prose can no longer register as a dim level.
+ *
+ *  This rail is about which opacity a CONTROL dims to, so a sentence that merely NAMES a level must
+ *  not count. Found the honest way: `ui/Button` gained a comment explaining why a competing
+ *  `disabled:opacity-100` was deliberately NOT added, and this rail reported that explanation as a
+ *  stray level at the comment's own line — flagging the absence of the thing it warns about. Same
+ *  fix, and the same reason, as `ui/disabledReasonCensus`. */
+const codeOf = (s: string): string => s
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + ' '.repeat(m.length - p.length))
+
 function levels(): Array<{ file: string; line: number; level: string }> {
   const out: Array<{ file: string; line: number; level: string }> = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = codeOf(readFileSync(abs, 'utf8'))
     for (const m of text.matchAll(/(?<!aria-)disabled:opacity-(\d+)/g)) {
       out.push({
         file: abs.slice(SRC.length + 1),

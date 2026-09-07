@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, FileText, ChevronRight, Trash2, Loader2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -117,7 +117,7 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
     <Section label="Integrity">
       <div className="flex items-center gap-s">
         <span className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: tone }}><Icon size={14} /> {label}</span>
-        <Button size="sm" variant="ghost" onClick={verify} disabled={busy} className="ml-auto">{busy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Re-verify</Button>
+        <Button size="sm" variant="ghost" onClick={verify} loading={busy} className="ml-auto"><ShieldCheck size={14} /> Re-verify</Button>
       </div>
       {drift && (
         <div className="mt-2 flex flex-col gap-1 text-[0.75rem] font-mono">
@@ -161,7 +161,7 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
       {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s">
         <Button size="sm" variant="ghost" onClick={onBack}><X size={14} /> Cancel</Button>
-        <Button size="sm" onClick={save} disabled={busy || content === null}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save</Button>
+        <Button size="sm" onClick={save} loading={busy} disabled={busy || content === null}><Save size={14} /> Save</Button>
       </div>
     </div>
   )

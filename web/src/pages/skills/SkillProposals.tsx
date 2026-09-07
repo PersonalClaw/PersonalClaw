@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Lightbulb, Loader2, Check, X, ChevronDown, ChevronRight, ShieldQuestion } from 'lucide-react'
+import { Lightbulb, Check, X, ChevronDown, ChevronRight, ShieldQuestion } from 'lucide-react'
 import { api, type SkillProposal, type SkillProposalDetail, type SkillProposalFeed, type SkillLadderReview } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
@@ -165,11 +165,9 @@ function ProposalRow({ proposal }: { proposal: SkillProposal }) {
           <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{proposal.description}</p>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Button size="sm" onClick={accept} disabled={!!busy}>
-            {busy === 'accept' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Accept
+          <Button size="sm" onClick={accept} loading={busy === 'accept'} disabled={!!busy}><Check size={13} /> Accept
           </Button>
-          <Button variant="ghost" size="sm" onClick={reject} disabled={!!busy}>
-            {busy === 'reject' ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Reject
+          <Button variant="ghost" size="sm" onClick={reject} loading={busy === 'reject'} disabled={!!busy}><X size={13} /> Reject
           </Button>
         </div>
       </div>

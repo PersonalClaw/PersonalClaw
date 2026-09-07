@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FieldError } from '../../ui/forms'
-import { Trash2, Play, FlaskConical, Loader2, AlertTriangle, Users } from 'lucide-react'
+import { Trash2, Play, FlaskConical, AlertTriangle, Users } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
@@ -195,8 +195,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
           things that could apply to it. */}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button variant="secondary" size="sm" onClick={() => run(false)} disabled={busy}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Run now
+          <Button variant="secondary" size="sm" onClick={() => run(false)} loading={busy}><Play size={14} /> Run now
           </Button>
           <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy}>
             <FlaskConical size={14} /> Dry run

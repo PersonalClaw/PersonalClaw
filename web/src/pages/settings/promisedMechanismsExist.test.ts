@@ -81,7 +81,14 @@ describe('the daily-digest promise', () => {
     expect(web('pages/settings/MemoryPanel.tsx')).toContain(
       'They build on the maintenance cadence, or press Build / refresh above.',
     )
-    expect(web('pages/settings/MemoryPanel.tsx'), 'the button it points at').toContain("'Build / refresh'")
+    // 🪤 MATCHED AS THE LABEL, NOT AS A QUOTED LITERAL. This asserted `"'Build / refresh'"` — with
+    // the single quotes — so it was pinned to the button's SPELLING in source, not to the property
+    // it cares about (the digest copy points at a control that exists and says this). Converting the
+    // button from `{busy ? <spinner/> : 'Build / refresh'}` to `loading={busy}` with the label as
+    // plain JSX text reddened it while the rendered label was byte-identical. Same error this repo
+    // already recorded one step out, in `destructiveConfirmSaysWhatGoes`: pinning a spelling instead
+    // of a property.
+    expect(web('pages/settings/MemoryPanel.tsx'), 'the button it points at').toMatch(/Build \/ refresh/)
     // The cadence half: reached from session consolidation, not a timer — which is what the code calls
     // its maintenance cadence.
     const consolidate = pyMethod(py('history.py'), '    async def _consolidate_locked')

@@ -165,7 +165,7 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
               className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </Field>
         ))}
-        <Button size="sm" onClick={render} disabled={loading} className="self-start">{loading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Render</Button>
+        <Button size="sm" onClick={render} loading={loading} className="self-start"><Play size={15} /> Render</Button>
       </div>
       {err && <FieldError className="mt-2">{err}</FieldError>}
       {out != null && (

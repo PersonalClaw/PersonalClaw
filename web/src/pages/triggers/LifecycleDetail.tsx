@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, Trash2, Check, X, FlaskConical, Loader2, AlertTriangle, ShieldOff, ShieldCheck } from 'lucide-react'
+import { Pencil, Trash2, Check, X, FlaskConical, AlertTriangle, ShieldOff, ShieldCheck } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { confirmDelete } from '../../ui/dialog'
@@ -108,7 +108,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   return (
     <div className="flex flex-col gap-l">
       <div className="flex flex-wrap items-center gap-s">
-        <Button size="sm" variant="secondary" onClick={test} disabled={busy}>{busy ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />} Test</Button>
+        <Button size="sm" variant="secondary" onClick={test} loading={busy}><FlaskConical size={14} /> Test</Button>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
         <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
         <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
