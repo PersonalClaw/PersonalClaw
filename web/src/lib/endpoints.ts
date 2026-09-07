@@ -8,11 +8,14 @@
  * 🔑 WHY THIS LIVES IN THE SHELL'S STORAGE SCOPE, NOT THE SPA'S. The served SPA cannot hold this
  * registry, for two independently sufficient reasons, both measured rather than assumed:
  *
- *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:768` does
- *      `wc.loadURL(backendUrl)` — the shell loads the dashboard *from the gateway's own origin* —
- *      and `backendUrl` (`desktop/main.js:143`) is a single string resolved from the spawned
- *      gateway's READY line. A registry of N gateways has nowhere to live in a bundle that is
- *      itself one of the N.
+ *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:1246` does
+ *      `wc.loadURL(localGatewayUrl)` and `connectMode`'s `navigateToEndpoint` does the same for a
+ *      paired gateway's origin — either way the shell loads the dashboard *from that gateway's own
+ *      origin*. A registry of N gateways has nowhere to live in a bundle that is itself one of the N.
+ *      (Since `CA-8` the shell holds TWO url variables, not one: `localGatewayUrl`
+ *      (`desktop/main.js:204`, resolved from the spawned gateway's READY line) and `activeUrl`, what
+ *      the WebView is actually pointed at. Every credential-bearing call is bound to the first;
+ *      only the second ever becomes a gateway this shell did not spawn.)
  *   2. The SPA's storage is ALREADY partitioned, for free, by browser origin. `grep -n partition`
  *      over `desktop/main.js` finds nothing, so the default session partition applies and
  *      per-origin isolation holds. Nothing in the SPA reaches across gateways either:
@@ -23,6 +26,12 @@
  * bleed is possible, and therefore the only place namespacing is load-bearing. This module is what
  * desktop (T4.1) and mobile import so that neither re-decides the key format — two shells that
  * disagree about the format are two shells that cannot share a registry.
+ *
+ * Desktop's consumer is `desktop/endpointRegistry.js`, a PORT rather than an import: `desktop/` is
+ * plain CommonJS with no build step, so it cannot load this `.ts`. It is held to this file by a
+ * DIFFERENTIAL rail — `desktop/test/endpointRegistry.test.js` imports this module for real (Node
+ * strips the types) and requires byte-identical output from both implementations over a shared
+ * vector table, so a behavioural divergence reds even when the two sides' spellings agree.
  *
  * 🚫 NO HUB, NO GATEWAY-TO-GATEWAY. N endpoints are N client-side rows. Gateways never learn about
  * each other; the client fans out. (The multi-instance hub is permanently vetoed.)

@@ -57,6 +57,102 @@ change, the switch says so and stays where the OS actually left it.
 In a browser tab there is no switch: registering a login item needs the desktop app, and
 a toggle that could not do anything would be worse than an honest absence.
 
+## Connecting to a gateway you did not start
+
+By default the desktop app starts its own gateway on this computer and loads that. That has not
+changed, and nothing below happens unless you ask for it.
+
+**Gateway → Gateways…** (⌘⇧G) opens the switcher. It lists every gateway you have paired with, marks
+the one you are looking at, and lets you add another — a PersonalClaw running on a different machine
+on your network, or your own gateway reached through the [remote access](remote-access.md) tunnel.
+Picking a different one reloads the dashboard from that gateway. Nothing is shared between them: see
+[No hub, ever](companion-apps.md#no-hub-ever).
+
+### Adding one: paste the pairing link
+
+On the gateway you want to reach, open **Settings → Devices → Pair a device**. It gives you a link
+that looks like `http://claw.local:10000/pair?code=ABCD-2345`. Paste that whole link into the
+switcher.
+
+Paste the *link*, not just the code, because the address in it was composed by that gateway rather
+than typed by you — so there is no address to get wrong. The app then shows you exactly which host it
+is about to open, and which network that host is on, and waits for you to say yes.
+
+You can type a bare address instead (`192.168.1.5:10000`) if you are reading it off a screen. Same
+checks, same confirmation, but now the address is only as right as your typing.
+
+### What the app refuses, and what it asks you about
+
+The three cases are genuinely different and the app treats them differently:
+
+| Where the gateway is | `http://` | `https://` |
+|---|---|---|
+| This computer (`localhost`, `127.0.0.1`) | fine, no prompt — this is the default mode | fine |
+| Your network or tailnet (`10.x`, `192.168.x`, `172.16–31.x`, `100.64–127.x`, `*.local`, `*.ts.net`) | allowed **once you confirm**, with a plain warning that the traffic is readable by anyone else on that network | allowed once you confirm |
+| Anywhere else (the public internet) | **refused** | allowed once you confirm |
+
+Plaintext to a public address is refused rather than warned about. A gateway reached over the
+internet goes through your own tunnel, which terminates TLS, and the session cookie it sets is
+`Secure` — so it would not be sent over `http://` anyway. "It does not work" is not a trade-off worth
+offering you.
+
+A few addresses are refused outright, and they are all the same kind of thing: an IP written as a
+number or in hex (`2130706433`, `0x7f000001`), an IPv4 address written as IPv6
+(`::ffff:127.0.0.1`), a link-local address (`169.254.x` — one of which is a cloud metadata service),
+and any address with a username and password in it. None of these is something you would type on
+purpose, and each is a known way to make one program disagree with another about which machine an
+address names.
+
+A name is also checked against what it actually resolves to. If `brain.example.com` points into your
+LAN, the app says "your local network" rather than "the public internet". If it points at more than
+one kind of network at once, the app will not connect, because it cannot tell you one true thing
+about where you are going. And a name that resolves to `127.0.0.1` is treated as a network address,
+never as this computer — the next section is why that distinction is load-bearing.
+
+### Desktop capabilities are for the gateway on this computer only
+
+The microphone, the global shortcut, native notifications and the login item are exposed to the
+dashboard through a bridge the app attaches to the page. **That bridge is only ever attached to the
+gateway this app started.** A gateway on the network gets a plain window: the panel in **Settings →
+Security → Desktop capabilities** reads "desktop app not connected", exactly as it does in a browser
+tab, and push-to-talk does nothing there.
+
+That is not a limitation waiting to be lifted. The bridge is authorised by a secret file in
+`~/.personalclaw`, which proves "I am running as you, on this machine" — a claim no other gateway can
+check and none should be asked to trust. So the shortcut and the microphone follow the local gateway,
+and switching to a paired one leaves them behind.
+
+### When a paired gateway stops answering
+
+The switcher shows a status per row, and the statuses mean different things on purpose:
+
+- **Not checked yet** — nobody has asked. Not the same as a failure.
+- **Not answering** / **Timed out** — the machine is off, asleep, or off the network. The app
+  re-checks on a widening delay a bounded number of times, then stops and waits for you. When it
+  answers again, the dashboard reloads by itself.
+- **Needs pairing again** — the gateway answered and refused. That is what a revoked device session
+  looks like. The app stops immediately and does not try again: re-presenting a credential that was
+  just refused achieves nothing and would trip that gateway's own pairing lockout. Pair it again from
+  its Devices panel.
+- **Answered, but not a PersonalClaw gateway** — something is at that address, and it is not this.
+- **Redirected somewhere else** — the address answered by pointing at a third host. The app does not
+  follow it.
+
+Revoking one gateway's device session breaks that row and nothing else. The others keep working, and
+switching back to them does not ask you to pair anything.
+
+### Where the list is kept
+
+In `~/.personalclaw/desktop/shell-store.json`, readable and writable by your account only. If those
+permissions are ever loosened — so that another account on the machine could edit it — the app will
+not silently connect to whatever it finds there: it starts its own gateway and asks you to confirm the
+address again. If the file is damaged it is **left exactly as it is** rather than overwritten, so
+nothing is lost while you look at it.
+
+The file holds addresses and names. It holds no tokens: your session for each gateway is an http-only
+cookie in the app's own cookie jar, which is also why pairing happens on the gateway's own page
+rather than inside the app.
+
 ## Quitting shuts the gateway down, not off
 
 The desktop app starts its own gateway, so quitting has to stop it in the right order.
