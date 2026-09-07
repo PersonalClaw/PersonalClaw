@@ -2327,6 +2327,35 @@ export interface BenchmarkSkippedRow {
   skill: string
   blockers: string[]
 }
+/** WHAT the cells of a run were allowed to call — the run's provenance, secret-free.
+ *
+ *  A benchmark run has two kinds and they produce identically-shaped score tables: cells bound to
+ *  one real `Provider:model` (ES-17), and cells that resolve the offline `scripted` replay. Only
+ *  this object tells them apart, and `pin` does NOT: `pin.model_fingerprint` is read from the
+ *  INVOKING home's `active_models.json`, so it names what the operator's home was bound to
+ *  whether or not any of that crossed into a cell. Measured: two runs from one bound home, one
+ *  with `--bind-provider` and one without, carry the SAME `pin.model_fp`. */
+export interface BenchmarkProviderBinding {
+  use_case: string
+  provider_name: string
+  model: string
+  /** The wire dialect (`openai`/`anthropic`), not a vendor. */
+  protocol: string
+  base_url: string
+  /** The NAME of the one forwarded environment variable — never its value. Empty means the cell
+   *  got a placeholder credential and could only reach an unauthenticated endpoint. */
+  api_key_env: string
+  max_tokens: number | null
+}
+/** The run's pin, as the runner recorded it. `model_fingerprint` spells out the per-use-case refs
+ *  beside the `model_fp` digest, because a digest cannot be read — but see
+ *  `BenchmarkProviderBinding`: this describes the INVOKING home, not the cells. */
+export interface BenchmarkPin {
+  prompt_pack_sha256?: string
+  config_snapshot_ref?: string
+  model_fp?: string
+  model_fingerprint?: Record<string, string>
+}
 export interface BenchmarkReport {
   run_id: string
   created_at: string
@@ -2346,6 +2375,13 @@ export interface BenchmarkReport {
   measured_tasks: number
   absent_cells: number
   reproduction?: BenchmarkReproduction
+  pin?: BenchmarkPin
+  /** THREE states, and collapsing any two of them is the defect this field exists to prevent:
+   *  an object = these cells called that named model; `null` = the run recorded that NO provider
+   *  was bound, so every cell resolved the offline replay; ABSENT = the report predates
+   *  provenance recording (ES-17 added the field without moving `report_schema`), so provenance
+   *  is UNRECORDED — which is not the same claim as "nothing was bound". */
+  provider_binding?: BenchmarkProviderBinding | null
 }
 /** The §8 (V4) reproduction judgement. The variance is NOT numeric and NOT invented by the
  *  code: `stated_variance` is the protocol's own list of conditions and `stated_variance_source`
