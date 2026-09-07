@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { FileDiff, Inbox, Package, TriangleAlert, Upload } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Segmented } from '../../ui/Segmented'
-import { Skeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, Skeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
@@ -142,7 +142,11 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
       onClose={onClose}
     >
       {loading ? (
-        <div className="flex flex-col gap-s p-m"><Skeleton /><Skeleton /><Skeleton /></div>
+        // 🔑 Was three bare `<Skeleton />` in a flex column — all three 0px, so this panel body was
+        // empty for the whole fetch. Three stacked rows IS `ListSkeleton`, which also carries the
+        // announcement the bare atom cannot. No `what` noun — see the note in `LedgerRailsPanel`:
+        // a panel title is not a declaration `loadingNounPairing` can verify against.
+        <ListSkeleton rows={3} />
       ) : error ? (
         <div className="p-m"><InlineError icon multiline>{error}</InlineError></div>
       ) : (
@@ -194,7 +198,8 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
               {detailError ? (
                 <InlineError icon multiline>{detailError}</InlineError>
               ) : !detail || !ctype ? (
-                <Skeleton />
+                // Sized, not shaped: this stands in for one artifact's detail body, not a list.
+                <Skeleton className="h-24 w-full" />
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
@@ -218,9 +223,11 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                       </span>
                     )}
                   </div>
+                  {/* The Suspense fallback below fills this bordered box — a 0px fallback made the
+                      lazy compare view's whole load look like an empty frame. */}
                   <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline/40">
                     {tab === 'compare' ? (
-                      <Suspense fallback={<Skeleton />}>
+                      <Suspense fallback={<Skeleton className="h-full w-full" />}>
                         <ArtifactCompare art={detail} versions={versions} />
                       </Suspense>
                     ) : (

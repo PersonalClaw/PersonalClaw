@@ -229,8 +229,25 @@ export function Loading({ what }: {
 
 /** A single shimmering placeholder block. Use to render the SHAPE of content while
  *  a (cache-miss) fetch is in flight, so the page appears instantly instead of a
- *  bare "Loading…". `className` controls size/shape (height, width, rounding). */
-export function Skeleton({ className = '' }: { className?: string }) {
+ *  bare "Loading…". `className` controls size/shape (height, width, rounding).
+ *
+ *  🔑 `className` IS REQUIRED, AND THAT IS THE WHOLE POINT. This renders a `<div>` with
+ *  no content, so with no height it is a **0px invisible element** — the component
+ *  "succeeds" and the user sees nothing. Five call sites shipped exactly that
+ *  (`<Skeleton />` bare), one of them `if (loading) return <Skeleton />`, which showed an
+ *  empty panel for the entire fetch and read as broken rather than loading.
+ *
+ *  Making the prop required turns that class of defect into a compile error, and it cost
+ *  nothing to adopt: of 55 call sites, the 50 correct ones already passed a size, as do
+ *  all of this file's own internal uses. A default height was considered and rejected —
+ *  `className` is APPENDED, so `skeleton rounded-md h-4 h-72` would leave the winner to
+ *  stylesheet source order rather than to the caller, which is worse than the bug.
+ *
+ *  🪤 This atom is `aria-hidden`, so it announces nothing by design. A composite built
+ *  from it needs its own `role="status"` + `<LoadingStatus>` — `ListSkeleton` /
+ *  `FormSkeleton` / `CardGridSkeleton` already do that, which is why they are the better
+ *  choice whenever the shape is a list, a form or a card grid. */
+export function Skeleton({ className }: { className: string }) {
   return <div className={`skeleton rounded-md ${className}`} aria-hidden="true" />
 }
 

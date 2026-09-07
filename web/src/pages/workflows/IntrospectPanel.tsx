@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CircleCheck, CircleHelp, Clock, DollarSign, ScanSearch, ShieldQuestion, Split, TriangleAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Segmented } from '../../ui/Segmented'
-import { Skeleton } from '../../ui/ListScaffold'
+import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
@@ -55,7 +55,12 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
   return (
     <SidePanel title="Introspection" icon={<ScanSearch size={18} />} onClose={onClose} fillHeight>
       {loading ? (
-        <Skeleton />
+        // 🔑 Was `<Skeleton />` with no className — a 0px invisible div, so this side panel showed an
+        // empty body for the whole fetch. No `what` noun: this panel reports failure via
+        // `InlineError`, not `LoadError`, so there is no declaration for `loadingNounPairing` to
+        // verify a noun against, and that rail treats an unverifiable noun as invented. See the
+        // longer note in `LedgerRailsPanel`.
+        <FormSkeleton sections={1} rows={4} title={false} />
       ) : error ? (
         <InlineError>{error}</InlineError>
       ) : !data ? (
