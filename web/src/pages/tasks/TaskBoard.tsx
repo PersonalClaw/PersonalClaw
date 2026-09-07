@@ -73,10 +73,10 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
             style={{ background: isOver ? `color-mix(in srgb, ${s.tone} 12%, var(--color-surface-container))` : 'color-mix(in srgb, var(--color-surface-container) 40%, transparent)', outline: isOver ? `1.5px dashed ${s.tone}` : '1.5px solid transparent' }}>
             <div className="mb-2 flex items-center gap-s px-1 pt-1 shrink-0">
               <s.icon size={15} style={{ color: s.tone }} />
-              <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{s.label}</span>
+              <span data-type="label-s" className="text-on-surface" style={fvs(550)}>{s.label}</span>
               {/* count pops on change (a card arriving/leaving reads as an event) */}
               <motion.span key={items.length} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={physics.playful}
-                className="flex-1 text-on-surface-low text-[0.75rem] tabular-nums">{items.length}</motion.span>
+                data-type="caption" className="flex-1 text-on-surface-low tabular-nums">{items.length}</motion.span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(s.key, items.length)} />
             </div>
             {/* A scroll container whose cards are divs (drag-and-drop, not buttons) has NOTHING
@@ -87,7 +87,7 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
             <div className="flex flex-1 min-h-0 flex-col gap-s overflow-y-auto pr-0.5"
               tabIndex={0} role="group" aria-label={`${s.label} — ${items.length} task${items.length === 1 ? '' : 's'}`}>
               {items.length === 0 ? (
-                <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-outline-variant/30 py-6 text-on-surface-low text-[0.75rem]">{isOver ? 'Drop here' : '—'}</div>
+                <div data-type="caption" className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-outline-variant/30 py-6 text-on-surface-low">{isOver ? 'Drop here' : '—'}</div>
               ) : (
                 <AnimatePresence initial={false}>
                   {items.map((t) => (
@@ -171,14 +171,14 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
           initiating the drag. */}
       {!readOnly && <GripVertical size={13} className="pointer-events-none absolute right-1.5 top-2 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />}
       <div className="pl-1.5">
-        <div className="text-on-surface text-[0.8125rem] leading-snug line-clamp-2 pr-4" style={fvs(500)}>{t.title}</div>
+        <div data-type="label-s" className="text-on-surface leading-snug line-clamp-2 pr-4" style={fvs(500)}>{t.title}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {pm && <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>}
-          {due && <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
-          {(t.labels ?? []).slice(0, 1).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
+          {pm && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>}
+          {due && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+          {(t.labels ?? []).slice(0, 1).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var">{l}</span>)}
         </div>
         {(exit.length > 0 || prereqIds(t).length > 0 || (t.comment_count ?? 0) > 0) && (
-          <div className="mt-1.5 flex items-center gap-m text-on-surface-low text-[0.75rem]">
+          <div data-type="caption" className="mt-1.5 flex items-center gap-m text-on-surface-low">
             {exit.length > 0 && <span>{exitDoneCount(exit)}/{exit.length} criteria</span>}
             {prereqIds(t).length > 0 && <span>{prereqIds(t).length} deps</span>}
             {(t.comment_count ?? 0) > 0 && <span className="inline-flex items-center gap-1"><MessageSquare size={10} /> {t.comment_count}</span>}

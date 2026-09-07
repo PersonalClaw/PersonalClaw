@@ -411,7 +411,11 @@ async def test_uninstall_deactivates_force_removes(tmp_path):
         src = _app_src(tmp_path, "notes")
         await client.post("/api/apps", json={"source": src})
         r = await client.get("/api/apps/notes/uninstall-preview")
-        assert r.status == 200 and "dependencies" in (await r.json())
+        body = await r.json()
+        assert r.status == 200 and "dependencies" in body
+        # The preview reports the app's data/ facts so the confirm dialogs can name the
+        # trade. `present` and `entries` are separate: install mints an EMPTY data/.
+        assert body["data"]["present"] is True and body["data"]["entries"] == 0, body["data"]
         # Plain DELETE = deactivate: still installed (present), but disabled.
         assert (await client.delete("/api/apps/notes")).status == 200
         got = await client.get("/api/apps/notes")
@@ -420,6 +424,64 @@ async def test_uninstall_deactivates_force_removes(tmp_path):
         # force=1 = real removal → gone (404 afterwards).
         assert (await client.delete("/api/apps/notes?force=1")).status == 200
         assert (await client.get("/api/apps/notes")).status == 404
+
+
+@pytest.mark.asyncio
+async def test_remove_rung_removes_the_app_and_keeps_its_data(tmp_path):
+    """``DELETE ?remove=1`` — the middle rung over HTTP (issue #2541).
+
+    The app must be GONE (404, not merely disabled) and the data it wrote must come
+    back on reinstall. Both halves, because "removed" without "data kept" is the
+    force-uninstall this rung exists to be an alternative to.
+    """
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+
+        from personalclaw.apps import manager as app_store
+
+        (app_store.app_dir("notes") / "data" / "note.md").write_text("kept\n", encoding="utf-8")
+
+        r = await client.delete("/api/apps/notes?remove=1")
+        assert r.status == 200
+        payload = await r.json()
+        assert payload["removed"] is True and payload["forced"] is False, payload
+        assert payload["dataPreserved"] is True, payload
+        # Gone, not deactivated.
+        assert (await client.get("/api/apps/notes")).status == 404
+
+        # Reinstall through the same endpoint a user would, and read the note back.
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (app_store.app_dir("notes") / "data" / "note.md").read_text(
+            encoding="utf-8"
+        ) == "kept\n"
+
+
+@pytest.mark.asyncio
+async def test_force_wins_when_a_request_asks_for_both_rungs(tmp_path):
+    """``?force=1&remove=1`` WIPES. Two contradictory promises ⇒ honour the confirmed one.
+
+    Honouring the weaker flag would silently keep data a caller explicitly asked to
+    destroy, and the reinstall would resurrect it.
+    """
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes")
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+
+        from personalclaw.apps import manager as app_store
+
+        (app_store.app_dir("notes") / "data" / "doomed.md").write_text("bye\n", encoding="utf-8")
+
+        r = await client.delete("/api/apps/notes?force=1&remove=1")
+        assert r.status == 200
+        payload = await r.json()
+        assert payload["forced"] is True and payload["removed"] is False, payload
+        assert (await client.get("/api/apps/notes")).status == 404
+
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert not (
+            app_store.app_dir("notes") / "data" / "doomed.md"
+        ).exists(), "data survived a request that asked for the destructive rung"
 
 
 @pytest.mark.asyncio

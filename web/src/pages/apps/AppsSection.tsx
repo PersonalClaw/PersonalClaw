@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
-  MoreVertical, Database, Sparkles,
+  MoreVertical, Database, Sparkles, Archive, HardDrive,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -176,8 +176,14 @@ function SourceDivider({ label, count }: { label: string; count: number }) {
 // ── Shared app actions ──────────────────────────────────────────────────────
 // The card + the detail panel both DISPATCH the same real actions instead of the
 // card silently opening the sidebar. Enable/disable runs inline; configure /
-// update / force-uninstall open their modals; open navigates to the app's page.
-type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'force-uninstall'
+// update / uninstall / force-uninstall open their modals; open navigates to the
+// app's page.
+//
+// 'uninstall' is the middle removal rung (issue #2541): the app's files go, the
+// user's `data/` is kept. It sits between 'toggle' (nothing leaves disk) and
+// 'force-uninstall' (everything goes, data included), and it is the control the
+// force-uninstall dialog has always told users to reach for.
+type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 'force-uninstall'
 type DispatchAppAction = (app: { name: string; enabled: boolean; hasUI: boolean }, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
@@ -188,12 +194,14 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [configFor, setConfigFor] = useState<string | null>(null)
   const [updateFor, setUpdateFor] = useState<string | null>(null)
   const [uninstallFor, setUninstallFor] = useState<string | null>(null)
+  const [removeFor, setRemoveFor] = useState<string | null>(null)
 
   const dispatch: DispatchAppAction = (app, action) => {
     switch (action) {
       case 'open': nav(`app/${encodeURIComponent(app.name)}`); return
       case 'configure': setConfigFor(app.name); return
       case 'update': setUpdateFor(app.name); return
+      case 'uninstall': setRemoveFor(app.name); return
       case 'force-uninstall': setUninstallFor(app.name); return
       case 'toggle': {
         setBusyName(app.name)
@@ -209,6 +217,8 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       {updateFor && <UpdateModal name={updateFor} onClose={() => setUpdateFor(null)}
         onUpdated={() => { setUpdateFor(null); reload() }} />}
       {configFor && <ConfigModal name={configFor} onClose={() => setConfigFor(null)} />}
+      {removeFor && <RemoveAppModal name={removeFor} onClose={() => setRemoveFor(null)}
+        onDone={() => { setRemoveFor(null); reload() }} />}
       {uninstallFor && <UninstallModal name={uninstallFor} onClose={() => setUninstallFor(null)}
         onDone={() => { setUninstallFor(null); reload() }} />}
     </>
@@ -258,6 +268,11 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
               <MenuRow icon={<Power size={15} />} label={item.enabled ? 'Deactivate' : 'Activate'} onClick={() => { onAction(app, 'toggle'); close() }} />
               <div className="my-1 border-t border-outline-variant/30" />
+              {/* The safe removal rung sits ABOVE the destructive one and outside the
+                  danger styling. A menu that offered only "Force uninstall" made the
+                  data-destroying path the ONLY way to get rid of an app — the inverse
+                  of "make dangerous actions harder to reach than safe ones". */}
+              <MenuRow icon={<Archive size={15} />} label="Uninstall…" onClick={() => { onAction(app, 'uninstall'); close() }} />
               <div className="[&_button]:text-danger">
                 <MenuRow icon={<Trash2 size={15} />} label="Force uninstall…" onClick={() => { onAction(app, 'force-uninstall'); close() }} />
               </div>
@@ -1041,6 +1056,8 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
         // A native app is locked on — omit uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
           { icon: <Power size={15} />, label: item.enabled ? 'Deactivate' : 'Activate', onSelect: () => onAction(app, 'toggle') },
+          // Safe removal (files go, the user's data/ stays) before the destructive one.
+          { icon: <Archive size={15} />, label: 'Uninstall…', onSelect: () => onAction(app, 'uninstall') },
           { icon: <Trash2 size={15} />, label: 'Force uninstall…', onSelect: () => onAction(app, 'force-uninstall'), danger: true },
         ]),
       ]
@@ -1305,6 +1322,7 @@ export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
 function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; onClose: () => void; onChanged: () => void; onOpen: () => void }) {
   const [busy, setBusy] = useState(false)
   const [confirmUninstall, setConfirmUninstall] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [configOpen, setConfigOpen] = useState(false)
   const [updateOpen, setUpdateOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -1403,10 +1421,15 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             </Button>
             {app.enabled && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
             <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
+            {/* The middle removal rung, and a REAL control at last: the force-uninstall
+                dialog has always told users to "use Uninstall instead", and until issue
+                2541 there was no such button anywhere in this panel — the one screen
+                warning about data loss pointed at nothing. Files go, data/ stays. */}
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRemove(true)}><Archive size={15} /> Uninstall</Button>
           </div>
 
-          {/* Advanced → the destructive force-uninstall (removes files from disk).
-              Hidden behind an expander so it's deliberate, not accidental. */}
+          {/* Advanced → the destructive force-uninstall (removes files AND the user's
+              data/). Hidden behind an expander so it's deliberate, not accidental. */}
           <div className="border-t border-outline-variant/40 pt-3">
             <button type="button" onClick={() => setAdvancedOpen((o) => !o)} aria-expanded={advancedOpen}
               className="flex items-center gap-1.5 text-on-surface-low text-[0.8125rem] transition-colors hover:text-on-surface">
@@ -1416,7 +1439,8 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
               <div className="mt-2 rounded-m border border-outline-variant bg-surface-high p-m">
                 <div data-type="body-s" className="text-on-surface">Force uninstall</div>
                 <div data-type="label-s" className="mt-0.5 text-on-surface-low">
-                  Remove this app's files from disk entirely. Deactivating (the normal off-switch) keeps the files — this can't be undone.
+                  Remove this app's files <span className="text-on-surface">and everything it stored for you</span> — notes, history,
+                  logs. Deactivate keeps the files; Uninstall removes them and keeps your data. This can't be undone.
                 </div>
                 <Button variant="danger" size="sm" className="mt-2" onClick={() => setConfirmUninstall(true)}>
                   <Trash2 size={15} /> Force uninstall
@@ -1430,6 +1454,9 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
       {updateOpen && <UpdateModal name={app.name} onClose={() => setUpdateOpen(false)}
         onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
       {configOpen && <ConfigModal name={app.name} onClose={() => setConfigOpen(false)} />}
+      {confirmRemove && <RemoveAppModal name={app.name}
+        onClose={() => setConfirmRemove(false)}
+        onDone={() => { setConfirmRemove(false); onClose(); onChanged() }} />}
       {confirmUninstall && <UninstallModal name={app.name}
         onClose={() => setConfirmUninstall(false)}
         onDone={() => { setConfirmUninstall(false); onClose(); onChanged() }} />}
@@ -1568,11 +1595,89 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
   )
 }
 
+/** The kept-dependency list both removal dialogs show. Identical either way: the
+ *  dependency ledger's answer does not depend on which rung removed the app. */
+function KeptDepsList({ kept }: { kept: AppDepClassification[] }) {
+  if (kept.length === 0) return null
+  return (
+    <ul className="flex flex-col gap-1">
+      {kept.map((d) => (
+        <li key={d.key} data-type="body-s" className="text-on-surface-low">
+          • Keeping {d.kind} <span className="text-on-surface">{d.id}</span> ({d.disposition})
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** The MIDDLE removal rung (issue #2541): the app's files go, the user's `data/`
+ *  stays and comes back if they reinstall.
+ *
+ *  It states which of the three data facts applies rather than one hedged sentence,
+ *  because "we kept your 4 notes" and "this app had nothing stored" and "it had a
+ *  data folder and it was empty" are three different promises, and a dialog that
+ *  makes the same one in all three cases is wrong in two of them. */
+function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+  const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
+  const [busy, setBusy] = useState(false)
+  const kept = (data?.dependencies ?? []).filter((d) => d.disposition !== 'removable')
+  const facts = data?.data
+
+  async function remove() {
+    setBusy(true)
+    try { await api.removeApp(name); onDone() }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <Modal title={`Uninstall ${name}?`} icon={<Archive size={18} />} onClose={onClose}>
+      <div className="flex flex-col gap-m p-l" style={{ minWidth: 400 }}>
+        <div data-type="body-s" className="text-on-surface-low">
+          This removes the app's files and providers from disk. To just turn it off and leave the
+          files in place, use <span className="text-on-surface">Deactivate</span> instead.
+        </div>
+        {/* `present` and `entries` are separate facts — see AppDataFacts. Absent data/
+            and empty data/ get different sentences on purpose. */}
+        <div className="flex items-start gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
+          <HardDrive size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
+          <div data-type="body-s" className="min-w-0 text-on-surface-low">
+            {facts === undefined
+              ? 'Checking what this app has stored…'
+              : !facts.present
+                ? <>This app keeps no data of its own, so there is nothing to preserve.</>
+                : facts.entries === 0
+                  ? <>This app has a data folder and it is currently <span className="text-on-surface">empty</span>. It is kept anyway, so reinstalling picks up where you left off.</>
+                  : <><span className="text-on-surface">Your data is kept</span> — {facts.entries} {facts.entries === 1 ? 'item' : 'items'} in this app's data folder. Reinstall it and your data comes back.</>}
+            {facts?.present && facts.path && (
+              <div data-type="label-s" className="mt-1 break-all text-on-surface-low/80">Kept at {facts.path}</div>
+            )}
+          </div>
+        </div>
+        <KeptDepsList kept={kept} />
+        <div className="flex justify-end gap-2">
+          {/* Cancel first in tab order — the safe option gets the focus, not the one
+              that removes things.
+              `loading`, not a hand-rolled Loader2 swap: the primitive carries aria-busy,
+              so a screen reader hears the in-flight state instead of watching a silent
+              spin. (The force dialog below still hand-rolls its own; converting the
+              existing population is a separate visual call — see
+              ui/transientStateAnnouncement.test.tsx.) */}
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} onClick={remove}>
+            <Archive size={16} /> Uninstall
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
   const deps: AppDepClassification[] = data?.dependencies ?? []
   const kept = deps.filter((d) => d.disposition !== 'removable')
+  const facts = data?.data
 
   async function forceUninstall() {
     setBusy(true)
@@ -1583,20 +1688,21 @@ function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () =
   return (
     <Modal title={`Force uninstall ${name}?`} icon={<Trash2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 400 }}>
+        {/* This paragraph used to end "use Uninstall instead" while no Uninstall
+            control existed anywhere in the Library — the one screen warning a user
+            about data loss sent them to a button that was not there, and it described
+            Deactivate's behaviour under Uninstall's name. Both lesser rungs are real
+            now, so both are named, each by what it actually does. */}
         <div data-type="body-s" className="text-on-surface-low">
-          This permanently removes the app's files and providers from disk — it cannot be undone.
-          To just turn the app off (keeping its files), use Uninstall instead. {kept.length > 0 &&
-            'Shared dependencies still used by other apps will be kept.'}
+          This permanently removes the app's files and providers from disk
+          {facts?.present && facts.entries > 0
+            ? <>, <span className="text-danger">including the {facts.entries} {facts.entries === 1 ? 'item' : 'items'} it stored for you</span></>
+            : <> and anything it stored for you</>}
+          {' '}— it cannot be undone. To keep your data, use <span className="text-on-surface">Uninstall</span>;
+          to just turn the app off and leave everything on disk, use <span className="text-on-surface">Deactivate</span>.
+          {kept.length > 0 && ' Shared dependencies still used by other apps will be kept.'}
         </div>
-        {kept.length > 0 && (
-          <ul className="flex flex-col gap-1">
-            {kept.map((d) => (
-              <li key={d.key} data-type="body-s" className="text-on-surface-low">
-                • Keeping {d.kind} <span className="text-on-surface">{d.id}</span> ({d.disposition})
-              </li>
-            ))}
-          </ul>
-        )}
+        <KeptDepsList kept={kept} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="danger" disabled={busy} onClick={forceUninstall}>

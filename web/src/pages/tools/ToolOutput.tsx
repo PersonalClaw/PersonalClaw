@@ -11,14 +11,14 @@ import { Markdown } from '../../ui/Markdown'
  *  UI until tools declare an output schema (then this can switch on it). */
 export function ToolOutput({ text }: { text: string }) {
   const trimmed = (text ?? '').trim()
-  if (!trimmed) return <p className="text-on-surface-low text-[0.8125rem]">(no output)</p>
+  if (!trimmed) return <p data-type="body-s" className="text-on-surface-low">(no output)</p>
 
   const json = tryParseJson(trimmed)
   if (json !== undefined) return <JsonValue value={json} top />
 
-  if (looksMarkdown(trimmed)) return <div className="text-[0.8125rem]"><Markdown>{trimmed}</Markdown></div>
+  if (looksMarkdown(trimmed)) return <div data-type="body-s"><Markdown>{trimmed}</Markdown></div>
 
-  return <pre className="text-on-surface-var text-[0.8125rem] font-mono whitespace-pre-wrap break-words">{trimmed}</pre>
+  return <pre data-type="body-s" className="text-on-surface-var font-mono whitespace-pre-wrap break-words">{trimmed}</pre>
 }
 
 function tryParseJson(s: string): unknown {
@@ -41,7 +41,7 @@ function JsonValue({ value, top }: { value: unknown; top?: boolean }) {
   }
   // array of primitives → bullet list
   if (Array.isArray(value) && value.every(isPrimitive)) {
-    return <ul className="flex flex-col gap-0.5">{value.map((v, i) => <li key={i} className="text-on-surface text-[0.8125rem] flex gap-s"><span className="text-on-surface-low tabular-nums">{i + 1}.</span><Scalar v={v} /></li>)}</ul>
+    return <ul className="flex flex-col gap-0.5">{value.map((v, i) => <li key={i} data-type="body-s" className="text-on-surface flex gap-s"><span className="text-on-surface-low tabular-nums">{i + 1}.</span><Scalar v={v} /></li>)}</ul>
   }
   // mixed array → indexed rows
   if (Array.isArray(value)) {
@@ -50,7 +50,7 @@ function JsonValue({ value, top }: { value: unknown; top?: boolean }) {
   // object → key/value rows
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
-    if (entries.length === 0) return <span className="text-on-surface-low text-[0.8125rem]">{'{}'}</span>
+    if (entries.length === 0) return <span data-type="body-s" className="text-on-surface-low">{'{}'}</span>
     return <div className={`flex flex-col gap-1 ${top ? '' : 'pl-3 border-l border-outline-variant/30'}`}>{entries.map(([k, v]) => <Row key={k} label={k} value={v} />)}</div>
   }
   return <Scalar v={value} />
@@ -61,7 +61,7 @@ function Row({ label, value }: { label: string; value: unknown }) {
   const nested = value !== null && typeof value === 'object'
   const [open, setOpen] = useState(true)
   return (
-    <div className="text-[0.8125rem]">
+    <div data-type="body-s">
       <div className="flex items-start gap-s">
         {nested ? (
           <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="inline-flex items-center gap-1 text-on-surface-var hover:text-on-surface shrink-0">
@@ -96,7 +96,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   const shown = cols.slice(0, 8)
   return (
     <div className="overflow-x-auto rounded-md border border-outline-variant/30">
-      <table className="w-full border-collapse text-[0.75rem]">
+      <table data-type="caption" className="w-full border-collapse">
         <thead>
           <tr>{shown.map((c) => <th key={c} className="border-b border-outline-variant/40 bg-surface-high px-2 py-1.5 text-left font-mono text-on-surface-var" style={fvs(500)}>{c}</th>)}</tr>
         </thead>

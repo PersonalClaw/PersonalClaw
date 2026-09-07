@@ -108,7 +108,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
       ) : (
         <>
         {analysis && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-l gap-y-1 px-2 py-1.5 text-[0.75rem] text-on-surface-low">
+          <div data-type="caption" className="mb-2 flex flex-wrap items-center gap-x-l gap-y-1 px-2 py-1.5 text-on-surface-low">
             <span className="inline-flex items-center gap-1.5"><Activity size={13} className="text-ok" /> {Math.round(analysis.completion_pct)}% complete</span>
             <span className="inline-flex items-center gap-1.5"><Route size={13} className="text-primary" /> Critical path: {criticalSet.size} {criticalSet.size === 1 ? 'task' : 'tasks'}</span>
             {bottlenecks.length > 0 && (
@@ -144,7 +144,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
                   {/* 182px of 386 at 390px — 2.1x, the worst of the four. A DAG node is the smallest slot a
                       task title gets, so it clips first and hardest. */}
                   <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)} title={t.title}>{t.title}</div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+                  <div data-type="caption" className="mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-on-surface-low)' }}>
                     <span style={{ color: sm.tone }}>{sm.label}</span>
                     {pm && <span style={{ color: pm.tone }}>· {pm.label}</span>}
                   </div>

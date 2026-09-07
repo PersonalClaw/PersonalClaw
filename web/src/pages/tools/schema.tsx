@@ -129,7 +129,10 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   // inputs/selects/textareas get `id` + a <label htmlFor>; the boolean Toggle and
   // custom widgets (which own their own element) take an accessible name instead.
   const id = useId()
-  const base = 'w-full rounded-md bg-surface px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // The type SIZE left this const deliberately: a `data-type` role is an ATTRIBUTE, so it cannot
+  // ride a className string — each control below declares its own role instead (`body-s` for the
+  // one-line controls, `caption` for the JSON textarea, which already sized itself smaller).
+  const base = 'w-full rounded-md bg-surface px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   let control: ReactNode
   const customWidget = meta.widget ? widgets?.[meta.widget] : undefined
   if (customWidget) {
@@ -139,7 +142,7 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
     control = <div role="group" aria-labelledby={`${id}-label`}>{customWidget({ value, onChange, schema, placeholder: meta.help })}</div>
   } else if (schema.enum?.length) {
     control = (
-      <select id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
+      <select id={id} data-type="body-s" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
         <option value="">—</option>
         {schema.enum.map((o) => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
       </select>
@@ -147,11 +150,11 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   } else if (t === 'boolean') {
     control = <Toggle on={!!value} onChange={onChange} size="sm" label={label} />
   } else if (t === 'number' || t === 'integer') {
-    control = <input id={id} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} className={base} />
+    control = <input id={id} data-type="body-s" type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} className={base} />
   } else if (t === 'object' || t === 'array') {
-    control = <textarea id={id} value={typeof value === 'string' ? value : JSON.stringify(value ?? (t === 'array' ? [] : {}), null, 2)} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={t === 'array' ? '[ … ]' : '{ … }'} className={`${base} font-mono text-[0.75rem] resize-y`} />
+    control = <textarea id={id} data-type="caption" value={typeof value === 'string' ? value : JSON.stringify(value ?? (t === 'array' ? [] : {}), null, 2)} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={t === 'array' ? '[ … ]' : '{ … }'} className={`${base} font-mono resize-y`} />
   } else {
-    control = <input id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help?.slice(0, 60) ?? schema.description?.slice(0, 60)} className={base} />
+    control = <input id={id} data-type="body-s" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help?.slice(0, 60) ?? schema.description?.slice(0, 60)} className={base} />
   }
   // The boolean Toggle carries its own aria-label; everything else binds the
   // <label> to the control by id (htmlFor). A plain-label span id lets custom
@@ -160,12 +163,12 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   return (
     <div>
       <div className="mb-1 flex items-center gap-s">
-        <label id={`${id}-label`} htmlFor={bindsHtmlFor ? id : undefined} className="text-on-surface text-[0.8125rem]">{label}</label>
-        <span className="text-on-surface-low text-[0.75rem] font-mono">{typeLabel(schema)}</span>
-        {required && <span className="text-danger text-[0.75rem]">required</span>}
+        <label id={`${id}-label`} htmlFor={bindsHtmlFor ? id : undefined} data-type="body-s" className="text-on-surface">{label}</label>
+        <span data-type="caption" className="text-on-surface-low font-mono">{typeLabel(schema)}</span>
+        {required && <span data-type="caption" className="text-danger">required</span>}
       </div>
       {control}
-      {meta.help && <p className="mt-1 text-on-surface-low text-[0.75rem]">{meta.help}</p>}
+      {meta.help && <p data-type="caption" className="mt-1 text-on-surface-low">{meta.help}</p>}
     </div>
   )
 }

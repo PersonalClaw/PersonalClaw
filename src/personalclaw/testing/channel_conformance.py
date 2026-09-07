@@ -34,11 +34,14 @@ provider instance it drives the clauses the plan's §C4 names:
    text. A transport declaring ``edits=False`` (email) is asserted the other way: its
    ``start_stream`` must return ``""`` so core skips animation entirely.
 9. **vendor-seam completeness (ADVISORY)** — the only clause that WARNS instead of
-   failing: a provider whose owning ``app.json`` registers a ``channel`` provider but no
-   ``inbox`` message source gets a ``UserWarning`` naming the missing seam (amendment
-   2026-07-26 rule 1). Suppress it with ``no_inbox_source_reason=`` when the vendor has no
-   message-source semantics. See ``_warn_on_incomplete_vendor_seams`` for why an advisory
-   rather than a failure, and ``docs/guides/build-a-channel-app.md`` for the checklist.
+   failing: a provider whose owning ``app.json`` registers a ``channel`` provider but not
+   the companion seams gets a ``UserWarning`` naming the missing one (amendment 2026-07-26
+   rule 1). Two arms, reported SEPARATELY because they are two different facts and two
+   different pieces of work: a missing ``inbox`` message source, and — since ``CE-10`` — a
+   missing ``trigger_source``. Suppress either with ``no_inbox_source_reason=`` /
+   ``no_trigger_source_reason=`` when the vendor genuinely has no such semantics. See
+   ``_warn_on_incomplete_vendor_seams`` for why an advisory rather than a failure, and
+   ``docs/guides/build-a-channel-app.md`` for the checklist.
 
 Failures name the violated obligation, not just the expression, because the reader is
 usually an app author who has never seen this file.
@@ -276,6 +279,7 @@ def assert_channel_contract(
     clock: Any = None,
     inbound_via: str = "",
     no_inbox_source_reason: str = "",
+    no_trigger_source_reason: str = "",
 ) -> None:
     """Assert ``provider`` honours the channel contract. Raises on the first violation.
 
@@ -303,9 +307,14 @@ def assert_channel_contract(
         ``receive()`` shape none of them use.
     :param no_inbox_source_reason: why this vendor app registers no ``inbox`` message
         source (e.g. the vendor has no message-source semantics at all). Supplying it
-        suppresses clause 9's advisory and *is* the documented exemption — the guide's
+        suppresses clause 9's inbox advisory and *is* the documented exemption — the guide's
         "Vendor completeness" section names it, so the reason lives in the app's own test
         rather than as a manifest key nothing else reads.
+    :param no_trigger_source_reason: the same exemption for the ``trigger_source`` arm (CE-10)
+        — why this vendor produces nothing an automation could be triggered by. A SEPARATE
+        parameter rather than one shared "seams I skip" string, because an app that has a
+        real reason to skip one arm rarely has a reason to skip the other, and a single
+        suppressor would silence a seam nobody had thought about.
     """
     _assert_identity(provider)
     _assert_capabilities(provider)
@@ -327,7 +336,11 @@ def assert_channel_contract(
     # red with a doctrine nag buries it. Runs through this entry point rather than as a
     # helper an apps-repo PR would have to adopt, so it is live for all four app suites
     # the day it merges instead of waiting on a second repo.
-    _warn_on_incomplete_vendor_seams(provider, no_inbox_source_reason=no_inbox_source_reason)
+    _warn_on_incomplete_vendor_seams(
+        provider,
+        no_inbox_source_reason=no_inbox_source_reason,
+        no_trigger_source_reason=no_trigger_source_reason,
+    )
 
 
 # ── clause 1: identity + info ────────────────────────────────────────────────
@@ -978,49 +991,116 @@ def _declared_provider_types(manifest: dict[str, Any]) -> set[str]:
 
 
 def _warn_on_incomplete_vendor_seams(
-    provider: ChannelTransportProvider, *, no_inbox_source_reason: str
+    provider: ChannelTransportProvider,
+    *,
+    no_inbox_source_reason: str,
+    no_trigger_source_reason: str = "",
 ) -> None:
-    """Advise when a channel app registers no ``inbox`` message source.
+    """Advise when a channel app leaves a companion seam unregistered.
 
     The obligation is CHANNEL-EXPANSION's vendor-completeness pattern (amendment
-    2026-07-26, rule 1): ONE vendor app registers EVERY seam that vendor touches. A
-    channel-only app can converse but its messages never reach the Inbox, so nothing
-    that arrives while no session is live is ever surfaced to the owner.
+    2026-07-26, rule 1): ONE vendor app registers EVERY seam that vendor touches. Two arms
+    are mechanically checkable, and they are checked and reported SEPARATELY:
 
-    A WARNING and never a failure, on purpose. The doctrine postdates the shipped channel
-    apps: when this clause landed the measured population was telegram-channel and
-    discord-channel channel-only, slack-channel complete (its inbox source landed with
-    the pattern), mail-inbox not a channel at all. Giving the clause teeth would turn two
-    already-green app suites red for an obligation their authors were never told — giving
-    a control teeth before the population satisfies it is an outage, not a gate.
+    * **``inbox``** — a channel-only app can converse but its messages never reach the
+      Inbox, so nothing that arrives while no session is live is surfaced to the owner.
+    * **``trigger_source``** (CE-10) — a channel app without one produces no automation
+      events, so a user cannot make anything happen when a message arrives. This arm did
+      not exist when the clause shipped: the advisory's own prose said "a trigger source
+      *once that seam exists*", the seam then shipped as ``WF2AUT-8``, and nothing here
+      started checking it. Adoption sat at 0/4 for that whole window with the advisory
+      silent about it, which is why the arm is now real rather than narrated.
+
+    Two arms, two messages, never one merged sentence: "you have no inbox" and "you have no
+    trigger source" are different facts about different work, and a reader who has already
+    decided about one must not have to re-read a paragraph to find the other.
+
+    A WARNING and never a failure, on purpose, and for both arms. The doctrine postdates the
+    shipped channel apps: when the inbox arm landed the measured population was
+    telegram-channel and discord-channel channel-only, slack-channel complete, mail-inbox
+    not a channel at all. Giving a clause teeth before the population satisfies it is an
+    outage, not a gate. The trigger-source arm is added at the point where the population
+    DOES satisfy it (CE-10 brought all four apps to a declared source) — and it stays
+    advisory anyway, because the thing with teeth is the apps repo's own
+    ``check_trigger_source_adoption.py`` sweep, which can see the whole population where a
+    per-app kit call can only ever see one app.
     """
-    if no_inbox_source_reason:
-        return
     manifest = _owning_app_manifest(provider)
     if manifest is None:
+        # NOT evidence of an incomplete app: core's own fixture transports and ad-hoc
+        # scripts have no bundle. See `_owning_app_manifest`.
         return
     declared = _declared_provider_types(manifest)
     # A manifest with no `channel` declaration is a different shape entirely (a transport
     # its own bundle does not register); this clause only speaks about channel apps.
-    if "channel" not in declared or "inbox" in declared:
+    if "channel" not in declared:
         return
     name = manifest.get("name") or type(provider).__name__
+
+    if "inbox" not in declared and not no_inbox_source_reason:
+        _warn_missing_seam(
+            name,
+            declared,
+            seam="inbox",
+            what='a {"type": "inbox"} MessageSourceProvider',
+            consequence=(
+                "so anything sent to your channel outside a live conversation never reaches "
+                "the owner's Inbox"
+            ),
+            suppressor="no_inbox_source_reason='<why this vendor has no message-source "
+            "semantics>'",
+        )
+
+    if "trigger_source" not in declared and not no_trigger_source_reason:
+        _warn_missing_seam(
+            name,
+            declared,
+            seam="trigger_source",
+            what=(
+                'a {"type": "trigger_source"} TriggerSourceProvider '
+                "(personalclaw.sdk.trigger_source)"
+            ),
+            consequence=(
+                "so nothing that arrives on your channel can drive an automation — a "
+                "`kind: event` trigger bound to app:<your-app>:<event> can never fire. The "
+                "seam is LIVE (WF2AUT-8): your provider's start(emit) hands core typed "
+                "SourceEvents and core namespaces, fences and matches them"
+            ),
+            suppressor="no_trigger_source_reason='<why this vendor produces nothing an "
+            "automation could trigger on>'",
+        )
+
+
+def _warn_missing_seam(
+    app: str,
+    declared: set[str],
+    *,
+    seam: str,
+    what: str,
+    consequence: str,
+    suppressor: str,
+) -> None:
+    """Emit ONE advisory for ONE missing seam.
+
+    Factored out so both arms carry the identical shape — the declared set, the consequence,
+    the concrete fix, the exemption — rather than drifting into two differently-helpful
+    messages. The reader is an app author who has never seen this file.
+    """
     warnings.warn(
-        f"vendor completeness: the app {name!r} registers a channel transport but no "
-        f"inbox message source — its manifest declares provider types {sorted(declared)}. "
-        "One vendor app owns EVERY seam that vendor touches (channel + inbox + a trigger "
-        "source once that seam exists + contributed UI), so a channel-only app's messages "
-        'never reach the Inbox. Add a {"type": "inbox"} MessageSourceProvider to the '
-        "manifest's providers[] array, or pass assert_channel_contract(..., "
-        "no_inbox_source_reason='<why this vendor has no message-source semantics>') to "
-        "record the exemption. See docs/guides/build-a-channel-app.md, section 'Vendor "
+        f"vendor completeness: the app {app!r} registers a channel transport but no "
+        f"{seam} provider — its manifest declares provider types {sorted(declared)}. "
+        "One vendor app owns EVERY seam that vendor touches (channel + inbox + "
+        f"trigger_source + contributed UI), {consequence}. Add {what} to the manifest's "
+        f"providers[] array, or pass assert_channel_contract(..., {suppressor}) to record "
+        "the exemption. See docs/guides/build-a-channel-app.md, section 'Vendor "
         "completeness'.",
         # UserWarning rather than a bespoke subclass: the message is the entire payload,
         # and a new public warning class would be one more symbol every app has to import
         # just to filter an advisory. Neither core nor the apps repo sets
         # `filterwarnings = error`, so this stays advisory wherever the four suites run.
         UserWarning,
-        # 3 = the caller of `assert_channel_contract` (this frame -> the entry point ->
-        # the app's own test), so the advisory points at the app, not at core's kit.
-        stacklevel=3,
+        # 4 = the caller of `assert_channel_contract` (this frame -> the seam walker -> the
+        # entry point -> the app's own test), so the advisory points at the app, not at
+        # core's kit.
+        stacklevel=4,
     )

@@ -44,7 +44,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} />
-          {err && <p ref={errRef} role="alert" className="mt-l text-danger text-[0.8125rem]">{err}</p>}
+          {err && <p ref={errRef} role="alert" data-type="body-s" className="mt-l text-danger">{err}</p>}
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">

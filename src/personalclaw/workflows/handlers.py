@@ -863,6 +863,25 @@ async def api_run_introspect(request: web.Request) -> web.Response:
     return _reply(service.introspect(request.match_info.get("run_id", "")))
 
 
+async def api_run_ledger_rails(request: web.Request) -> web.Response:
+    """GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
+
+    The run-side counterpart of the loop cockpit's two rails, which the loop side serves off
+    `GET /api/loops/{id}` (`store.get_redacted` attaches `findings` + `verdicts`). Both are
+    projections over the PP-5 ledger this run already wrote, so this route stores nothing and
+    mints no kind.
+
+    Its own route rather than a field on `introspect` because the two payloads have different
+    costs: `introspect` reads this template's sibling runs to earn its p50/p95 card, while these
+    rails are one run's own ledger. A cockpit paints the rails on connect and opens introspection
+    on demand, so folding them together would make the cheap read pay for the expensive one.
+
+    404s for an unknown run (`WF_RUN_NOT_FOUND`), so a polled deleted run is distinguishable from
+    a warming-up one with empty rails.
+    """
+    return _reply(service.ledger_rails(request.match_info.get("run_id", "")))
+
+
 async def api_run_output(request: web.Request) -> web.Response:
     return _reply(
         service.output(request.match_info.get("run_id", ""), request.match_info.get("node_id", ""))
@@ -1295,6 +1314,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/drop", api_run_drop)
     app.router.add_get("/api/workflows/runs/{run_id}/outbox", api_run_outbox)
     app.router.add_get("/api/workflows/runs/{run_id}/introspect", api_run_introspect)
+    app.router.add_get("/api/workflows/runs/{run_id}/ledger-rails", api_run_ledger_rails)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)

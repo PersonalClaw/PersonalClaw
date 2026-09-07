@@ -49,7 +49,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/apps/sources` — remove a user git source URL.
 - `GET /api/apps/sources` — the configured git source URLs (defaults + user).
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.
-- `DELETE /api/apps/{name}` — uninstall = DEACTIVATE (keep files). Pass
+- `DELETE /api/apps/{name}` — remove an app: no flag deactivates, ``?remove=1`` keeps ``data/``, ``?force=1`` wipes.
 - `GET /api/apps/{name}` — full manifest + status + saved config.
 - `POST /api/apps/{name}/agent-run` — start a background agent task.
 - `GET /api/apps/{name}/agent-run/{run_id}` — poll a background agent task.
@@ -58,7 +58,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/disable` — _(no summary)_
 - `POST /api/apps/{name}/enable` — _(no summary)_
 - `POST /api/apps/{name}/token` — mint an app-scoped identity token.
-- `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3).
+- `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
@@ -798,6 +798,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
 - `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/introspect` — The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
+- `GET /api/workflows/runs/{run_id}/ledger-rails` — GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
