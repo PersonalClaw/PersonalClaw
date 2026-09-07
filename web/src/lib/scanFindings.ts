@@ -1,3 +1,5 @@
+import glossSource from '../../../src/personalclaw/scan_rule_gloss.json'
+
 /** The shared rules for listing security-scan findings on a consent surface.
  *
  *  🔑 BOTH CONSENT SURFACES TRUNCATE THE SAME LIST, and each had hardcoded its own `8`. An app
@@ -22,11 +24,11 @@ export function hiddenFindingsNote(total: number): string | null {
   return `+${hidden} more finding${hidden === 1 ? '' : 's'} not shown`
 }
 
-/** What each scanner rule MEANS, in terms of what the scanned code can then do to this machine.
+/** What each scanner rule MEANS, in terms of what the app can then do to this machine.
  *
  *  🔑 A RULE NAME IS NOT A DISCLOSURE. The findings list rendered `python_exec (warning) —
  *  server/provider.py: subprocess.run([...])`, which names the pattern and shows the code but
- *  never says what the pattern lets it do. A non-expert cannot weigh "python_exec" at all,
+ *  never says what the pattern lets the app do. A non-expert cannot weigh "python_exec" at all,
  *  and the whole point of the surface is a yes/no a non-expert can give. The gloss COMPLEMENTS
  *  the evidence — the evidence is the concrete argv, this is the consequence — so it stays one
  *  clause and never restates the snippet.
@@ -37,37 +39,19 @@ export function hiddenFindingsNote(total: number): string | null {
  *  covers every rule the scanner can emit — a new rule ships glossed or reds the suite, because
  *  the failure mode here is silence, and silence is what the user reads as "probably fine".
  *
- *  🪤 THE SUBJECT IS "THIS CODE", NOT "THE APP" — and that is load-bearing, not style. Every
- *  sentence here said "The app …" while the map had one consumer. Wiring the skills marketplace
- *  in (#2535) rendered "The app runs an external program on your machine." on a SKILL install
- *  card: one map, two nouns, and the wrong one on the newer surface. One map answering "what does
- *  this rule mean" cannot name one of the surfaces that asks. A finding is located in a FILE
- *  (`f.path`) either way, so the code is the honest subject on both. Any third consumer inherits
- *  a sentence that is already true for it. */
-export const SCAN_RULE_GLOSS: Record<string, string> = {
-  // Terminal (dangerous) content.
-  destructive_root: 'This code deletes files from the root of the filesystem or your home directory.',
-  fork_bomb: 'This code spawns processes without limit until the machine stops responding.',
-  disk_wipe: 'This code writes straight to a raw disk device, destroying what is on it.',
-  remote_exec_pipe: 'This code downloads more code from the internet and runs it immediately, unread.',
-  obfuscated_exec: 'This code decodes hidden text and runs it, so what runs cannot be read here.',
-  exfil_sensitive_path: 'This code reads a credential file and sends its contents off this machine.',
-  bidi_override: 'Direction-flipping characters hide text here, so what you read is not what runs.',
-  // Overridable (warning) content.
-  eval_exec: 'This code builds more code as text while it runs, then executes it.',
-  pipe_to_shell: 'This code feeds output straight into a shell to be run as commands.',
-  curl_network: 'This code downloads from the internet while it runs.',
-  sudo_use: 'This code asks for administrator rights to act as root on this machine.',
-  python_exec: 'This code runs an external program on your machine.',
-  crontab_write: "This code edits this machine's scheduled-job table, so it can keep running later.",
-  reads_sensitive_path: 'This code reads a file where credentials and keys are kept.',
-  zero_width_chars: 'Invisible characters are present, which can hide text from a reviewer.',
-  // Prompt injection — prose aimed at the assistant that reads the bundle's own text.
-  injection_ignore: 'Text here addresses your assistant and tells it to ignore its own instructions.',
-  injection_disregard: 'Text here addresses your assistant and tells it to disregard what it was told.',
-  injection_coerce: 'Text here addresses your assistant and orders it to run or call something.',
-  injection_override: "Text here poses as a replacement for your assistant's instructions.",
-}
+ *  🪤 THE SENTENCES ARE NOT DEFINED HERE ANY MORE (#2633). `personalclaw skills install` refuses
+ *  from Python and rendered the same findings BARE, so the third renderer needed the same map and
+ *  could not import TypeScript — the wheel ships `web/dist`, not `web/src`. The map moved to
+ *  `src/personalclaw/scan_rule_gloss.json`, which is packaged (pyproject `package-data`) and
+ *  imported here. One literal, two languages: duplicating it in Python would have re-created the
+ *  two-copies-of-one-fact defect this file's own header condemns. */
+export const SCAN_RULE_GLOSS: Record<string, string> = Object.fromEntries(
+  // `_comment` carries this file's rationale into the JSON, which cannot hold comments — the same
+  // convention as `apps/token_lint_rules.json`. Underscore keys are metadata, never rules.
+  Object.entries(glossSource).filter(
+    (e): e is [string, string] => !e[0].startsWith('_') && typeof e[1] === 'string',
+  ),
+)
 
 /** The plain-language sentence for a scanner rule, or `''` for a rule this build has no gloss
  *  for. Returning empty rather than echoing the rule name keeps the row honest: a name repeated

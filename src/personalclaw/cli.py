@@ -1610,6 +1610,13 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
     return 0
 
 
+#: Findings a refused `skills install` lists before it says how many it is hiding.
+#: Deliberately NOT imported from `web/src/lib/scanFindings.ts`'s `SCAN_FINDINGS_SHOWN` — the
+#: cap is a layout choice per surface, not a cross-language fact like the gloss map. It is a
+#: second literal all the same, so `test_scan_rule_gloss.py` reds if the two numbers drift.
+_SKILL_FINDINGS_SHOWN = 8
+
+
 def _handle_skills(args) -> None:  # noqa: ANN001
     """Dispatch personalclaw skills subcommands."""
     import shutil
@@ -1624,6 +1631,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         get_default_skills_registry,
         list_local_skills,
     )
+    from personalclaw.supply_chain import rule_gloss
 
     cmd = getattr(args, "skills_command", None)
 
@@ -1678,10 +1686,23 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 print("   This is an overridable warning — re-run with --force to install anyway.")
             else:
                 print("   This is a dangerous verdict — it cannot be force-installed.")
-            for f in exc.report.findings[:8]:
+            for f in exc.report.findings[:_SKILL_FINDINGS_SHOWN]:
                 print(
                     f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}"  # noqa: E501
                 )
+                # The row above is the scanner's vocabulary and the real snippet; neither
+                # tells a CLI user what the skill would be allowed to DO, which is the only
+                # question a refusal leaves them. Indented under its row, and omitted rather
+                # than echoing the rule name when this build has no sentence for it.
+                gloss = rule_gloss(f.rule)
+                if gloss:
+                    print(f"       {gloss}")
+            hidden = len(exc.report.findings) - _SKILL_FINDINGS_SHOWN
+            if hidden > 0:
+                # Without this the capped list reads as ALL the findings, on the one output
+                # whose entire job is to justify the refusal. Same sentence the consent
+                # surfaces render (`hiddenFindingsNote` in web/src/lib/scanFindings.ts).
+                print(f"     +{hidden} more finding{'' if hidden == 1 else 's'} not shown")
         except Exception as exc:
             print(f"❌ Install failed: {exc}")
         return

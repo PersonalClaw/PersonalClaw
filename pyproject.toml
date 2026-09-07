@@ -248,6 +248,15 @@ personalclaw = [
     # The baseline bash denylist (SH-6). security.py raises at import if this is missing,
     # so a wheel without this line does not "degrade to no denylist" — it fails to start.
     "baseline_denylist.json",
+    # THE scanner-rule gloss (#2633) — the one plain-language map behind all three
+    # finding-row renderers: the app-install consent card, the skills marketplace, and
+    # `personalclaw skills install`. web/src/lib/scanFindings.ts imports this same file at
+    # BUILD time; the CLI reads it at RUNTIME, where web/src does not exist. A wheel without
+    # this line makes supply_chain.load_scan_rule_gloss() RAISE rather than return {} — a
+    # refused install fails loudly instead of quietly going back to printing bare rule
+    # names, which is the whole defect the map removes. test_scan_rule_gloss.py proves the
+    # file out of a BUILT wheel, not out of the source tree.
+    "scan_rule_gloss.json",
     # The in-tree signing trust store (SH-3). A wheel without this line ships a verifier
     # with no trusted keys, so every signed bundle would be refused as "unknown key" —
     # the safe direction, but it would silently retire first-party signing.
