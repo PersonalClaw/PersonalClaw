@@ -1,38 +1,37 @@
-"""A lazily-imported module must not bind a home resolver at import (#2443, #2442).
+"""No module binds the PersonalClaw home resolver at import time (#2443, #2442).
 
-Both of those issues were the same defect, reached from different directions.
+## The defect this closes
 
-`tasks/native.py` did `from personalclaw.config.loader import config_dir` at module level, and
-`registry._ensure_native()` imports that module LAZILY — on first use. Under test, first use can
-land inside a test that has patched `loader.config_dir` to return its own tmp home, so the module
-captures THAT LAMBDA. `monkeypatch` then restores the attribute on `loader` at teardown, but
-nothing can restore a copy another module already took, so every later test in the process resolves
-the FIRST test's home.
+A module-level ``from personalclaw.config.loader import config_dir`` binds whatever that name
+pointed at the moment the importing module was first imported. Much of this codebase is imported
+LAZILY — on first use, from inside a function — so that moment is not startup. Under test it can
+land inside a test that has replaced ``loader.config_dir`` to keep writes out of the real home, and
+the importing module then keeps the replacement **forever**: the attribute can be restored on
+``loader``, but not in a copy another module already took.
 
-Measured, in the failing pair (trace of the real resolver):
+``PERSONALCLAW_HOME`` is not a defence. The env var is read by the REAL ``config_dir``; a captured
+stand-in never consults it. Measured on #2443: a task store resolved the FIRST test's home while
+``PERSONALCLAW_HOME`` correctly named the current one, so every record it wrote landed in a
+directory nothing ever read back. That surfaced as two assertions in a different file that looked
+nothing like a home bug (``assert 0 == 1`` and ``assert 200 == 400``), which is why the same defect
+was filed twice as "cross-test pollution".
 
-    GET id=t-201ca58d
-        path = .../test_withheld_granted_the0/home/tasks/...   <- the FIRST test's home
-        env  = .../test_a_provider_that_refuses_l0/home        <- the current test's home
+## The invariant, and why it is absolute rather than a ratchet
 
-**The env var does not save you**, which is what made this hard to find: `PERSONALCLAW_HOME` is
-read by the REAL `config_dir`, and the captured lambda never consults it. So the second test filed
-its task into a directory it never looks at, which surfaced as two unrelated-looking assertions:
-`assert 0 == 1` (its own tasks dir is empty) and `assert 200 == 400` (its unlink loop found nothing,
-so the undo it expected to refuse succeeded).
+#2677 fixed the two modules that had actually been bitten and recorded the remaining 57 as a
+baseline that could only shrink. That baseline is now **empty**: every module resolves the home
+through a locally DEFINED delegator. So this file asserts the strong form — *no* module binds the
+resolver at import — rather than policing a list.
 
-`agent_metadata.py` was the same shape (#2442), lazily imported from `agents/runners.py`.
+Two properties make a delegator correct, and both are load-bearing:
 
-## What this rail does, and what it does not
-
-The hazard needs BOTH halves: an import-time binding AND a lazy import of that module. Scanning for
-the intersection found **59** modules, so this is systemic and latent rather than two accidents —
-the two above are simply the two that were reached in an order that bit.
-
-Fixing 59 modules is not this change. So this is a **ratchet**: the intersection must stay a subset
-of the baseline recorded below. A NEW module joining it reds by name; every module fixed should be
-deleted from the baseline, which can only shrink. It does not claim the baseline is safe — each
-entry is a latent instance of a defect that has now cost two issues.
+* **DEFINED, not imported and not aliased.** There is no object to capture. An alias assignment
+  (``config_dir = config_loader.config_dir``) captures exactly like the import did, which is why
+  :meth:`TestNoModulePinsTheHome.test_no_module_aliases_the_resolver` sits beside the import
+  check.
+* **The NAME stays on the module.** ``conftest``'s home guard re-points module-level ``config_dir``
+  attributes, and several modules deliberately re-export the name as a test patch seam. Keeping the
+  name is what let the sweep touch **zero** test files.
 """
 
 from __future__ import annotations
@@ -43,72 +42,31 @@ from pathlib import Path
 import personalclaw
 
 SRC = Path(personalclaw.__file__).parent
+LOADER_MODULE = "personalclaw.config.loader"
 HOME_RESOLVERS = {"config_dir", "config_path"}
 
-#: Modules that bind a home resolver at import AND are imported lazily somewhere. A RATCHET:
-#: shrink it by fixing a module (resolve through the live `config_loader.config_dir` attribute),
-#: never grow it. Empty is the goal.
-BASELINE: frozenset[str] = frozenset(
+#: The loader OWNS these names — it is where they are really defined.
+OWNER = SRC / "config" / "loader.py"
+
+#: The two SDK facades, exempt with a reason rather than swept.
+#:
+#: `sdk/channel.py` and `sdk/util.py` are pure published surfaces, and
+#: `tests/test_sdk_surface_is_public.py` requires every module-level name in them to appear in
+#: `__all__`. `config_dir` / `config_path` ARE declared there — the re-export IS the public
+#: contract an app calls. So a delegator cannot be added without either publishing
+#: `config_loader` (a core internal on the app surface, which that rail exists to prevent) or
+#: widening that rail, and widening another lane's boundary rail as a side effect of this sweep is
+#: not a trade worth making.
+#:
+#: The exemption is also SAFE, not merely convenient, and the distinction matters. The hazard is
+#: capturing a *stale* resolver — which needs the module's first import to land mid-test. These two
+#: are imported when an app loads, so they hold the loader's ORIGINAL object, and that is exactly
+#: the shape `conftest`'s home guard finds by identity and re-points. The modules this sweep had to
+#: fix are the ones the guard cannot see; these are not among them.
+SDK_FACADE_EXEMPT = frozenset(
     {
-        "personalclaw.apps.catalog",
-        "personalclaw.apps.manager",
-        "personalclaw.apps.mcp_bridge",
-        "personalclaw.artifacts.native",
-        "personalclaw.auth.credentials",
-        "personalclaw.auth.enrollment",
-        "personalclaw.auth.pairing",
-        "personalclaw.cli_server",
-        "personalclaw.concurrency",
-        "personalclaw.config",
-        "personalclaw.config.migrations",
-        "personalclaw.context_management",
-        "personalclaw.dashboard.chat",
-        "personalclaw.dashboard.chat_handlers",
-        "personalclaw.dashboard.chat_plan",
-        "personalclaw.dashboard.chat_runner",
-        "personalclaw.dashboard.handlers",
-        "personalclaw.dashboard.handlers.agents",
-        "personalclaw.dashboard.handlers.autonudge",
-        "personalclaw.dashboard.handlers.triggers",
-        "personalclaw.dashboard.handlers.updates",
-        "personalclaw.dashboard.session_store",
-        "personalclaw.dashboard.views_store",
-        "personalclaw.engagement_signals",
-        "personalclaw.evals.store",
-        "personalclaw.history",
-        "personalclaw.inbox",
-        "personalclaw.inbox_providers.filesystem_source",
-        "personalclaw.knowledge.research_reports",
-        "personalclaw.loop.files",
-        "personalclaw.mcp_core",
-        "personalclaw.mcp_shared",
-        "personalclaw.memory",
-        "personalclaw.notification_rules",
-        "personalclaw.packs.build",
-        "personalclaw.packs.connectors",
-        "personalclaw.packs.fingerprint",
-        "personalclaw.packs.import_",
-        "personalclaw.packs.installed",
-        "personalclaw.portability",
-        "personalclaw.providers.entity_routes",
-        "personalclaw.push",
-        "personalclaw.resilience.crashes",
-        "personalclaw.resilience.doctor",
-        "personalclaw.resilience.remediation",
-        "personalclaw.schedule_script",
-        "personalclaw.session_map",
-        "personalclaw.session_pid",
-        "personalclaw.session_workspace",
-        "personalclaw.skills.loader",
-        "personalclaw.tasks.hierarchy",
-        "personalclaw.tool_providers.savings",
-        "personalclaw.tool_providers.tool_prefs",
-        "personalclaw.triggers.boot_migrate",
-        "personalclaw.vector_memory",
-        "personalclaw.voice.bindings",
-        "personalclaw.voice.profiles",
-        "personalclaw.workflows.leases",
-        "personalclaw.workflows.store",
+        "personalclaw.sdk.channel",
+        "personalclaw.sdk.util",
     }
 )
 
@@ -118,118 +76,126 @@ def _module_name(path: Path) -> str:
     return ("personalclaw." + str(rel).replace("/", ".")).replace(".__init__", "")
 
 
-def _scan() -> tuple[set[str], set[str]]:
-    """(modules binding a home resolver at import, every module imported lazily)."""
-    binders: set[str] = set()
-    lazy: set[str] = set()
+def _sources() -> list[tuple[Path, ast.Module]]:
+    out = []
     for f in sorted(SRC.rglob("*.py")):
+        if f == OWNER:
+            continue
         try:
-            tree = ast.parse(f.read_text(encoding="utf-8"))
+            out.append((f, ast.parse(f.read_text(encoding="utf-8"))))
         except SyntaxError:  # pragma: no cover - the lint gate owns syntax
             continue
-        mod = _module_name(f)
-        for node in tree.body:  # module level ONLY - a nested import is the safe shape
-            if isinstance(node, ast.ImportFrom) and node.module == "personalclaw.config.loader":
+    return out
+
+
+def _binders(trees: list[tuple[Path, ast.Module]]) -> list[str]:
+    """Modules with a MODULE-LEVEL ``from ...loader import config_dir/config_path``."""
+    hits = []
+    for f, tree in trees:
+        for node in tree.body:  # module level only — a nested import resolves per call
+            if isinstance(node, ast.ImportFrom) and node.module == LOADER_MODULE:
                 if {a.name for a in node.names} & HOME_RESOLVERS:
-                    binders.add(mod)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    hits.append(_module_name(f))
+    return hits
+
+
+def _aliasers(trees: list[tuple[Path, ast.Module]]) -> list[str]:
+    """Modules doing ``config_dir = <something>.config_dir`` at module level.
+
+    An alias captures the object exactly like the import did, so it is the same defect wearing a
+    different spelling — and it would slip straight past the import check.
+    """
+    hits = []
+    for f, tree in trees:
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
                 continue
-            for inner in ast.walk(node):  # an import inside a function body = a lazy import
-                if isinstance(inner, ast.ImportFrom) and inner.module:
-                    lazy.add(inner.module)
-                    lazy.update(f"{inner.module}.{a.name}" for a in inner.names)
-                elif isinstance(inner, ast.Import):
-                    lazy.update(a.name for a in inner.names)
-    return binders, lazy
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+            if not names & HOME_RESOLVERS:
+                continue
+            if isinstance(node.value, ast.Attribute) and node.value.attr in HOME_RESOLVERS:
+                hits.append(f"{_module_name(f)} ({node.value.attr})")
+    return hits
 
 
-def _risky() -> set[str]:
-    binders, lazy = _scan()
-    return {m for m in binders if m in lazy}
+class TestTheScannerCanActuallySee:
+    """Vacuity floors, as POSITIVE CONTROLS rather than population counts.
 
-
-class TestTheScanIsReal:
-    """Both floors, because either half breaking alone would make the ratchet vacuous."""
-
-    def test_the_binder_scan_finds_modules(self):
-        # FLOOR 1: if the import shape changes, `binders` empties and the ratchet passes over
-        # nothing at all.
-        binders, _ = _scan()
-        assert len(binders) > 40, f"binder scan found only {len(binders)} - scanner broke"
-
-    def test_the_lazy_import_scan_finds_targets(self):
-        # FLOOR 2: and if the lazy-import walk breaks, the INTERSECTION empties, which also
-        # passes. One floor cannot see the other's failure.
-        _, lazy = _scan()
-        assert len(lazy) > 1000, f"lazy-import scan found only {len(lazy)} - scanner broke"
-
-
-class TestTheRatchetHolds:
-    def test_no_new_module_joins_the_risky_set(self):
-        new = sorted(_risky() - BASELINE)
-        assert not new, (
-            "these modules bind a home resolver at import AND are imported lazily, so under test "
-            "they can capture a previous test's patched resolver and write into the wrong home "
-            "(#2443/#2442):\n  " + "\n  ".join(new) + "\n\nResolve through the live attribute: "
-            "`from personalclaw.config import loader as config_loader`, then call "
-            "`config_loader.config_dir()` at each use."
-        )
-
-    def test_the_baseline_does_not_name_a_module_that_is_already_clean(self):
-        """A stale baseline entry silently widens the ratchet, so it must shrink as fixes land."""
-        stale = sorted(BASELINE - _risky())
-        assert (
-            not stale
-        ), "already clean - delete from BASELINE so the ratchet keeps its grip:\n  " + "\n  ".join(
-            stale
-        )
-
-
-class TestTheTwoFixedModulesStayFixed:
-    """The regression guard for the two modules the issues were actually about.
-
-    Each still EXPOSES ``config_dir`` — deliberately, so ``conftest``'s home guard and the nine
-    existing per-module patch sites keep working — but it is DEFINED here and delegates to the
-    loader per call, rather than being a name imported (and therefore captured) at import time.
-    Both halves are asserted: the name is present, and it is this module's own function.
+    The previous version asserted "more than 40 modules bind the resolver" — a meaningful floor only
+    while the defect existed. At zero, a population floor has to be deleted, and a deleted floor is
+    how a scanner rots into always-green. A control that feeds the detector a known-bad synthetic
+    source keeps working at zero.
     """
 
-    def _assert_local_and_delegating(self, module, issue: str) -> None:
-        from personalclaw.config import loader
+    def test_the_binder_detector_flags_a_known_binder(self):
+        tree = ast.parse("from personalclaw.config.loader import config_dir\n")
+        assert _binders([(SRC / "synthetic.py", tree)]), "binder detector is blind"
 
-        assert hasattr(module, "config_dir"), (
-            f"{module.__name__} must KEEP a module-level `config_dir` — conftest's home guard "
-            f"and the existing patch sites replace it by name ({issue})"
+    def test_the_alias_detector_flags_a_known_alias(self):
+        tree = ast.parse("from personalclaw.config import loader\nconfig_dir = loader.config_dir\n")
+        assert _aliasers([(SRC / "synthetic.py", tree)]), "alias detector is blind"
+
+    def test_the_walk_reaches_the_package(self):
+        # The cheapest failure of all: globbing nothing.
+        assert len(_sources()) > 500, "source walk found too few modules — the glob broke"
+
+
+class TestNoModulePinsTheHome:
+    def test_no_module_binds_the_resolver_at_import(self):
+        hits = sorted(set(_binders(_sources())) - SDK_FACADE_EXEMPT)
+        assert not hits, (
+            "these modules bind the home resolver at IMPORT time, so a lazy import can pin a "
+            "previous caller's resolver and write into the wrong home (#2443/#2442):\n  "
+            + "\n  ".join(hits)
+            + "\n\nDefine it locally instead:\n"
+            "    from personalclaw.config import loader as config_loader\n\n"
+            "    def config_dir():\n"
+            "        return config_loader.config_dir()\n"
         )
-        assert module.config_dir is not loader.config_dir, (
-            f"{module.__name__}.config_dir must be its OWN function, not the loader's object "
-            f"bound at import: this module is imported lazily, so an imported binding captures "
-            f"whatever the name pointed at on first use — a previous test's lambda ({issue})"
-        )
-        assert module.config_dir.__module__ == module.__name__, (
-            f"{module.__name__}.config_dir must be DEFINED in that module, not aliased from "
-            f"elsewhere — an alias captures the object exactly like the import did ({issue})"
+
+    def test_no_module_aliases_the_resolver(self):
+        hits = sorted(set(_aliasers(_sources())))
+        assert not hits, (
+            "these modules ALIAS the home resolver at module level, which captures the object "
+            "exactly like an import does (#2443):\n  " + "\n  ".join(hits)
         )
 
-    def test_the_task_store_resolves_the_home_live(self):
-        from personalclaw.tasks import native
+    def test_the_exemption_cannot_outlive_its_reason(self):
+        """An exemption for a module that no longer binds silently widens the rail.
 
-        self._assert_local_and_delegating(native, "#2443")
+        Two entries is a small enough list to keep honest, and the whole point of this sweep was
+        that a list nobody re-measures is how 57 latent instances accumulated in the first place.
+        """
+        stale = sorted(SDK_FACADE_EXEMPT - set(_binders(_sources())))
+        assert not stale, (
+            "these modules are exempt but no longer bind the resolver — delete them from "
+            "SDK_FACADE_EXEMPT:\n  " + "\n  ".join(stale)
+        )
 
-    def test_the_agent_metadata_store_resolves_the_home_live(self):
-        from personalclaw import agent_metadata
 
-        self._assert_local_and_delegating(agent_metadata, "#2442")
+class TestDelegationActuallyFollowsTheLoader:
+    """The behavioural half. The structural checks cannot tell a live delegator from a function
+    that captured the loader's object internally, so this asserts the property that matters:
+    patching the LOADER reaches the module."""
 
-    def test_the_delegation_follows_a_patched_loader(self):
-        """The behavioural half: patching the LOADER must reach the store, which is the thing an
-        import-time binding broke. Without this the two structural checks above could pass over
-        a function that had captured the loader's object internally anyway."""
+    def test_patching_the_loader_reaches_a_delegating_module(self, tmp_path):
         from unittest.mock import patch
 
         from personalclaw.tasks import native
 
-        with patch("personalclaw.config.loader.config_dir", return_value=Path("/tmp/pclaw-probe")):
-            assert native.config_dir() == Path("/tmp/pclaw-probe")
-            assert native._tasks_dir() == Path("/tmp/pclaw-probe") / "tasks"
+        with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+            assert native.config_dir() == tmp_path
+            assert native._tasks_dir() == tmp_path / "tasks"
+
+    def test_the_name_is_still_on_the_module(self):
+        """Keeping the module-level NAME is what let the sweep change zero test files:
+        ``conftest``'s home guard re-points it, and several modules re-export it as a documented
+        test patch seam. A delegator that removed the name would break both."""
+        from personalclaw import agent_metadata
+        from personalclaw.tasks import native
+
+        for module in (native, agent_metadata):
+            assert hasattr(module, "config_dir"), f"{module.__name__} lost its patch seam"
+            assert (
+                module.config_dir.__module__ == module.__name__
+            ), f"{module.__name__}.config_dir must be DEFINED there, not re-imported"

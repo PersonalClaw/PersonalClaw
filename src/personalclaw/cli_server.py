@@ -14,7 +14,8 @@ from pathlib import Path
 
 from personalclaw import __version__, self_update
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import _DEFAULT_PORT, config_dir, config_path
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.constants import DATA_WARNING
 from personalclaw.dashboard.origin import dashboard_origin, parse_dashboard_url
 from personalclaw.dashboard.token_auth import parse_duration
@@ -30,6 +31,24 @@ from personalclaw.service.common import SERVICE_NAME, Platform, current_platform
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.vector_memory import VectorMemoryStore
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+def config_path() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()
 
 
 def resolve_client_port(cli_port: int | None) -> int:

@@ -40,7 +40,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 logger = logging.getLogger(__name__)
 

@@ -12,8 +12,9 @@ from pathlib import Path
 from personalclaw import __version__ as _pc_version
 from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
 from personalclaw.config import AppConfig
+from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_backend, credential_backend_warning
-from personalclaw.config.loader import config_dir, env_path
+from personalclaw.config.loader import env_path
 from personalclaw.dashboard.origin import (
     auth_is_off,
     is_local_bind,
@@ -23,6 +24,16 @@ from personalclaw.dashboard.origin import (
     tailnet_ip,
 )
 from personalclaw.transcribe import ensure_ffmpeg_in_path
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 _MIN_NODE_VERSION = 18
 

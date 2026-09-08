@@ -27,9 +27,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 if TYPE_CHECKING:  # a type hint only — a runtime import would close a cycle with loop.loop
     from personalclaw.loop.loop import LoopStatus

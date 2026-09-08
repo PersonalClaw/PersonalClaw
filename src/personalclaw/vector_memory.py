@@ -25,10 +25,20 @@ from uuid import uuid4
 from snowballstemmer import stemmer as _snowball_stemmer
 
 from personalclaw import memory_holder, memory_slots
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
 from personalclaw.sqlite_compat import sqlite3
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 if TYPE_CHECKING:
     from personalclaw.memory_graph import AliasIndex, MemoryGraph

@@ -34,12 +34,8 @@ from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import (
-    CRED_OWNER_ID,
-    CRED_SLACK_APP_TOKEN,
-    CRED_SLACK_BOT_TOKEN,
-    config_dir,
-)
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import CRED_OWNER_ID, CRED_SLACK_APP_TOKEN, CRED_SLACK_BOT_TOKEN
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import start_dashboard
@@ -89,6 +85,16 @@ from personalclaw.triggers.nudge import (
     NudgeLoop,
 )
 from personalclaw.triggers.nudge import enabled as autonudge_enabled
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery

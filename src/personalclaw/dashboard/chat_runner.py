@@ -17,11 +17,8 @@ from personalclaw.acp.types import (
     STOP_REASON_END_TURN,
     is_cancelled_stop,
 )
-from personalclaw.config.loader import (
-    AppConfig,
-    config_dir,
-    resolve_agent_bindings,
-)
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState
@@ -99,6 +96,16 @@ from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.validation import ValidationError, validate_ask_user_question
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 logger = logging.getLogger(__name__)
 
