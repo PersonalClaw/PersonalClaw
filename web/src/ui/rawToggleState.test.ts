@@ -54,14 +54,33 @@ import { join } from 'node:path'
 //     src         population=67  silent=20     ← what there actually is
 //
 // The ceiling therefore RISES from 16 to 20, and that is not a regression: the population grew
-// because the SCOPE grew, not because new silent toggles landed. The 7 newly-visible silent toggles
-// live in six files and are **BUGS, NOT EXEMPTIONS** — a worklist, recorded so the next pass does not
-// have to re-derive it:
+// because the SCOPE grew, not because new silent toggles landed.
 //
-//     ui/Composer.tsx · ui/DegradedChip.tsx · ui/NotificationBell.tsx
-//     ui/content/ContentSurface.tsx · ui/widget/ReactWidgetFrame.tsx · ui/widget/WidgetFrame.tsx
+// 🔴 THAT 20 WAS 18 ARTEFACTS AND 2 BUGS, AND THE WORKLIST WRITTEN HERE WAS WRONG ABOUT 6 OF ITS 7
+// ENTRIES. This comment used to name six `ui/` files and call their 7 sites "BUGS, NOT EXEMPTIONS".
+// Re-measured with a predicate that reads the ELEMENT (see the census below) rather than a fixed
+// byte-window near the handler:
 //
-// Shrink-only from here in either half of the pair.
+//     population 67 · announces 58 · name-flips 7 · genuinely silent 2
+//
+// Of the 7 in that worklist: ONE was real (`ui/content/ContentSurface.tsx`'s Export menu — fixed,
+// `ariaExpanded={exportOpen}`), FOUR announce and were mis-read (`ui/Composer.tsx` via
+// `IconButton active=`, `ui/content/ContentSurface.tsx`'s wrap via `on={wrap}`, and
+// `ui/DegradedChip.tsx` + `ui/NotificationBell.tsx`, whose `aria-expanded` sits 19 and 6 lines
+// below the handler behind long comments), and TWO are the name-flip exception this file already
+// pins elsewhere (`ui/widget/WidgetFrame.tsx` and `ui/widget/ReactWidgetFrame.tsx`, both
+// `label={expanded ? 'Minimize' : 'Expand'}` with a flipping icon).
+//
+// 🔑 AND THE 2 REAL ONES WERE IN NEITHER OF THOSE SIX FILES: the Nudge disclosures in
+// `pages/loops/LoopCockpitPage.tsx` and `pages/loops/DesignCockpitPage.tsx`, which the worklist
+// never mentioned. A census that cannot see the element cannot produce a trustworthy worklist — it
+// produced six false accusations and missed both actual defects. Both are fixed here, and the
+// ceiling is now ZERO with the offenders named on failure.
+//
+// The lesson is the one this campaign keeps re-learning, in its sharpest form yet: **the rail was
+// measuring a byte-window's contents, not the property it claimed.** Suspect the scope before the
+// code — and when a rail hands you a worklist, verify each entry against the element before fixing
+// anything.
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
@@ -139,12 +158,81 @@ describe('the census ceiling falls', () => {
         return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
       })
     const TOGGLE = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/g
-    const windows = walk(SRC).flatMap((abs) => {
+    // 🔴 THE WINDOW WAS THE DEFECT, and it manufactured a worklist of six bugs that did not exist.
+    // A fixed ±340/380-char slice around the `onClick` is not the control — it is a guess at where
+    // the control ends, and it was wrong in two directions at once:
+    //
+    //   * TOO NARROW. `ui/NotificationBell.tsx` carries `aria-expanded={open}` SIX lines below its
+    //     onClick and `ui/DegradedChip.tsx` NINETEEN, both behind long explanatory comments. Both
+    //     announce correctly; both were counted silent. Widening is not enough on its own, because
+    //     any fixed width is the same guess with a different number — so the window now ends at the
+    //     element's own close.
+    //   * BLIND TO THE PRIMITIVES. `SquareIconButton` takes `on` → `aria-pressed` and `ariaExpanded`
+    //     → `aria-expanded`, and `IconButton`/`HeaderControl` take `active`. A call site passing one
+    //     of those announces, and the old predicate could not see any of them — so every correctly
+    //     announcing primitive call site scored as a bug. This file's own header already said ten of
+    //     the sixteen were "primitive-backed and already announce"; the predicate never implemented
+    //     what the prose knew.
+    //
+    // Measured on the tree at the moment of this change: of the 7 sites the recorded worklist called
+    // "BUGS, NOT EXEMPTIONS", ONE was real (`ContentSurface`'s Export menu, fixed here), FOUR
+    // announce and were mis-read by the window, and TWO are the name-flip exception this file
+    // already pins for `DiagnosticsPanel`'s pause and `PromptDetail`'s raw/rendered.
+    // 🪤 BRACE-DEPTH, NOT A SEARCH FOR `>`. The obvious `indexOf('>', at)` lands on the `>` inside
+    // the handler's own arrow function (`() => !open`) and truncates the element at the very
+    // attribute the scan is standing on — which measured 45 "silent" sites, worse than the window
+    // it replaced. An attribute value is a balanced `{…}` region, so the tag's real close is the
+    // first `>` at depth 0.
+    const elementAround = (src: string, at: number): string => {
+      const open = src.lastIndexOf('<', at)
+      const start = open === -1 ? Math.max(0, at - 340) : open
+      let depth = 0
+      for (let i = start; i < src.length; i++) {
+        const c = src[i]
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        else if (c === '>' && depth === 0) return src.slice(start, i + 1)
+      }
+      return src.slice(start, Math.min(src.length, at + 380))
+    }
+    //: A control announces when it says so itself, or when it hands the question to a primitive that
+    //  does. `on`/`active`/`ariaExpanded` are the props those primitives expose for exactly this.
+    const ANNOUNCES = /aria-expanded|aria-pressed|ariaExpanded|ariaPressed|\bon=\{|\bactive=\{/
+    //: …and a control whose NAME flips needs no second channel — the rule this file already applies
+    //  to `title={paused ? 'Resume' : 'Pause'}` and `PromptDetail`'s raw/rendered switch.
+    //
+    //  🪤 THE FLIP MUST KEY ON THE STATE THIS TOGGLE SETS, or the exemption is a hole rather than a
+    //  rule. A bare "any ternary in `label`" would exempt `label={compact ? 'Export' : 'Export as…'}`
+    //  — a name that varies with LAYOUT while the toggle's own state stays unannounced. So the state
+    //  is derived from the setter (`setExpanded` → `expanded`) and the ternary has to mention it.
+    const flipsOnItsOwnState = (el: string, setter: string): boolean => {
+      const state = setter.replace(/^set/, '')
+      const lower = state.charAt(0).toLowerCase() + state.slice(1)
+      const named = new RegExp(`(?:label|title)=\\{[^}]*\\b(?:${lower}|${state})\\b[^}]*\\?`)
+      return named.test(el)
+    }
+    const found = walk(SRC).flatMap((abs) => {
       const src = readFileSync(abs, 'utf8')
-      return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 340), m.index! + 380))
+      return [...src.matchAll(TOGGLE)].map((m) => ({
+        el: elementAround(src, m.index!),
+        setter: (m[0].match(/set\w+/) ?? ['set'])[0],
+        where: `${abs.slice(SRC.length + 1)}:${src.slice(0, m.index!).split('\n').length}`,
+      }))
     })
-    expect(windows.length, 'the population must still be found').toBeGreaterThanOrEqual(60)
-    const silent = windows.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
-    expect(silent.length, 'measured 20 across src at the DisclosureCard extraction; may only fall').toBeLessThanOrEqual(20)
+    expect(found.length, 'the population must still be found').toBeGreaterThanOrEqual(60)
+    const silent = found.filter(
+      (f) => !ANNOUNCES.test(f.el) && !flipsOnItsOwnState(f.el, f.setter),
+    )
+    // 🔑 ZERO, and it is reachable because the predicate finally reads the element. The old ceiling
+    // was 20 and 18 of those were the window's own artefacts; the 2 that were real are fixed here.
+    // Naming the offenders makes a future red actionable instead of a number to raise.
+    //
+    // The anti-vacuity guard is the population floor above (60 against a measured 67), deliberately
+    // well below: a `>=` bound detects a REMOVAL and never an addition, so its only job is to prove
+    // the walk still finds the family rather than silently matching nothing.
+    expect(
+      silent.map((f) => f.where),
+      'a toggle that announces neither state nor a flipping name — announce it, or flip its label',
+    ).toEqual([])
   })
 })
