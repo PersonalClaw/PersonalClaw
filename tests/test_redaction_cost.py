@@ -334,3 +334,173 @@ class TestTheCostTracksNothingQuadratic:
 
         ratio = _cost(large) / max(_cost(small), 1e-6)
         assert ratio < 8.0, f"cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+
+# ── #2717: the per-match rebuild ────────────────────────────────────────────────────────────────
+#
+# Pass 1 used to be `finditer` with `result = result.replace(matched, tag, 1)` INSIDE the loop —
+# one fresh copy of the whole document per match, O(matches x length). On a 1 MB document holding
+# 23,831 credentials that loop was 1.318s of 1.367s total, and `acp/translate.py` calls this 5+
+# times per agent message, so a leaked env dump cost seconds on a live turn path.
+#
+# 🪤 It was NOT a drop-in, which is why #2716 left it alone. `str.replace(matched, tag, 1)`
+# rewrites the LEFTMOST occurrence of the matched TEXT, not the occurrence the scan found — so
+# replacing the loop with a span splice is a behaviour question before it is an optimisation, and
+# it needed its own equivalence argument rather than riding on #2716's.
+#
+# `_pre_2637_redact_credentials` above is the reference for BOTH fixes: it predates each, so every
+# byte-identity test in this file already covers this change. These add the shape those tests do
+# not reach — the same credential appearing more than once, which is exactly where leftmost and
+# found could diverge.
+
+#: Documents where a credential repeats. The reason the old loop was not provably correct.
+REPEATED = [
+    "AKIAIOSFODNN7EXAMPLE AKIAIOSFODNN7EXAMPLE",
+    "key=AKIAIOSFODNN7EXAMPLE and again key=AKIAIOSFODNN7EXAMPLE",
+    "AKIAIOSFODNN7EXAMPLE ASIA1234567890123456 AKIAIOSFODNN7EXAMPLE",
+    "first AKIAAAAAAAAAAAAAAAAA middle AKIAAAAAAAAAAAAAAAAA last AKIAAAAAAAAAAAAAAAAA",
+    # A repeat whose copies are separated by ANOTHER credential's tag-to-be.
+    "sk-ant-api03-" + "z" * 30 + " AKIAZZZZZZZZZZZZZZZZ sk-ant-api03-" + "z" * 30,
+    # Adjacent, no separator at all.
+    "AKIAQQQQQQQQQQQQQQQQAKIAQQQQQQQQQQQQQQQQ",
+    # The same credential inside a URL and again bare.
+    "https://u:hunter2@h/x AKIAWWWWWWWWWWWWWWWW https://u:hunter2@h/x AKIAWWWWWWWWWWWWWWWW",
+]
+
+
+class TestRepeatedCredentialsRedactIdentically:
+    """The span splice must agree with the old leftmost-replace on repeated credentials."""
+
+    @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
+    def test_a_repeated_credential_redacts_exactly_as_before(self, text):
+        assert S.redact_credentials(text) == _pre_2637_redact_credentials(text)
+
+    @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
+    def test_every_copy_is_masked_not_just_the_first(self, text):
+        """The property behind the equivalence, asserted directly rather than inferred.
+
+        Byte-identity to a reference proves the two agree; it does not prove either is right. A
+        second copy left in cleartext is the whole failure this primitive exists to prevent, so
+        that is checked on its own terms.
+        """
+        out, _ = S.redact_credentials(text)
+        for cred in ("AKIA", "ASIA", "sk-ant-api03-", "hunter2"):
+            assert cred not in out, f"{cred!r} survived redaction in {text[:48]!r}"
+
+    def test_the_fixture_really_does_repeat(self):
+        """Vacuity floor: a corpus of non-repeating strings would pass the class above while
+        testing nothing about the leftmost-vs-found question it exists for."""
+        for text in REPEATED:
+            spans = [m.group() for m in S._CREDENTIAL_PATTERNS.finditer(text)]
+            assert len(spans) > len(set(spans)), f"no credential repeats in {text[:48]!r}"
+
+
+class TestTheSpliceIsEquivalentUnderFuzzing:
+    """Generated documents, because the divergence this change had to rule out is constructive.
+
+    The only way leftmost and found can differ is for a replacement to help SYNTHESISE an earlier
+    match — the inserted text is the fixed tag, so the filler here deliberately includes
+    tag-lookalikes (`[REDACTED: credential]`, `credential]`, `[REDACTED:`) to give that every
+    chance. 200,000 cases with a wider pool found zero divergence; 4,000 with a fixed seed is the
+    committed regression anchor.
+    """
+
+    _CREDS = [
+        "AKIA" + "A" * 16,
+        "ASIA" + "C" * 16,
+        "key=hunter2hunter2hunter2",
+        "api_key: abcdef1234567890abcdef",
+        "sk-ant-api03-" + "y" * 30,
+    ]
+    _FILLER = [
+        " ",
+        "\n",
+        " and ",
+        "]",
+        "[",
+        "[REDACTED: credential]",
+        "credential]",
+        "[REDACTED:",
+        "=",
+        ": ",
+        "x",
+        "REDACTED",
+        "https://u:p@h/",
+        "\t",
+    ]
+
+    def test_generated_documents_redact_exactly_as_before(self):
+        rnd = random.Random(20260908)
+        pool = self._CREDS + self._FILLER
+        for _ in range(4000):
+            parts: list[str] = []
+            for _ in range(rnd.randint(1, 9)):
+                piece = rnd.choice(pool)
+                # Repeat something already present, often — that is the shape under test.
+                if parts and rnd.random() < 0.35:
+                    piece = rnd.choice(parts)
+                parts.append(piece)
+            text = "".join(parts)
+            assert S.redact_credentials(text) == _pre_2637_redact_credentials(text), repr(text)
+
+    def test_the_generator_really_produces_repeats_and_matches(self):
+        """Vacuity floor on the fuzz: a generator emitting no credentials, or no repeats, would
+        make the loop above green while proving nothing."""
+        rnd = random.Random(20260908)
+        pool = self._CREDS + self._FILLER
+        with_match = repeats = 0
+        for _ in range(400):
+            parts: list[str] = []
+            for _ in range(rnd.randint(1, 9)):
+                piece = rnd.choice(pool)
+                if parts and rnd.random() < 0.35:
+                    piece = rnd.choice(parts)
+                parts.append(piece)
+            text = "".join(parts)
+            spans = [m.group() for m in S._CREDENTIAL_PATTERNS.finditer(text)]
+            if spans:
+                with_match += 1
+            if len(spans) > len(set(spans)):
+                repeats += 1
+        assert with_match > 200, f"only {with_match}/400 generated documents held a credential"
+        assert repeats > 20, f"only {repeats}/400 held a REPEATED credential"
+
+
+class TestManyMatchesIsNotQuadratic:
+    """The cost half. Pass 1 was O(matches x length); it is now one pass."""
+
+    @staticmethod
+    def _many(matches: int) -> str:
+        return " ".join(f"AKIA{i:016d}" for i in range(matches))
+
+    def test_the_fixture_really_holds_the_matches_it_claims(self):
+        """Vacuity floor. If the generated tokens stopped matching, the bound below would pass on
+        a tree that still rebuilt the document per match — the same trap the single-token floor
+        above exists for."""
+        text = self._many(2000)
+        found = len(S._CREDENTIAL_PATTERNS.findall(text))
+        assert found == 2000, f"fixture holds {found} matches, not 2000"
+
+    def test_a_document_full_of_credentials_is_bounded(self):
+        """Coarse floor, not a benchmark. ~24k matches in 1 MB cost 1.318s in pass 1 before."""
+        text = self._many(24_000)
+        started = time.perf_counter()
+        out, warnings = S.redact_credentials(text)
+        elapsed = time.perf_counter() - started
+        assert len(warnings) == 24_000, f"expected one warning per match, got {len(warnings)}"
+        assert "AKIA" not in out, "a credential survived"
+        assert elapsed < 2.0, f"24k credentials took {elapsed:.2f}s"
+
+    def test_quadrupling_the_match_count_does_not_multiply_the_cost_by_sixteen(self):
+        """The shape assertion: ×4 matches, ~×4 cost. This is what the old loop could not do."""
+
+        def _cost(text: str) -> float:
+            best = float("inf")
+            for _ in range(3):
+                started = time.perf_counter()
+                S.redact_credentials(text)
+                best = min(best, time.perf_counter() - started)
+            return best
+
+        ratio = _cost(self._many(8000)) / max(_cost(self._many(2000)), 1e-6)
+        assert ratio < 8.0, f"cost grew x{ratio:.1f} for x4 matches — that is not linear"
