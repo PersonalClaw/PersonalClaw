@@ -138,10 +138,10 @@ class TestIdempotence:
         """The tag contains a space and the userinfo character class excludes
         whitespace, so a second match is impossible rather than merely prevented.
         Pinned so nobody "simplifies" the tag into something matchable."""
-        from personalclaw.security import _URL_USERINFO_RE, _URL_USERINFO_TAG
+        from personalclaw.security import _URL_USERINFO_CORE_RE, _URL_USERINFO_TAG
 
         assert " " in _URL_USERINFO_TAG
-        assert not _URL_USERINFO_RE.search(f"https://{_URL_USERINFO_TAG}@host/x")
+        assert not _URL_USERINFO_CORE_RE.search(f"https://{_URL_USERINFO_TAG}@host/x")
 
     def test_a_composed_line_holding_a_redacted_url_survives(self):
         """The documented hazard's shape, applied to this pass's output: a caller
