@@ -415,6 +415,15 @@ jobs:
       - name: every authenticated route was actually SCANNED (not skipped)
         working-directory: web
         run: node e2e/assert-no-route-skips.mjs a11y-report.json
+      # The two non-axe detectors (mouse-only click targets, clipped focus rings) sweep every
+      # route in the Tier-1/2 loop above, and both return `[]` on a healthy tree — which is
+      # what the tree is. So a selector that rotted into a no-op would read exactly like a
+      # pass, forever. This spec is the anti-vacuity probe: it plants each defect shape in a
+      # live page and asserts the detector still recognises it. It belongs in THIS job because
+      # it needs the same authenticated harness the axe sweep does, and nothing more.
+      - name: non-axe a11y detectors still recognise their defects (web/e2e/nonAxeA11yChecks.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/nonAxeA11yChecks.spec.ts --project=chromium
       # DSC-11's OTHER half. axe cannot express any of these three: whether a focus stop is
       # VISIBLE (it checks name/role, not "was the user told"), what a user with
       # prefers-reduced-motion actually gets, or whether the page pans sideways on a phone.

@@ -44,7 +44,17 @@ const EXEMPT_FROM_THE_HARNESS: Record<string, string> = {
   loop: 'loop detail — needs a loop to address; also carries the logged overflowing-control-row taste call',
   loops: 'loop history/planning sub-route (#/loops/<id>) — needs a loop id to render a record',
   code: 'code sub-route of a loop (#/code/<id>) — needs a loop id to render a record',
-  app: 'per-app surface (#/app/<name>) — needs an installed app name; one route per app',
+  // 🔑 THIS ENTRY USED TO READ "needs an installed app name; one route per app", AND IT WAS HALF
+  // WRONG — which is the more useful kind of wrong, because it was true enough to stop anyone
+  // looking. `AppHostPage` renders a whole page of chrome BEFORE any app code runs: a 404
+  // EmptyState with a focusable "Open the Store" action, a retryable LoadError, and a spinner. A
+  // name that is not installed reaches the first deterministically with no fixture at all, so the
+  // shell is now scanned as `app/not-a-real-app` in `NON_NAV_ROUTES`. What remains exempt is the
+  // half that really is blocked: an app's OWN UI, which needs the app installed WITH its bundle
+  // built at install time. **An exemption that covers two things and holds for one of them is a
+  // gap with a reason attached.**
+  app: 'app-AUTHORED UI only (#/app/<installed-name>) — needs the app installed with its bundle '
+    + 'built; the hosting SHELL is covered via app/not-a-real-app in NON_NAV_ROUTES',
 }
 
 const WEB = process.cwd()
@@ -152,6 +162,11 @@ describe('e2e route manifest vs NAV', () => {
     it('exempts no route that IS already scanned', () => {
       // Both claims cannot be true; one of them is a lie the next reader would trust.
       const scanned = scannedRoutes()
+      // 🪤 WHOLE-STRING ON PURPOSE, unlike its mirror below. `app` is exempt (an app's own UI) while
+      // `app/not-a-real-app` is scanned (the hosting shell) — that split is the intended state, not a
+      // stale exemption, so matching on the first segment here would red on a correct arrangement.
+      // The two checks ask different questions: "is this exemption dead?" is about the exact id, and
+      // "does the shell still serve this page?" is about the segment `renderPage` switches on.
       const both = Object.keys(EXEMPT_FROM_THE_HARNESS).filter((r) => scanned.includes(r))
       expect(both, 'these routes are declared exempt AND scanned — drop the exemption').toEqual([])
     })
@@ -160,8 +175,16 @@ describe('e2e route manifest vs NAV', () => {
       // The mirror of the stale-exemption check. A NON_NAV_ROUTES entry App.tsx no longer
       // serves would scan the ONBOARDING shell and report it clean — a green test for a page
       // that is gone, which is worse than no test.
+      //
+      // 🪤 COMPARED ON THE FIRST SEGMENT, because that is what `renderPage` switches on — a fact
+      // `e2e/routes.ts` states in prose and this check did not implement. It matched the WHOLE
+      // route string against a set of first segments, which happened to be indistinguishable while
+      // every entry was a bare `#/<id>`, and reddened the moment one carried a path parameter
+      // (`app/not-a-real-app`, the app-hosting shell). The rule is "the shell still routes to this
+      // page", and the page is named by the first segment.
       const routable = new Set(routableExtras())
-      const stale = nonNavRoutes().filter((r) => !routable.has(r))
+      const firstSegment = (r: string) => r.split('?')[0].split('/')[0]
+      const stale = nonNavRoutes().filter((r) => !routable.has(firstSegment(r)))
       expect(stale, 'NON_NAV_ROUTES names routes App.tsx no longer routes to').toEqual([])
     })
 

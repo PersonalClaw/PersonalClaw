@@ -30,6 +30,20 @@ import { expect, type Page } from '@playwright/test'
 // instances — 14 routes for the first check, 8 for the second. These land GREEN; their job is to
 // catch the next one, not to work through a backlog.
 //
+// ⚠️ WHAT "EVERY ROUTE" DOES NOT INCLUDE, because inheriting a loop means inheriting its blind spots.
+// These detectors sweep whatever `a11y.spec.ts` navigates to, so their coverage is exactly that
+// manifest's coverage and no wider — and `web/e2e/routes.ts` carries one deliberate hole:
+// **app-AUTHORED UI is not swept.** Three of ~51 first-party apps render their own surface (two React
+// ESM bundles into the HOST DOM — not iframes — plus a native menu-bar companion), and reaching one
+// needs the app installed WITH its bundle built at install time: a fixture that seeds the e2e home and
+// requires the apps repo to be present. The app-hosting SHELL *is* covered (`app/not-a-real-app`), so
+// the gap is narrower than it was, but it is not closed.
+//
+// This matters because these checks are cheap and land green across the whole manifest, which makes a
+// green run read as "the tree is clean". It means "every surface this manifest reaches is clean". The
+// detectors are route-independent pure DOM functions and would apply to an app's UI unchanged; what is
+// missing is the fixture, not the check.
+//
 // ── THREE FALSE-POSITIVE CLASSES, each removed after reading the data ────────────────────────────
 // Recorded because each made the raw count look alarming and each was wrong:
 //
