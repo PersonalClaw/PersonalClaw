@@ -266,7 +266,7 @@ function RoutingProposalsSection() {
                   ariaLabel={`Apply: try ${p.proposed[0]} first for ${p.use_case} ${p.query_class}`}>
                   Apply
                 </Button>
-                <Button size="xs" variant="ghost" disabled={busy === p.id}
+                <Button size="xs" variant="ghost" loading={busy === p.id}
                   onClick={() => void decide(p, false)}
                   ariaLabel={`Dismiss the proposal for ${p.use_case} ${p.query_class}`}>
                   Dismiss

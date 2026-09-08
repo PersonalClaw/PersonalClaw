@@ -185,12 +185,12 @@ function AutonomyLadderSection() {
                       slot mangles it. Give it a subject — the same form this file's own success
                       toasts already use (`${t.key} now ${label}.`). */}
                   {t.eligible && t.next_rung && (
-                    <Button size="xs" variant="secondary" disabled={busy === t.key} onClick={() => promote(t)}>
+                    <Button size="xs" variant="secondary" loading={busy === t.key} onClick={() => promote(t)}>
                       Promote so it {rungMeta(t.next_rung, ladder).label}
                     </Button>
                   )}
                   {t.granted_at && (
-                    <Button size="xs" variant="ghost" disabled={busy === t.key} onClick={() => handBack(t)}
+                    <Button size="xs" variant="ghost" loading={busy === t.key} onClick={() => handBack(t)}
                       title={`Drop ${t.key} back to ${rungMeta(t.floor, ladder).label} and start its cooldown.`}>
                       Hand back
                     </Button>
@@ -238,7 +238,7 @@ function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () =
         ) : pending.map((r) => (
           <Row key={r.id} label={r.label || r.action_type}
             hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}. Undoing it also stops ${r.action_type} from doing this on its own.`}>
-            <Button size="xs" variant="secondary" disabled={busy === r.id} onClick={() => undo(r)}>Undo</Button>
+            <Button size="xs" variant="secondary" loading={busy === r.id} onClick={() => undo(r)}>Undo</Button>
           </Row>
         ))}
       </RowGroup>

@@ -1014,7 +1014,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newSource} onChange={setNewSource} name="app-git-source"
             placeholder="https://github.com/owner/app.git" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}
+          <Button variant="secondary" size="sm" loading={busy === 'add-source'} disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}
             disabledReason={!newSource.trim() ? 'Enter a source URL first' : undefined}>
             <Plus size={15} /> Add
           </Button>
@@ -1073,7 +1073,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newLocal} onChange={setNewLocal} name="app-local-source"
             placeholder="/path/to/apps  (a directory of app subdirs)" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}
+          <Button variant="secondary" size="sm" loading={busy === 'add-local'} disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}
             disabledReason={!newLocal.trim() ? 'Enter a folder path first' : undefined}>
             <Plus size={15} /> Add
           </Button>

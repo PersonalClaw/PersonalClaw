@@ -1568,7 +1568,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
           <div className="flex gap-1.5">
             <Button size="sm" onClick={() => decide(p.name, 'accept')} loading={busy === p.name} className="flex-1"><Check size={14} /> Accept
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} disabled={busy === p.name} className="flex-1">
+            <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} loading={busy === p.name} className="flex-1">
               <X size={14} /> Not a thing
             </Button>
           </div>

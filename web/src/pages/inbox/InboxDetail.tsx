@@ -197,7 +197,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
               <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
               <div className="mt-2 flex flex-wrap items-center gap-s">
                 <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
-                {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
+                {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} loading={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
                 <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim()}
                   disabledReason={!draft.trim() ? 'Write a reply first' : undefined}><Send size={14} /> Send reply</Button>
               </div>
