@@ -6,6 +6,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { LANES, toLanes, type Lane } from '../../lib/attentionLanes'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // ── Mission Control — the locked four-lane attention view (AMBIENT-SURFACES AS-8) ──────────
 //
@@ -435,7 +436,7 @@ function AttentionCard({
               <Button
                 size="xs"
                 variant="secondary"
-                disabled={busy}
+                disabled={busy} disabledReason={BUSY_REASON}
                 ariaLabel={`Reject ${subject}`}
                 onClick={() => onResolve(card.id, approval.id, 'reject')}
               >
@@ -500,7 +501,7 @@ function QuestionActions({
           key={choice}
           size="xs"
           variant="tonal"
-          disabled={busy}
+          disabled={busy} disabledReason={BUSY_REASON}
           ariaLabel={`Answer ${subject} — ${choice}`}
           onClick={() => onAnswer(card.id, question, choice)}
         >

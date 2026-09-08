@@ -22,6 +22,7 @@ import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
 import { confirm } from '../../ui/dialog'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Scheduled backups (DURABILITY-AND-SYNC §3).
  *
@@ -322,13 +323,13 @@ function TimeTravelSection({ cfg, setCfg }: {
                         row from the next in a chronological list, and it is human where `entry.sha`
                         would be a machine code read out loud. */}
                     {i > 0 && (
-                      <Button variant="secondary" size="sm" disabled={busy}
+                      <Button variant="secondary" size="sm" disabled={busy} disabledReason={BUSY_REASON}
                         ariaLabel={`See going back to here: change ${i + 1} of ${timeline.data!.entries.length} — ${entry.subject}`}
                         onClick={() => takePreview(entry, 'rollback')}>
                         See going back to here
                       </Button>
                     )}
-                    <Button variant="secondary" size="sm" disabled={busy}
+                    <Button variant="secondary" size="sm" disabled={busy} disabledReason={BUSY_REASON}
                       ariaLabel={`See undoing just this: change ${i + 1} of ${timeline.data!.entries.length} — ${entry.subject}`}
                       onClick={() => takePreview(entry, 'revert')}>
                       See undoing just this
@@ -517,11 +518,11 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button variant={op === 'rollback' ? 'danger' : 'primary'} size="sm" disabled={busy}
+        <Button variant={op === 'rollback' ? 'danger' : 'primary'} size="sm" disabled={busy} disabledReason={BUSY_REASON}
           onClick={onApply}>
           {op === 'rollback' ? 'Roll back' : 'Undo it'}
         </Button>
-        <Button variant="secondary" size="sm" disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button variant="secondary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   )
@@ -728,7 +729,7 @@ function ArchiveSection({ snaps, onChanged }: {
                     onClick={() => preview(a)} loading={busy === a.id} loadingLabel="Working…" disabled={busy !== ''}>Preview restore
                   </Button>
                   <Button variant="secondary" size="sm" ariaLabel={`Merge-restore: ${a.name}`}
-                    onClick={() => mergeRestore(a)} disabled={busy !== ''}>
+                    onClick={() => mergeRestore(a)} disabled={busy !== ''} disabledReason={BUSY_REASON}>
                     Merge-restore
                   </Button>
                 </div>
@@ -1013,7 +1014,7 @@ function ConflictsSection({ read, onChanged }: {
                     ariaLabel={`${CHOICE_LABELS.keep_local}: ${c.entity_id}`}
                     onClick={() => resolve(c, 'keep_local')}>{CHOICE_LABELS.keep_local}
                   </Button>
-                  <Button variant="secondary" size="sm" disabled={busy !== ''}
+                  <Button variant="secondary" size="sm" disabled={busy !== ''} disabledReason={BUSY_REASON}
                     ariaLabel={`${CHOICE_LABELS.take_remote}: ${c.entity_id}`}
                     onClick={() => resolve(c, 'take_remote')}>
                     {CHOICE_LABELS.take_remote}

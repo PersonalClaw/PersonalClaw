@@ -6,6 +6,7 @@ import { ChipInput, Checkbox, TextInput, FieldError, Select } from '../../ui/for
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 import { CUES, type CueName } from '../../design/soundCues'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 const MODES: { key: NotificationMode; label: string }[] = [
   { key: 'never', label: 'Never' },
@@ -197,8 +198,8 @@ export function DigestSchedule({ schedule, onSaved }: { schedule: string; onSave
           <div className="w-44">
             <TextInput value={value} onChange={setValue} size="sm" mono ariaLabel="Digest schedule" />
           </div>
-          {dirty && <Button size="sm" onClick={save} disabled={busy}>Save</Button>}
-          {dirty && <Button size="sm" variant="ghost" onClick={() => { setValue(schedule); setErr('') }} disabled={busy}>Cancel</Button>}
+          {dirty && <Button size="sm" onClick={save} disabled={busy} disabledReason={BUSY_REASON}>Save</Button>}
+          {dirty && <Button size="sm" variant="ghost" onClick={() => { setValue(schedule); setErr('') }} disabled={busy} disabledReason={BUSY_REASON}>Cancel</Button>}
         </div>
       </Field>
       {err && <FieldError>{err}</FieldError>}

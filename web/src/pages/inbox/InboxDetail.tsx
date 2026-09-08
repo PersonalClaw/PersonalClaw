@@ -12,6 +12,7 @@ import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, r
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
@@ -226,15 +227,15 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
 
       {/* triage actions */}
       <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/40 pt-l">
-        <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy}><Check size={14} /> Mark handled</Button>
-        <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy}><XCircle size={14} /> Dismiss</Button>
+        <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy} disabledReason={BUSY_REASON}><Check size={14} /> Mark handled</Button>
+        <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>
         {/* Mute thread writes to the muted-THREADS set, keyed off a channel thread id. A
             non-channel item has no thread, so the button would silently do nothing. */}
-        {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy}><BellOff size={14} /> Mute thread</Button>}
+        {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy} disabledReason={BUSY_REASON}><BellOff size={14} /> Mute thread</Button>}
         {/* P11: favorite toggle — a strong engagement signal (boosts this channel/sender
             in the ranking when engagement ranking is enabled) + a persisted star. Uses the
             dedicated /favorite endpoint so the signal is recorded, not just the flag set. */}
-        <Button size="sm" variant="ghost" onClick={fav} disabled={!!busy}>
+        <Button size="sm" variant="ghost" onClick={fav} disabled={!!busy} disabledReason={BUSY_REASON}>
           <Star size={14} className={item.favorited ? 'fill-current text-warning' : ''} />
           {item.favorited ? 'Favorited' : 'Favorite'}
         </Button>
@@ -334,11 +335,11 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
           <div className="flex flex-wrap items-center gap-s">
             <Button size="sm" onClick={() => act('accept')} loading={busy === 'accept'} disabled={!!busy}><Check size={14} /> Install skill
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => act('reject')} disabled={!!busy}>
+            <Button size="sm" variant="ghost" onClick={() => act('reject')} disabled={!!busy} disabledReason={BUSY_REASON}>
               <XCircle size={14} /> Reject
             </Button>
             {/* Editing before approving lives on the skills page, which has the editor. */}
-            <Button size="sm" variant="ghost" onClick={() => navigate('skills')} disabled={!!busy}>
+            <Button size="sm" variant="ghost" onClick={() => navigate('skills')} disabled={!!busy} disabledReason={BUSY_REASON}>
               <ExternalLink size={14} /> Edit first
             </Button>
           </div>

@@ -27,6 +27,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // 'home' is the library HOME (KL-8): the shelves — recently added, continue reading, favorites,
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
@@ -650,27 +651,27 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                     <span data-type="label-s" className="text-on-surface" style={fvs(500)}>
                       {selected.size} selected
                     </span>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('read_state', { state: 'read' }, 'Marked read')}>
                       Mark read
                     </Button>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('read_state', { state: 'unread' }, 'Marked unread')}>
                       Mark unread
                     </Button>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('favorite', { value: true }, 'Favorited')}>
                       Favorite
                     </Button>
                     {/* Only MANUAL shelves: a smart shelf resolves membership from its
                         query, so adding by hand would be a write its own reads ignore. */}
                     {collections.filter((c) => c.kind === 'manual').map((c) => (
-                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy}
+                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                         onClick={() => runBulk('collect', { collection_id: c.id }, `Added to ${c.name}:`)}>
                         Add to {c.name}
                       </Button>
                     ))}
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk(showArchived ? 'restore' : 'archive', {}, showArchived ? 'Restored' : 'Archived')}>
                       {showArchived ? 'Restore' : 'Archive'}
                     </Button>

@@ -46,6 +46,7 @@ import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The install-consent surface is shared with the first-run essential-apps step.
 import { ScanReport, ConsentModal, PermissionList, CronConsentList } from './installConsent'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** An install held at the consent gate. `entry` is the catalog row the install came
  *  from — carried so `ConsentModal` can disclose the app's declared permissions and
@@ -1528,7 +1529,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             {app.hasUI && app.enabled && (
               <Button variant="primary" size="sm" onClick={onOpen}><LayoutGrid size={15} /> Open</Button>
             )}
-            <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} onClick={toggle}>
+            <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={toggle}>
               <Power size={15} /> {app.enabled ? 'Deactivate' : 'Activate'}
             </Button>
             {app.enabled && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}

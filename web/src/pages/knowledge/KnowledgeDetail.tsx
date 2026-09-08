@@ -14,6 +14,7 @@ import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore
 import { GistEditor } from './GistEditor'
 import { confirm } from '../../ui/dialog'
 import { api } from '../../lib/api'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Wrap gist code in a fenced markdown block so Markdown's CodeBlock highlights it.
  *  The fence is longer than any backtick run in the body (defensive against code
@@ -73,7 +74,7 @@ function StaleSynthesisBanner({ item }: { item: KnowledgeItem }) {
       <span data-type="body-s" className="min-w-0 text-on-surface-var">
         {parts.join(' \u00b7 ')} since this was written{state.scope ? ` (${state.scope})` : ''}.
       </span>
-      <Button size="xs" variant="secondary" className="ml-auto" disabled={busy}
+      <Button size="xs" variant="secondary" className="ml-auto" disabled={busy} disabledReason={BUSY_REASON}
         ariaLabel="Regenerate this synthesis as a proposal"
         onClick={() => {
           setBusy(true); setOutcome('')

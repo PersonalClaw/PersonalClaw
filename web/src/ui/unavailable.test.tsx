@@ -169,7 +169,15 @@ describe('every converted raw submit uses the helper', () => {
     it(`${rel} spreads unavailableWhen on its gated submit`, () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must spread the helper').toMatch(/\{\.\.\.unavailableWhen\(/)
-      expect(src, 'must import it').toMatch(/import \{ unavailableWhen \}/)
+      // 🪤 THIS PINNED THE BRACE CONTENTS, NOT THE IMPORT. Adding a second name to the same statement
+      // — `import { unavailableWhen, BUSY_REASON } from '…/ui/unavailable'` — reddened it while changing
+      // nothing it exists to check. That is the third label/spelling pin this campaign has had to
+      // loosen. Assert the NAME is imported from the canonical module, and let the statement carry
+      // whatever else the file needs from it.
+      // 🪤 …AND THE PATH HALF HAD THE SAME FAULT, one iteration later. `ui/unavailable` is wrong for an
+      // adopter that LIVES in `ui/` — `PlanningWalkthrough` imports `'./unavailable'`. Match the module
+      // by name and let the specifier be however far away the caller happens to sit.
+      expect(src, 'must import it').toMatch(/import \{[^}]*\bunavailableWhen\b[^}]*\} from '[^']*unavailable'/)
     })
   }
 

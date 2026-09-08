@@ -6,6 +6,7 @@ import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } fro
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // The editable packs.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py PacksConfig). A fingerprint toggle + a catalog-refresh URL, each
@@ -193,7 +194,7 @@ export function ProposalCard({ proposal, busy, onInstall, onReject }: {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button variant="primary" size="sm" disabled={busy} onClick={() => onInstall(proposal)}>Install</Button>
+          <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={() => onInstall(proposal)}>Install</Button>
           <Button variant="ghost" size="sm" onClick={() => onReject(proposal)}>Not for this project</Button>
         </div>
       </div>
@@ -396,7 +397,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
         hint={connectorWarning(pack.connector_markers)}>
         <div className="flex items-center gap-2">
           {pack.setup_pending && (
-            <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>
+            <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={finishSetup}>Finish setup</Button>
           )}
           <Button variant="ghost" size="sm" loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
             Check for update
@@ -458,7 +459,7 @@ export function UpdatePreview({ update, busy, onApply }: {
           {' · '}{update.overwritten.length} to replace, {update.skipped.length} to keep
         </span>
         {!update.applied && update.overwritten.length > 0 && (
-          <Button variant="primary" size="sm" disabled={busy} onClick={onApply}>Apply update</Button>
+          <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={onApply}>Apply update</Button>
         )}
       </div>
       {/* Every kept copy, named, with the reason. This is the "visible drift note" the §1

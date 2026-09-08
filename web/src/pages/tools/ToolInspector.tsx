@@ -7,6 +7,7 @@ import { Markdown } from '../../ui/Markdown'
 import { api, type ToolItem, type ToolInvokeResult } from '../../lib/api'
 import { schemaProps, typeLabel, SchemaField, buildArgs, useArgs, type JsonSchema } from './schema'
 import { ToolOutput } from './ToolOutput'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Tool inspector body for the SidePanel: full parameter signature (view) plus
  *  an expandable "Try it" panel that auto-builds an editable input form from the
@@ -96,13 +97,13 @@ function RunPanel({ tool }: { tool: ToolItem }) {
           {formErr && <FieldError>{formErr}</FieldError>}
 
           {!confirming ? (
-            <Button size="sm" onClick={() => setConfirming(true)} disabled={running}><Play size={15} /> Run tool</Button>
+            <Button size="sm" onClick={() => setConfirming(true)} disabled={running} disabledReason={BUSY_REASON}><Play size={15} /> Run tool</Button>
           ) : (
             <div className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
               <div data-type="label-s" className="flex items-center gap-1.5 text-warn mb-2" style={fvs(500)}><AlertTriangle size={14} /> This runs <span className="font-mono">{tool.name}</span> for real.</div>
               <div className="flex gap-s">
                 <Button size="sm" onClick={run} loading={running} loadingLabel="Running…"><Check size={15} /> Confirm & run</Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={running}>Cancel</Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={running} disabledReason={BUSY_REASON}>Cancel</Button>
               </div>
             </div>
           )}

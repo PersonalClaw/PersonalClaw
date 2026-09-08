@@ -13,6 +13,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 const CACHE_KEY = 'knowledge:reports'
 
@@ -99,7 +100,7 @@ export function ReportRow({ report, index, onChanged }: {
             label={`${report.name} enabled`}
             onChange={(on) => void act(() => api.updateResearchReport(report.id, { enabled: on }),
               `${report.name} ${on ? 'resumed' : 'paused'}`)} />
-          <Button size="xs" variant="secondary" disabled={busy}
+          <Button size="xs" variant="secondary" disabled={busy} disabledReason={BUSY_REASON}
             ariaLabel={`Run ${report.name} now`}
             onClick={() => void act(() => api.runResearchReport(report.id), `${report.name} started`)}>
             <Play size={13} /> Run now
@@ -180,9 +181,9 @@ function CreateForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: 
       {err && <FieldError>{err}</FieldError>}
       <div className="flex items-center gap-s">
         <Button size="sm" disabled={saving || !draft.name.trim() || !draft.prompt.trim()}
-          disabledReason={!draft.name.trim() ? 'Name it first' : !draft.prompt.trim() ? 'Give it a prompt' : undefined}
+          disabledReason={!draft.name.trim() ? 'Name it first' : !draft.prompt.trim() ? 'Give it a prompt' : BUSY_REASON}
           onClick={() => void save()}>Create report</Button>
-        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>Cancel</Button>
+        <Button size="sm" variant="ghost" disabled={saving} disabledReason={BUSY_REASON} onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   )
