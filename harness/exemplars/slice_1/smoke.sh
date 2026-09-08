@@ -9,8 +9,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
-PY="${PERSONALCLAW_PY:-.venv/bin/python}"
-[ -x "$PY" ] || PY="python3"
+# Interpreter resolution lives in ONE place — see resolve_py.sh for why (#2718).
+# shellcheck source-path=SCRIPTDIR/..
+source "$REPO_ROOT/harness/exemplars/resolve_py.sh"
 
 HOME_DIR="$(mktemp -d)"
 trap 'rm -rf "$HOME_DIR"' EXIT

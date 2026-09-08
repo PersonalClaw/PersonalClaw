@@ -106,3 +106,84 @@ def _isolated_env() -> dict[str, str]:
     env = dict(os.environ)
     env["PERSONALCLAW_HOME"] = tempfile.mkdtemp(prefix="pclaw-exemplar-")
     return env
+
+
+# ── The interpreter the smoke scripts run on (#2718) ────────────────────────────────────────────
+#
+# Every smoke script used to resolve `.venv/bin/python` against its OWN repo root and fall back to
+# a bare `python3`. A `git worktree` has no `.venv`, so in a worktree the fallback took an
+# interpreter with no `personalclaw` installed and the exemplar died on `ModuleNotFoundError` — in
+# THIS file, which the change under review never touched. Three contributors each spent a
+# diagnosis on it, and the conclusion was recorded as folklore rather than fixed.
+#
+# These pin the two properties that keep it fixed. The first is the one that matters: six copies of
+# the resolution is what let one bug live in all six at once, so the rail is that there is exactly
+# ONE copy.
+
+_RESOLVER = exemplars_root() / "resolve_py.sh"
+
+
+def test_the_interpreter_rule_has_exactly_one_owner() -> None:
+    """No smoke script may resolve its own interpreter — they all source the shared resolver.
+
+    This is the anti-recurrence half: a seventh slice added by copying an existing smoke script
+    inherits the sourced line, and a slice that hand-rolls the old `|| PY="python3"` fallback fails
+    here by name instead of silently reintroducing #2718 for whoever next works in a worktree.
+    """
+    smokes = [e.smoke for e in _EXEMPLARS]
+    assert smokes, "no exemplars discovered — this rail would pass vacuously"
+    assert _RESOLVER.is_file(), f"the shared resolver is missing: {_RESOLVER}"
+
+    unsourced, rerolled = [], []
+    for smoke in smokes:
+        body = smoke.read_text(encoding="utf-8")
+        if "resolve_py.sh" not in body:
+            unsourced.append(smoke.name and f"{smoke.parent.name}/{smoke.name}")
+        # The exact shape that was wrong: a bare `python3` accepted as an interpreter.
+        if 'PY="python3"' in body:
+            rerolled.append(f"{smoke.parent.name}/{smoke.name}")
+    assert not unsourced, f"these smoke scripts do not source resolve_py.sh: {unsourced}"
+    assert not rerolled, (
+        "these smoke scripts fall back to a bare `python3`, which has none of this repo's dev "
+        f"dependencies and turns a wrong-interpreter error into a missing-module one: {rerolled}"
+    )
+
+
+def test_an_unresolvable_interpreter_says_so_instead_of_failing_later(tmp_path: Path) -> None:
+    """With nothing to resolve, the resolver exits 1 naming the knob — not a module error.
+
+    Driven for real in a directory that is not a git repo and has no `.venv`, because the whole
+    defect was a fallback that *succeeded* at picking an interpreter and failed 30 lines later. A
+    test asserting the message without exercising the no-candidate path would not have caught it.
+    """
+    (tmp_path / "resolve_py.sh").write_text(_RESOLVER.read_text(encoding="utf-8"), encoding="utf-8")
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        'set -euo pipefail\nREPO_ROOT="$(pwd)"\nsource ./resolve_py.sh\necho "PY=$PY"\n',
+        encoding="utf-8",
+    )
+    env = {k: v for k, v in __import__("os").environ.items() if k != "PERSONALCLAW_PY"}
+    proc = subprocess.run(
+        ["bash", str(driver)], cwd=tmp_path, capture_output=True, text=True, timeout=60, env=env
+    )
+    assert proc.returncode == 1, f"expected a loud refusal, got {proc.returncode}:\n{proc.stdout}"
+    assert "PERSONALCLAW_PY" in proc.stderr, f"the refusal must name the knob:\n{proc.stderr}"
+    assert "python3" in proc.stderr, "it must say why a bare python3 is not used"
+    assert "PY=" not in proc.stdout, "it must not resolve anything on the no-candidate path"
+
+
+def test_personalclaw_py_wins_when_set(tmp_path: Path) -> None:
+    """An explicit interpreter overrides both search paths — how CI and non-venv setups pin it."""
+    (tmp_path / "resolve_py.sh").write_text(_RESOLVER.read_text(encoding="utf-8"), encoding="utf-8")
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        'set -euo pipefail\nREPO_ROOT="$(pwd)"\nsource ./resolve_py.sh\necho "PY=$PY"\n',
+        encoding="utf-8",
+    )
+    env = dict(__import__("os").environ)
+    env["PERSONALCLAW_PY"] = "/bin/sh"
+    proc = subprocess.run(
+        ["bash", str(driver)], cwd=tmp_path, capture_output=True, text=True, timeout=60, env=env
+    )
+    assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+    assert "PY=/bin/sh" in proc.stdout, proc.stdout
