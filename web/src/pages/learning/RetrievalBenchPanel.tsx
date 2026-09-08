@@ -7,6 +7,7 @@ import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
 import { api, hasApiCode, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Per-arm P@k/R@k for both retrieval stores (EVALUATION-SUBSTRATE §5 / ES-3).
  *
@@ -326,7 +327,7 @@ function LabelCards({ stores }: { stores: string[] }) {
       </p>
       <div className="flex flex-wrap items-center gap-s">
         {stores.map((s) => (
-          <Button key={s} variant="ghost" disabled={busy} onClick={() => open(s)}>
+          <Button key={s} variant="ghost" disabled={busy} disabledReason={BUSY_REASON} onClick={() => open(s)}>
             Label {s}
           </Button>
         ))}
@@ -362,8 +363,8 @@ function LabelCards({ stores }: { stores: string[] }) {
             </fieldset>
           ))}
           <div className="flex flex-wrap items-center gap-s">
-            <Button disabled={busy} onClick={save}>Save labels</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => { setCard(null); setStore('') }}>
+            <Button disabled={busy} disabledReason={BUSY_REASON} onClick={save}>Save labels</Button>
+            <Button variant="ghost" disabled={busy} disabledReason={BUSY_REASON} onClick={() => { setCard(null); setStore('') }}>
               Cancel
             </Button>
           </div>

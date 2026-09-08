@@ -3,6 +3,7 @@ import { Check, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { Button } from '../Button'
 import { Markdown } from '../Markdown'
 import { api, type PlanStep, type TaskMode } from '../../lib/api'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** The chat's plan review gate (CHAT-CRAFT CC-8).
  *
@@ -96,10 +97,10 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
             <Button size="xs" onClick={() => void run(async () => {
               await api.chatPlanEdit(session, step.id, editText)
               setEditText(null)
-            })} disabled={busy}>
+            })} disabled={busy} disabledReason={BUSY_REASON}>
               <Check size={14} /> Save edits
             </Button>
-            <Button size="xs" variant="ghost" onClick={() => setEditText(null)} disabled={busy}>
+            <Button size="xs" variant="ghost" onClick={() => setEditText(null)} disabled={busy} disabledReason={BUSY_REASON}>
               <X size={14} /> Cancel
             </Button>
           </div>
@@ -133,16 +134,16 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
               data-type="body-s"
               className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary" />
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="xs" disabled={busy}
+              <Button size="xs" disabled={busy} disabledReason={BUSY_REASON}
                 onClick={() => void run(async () => { const r = await api.chatPlanApprove(session, step.id); if (r.complete) onTaskMode(r.task_mode) })}>
                 <Check size={14} /> Approve &amp; run it
               </Button>
               <Button size="xs" variant="secondary" disabled={busy || !comment.trim()}
-                disabledReason={!comment.trim() ? 'Write a comment first' : undefined}
+                disabledReason={!comment.trim() ? 'Write a comment first' : BUSY_REASON}
                 onClick={() => void run(() => api.chatPlanComment(session, step.id, comment.trim()))}>
                 <MessageSquarePlus size={14} /> Send comment &amp; redraft
               </Button>
-              <Button size="xs" variant="ghost" disabled={busy}
+              <Button size="xs" variant="ghost" disabled={busy} disabledReason={BUSY_REASON}
                 onClick={() => void run(async () => { const r = await api.chatPlanCancel(session); onTaskMode(r.task_mode) })}>
                 <X size={14} /> Cancel plan mode
               </Button>

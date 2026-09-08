@@ -47,6 +47,7 @@ import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { overlayEnter, messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
 import { Expandable } from '../../ui/motion'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 const EMPTY_ARTIFACTS = new Set<string>()
 
@@ -1530,7 +1531,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
           <div className="flex items-center gap-1.5">
             {/* Autopilot drives the phased plan itself; one-by-one hands queueing to
                 the user. Toggle is live (any non-terminal state). */}
-            <Button variant={autopilot ? 'tonal' : 'ghost'} size="xs" disabled={busy}
+            <Button variant={autopilot ? 'tonal' : 'ghost'} size="xs" disabled={busy} disabledReason={BUSY_REASON}
               onClick={toggleAutopilot} ariaPressed={autopilot} ariaLabel="Autopilot"
               title={autopilot ? 'Autopilot on — the system queues + drives the phased tasks. Click for one-by-one.' : 'One-by-one — you queue tasks yourself. Click to let the system drive.'}>
               {autopilot ? <Rocket size={11} /> : <Hand size={11} />} {autopilot ? 'Autopilot' : 'One-by-one'}
@@ -1538,7 +1539,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
             {/* Manual Queue all only matters in one-by-one mode (autopilot auto-queues). */}
             {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
             {!autopilot && queueable.length > 0 && (
-              <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue(queueable.map((t) => t.id))}
+              <Button variant="tonal" size="xs" disabled={busy} disabledReason={BUSY_REASON} onClick={() => queue(queueable.map((t) => t.id))}
                 className="gap-1 px-2 text-[0.75rem]">
                 <Play size={11} /> Queue all
               </Button>
@@ -1869,7 +1870,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
               {/* One-click unblock — matches the project-level footer's affordance so a
                   user steering from the task scope isn't forced to type a full answer. */}
               {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" disabled={busy}
+              <Button variant="ghost" size="xs" disabled={busy} disabledReason={BUSY_REASON}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment
@@ -1975,7 +1976,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                 stage opens). Blocked tasks can't be queued usefully (deps not done). */}
             {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
             {(state === 'ready' || (state === 'waiting' && !queued)) && (
-              <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue('queue')}
+              <Button variant="tonal" size="xs" disabled={busy} disabledReason={BUSY_REASON} onClick={() => queue('queue')}
                 className="mb-2 gap-1 px-2 text-[0.75rem]">
                 <Play size={11} /> Queue this task{state === 'waiting' ? ' (runs when its stage starts)' : ''}
               </Button>
@@ -3247,7 +3248,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             <div className="mt-2 flex items-center gap-2">
               <p data-type="caption" className="flex-1 text-on-surface-low">Answer below to resume the build.</p>
               {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" disabled={sending}
+              <Button variant="ghost" size="xs" disabled={sending} disabledReason={BUSY_REASON}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment
@@ -3268,7 +3269,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             <p data-type="caption" className="text-on-surface-var">It paused for input but didn't leave a specific question. Steer it below with direction (or tell it to use its best judgment), then it resumes.</p>
             <div className="mt-2 flex justify-end">
               {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" disabled={sending}
+              <Button variant="ghost" size="xs" disabled={sending} disabledReason={BUSY_REASON}
                 onClick={() => steer('Proceed with your best judgment / the sensible default. Record any assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment

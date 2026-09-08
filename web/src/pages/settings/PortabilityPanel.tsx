@@ -7,6 +7,7 @@ import { notify } from '../../app/appSdk'
 import { PanelHeader, Section } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Import / Export — the DSAR surface (DURABILITY-AND-SYNC §6, DAS-10).
  *
@@ -217,7 +218,7 @@ export function PortabilityPanel() {
           <input ref={fileRef} type="file" accept=".zip,application/zip" className="hidden" aria-label="Choose export archive"
             onChange={(e) => void pickFile(e.target.files?.[0] ?? null)} />
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
+            <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy !== null} disabledReason={BUSY_REASON}>
               <FileArchive size={15} /> {file ? file.name : 'Choose archive…'}
             </Button>
             <Button size="sm" onClick={runImport} loading={busy === 'import'} loadingLabel="Importing…" disabled={busy !== null || !file || !manifest} disabledReason={!file && busy === null ? 'Choose a file first' : (!manifest && busy === null ? 'The archive has not passed validation' : undefined)}><Upload size={15} /> Import

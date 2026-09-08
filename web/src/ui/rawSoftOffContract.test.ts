@@ -29,9 +29,18 @@ import { join } from 'node:path'
 //   • busy — an in-flight action must not be re-clickable. 🔴 CORRECTION (cycle ux-796): this line
 //     used to append a second justification, that the state was already announced to assistive
 //     tech. That was FALSE and was never asserted here — `Button` publishes `aria-busy` from its
-//     `loading` prop only, so a busy-gated `disabled` announces nothing. Staying native is still
-//     right, for the re-clickability reason alone; the missing announcement is a real separate
-//     defect, measured and ratcheted down by `ui/busyIsNotAnnounced.test.ts`.
+//     `loading` prop only, so a busy-gated `disabled` announces nothing. The missing announcement is
+//     a real separate defect, measured and ratcheted down by `ui/busyIsNotAnnounced.test.ts`.
+//     🔑 SECOND CORRECTION (this cycle): "staying native is still right, for the re-clickability
+//     reason alone" is TRUE HERE AND ONLY HERE, and it is worth being precise about why. THIS rail
+//     governs RAW `<button>`s, which have no click guard of their own — dropping the native attribute
+//     really would let an in-flight action fire twice, which is exactly why `unavailableWhen`'s busy
+//     branch returns `{ disabled: true, 'aria-busy': true }` and says so in its own trap note. The
+//     `<Button>` PRIMITIVE is different: it swaps the handler for a refusal when soft-off, so there
+//     the same sentence was false and was being used to exempt 74 sites from explaining themselves.
+//     `ui/disabledReasonTriage.test.ts` carries that retraction and now asserts both halves. **The
+//     rule belongs to the tier, not to the gate** — a class rule written across both is wrong about
+//     one of them.
 //   • pass-through `disabled` on a PRIMITIVE (`Segmented`, `Toggle`, `TextLink`, `ProjectPicker`,
 //     `HeaderActions`) — the primitive cannot know the reason; the fix is for each to accept one,
 //     which is its own change.

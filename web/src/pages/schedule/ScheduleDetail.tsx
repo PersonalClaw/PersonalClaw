@@ -13,6 +13,7 @@ import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, lastRunMeta, isInertOutcome, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ScheduleForm, toDraft, draftToPayload, type ScheduleDraft } from './ScheduleForm'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
@@ -169,7 +170,12 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     <div className="flex flex-col gap-l">
       {/* action row */}
       <div className="flex flex-wrap items-center gap-s">
-        <Button size="sm" variant="secondary" onClick={runNow} disabled={busy || running || !!ranFlash}>
+        {/* 🪤 THE REASON IS CONDITIONAL, because one disjunct of this gate is NOT in-flight at all.
+            `ranFlash` is the transient post-run confirmation (✓ "Run finished" / ⚠ "Run failed"), so
+            during it "An action is already in progress" would be FALSE — the action just ended. The
+            label already says what happened, so the flash keeps the native attribute and no reason. */}
+        <Button size="sm" variant="secondary" onClick={runNow} disabled={busy || running || !!ranFlash}
+          disabledReason={ranFlash ? undefined : BUSY_REASON}>
           <span className={`inline-flex items-center gap-1.5 transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
             style={ranFlash === 'ok' ? { color: 'var(--color-ok)' } : ranFlash === 'error' ? { color: 'var(--color-danger)' } : undefined}>
             {running ? <Loader2 size={14} className="animate-spin" />
@@ -180,12 +186,13 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
           </span>
         </Button>
         <span title="Dry-run replay — preview what this would do, with no side effects (write tools are not executed)">
-          <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running || !!ranFlash}>
+          <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running || !!ranFlash}
+            disabledReason={ranFlash ? undefined : BUSY_REASON}>
             <FlaskConical size={14} /> Dry run
           </Button>
         </span>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
-        {job.has_result && <Button size="sm" variant="ghost" onClick={openChat} disabled={busy}><MessagesSquare size={14} /> Open as chat</Button>}
+        {job.has_result && <Button size="sm" variant="ghost" onClick={openChat} disabled={busy} disabledReason={BUSY_REASON}><MessagesSquare size={14} /> Open as chat</Button>}
         <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
         <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
           <span className="text-on-surface-var">{job.enabled ? 'Enabled' : 'Disabled'}</span>

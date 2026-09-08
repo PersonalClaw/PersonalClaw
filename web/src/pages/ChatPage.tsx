@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
-import { unavailableWhen } from '../ui/unavailable'
+import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
 /** Hands-free voice knobs the composer needs (`voice.*`, MULTIMODAL-IO §4.5). */
 interface VoiceLoopConfig {
@@ -4477,15 +4477,15 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-low px-m py-2 ring-1 ring-outline-variant/40">
                 <span data-type="label-l" className="text-on-surface">{selected.size} selected</span>
                 {showArchived ? (
-                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('restore')}>
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('restore')}>
                     <ArchiveRestore size={13} /> Restore
                   </Button>
                 ) : (
-                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('archive')}>
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('archive')}>
                     <Archive size={13} /> Archive
                   </Button>
                 )}
-                <Button variant="ghost" size="xs" disabled={bulkBusy}
+                <Button variant="ghost" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                   onClick={() => runBulk('never_archive', { value: true })}
                   title="Exempt these chats from auto-archive">
                   <Pin size={13} /> Never archive
@@ -4829,9 +4829,9 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
               </div>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">
-                {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy}><X size={14} /> Stop</Button>}
+                {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy} disabledReason={BUSY_REASON}><X size={14} /> Stop</Button>}
                 <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
-                  disabledReason={!msg.trim() ? 'Write the message first' : undefined}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
+                  disabledReason={!msg.trim() ? 'Write the message first' : BUSY_REASON}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
               </div>
             </>)}
           </div>

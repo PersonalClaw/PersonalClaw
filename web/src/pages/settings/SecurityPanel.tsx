@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FieldError } from '../../ui/forms'
-import { unavailableWhen } from '../../ui/unavailable'
+import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import {
   ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe, MonitorOff, ShieldCheck, ShieldAlert,
   KeyRound, Undo2,
@@ -211,7 +211,7 @@ function CredentialStoreEditor() {
             <KeyRound size={15} /> Move {cs.pending > 0 ? cs.pending : ''} to keychain
           </Button>
           {cs.rollback_available && (
-            <Button variant="secondary" onClick={rollBack} disabled={busy}>
+            <Button variant="secondary" onClick={rollBack} disabled={busy} disabledReason={BUSY_REASON}>
               <Undo2 size={15} /> Roll back
             </Button>
           )}

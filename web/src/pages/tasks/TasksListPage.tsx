@@ -28,6 +28,7 @@ import { TaskBoard } from './TaskBoard'
 import { PageTitle } from '../../ui/PageTitle'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { accentChip } from '../../design/accent'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
@@ -538,8 +539,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           <div className="pointer-events-auto flex items-center gap-2 rounded-pill bg-surface-highest/95 px-3 py-2 shadow-sheet backdrop-blur">
             <span data-type="label-s" className="pl-1 text-on-surface tabular-nums" style={fvs(600)}>{selected.size} selected</span>
             <span className="h-4 w-px bg-outline-variant/50" aria-hidden />
-            <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
-            <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
+            <Button size="sm" variant="ghost" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
+            <Button size="sm" variant="ghost" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
             <button type="button" onClick={clearSelection} aria-label="Clear selection" className="ml-1 grid size-7 place-items-center rounded-full text-on-surface-low hover:bg-surface-container hover:text-on-surface"><X size={15} /></button>
           </div>
         </div>

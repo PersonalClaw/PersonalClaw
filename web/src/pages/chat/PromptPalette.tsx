@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
 import { seedRenderValues } from '../prompts/promptMeta'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Composer prompt palette — pick a USER prompt, fill its variables (the merged
  *  set, including any from snippets it pulls in), preview the rendered text, then
@@ -197,8 +198,8 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
 
       <div className="flex items-center justify-end gap-2 border-t border-outline-variant/40 pt-3">
         <Button variant="ghost" size="sm" onClick={onBack}>Cancel</Button>
-        <Button variant="secondary" size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : undefined} onClick={() => finalize(false)}>Insert</Button>
-        {onSend && <Button size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : undefined} onClick={() => finalize(true)}><CornerDownLeft size={14} /> Send</Button>}
+        <Button variant="secondary" size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : BUSY_REASON} onClick={() => finalize(false)}>Insert</Button>
+        {onSend && <Button size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : BUSY_REASON} onClick={() => finalize(true)}><CornerDownLeft size={14} /> Send</Button>}
       </div>
     </div>
   )

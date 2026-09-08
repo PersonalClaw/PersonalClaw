@@ -7,6 +7,7 @@ import type { WorkflowContinuation } from '../../lib/api'
 import { findGenUiBlock, widgetlessText } from '../../ui/widget/blocks'
 import { GenUiWidget } from '../../ui/genui/GenUiWidget'
 import { GenUiHostCtx } from '../../ui/genui/actions'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** The ONE renderer for every human-input gate (WF2-R7).
  *
@@ -146,7 +147,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
       <div className="flex items-center gap-s">
         {kind === 'approval' ? (
           <>
-            <Button onClick={() => onAnswer(continuation, true, alwaysAllow)} disabled={busy}>
+            <Button onClick={() => onAnswer(continuation, true, alwaysAllow)} disabled={busy} disabledReason={BUSY_REASON}>
               <Check size={14} /> Approve
             </Button>
             {/* Deny is quiet, not destructive-styled: rejecting a gate is a normal answer,
@@ -163,7 +164,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
               alwaysAllow,
             )}
             disabled={busy || (kind === 'text' && !text.trim())}
-            disabledReason={kind === 'text' && !text.trim() ? 'Type an answer first' : undefined}
+            disabledReason={kind === 'text' && !text.trim() ? 'Type an answer first' : BUSY_REASON}
           >
             <Check size={14} /> Submit
           </Button>

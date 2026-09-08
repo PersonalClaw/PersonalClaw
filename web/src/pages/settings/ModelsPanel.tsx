@@ -24,6 +24,7 @@ import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -606,7 +607,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                   <Check size={12} /> already the default
                 </span>
               ) : (
-                <Button size="sm" variant="tonal" disabled={saving}
+                <Button size="sm" variant="tonal" disabled={saving} disabledReason={BUSY_REASON}
                   onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
                   Bind as default
                 </Button>

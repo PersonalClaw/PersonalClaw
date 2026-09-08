@@ -142,7 +142,15 @@ describe('the migrated submits pass a reason', () => {
       // with a security verdict — so assert it is a TERNARY yielding undefined when satisfied,
       // not a bare string.
       expect(src, 'the reason must be conditional, not a constant').toMatch(/disabledReason=\{[^}]*\?/)
-      expect(src, 'the reason must fall back to undefined when nothing is missing').toMatch(/disabledReason=\{[^}]*undefined/)
+      // 🔑 THE FALLBACK MAY NOW BE `BUSY_REASON` RATHER THAN `undefined`, and the rule above is better
+      // served by it. The hazard this line guards is real and unchanged — an unconditional
+      // "enter a name" announced while a save is in flight. But `undefined` was never the goal; it was
+      // the only honest fallback available while busy gates were exempt from explaining themselves.
+      // Now that they are not, the state that selects the fallback is precisely "off, and the input is
+      // fine" — which IS the in-flight case, so naming it is more true than going silent. The
+      // input-specific reason stays conditional either way, which is the whole property.
+      expect(src, 'the reason must fall back to undefined or the shared busy reason when nothing is missing')
+        .toMatch(/disabledReason=\{[^}]*(undefined|BUSY_REASON)/)
     })
   }
 
