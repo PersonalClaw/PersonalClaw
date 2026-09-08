@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { ChevronRight, Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } from 'lucide-react'
+import { Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } from 'lucide-react'
 import { api, type SearchProviderInfo } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
-import { fvs } from '../../design/fontWeight'
-import { accentChip } from '../../design/accent'
+import { DisclosureCard } from '../../ui/DisclosureCard'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
 // one provider per use-case; an unbound one falls back to the general binding.
@@ -56,7 +55,8 @@ export function SearchPanel() {
 function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   useCase: string; activeProviders: string[]; providers: SearchProviderInfo[]; onChanged: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  // No `open` flag here: `DisclosureCard` owns the disclosure state, which is the only thing this
+  // component ever used it for.
   const [saving, setSaving] = useState(false)
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', icon: Globe }
   // For fetch-article, only a provider that can extract content is a sensible bind;
@@ -74,70 +74,47 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   const toggle = (name: string) => setActive(activeProviders.includes(name) ? [] : [name])
 
   return (
-    <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
-      {/* `focus-visible:-outline-offset-2`: this header fills the `overflow-hidden rounded-lg` card on
-          the line above, so an outward-drawn outline is clipped on ALL FOUR sides — measured 4px lost
-          per side, the ring's entire reach, i.e. no visible focus indicator at all (WCAG 2.4.7). */}
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high focus-visible:-outline-offset-2">
-        <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
-        <span className="grid size-7 shrink-0 place-items-center rounded-md"
-          style={activeProviders.length > 0
-            ? accentChip
-            : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-          <meta.icon size={14} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div data-type="label-s" className="text-on-surface" style={fvs(500)}>{meta.label}</div>
-          <div data-type="caption" className="mt-0.5 text-on-surface-low">
-            {activeProviders.length > 0 ? activeProviders[0] : <span className="italic">none — falls back to General</span>}
-          </div>
+    <DisclosureCard icon={meta.icon} label={meta.label} active={activeProviders.length > 0} count={eligible.length}
+      subtitle={activeProviders.length > 0 ? activeProviders[0] : <span className="italic">none — falls back to General</span>}>
+      <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
+      {eligible.length === 0 ? (
+        <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
+          {useCase === 'fetch-article'
+            ? 'No configured provider can extract page content. Bind one with fetch support (e.g. Tavily), or leave this unset to use the native fetch pipeline.'
+            : 'No search providers configured. Add one in Providers first.'}
         </div>
-        {eligible.length > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">{eligible.length} available</span>}
-      </button>
-
-      {open && (
-        <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
-          <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
-          {eligible.length === 0 ? (
-            <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
-              {useCase === 'fetch-article'
-                ? 'No configured provider can extract page content. Bind one with fetch support (e.g. Tavily), or leave this unset to use the native fetch pipeline.'
-                : 'No search providers configured. Add one in Providers first.'}
-            </div>
-          ) : (
-            // 🔴 One-of-N, and the bind was announced by COLOUR alone: the filled circle and the
-            //    tinted row are the only thing that said "this provider is bound". The group is named
-            //    with its use-case so the four sibling groups on this panel are distinguishable —
-            //    "General search provider" and "News search provider", not four identical lists.
-            <div role="group" aria-label={`${meta.label} provider`}
-              className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
-              {eligible.map((p) => {
-                const on = activeProviders.includes(p.name)
-                return (
-                  <button key={p.name} type="button" onClick={() => toggle(p.name)} disabled={saving}
-                    aria-pressed={on}
-                    className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
-                    style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                    <span className="grid size-4 shrink-0 place-items-center rounded-full border"
-                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                    </span>
-                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.display_name}</span>
-                    <CapChips caps={p.capabilities} />
-                    <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
-                      style={p.available
-                        ? { background: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', color: 'var(--color-ok)' }
-                        : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-                      {p.available ? 'ready' : 'not configured'}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+      ) : (
+        // 🔴 One-of-N, and the bind was announced by COLOUR alone: the filled circle and the
+        //    tinted row are the only thing that said "this provider is bound". The group is named
+        //    with its use-case so the four sibling groups on this panel are distinguishable —
+        //    "General search provider" and "News search provider", not four identical lists.
+        <div role="group" aria-label={`${meta.label} provider`}
+          className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
+          {eligible.map((p) => {
+            const on = activeProviders.includes(p.name)
+            return (
+              <button key={p.name} type="button" onClick={() => toggle(p.name)} disabled={saving}
+                aria-pressed={on}
+                className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
+                style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
+                <span className="grid size-4 shrink-0 place-items-center rounded-full border"
+                  style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                  {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                </span>
+                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.display_name}</span>
+                <CapChips caps={p.capabilities} />
+                <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
+                  style={p.available
+                    ? { background: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', color: 'var(--color-ok)' }
+                    : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+                  {p.available ? 'ready' : 'not configured'}
+                </span>
+              </button>
+            )
+          })}
         </div>
       )}
-    </div>
+    </DisclosureCard>
   )
 }
 
