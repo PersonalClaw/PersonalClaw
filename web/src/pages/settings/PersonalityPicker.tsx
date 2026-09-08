@@ -212,8 +212,8 @@ export function PersonalityPicker() {
             </div>
             <div className="flex justify-end gap-s">
               <Button variant="ghost" size="sm" onClick={() => setPending(null)}>Cancel</Button>
-              <Button variant="primary" size="sm" disabled={busy} onClick={confirm}>
-                {busy ? 'Switching…' : `Switch to ${pending.label}`}
+              <Button variant="primary" size="sm" loading={busy} loadingLabel="Switching…" onClick={confirm}>
+                {`Switch to ${pending.label}`}
               </Button>
             </div>
           </div>

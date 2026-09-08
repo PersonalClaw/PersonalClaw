@@ -109,8 +109,8 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving || !draft.title.trim()}
-            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim()}
+            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

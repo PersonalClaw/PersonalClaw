@@ -885,7 +885,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} loading={busy} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> Save</Button>
         {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {saved && <span data-type="caption" className="text-ok">Saved ✓</span>}
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
@@ -916,8 +916,8 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="e.g. Always run the test suite before saying a fix works."
         data-type="body-s" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
-          disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={!rule.trim() || saving}
+          disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>Save lesson</Button>
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
       <p data-type="caption" className="text-on-surface-low">Injected into future prompts. Prune anything wrong from the list.</p>
@@ -953,8 +953,8 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="value" rows={2}
         data-type="body-s" className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}
-          disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} disabled={saving || !key || !value.trim()}
+          disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>Save</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>

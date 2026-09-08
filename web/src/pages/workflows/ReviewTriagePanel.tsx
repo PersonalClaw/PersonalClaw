@@ -198,9 +198,9 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
           <span data-type="caption" className="text-on-surface-low">
             {acceptedCount} to send · {rejectedCount} to record
           </span>
-          <Button size="sm" onClick={dispatch} disabled={busy || (acceptedCount === 0 && rejectedCount === 0)}
+          <Button size="sm" onClick={dispatch} loading={busy} loadingLabel="Dispatching…" disabled={busy || (acceptedCount === 0 && rejectedCount === 0)}
             disabledReason={acceptedCount === 0 && rejectedCount === 0 ? 'Accept or reject at least one finding first' : undefined}>
-            <Send size={14} /> {busy ? 'Dispatching…' : 'Dispatch decisions'}
+            <Send size={14} /> Dispatch decisions
           </Button>
         </div>
         <p data-type="caption" className="text-on-surface-low">

@@ -128,13 +128,14 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
             that. Measured: the first draft put both on `title` and reds the ratchet. */}
         <Button
           onClick={write}
+          loading={busy} loadingLabel="Writing…"
           disabled={busy || report.total === 0}
           title="Compose the narrative, save it as a versioned artifact and send it to your inbox."
           disabledReason={report.total === 0
             ? 'Nothing has been learned yet, so there is nothing to write up.'
             : undefined}
         >
-          <FileText size={14} /> {busy ? 'Writing…' : 'Write it up'}
+          <FileText size={14} /> Write it up
         </Button>
       </div>
 

@@ -149,9 +149,9 @@ export function SteeringPanel({
           placeholder="Guide the next iteration — focus an angle, or answer what the run is stuck on."
         />
         <div className="flex justify-end">
-          <Button size="sm" onClick={() => steer(draft)} disabled={!draft.trim() || busy}
+          <Button size="sm" onClick={() => steer(draft)} loading={busy} loadingLabel="Queuing…" disabled={!draft.trim() || busy}
             disabledReason={!draft.trim() ? 'Write a steering note first' : undefined}>
-            <MessageSquarePlus size={14} /> {busy ? 'Queuing…' : 'Queue instruction'}
+            <MessageSquarePlus size={14} /> Queue instruction
           </Button>
         </div>
         {pending.length > 0 && (

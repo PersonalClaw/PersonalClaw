@@ -81,7 +81,7 @@ export function ProviderConfigForm({ name }: { name: string }) {
           secretAlreadySet={secretSet.includes(key)} onChange={(v) => set(key, v)} />
       ))}
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} loading={saving} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>Save</Button>
         <SavedToast show={saved} />
         {dirty && !saved && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}

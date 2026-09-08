@@ -180,21 +180,71 @@ function disjuncts(g: string): string[] {
   return out.map((s) => s.trim()).filter(Boolean)
 }
 
-/** The condition guarding a hand-rolled spinner in the children: `COND ? <Loader2…/> : …`. */
+/** The condition guarding a hand-rolled spinner in the children: `COND ? <Loader2…/> : …`.
+ *
+ *  🪤 IT ONLY LOOKED FOR `Loader2`, AND THAT MISFILED CLASS A AS CLASS B. Two sites hand-roll their
+ *  in-flight state without ever importing a spinner component: `KnowledgeListPage`'s "Run on existing
+ *  items" and its "Generate skill" sibling animate the ICON — `<Play className={running ?
+ *  'animate-pulse' : ''}/>` — and pair it with a label ternary, `{running ? 'Running…' : 'Run on
+ *  existing items'}`. That is precisely Class A's shape (the gate IS the in-flight condition, and the
+ *  author has asserted "this button is the one working"), reached with a different vocabulary. A
+ *  census that recognises one spelling of a pattern measures the spelling, not the pattern — the same
+ *  mistake the z-layer rail made with `z-[N]` versus `z-50`.
+ *
+ *  Three spellings are now recognised, in order of confidence: a `Loader2` ternary, a conditional
+ *  `animate-pulse`/`animate-spin` class, and a label ternary whose busy arm ends in an ellipsis. The
+ *  last is the weakest signal and deliberately last — "…" in the busy arm is how every one of these
+ *  sites writes "still working". */
 function spinnerCond(body: string): string | null {
-  const i = body.search(/Loader2/)
-  if (i < 0) return null
-  const before = body.slice(0, i)
-  const q = before.lastIndexOf('?')
-  if (q < 0) return null
-  let d = 0
-  let start = 0
-  for (let j = q - 1; j >= 0; j--) {
-    const ch = before[j]
-    if (')]}'.includes(ch)) d++
-    else if ('([{'.includes(ch)) { if (d === 0) { start = j + 1; break } d-- }
+  /** The condition immediately left of `at`, walked back to its enclosing brace/paren. */
+  const condBefore = (at: number): string | null => {
+    const before = body.slice(0, at)
+    const q = before.lastIndexOf('?')
+    if (q < 0) return null
+    let d = 0
+    let start = 0
+    for (let j = q - 1; j >= 0; j--) {
+      const ch = before[j]
+      if (')]}'.includes(ch)) d++
+      else if ('([{'.includes(ch)) { if (d === 0) { start = j + 1; break } d-- }
+    }
+    return before.slice(start, q).trim() || null
   }
-  return before.slice(start, q).trim()
+
+  const loader = body.search(/Loader2/)
+  if (loader >= 0) {
+    const c = condBefore(loader)
+    if (c) return c
+  }
+  // A conditional pulse/spin on the icon is a hand-rolled spinner with no spinner component.
+  const anim = body.match(/([A-Za-z_$][\w$.]*)\s*\?\s*'animate-(?:pulse|spin)'/)
+  if (anim) return anim[1].trim()
+  // A label ternary whose busy arm trails an ellipsis: `{running ? 'Running…' : 'Run …'}`.
+  const label = body.match(/([A-Za-z_$][\w$.]*)\s*\?\s*'[^']*…'\s*:/)
+  if (label) return label[1].trim()
+  return null
+}
+
+/** Every flag a `<Button>` in this FILE publishes through `loading={…}`.
+ *
+ *  🔑 THE DISCRIMINATOR CLASS B WAS MISSING, and it comes from the code rather than from how an
+ *  identifier is spelled — which is the lesson this rail keeps re-learning. `BARE` catches a bystander
+ *  written `disabled={busy}`, and misses every other way of sharing one flag: a NAMED boolean
+ *  (`disabled={sending}` beside a sibling `loading={sending}`), and a shared STRING compared against
+ *  its idle value (`disabled={busy !== ''}` beside `loading={busy === a.id}`). Both are bystanders.
+ *  Both landed in Class B, where they read as pending fixes.
+ *
+ *  If a sibling in the same file already passes `loading={X}`, then the button that OWNS X announces
+ *  itself, and a second button merely gated on X is blocked BY it. Marking that one `aria-busy` too
+ *  would announce two concurrent operations — the exact lie this census exists to avoid. So the honest
+ *  answer at those sites is not this attribute at all; it is nothing, or a `disabledReason` ("wait for
+ *  the current action"), which is the separate Class D family. */
+function loadingFlags(src: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of src.matchAll(/\bloading=\{([^}]{1,80})\}/g)) {
+    for (const id of m[1].match(/[A-Za-z_$][\w$]*/g) ?? []) out.add(id)
+  }
+  return out
 }
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
@@ -210,6 +260,7 @@ const census = () => {
   for (const abs of walk(SRC)) {
     const rel = abs.slice(SRC.length + 1)
     const src = code(abs)
+    const published = loadingFlags(src)
     for (const { tag, body, line } of elements(src)) {
       const gate = gateOf(tag)
       if (gate === null) continue
@@ -220,6 +271,20 @@ const census = () => {
       if (/aria-busy|\bloading=/.test(tag)) { announced.push(site); continue }
       const ds = disjuncts(gate)
       const busyDs = ds.filter((d) => BUSY.test(d))
+      // 🔑 A SIBLING ALREADY PUBLISHES THIS FLAG → BYSTANDER, whatever the gate's spelling. This is
+      // the discriminator Class B was missing, and it reads the code instead of the identifier: if
+      // another `<Button>` in this file passes `loading={<the same flag>}`, that button owns the
+      // operation and announces it, so this one is blocked BY it. Six sites moved here from B on the
+      // strength of it — `CodeCockpitPage`'s two `disabled={sending}` beside a `loading={sending}`
+      // send, `ToolInspector`'s two `disabled={running}` beside `loading={running}`,
+      // `DurabilityPanel`'s `disabled={busy !== ''}` beside `loading={busy === a.id}`, and
+      // `PortabilityPanel`'s `disabled={busy !== null}` beside `loading={busy === spec.key}`. None is
+      // a pending `loading=` conversion; announcing them would claim several concurrent operations.
+      //
+      // Placed AFTER the gate-equals-spinner test on purpose: a site that renders its OWN in-flight
+      // state has asserted it is the working one, and that assertion outranks the file-level hint.
+      const ownFlag = gate.match(/[A-Za-z_$][\w$]*/)?.[0]
+      const bystander = !site.spinner && !!ownFlag && published.has(ownFlag)
       // 🪤 ORDER MATTERS, AND GATE-EQUALS-SPINNER OUTRANKS BARENESS. A first draft tested `BARE`
       // first and put `disabled={busy}` in the bystander class even where the children render
       // `busy ? <Loader2/> : <Icon/>` — which measured Class A at 15 instead of 28. A bare flag is
@@ -230,7 +295,7 @@ const census = () => {
       if (ds.length === 1 && site.spinner && norm(site.spinner) === norm(gate)) A.push(site)
       else if (ds.length > 1 && busyDs.length === 1 && BARE.test(busyDs[0])) D.push(site)
       else if (ds.length > 1) C.push(site)
-      else if (BARE.test(gate)) D.push(site)
+      else if (BARE.test(gate) || bystander) D.push(site)
       else B.push(site)
     }
   }
@@ -275,11 +340,19 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
   })
 
   it('🔴 THE RATCHET: the number of busy-gated Buttons announcing nothing may only go DOWN', () => {
-    // 179 as first measured; **114 after this change closes Class A, the self-spun bystanders, and the
-    // identity-gated half of Class B** — the 28 converted sites drop
-    // out of the population entirely, because `disabled={busy}` is GONE from them rather than
-    // supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that PR), and a
-    // NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
+    // 179 as first measured; 114 once Class A, the self-spun bystanders and the identity-gated half of
+    // Class B were closed; **79 now.** The converted sites drop out of the population entirely, because
+    // `disabled={busy}` is GONE from them rather than supplemented. A CEILING, not a floor: each future
+    // fix lowers it (lower it in that PR), and a NEW `<Button disabled={busy}>` with no `loading=`
+    // raises it and reds this.
+    //
+    // 🔑 THE 114 → 79 STEP CAME FROM FIXING THE CENSUS, NOT FROM A SWEEP, and that is the part worth
+    // reading. `spinnerCond` recognised only `<Loader2`, so 33 sites that hand-roll their in-flight
+    // state with a conditional `animate-pulse`/`animate-spin` on the icon plus a `flag ? 'Verb…'` label
+    // ternary were invisible to it and sat misfiled in Class B. They are the SAME pattern reached with
+    // a different vocabulary — exactly the mistake the z-layer rail made counting `z-[N]` and not
+    // `z-50`. Widened, they surfaced as 11 true drop-ins and 22 mixed gates, and all 33 are now
+    // converted. **A census that recognises one spelling of a pattern measures the spelling.**
     //
     // 🪤 A `>=` FLOOR HERE WOULD BE EXACTLY BACKWARDS, and this repo has the scar: `railFloors`
     // records that a floor detects a REMOVAL but never an ADDITION, and addition is the direction
@@ -291,7 +364,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(114)
+    ).toBeLessThanOrEqual(79)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {
@@ -303,13 +376,20 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
     // hand-rolled pattern, so this is `toBe(0)`, not `>=`.
     expect(A, 'a hand-rolled spinner whose condition IS the disabled gate — use `loading=` instead')
       .toEqual([])
+    // 🪤 BOTH FLOORS SIT WELL BELOW THE MEASUREMENT, for the reason this whole file records: fixes in
+    // this family SHRINK the population, so a floor pinned at the measured value reds on the next
+    // correct fix. C measured 5 here (was 7) and D measured 74 (was 95) — the drop in D is the
+    // conversions leaving the tree, plus the six bystanders the sibling-`loading=` discriminator moved
+    // IN from Class B. Their only job is anti-vacuity: proving the classifier still resolves each kind.
     expect(C.length, 'Class C — mixed gate; `loading` takes the busy disjunct, `disabled` keeps the gate')
-      .toBeGreaterThanOrEqual(5)
+      .toBeGreaterThanOrEqual(3)
     expect(D.length, 'Class D — bystander shared flag with NO spinner to derive identity from')
-      .toBeGreaterThanOrEqual(95)
-    // Class D is the majority, which is the single most important thing this census establishes:
-    // the family is NOT ~180 missing attributes, it is ~50 real ones plus a large class whose
-    // honest answer is something else entirely.
+      .toBeGreaterThanOrEqual(60)
+    // Class D is the majority, which is the single most important thing this census establishes: the
+    // family is NOT ~180 missing attributes. It was ~100 real ones — every one of which is now
+    // converted, so A and B are both EMPTY — plus a large class whose honest answer is something else
+    // entirely (nothing, or a `disabledReason`; that is the remaining work and it is a different
+    // change, because inventing an identity for a shared flag would be guessing).
     expect(D.length, 'the bystanders outnumber the genuine cases — a sweep would have lied at most sites')
       .toBeGreaterThan(A.length + B.length + C.length)
   })
