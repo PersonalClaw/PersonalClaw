@@ -268,16 +268,25 @@ export function NavRail({
   if (overlay) {
     return (
       <>
-        {/* scrim — only interactive/visible while open */}
+        {/* scrim — only interactive/visible while open. It rides one rung UNDER its own drawer, which
+            is what `calc(var(--z-modal) - 1)` says and a bare `z-40` did not: 40 was a number chosen
+            relative to the drawer's old 50, so moving the drawer would silently have left the scrim
+            two rungs adrift. Expressed against the drawer's rung, the pair cannot come apart. */}
         <motion.div
-          className="fixed inset-0 z-40 bg-black/40"
+          className="fixed inset-0 z-[calc(var(--z-modal)-1)] bg-black/40"
           initial={false}
           animate={{ opacity: overlayOpen ? 1 : 0 }}
           transition={spring.effects}
           style={{ pointerEvents: overlayOpen ? 'auto' : 'none' }}
           onClick={onScrimClick} aria-hidden />
+        {/* 🔴 A VALUE FIX, NOT A SPELLING ONE. This drawer DECLARES `role="dialog"` and draws its own
+            scrim, which is exactly what tokens.css assigns to `--z-modal` ("dialogs, sheets, blocking
+            takeovers"). At a bare `z-50` it rode the CONTENT ceiling instead — tying with
+            `ui/SidePanel` and `chat/ChatFilePanel`, which are both `fixed inset-0 z-50`. Three
+            overlays on one rung do not stack by design; they stack by DOM/portal order, so which one
+            covered the other was an accident of mount sequence. */}
         <motion.div
-          className="fixed left-0 top-0 z-50 h-full shadow-2xl"
+          className="fixed left-0 top-0 z-[var(--z-modal)] h-full shadow-2xl"
           initial={false}
           animate={{ x: overlayOpen ? 0 : '-100%' }}
           transition={spring.spatialDefault}

@@ -149,7 +149,9 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // wipe. Wipe speed/overshoot scale with expressiveness; reduced-motion → no clip.
     const furled = `inset(0px 0px 0px calc(100dvw - ${dockW}px))`
     return createPortal(
-      <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-surface"
+      // `--z-content` IS 50: spelling migration, byte-identical computed value. A full-screen panel
+      // is the content ceiling by tokens.css's own definition of the rung.
+      <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface"
         initial={reduce ? { opacity: 0 } : { clipPath: furled }}
         animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
         exit={reduce ? { opacity: 0 } : { clipPath: furled }}

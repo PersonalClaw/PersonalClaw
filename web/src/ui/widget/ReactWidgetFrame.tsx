@@ -75,7 +75,9 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
       className={expanded
-        ? 'fixed inset-4 z-50 overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
+        // `--z-content` IS 50: spelling migration, byte-identical computed value — the same one its
+        // `WidgetFrame` sibling takes, so the two expanded frames stay on one rung by construction.
+        ? 'fixed inset-4 z-[var(--z-content)] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
         : 'my-3 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-low'}>
       <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
         <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title}</span>

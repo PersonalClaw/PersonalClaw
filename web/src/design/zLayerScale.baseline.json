@@ -1,20 +1,26 @@
 {
-  "_comment": "z-layer scale ratchet (CD-05). The ARBITRARY form is complete: no app source carries a bespoke numeric z-[N], the files list is empty and the ceiling is 0. \u26a0\ufe0f THIS FILE PREVIOUSLY CLAIMED 'COMPLETE. Every fixed/portaled overlay rides the --z-* scale' \u2014 which was FALSE. It was true only of the bracket spelling `z-[N]`; Tailwind's STANDARD scale (`z-50`, `z-40`, `z-30`) is a second spelling of the same thing and NUMERIC_Z (/\\bz-\\[-?\\d/) cannot see it. 15 `fixed` overlays were on the standard scale, every one of them below --z-modal (60), and a NEW one would have passed CI. `maxStandardScaleFixed` below is the second ratchet, shrink-only.",
+  "_comment": "z-layer scale ratchet (CD-05). The ARBITRARY form is complete: no app source carries a bespoke numeric z-[N], the files list is empty and the ceiling is 0. ⚠️ THIS FILE PREVIOUSLY CLAIMED 'COMPLETE. Every fixed/portaled overlay rides the --z-* scale' — which was FALSE. It was true only of the bracket spelling `z-[N]`; Tailwind's STANDARD scale (`z-50`, `z-40`, `z-30`) is a second spelling of the same thing and NUMERIC_Z (/\\bz-\\[-?\\d/) cannot see it. 15 `fixed` overlays were on the standard scale, every one of them below --z-modal (60), and a NEW one would have passed CI. `maxStandardScaleFixed` below is the second ratchet, shrink-only.",
+  "_migration": "15 → 5, and what remains is NOT a backlog — see _standardScaleFixedReasons. Two of the fifteen were wrong in VALUE rather than merely in spelling: `pages/files/browse/FileTree.tsx`'s portaled role=menu rode the content ceiling BELOW every dialog, and `ui/NavRail.tsx`'s mobile drawer DECLARES role=dialog yet rode z-50, tying with `ui/SidePanel` and `chat/ChatFilePanel` (both `fixed inset-0 z-50`) so which overlay covered which was an accident of mount order. NavRail's scrim now reads `calc(var(--z-modal)-1)` instead of a bare 40, so the pair cannot come apart when the drawer moves. The other six were spelling with a byte-identical computed value, because --z-content IS 50.",
+  "_liveNotLatent": "🪤 THE PRIOR PASS CALLED THIS FAMILY 'LATENT, NOT LIVE', and that was true of the two primitives it fixed (`ui/Popover`, `ui/motion/ContextMenu` — neither is currently rendered inside a Modal) and untrue of the tree. `FileTree`'s hand-rolled context menu is a THIRD control-anchored menu with the same wrong rung, and it was invisible to the rail because the rail could only see the arbitrary spelling. A census scoped to one spelling certified a fix as complete.",
+  "_rule": "The rule applied here, recorded so the next pass does not re-derive it: DECLARED ROLE decides the rung, not felt modality. `role=dialog` earns --z-modal; a full-screen content takeover gets --z-content even when it traps focus and dismisses on Escape. `chat/ChatFilePanel` carries the repo's ruling on that shape — page-level ad-hoc takeovers deliberately claim no dialog role (primitiveAdoption holds them at 0; `ui/Modal` is canonical) — and `pages/knowledge/KnowledgeDetail.tsx`'s fullscreen viewer is the case that tested it.",
   "maxArbitraryZLayers": 0,
   "files": [],
-  "maxStandardScaleFixed": 15,
+  "maxStandardScaleFixed": 5,
+  "_standardScaleFixedReasons": "⚠️ READ THIS BEFORE 'FINISHING THE MIGRATION'. The five below are NOT pending migrations, and the earlier framing — that every `fixed` + standard-scale z is a defect awaiting a token — was too strong. Each is INTRA-CONTENT ordering: a position beneath the content ceiling, or beneath one specific sibling. The --z-* scale orders LAYERS (content < overlay < modal < menu < toast); it does not order positions within a layer, and giving these a global token would assert a layer relationship that does not exist. Each reason is verified by the rail rather than taken on trust — an exemption nobody checks is a silent gap with a comment attached.",
   "standardScaleFixedFiles": [
-    "pages/chat/ChatFilePanel.tsx",
-    "pages/files/browse/FileTree.tsx",
-    "pages/knowledge/KnowledgeDetail.tsx",
     "pages/tasks/TasksListPage.tsx",
     "pages/terminal/TerminalDrawer.tsx",
     "ui/DegradedChip.tsx",
     "ui/FeedbackThumbs.tsx",
-    "ui/NavRail.tsx",
-    "ui/SidePanel.tsx",
-    "ui/content/ContentSurface.tsx",
-    "ui/widget/ReactWidgetFrame.tsx",
-    "ui/widget/WidgetFrame.tsx"
-  ]
+    "ui/content/ContentSurface.tsx"
+  ],
+  "_perFile": {
+    "pages/tasks/TasksListPage.tsx": "z-30 — a pointer-events-none floating action bar, deliberately BENEATH the content ceiling. No token exists below --z-content, because 'ordinary content, ordered among itself' is not a rung.",
+    "pages/terminal/TerminalDrawer.tsx": "z-40 — a docked drawer, also beneath the content ceiling. Same reason.",
+    "ui/DegradedChip.tsx": "z-40 — a click-catcher scrim that must sit exactly one step under its OWN sibling menu (`absolute right-0 z-50`, same component). The relationship is local, so a global rung would be the wrong vocabulary for it.",
+    "ui/FeedbackThumbs.tsx": "z-40 — same shape: a scrim under its own `absolute` popover.",
+    "ui/content/ContentSurface.tsx": "z-40 — same shape: a scrim under its own `absolute` export menu."
+  },
+  "_negativeRungsExcluded": "The scan now requires a POSITIVE rung. It previously counted `-z-10` — `ui/widget/WidgetFrame` and `ui/widget/ReactWidgetFrame` each draw their expanded-mode backdrop with `fixed inset-0 -z-10`, matching on the `z-10` inside it. A negative z-index puts an element BEHIND its stacking context and so takes part in no layer contest; counting it inflated the census by two and implied a migration that would have been meaningless.",
+  "_nextBlindSpot": "🪤 A THIRD SPELLING THIS CENSUS STILL CANNOT SEE, recorded rather than fixed. The scan requires `fixed` AND a standard-scale z in ONE class literal, so a hand-rolled menu positioned `absolute` inside a `relative` trigger is invisible to it — and `ui/DegradedChip`, `ui/FeedbackThumbs` and `ui/content/ContentSurface` each hold one at `absolute … z-50`, the same below-dialogs rung FileTree's menu was just lifted off. Whether those three are LIVE defects turns on whether any can be open while a dialog is up, a reachability question this rail cannot answer and nobody has measured. Deliberately not folded in here: raising a menu without raising its paired scrim in the same change is how a scrim ends up painted over its own menu."
 }
