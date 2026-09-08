@@ -68,7 +68,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} loading={saving}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )
@@ -198,7 +198,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
           <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
             placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
+            <Button size="sm" onClick={save} loading={busy} loadingLabel="Saving…" disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> Save notes</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
             {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
           </div>
@@ -241,7 +241,7 @@ function RoutingStatusView({ agentName }: { agentName: string }) {
           <span className="inline-flex items-center gap-1.5 text-on-surface-var">
             <VolumeX size={14} /> Muted — the auto-router stopped suggesting this agent.
           </span>
-          <Button size="sm" onClick={unmute} disabled={busy}>{busy ? 'Unmuting…' : 'Unmute'}</Button>
+          <Button size="sm" onClick={unmute} loading={busy}>Unmute</Button>
           {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
         </div>
       ) : (
@@ -317,7 +317,7 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
       <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Model</div>
       <div className="flex items-center gap-s">
         <div className="min-w-0 flex-1"><Combobox options={opts} value={model} onChange={setModel} placeholder="Auto — use chat binding" emptyText="No active chat models" /></div>
-        {dirty && <Button size="sm" onClick={save} disabled={saving}><Check size={14} /> {saving ? 'Saving…' : 'Save'}</Button>}
+        {dirty && <Button size="sm" onClick={save} loading={saving}><Check size={14} /> Save</Button>}
       </div>
       {err && <FieldError>{err}</FieldError>}
     </div>

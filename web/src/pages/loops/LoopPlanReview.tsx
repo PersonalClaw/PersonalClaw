@@ -412,7 +412,10 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
             <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
           </Button>
           {onLaunch ? (
-            <Button onClick={launch} disabled={launching}><Play size={16} /> {launching ? 'Launching…' : 'Launch'}</Button>
+            // `launching` is owned by this button — nothing else reads it — and the label ternary was
+            // a hand-rolled `loadingLabel`. The verb is kept rather than faded: launching a loop is
+            // the last confirmation in a multi-step review, so "still going" has to stay legible.
+            <Button onClick={launch} loading={launching} loadingLabel="Launching…"><Play size={16} /> Launch</Button>
           ) : (
             <Button size="sm" onClick={() => setStep((s) => s + 1)}>
               {onOverview ? 'Capabilities'

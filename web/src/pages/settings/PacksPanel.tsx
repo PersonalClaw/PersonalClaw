@@ -141,7 +141,7 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
     <Section
       title="Suggested for your projects"
       hint="Matched by file shape only — no model reads your code. A suggestion never installs anything, and declining one is remembered for that project."
-      right={<Button variant="ghost" size="sm" disabled={busy} onClick={scan}>{busy ? 'Scanning…' : 'Suggest packs'}</Button>}
+      right={<Button variant="ghost" size="sm" loading={busy} loadingLabel="Scanning…" onClick={scan}>Suggest packs</Button>}
     >
       {error && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-warn">Couldn't scan for suggestions: {error}</div>
@@ -398,8 +398,8 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
           {pack.setup_pending && (
             <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>
           )}
-          <Button variant="ghost" size="sm" disabled={busy} onClick={checkUpdate}>
-            {busy ? 'Checking…' : 'Check for update'}
+          <Button variant="ghost" size="sm" loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
+            Check for update
           </Button>
         </div>
       </Row>

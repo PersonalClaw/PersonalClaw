@@ -160,7 +160,7 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
             secretAlreadySet={secretSet.includes(k)}
             onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+            <Button size="sm" onClick={save} loading={saving}>Save</Button>
             <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setConfig(editableConfig(inst)) }}>Cancel</Button>
           </div>
         </div>
@@ -200,8 +200,8 @@ function AddInstanceForm({ ext, schema, onDone }: {
         </div>
       )}
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving || !name.trim()}
-          disabledReason={!name.trim() ? 'Enter a name first' : undefined}>{saving ? 'Creating…' : 'Create'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} disabled={saving || !name.trim()}
+          disabledReason={!name.trim() ? 'Enter a name first' : undefined}>Create</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
