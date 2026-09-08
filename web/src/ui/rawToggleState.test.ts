@@ -42,23 +42,47 @@ import { join } from 'node:path'
 // `SquareIconButton` — the census counts call sites, not behaviour (cycle 130's lesson) — and the
 // remaining six are the name-flipping exceptions plus `ModelBackends`' show/hide pair.
 
-const PAGES = join(process.cwd(), 'src', 'pages')
-const read = (rel: string) => readFileSync(join(PAGES, rel), 'utf8')
+// 🪤 THIS CENSUS USED TO WALK `src/pages` ONLY, and that scope was wrong about its own subject.
+// A hand-rolled disclosure is a hand-rolled disclosure wherever it lives, and `src/ui` is full of
+// them — so extracting one OUT of `pages/` removed it from the census entirely and the ceiling fell
+// for a reason that was not a fix. That is exactly what happened here: `ModelsPanel` and
+// `SearchPanel`'s accordion shells became `ui/DisclosureCard`, and two rows would have gone quiet.
+//
+// Re-scoped to `src/`. Measured across both scopes at the moment of the move:
+//
+//     src/pages   population=54  silent=13     ← what the rail could see
+//     src         population=67  silent=20     ← what there actually is
+//
+// The ceiling therefore RISES from 16 to 20, and that is not a regression: the population grew
+// because the SCOPE grew, not because new silent toggles landed. The 7 newly-visible silent toggles
+// live in six files and are **BUGS, NOT EXEMPTIONS** — a worklist, recorded so the next pass does not
+// have to re-derive it:
+//
+//     ui/Composer.tsx · ui/DegradedChip.tsx · ui/NotificationBell.tsx
+//     ui/content/ContentSurface.tsx · ui/widget/ReactWidgetFrame.tsx · ui/widget/WidgetFrame.tsx
+//
+// Shrink-only from here in either half of the pair.
+const SRC = join(process.cwd(), 'src')
+const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
-/** [file, the flag its content is gated on, an anchor unique to that button] */
+/** [file (relative to `src/`), the flag its content is gated on, an anchor unique to that button] */
 const DISCLOSURES: [string, string, string][] = [
   // The chat turn-context strip is the `ContextLedger`, extracted out of `ChatPage.tsx` (LV-2) so
   // its one-action reach could be mounted and proved; the census follows the code, not the address.
-  ['chat/ContextLedger.tsx', 'open', 'aria-expanded={open}\n        data-type="caption"\n        className="flex items-center gap-1.5 rounded-pill'],
-  ['artifacts/ArtifactViewer.tsx', 'metaOpen', 'setMetaOpen((v) => !v)} aria-expanded={metaOpen}'],
-  ['loops/CockpitPromptBar.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-s text-left min-w-0"'],
-  ['loops/LoopCockpitPage.tsx', 'promptOpen', 'setPromptOpen(!promptOpen)} aria-expanded={promptOpen}'],
-  ['loops/LoopCockpitPage.tsx', 'open', 'aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left"'],
-  ['settings/AuditPanel.tsx', 'open', 'aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left'],
-  ['settings/MemoryPanel.tsx', 'open', 'aria-expanded={open} className="w-full text-left"'],
-  ['settings/ModelsPanel.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left'],
-  ['settings/SearchPanel.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left'],
-  ['tools/ToolOutput.tsx', 'open', 'aria-expanded={open} className="inline-flex items-center gap-1 text-on-surface-var'],
+  ['pages/chat/ContextLedger.tsx', 'open', 'aria-expanded={open}\n        data-type="caption"\n        className="flex items-center gap-1.5 rounded-pill'],
+  ['pages/artifacts/ArtifactViewer.tsx', 'metaOpen', 'setMetaOpen((v) => !v)} aria-expanded={metaOpen}'],
+  ['pages/loops/CockpitPromptBar.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-s text-left min-w-0"'],
+  ['pages/loops/LoopCockpitPage.tsx', 'promptOpen', 'setPromptOpen(!promptOpen)} aria-expanded={promptOpen}'],
+  ['pages/loops/LoopCockpitPage.tsx', 'open', 'aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left"'],
+  ['pages/settings/AuditPanel.tsx', 'open', 'aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left'],
+  ['pages/settings/MemoryPanel.tsx', 'open', 'aria-expanded={open} className="w-full text-left"'],
+  // 🔑 TWO ROWS BECAME ONE. `ModelsPanel` and `SearchPanel` held byte-identical accordion shells;
+  // both are now `ui/DisclosureCard`, so there is one disclosure button to police instead of two
+  // copies that had to be fixed twice (they were — the same clipped-focus-ring fix, applied at both
+  // sites in one PR). `aria-controls` is part of the anchor because the extraction added it: the two
+  // originals announced that they expanded WITHOUT naming what they expanded.
+  ['ui/DisclosureCard.tsx', 'open', 'aria-expanded={open} aria-controls={bodyId}\n        className="flex w-full items-center gap-3 px-4 py-3 text-left'],
+  ['pages/tools/ToolOutput.tsx', 'open', 'aria-expanded={open} className="inline-flex items-center gap-1 text-on-surface-var'],
 ]
 
 describe('a raw disclosure button announces its state', () => {
@@ -77,11 +101,11 @@ describe('a raw disclosure button announces its state', () => {
 
 describe('a mode toggle gets pressed — unless its name already says so', () => {
   it('autoscroll is pressed, because its title names the state and the rest is a tint', () => {
-    expect(read('settings/DiagnosticsPanel.tsx')).toContain('aria-pressed={autoscroll}')
+    expect(read('pages/settings/DiagnosticsPanel.tsx')).toContain('aria-pressed={autoscroll}')
   })
 
   it('pause stays silent, because its title names the next action', () => {
-    const src = read('settings/DiagnosticsPanel.tsx')
+    const src = read('pages/settings/DiagnosticsPanel.tsx')
     const at = src.indexOf('setPaused((v) => !v)')
     expect(at).toBeGreaterThan(-1)
     expect(src.slice(at, at + 200), 'a name that flips needs no second channel').not.toMatch(/aria-pressed|aria-expanded/)
@@ -89,7 +113,7 @@ describe('a mode toggle gets pressed — unless its name already says so', () =>
   })
 
   it("PromptDetail's raw/rendered switch stays silent for the same reason", () => {
-    const src = read('prompts/PromptDetail.tsx')
+    const src = read('pages/prompts/PromptDetail.tsx')
     const at = src.indexOf('setRaw((r) => !r)')
     expect(at).toBeGreaterThan(-1)
     expect(src.slice(at, at + 260)).not.toMatch(/aria-pressed|aria-expanded/)
@@ -98,9 +122,16 @@ describe('a mode toggle gets pressed — unless its name already says so', () =>
 })
 
 describe('the census ceiling falls', () => {
-  it('48 toggles, at most 16 silent', () => {
-    // 🪤 The count is over CALL SITES, so ten of the sixteen are primitive-backed and already announce
-    // (cycle 130's lesson). The ceiling exists to stop a NEW silent toggle landing, not to claim zero.
+  it('67 toggles across src, at most 20 silent', () => {
+    // 🪤 The count is over CALL SITES, so many of the silent ones are primitive-backed and already
+    // announce through `HeaderControl`/`FilterChip`/`IconButton`/`SquareIconButton` (cycle 130's
+    // lesson). The ceiling exists to stop a NEW silent toggle landing, not to claim zero.
+    //
+    // 🪤 AND THE FLOOR IS DELIBERATELY WELL BELOW THE MEASUREMENT (60 against 67). A `>=` floor
+    // detects a REMOVAL and never an ADDITION, so its only job here is anti-vacuity — proving the
+    // walk still finds the family rather than silently matching nothing after a regex or layout
+    // change. Pinning it AT the measurement would red on the next honest extraction, which is what
+    // this very PR does to two of the rows.
     const walk = (d: string): string[] =>
       readdirSync(d).flatMap((n) => {
         const p = join(d, n)
@@ -108,12 +139,12 @@ describe('the census ceiling falls', () => {
         return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
       })
     const TOGGLE = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/g
-    const windows = walk(PAGES).flatMap((abs) => {
+    const windows = walk(SRC).flatMap((abs) => {
       const src = readFileSync(abs, 'utf8')
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 340), m.index! + 380))
     })
-    expect(windows.length, 'the population must still be found').toBeGreaterThanOrEqual(48)
+    expect(windows.length, 'the population must still be found').toBeGreaterThanOrEqual(60)
     const silent = windows.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
-    expect(silent.length, 'was 34 after #1201; may only fall').toBeLessThanOrEqual(16)
+    expect(silent.length, 'measured 20 across src at the DisclosureCard extraction; may only fall').toBeLessThanOrEqual(20)
   })
 })

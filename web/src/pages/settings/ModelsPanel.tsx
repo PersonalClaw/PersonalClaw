@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import {
-  ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
+  Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
   Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
   Trash2, Gavel, type LucideIcon,
@@ -23,8 +23,9 @@ import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
-import { reportingWrite } from '../../app/reportingWrite'
+import { DisclosureCard } from '../../ui/DisclosureCard'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { reportingWrite } from '../../app/reportingWrite'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -442,7 +443,8 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
   useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]
   judgeRec?: JudgeBenchRecommendation; onChanged: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  // No `open` flag here: `DisclosureCard` owns the disclosure state, which is the only thing this
+  // component ever used it for.
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
@@ -556,207 +558,185 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
   }
 
   return (
-    <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
-      {/* `focus-visible:-outline-offset-2`: this header fills the `overflow-hidden rounded-lg` card
-          above, so an outward ring is clipped on ALL FOUR sides — 4px lost per side, the ring's whole
-          reach, i.e. no visible focus indicator (WCAG 2.4.7).
-          🪤 This card + header is BYTE-IDENTICAL to `SearchPanel`'s, which had the same defect and
-          the same fix. Two copies of a collapsible card is the abstraction this pair is asking for;
-          extracting it is its own change, and is recorded rather than smuggled into an a11y fix. */}
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high focus-visible:-outline-offset-2">
-        <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
-        <span className="grid size-7 shrink-0 place-items-center rounded-md"
-          style={activeModels.length > 0
-            ? accentChip
-            : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-          <meta.icon size={14} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div data-type="label-s" className="text-on-surface" style={fvs(500)}>{meta.label}</div>
-          <div data-type="caption" className="mt-0.5 text-on-surface-low">
-            {activeModels.length > 0
-              ? meta.chain && activeModels.length > 1
-                ? `chain of ${activeModels.length}`
-                : `${activeModels.length} active`
-              : meta.fallback
-                ? <span className="italic">uses your {meta.fallback} chain</span>
-                : <span className="italic">none configured</span>}
-          </div>
-        </div>
-        {capable.length > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">{capable.length} available</span>}
-      </button>
+    <DisclosureCard icon={meta.icon} label={meta.label} active={activeModels.length > 0} count={capable.length}
+      subtitle={activeModels.length > 0
+        ? meta.chain && activeModels.length > 1
+          ? `chain of ${activeModels.length}`
+          : `${activeModels.length} active`
+        : meta.fallback
+          ? <span className="italic">uses your {meta.fallback} chain</span>
+          : <span className="italic">none configured</span>}>
+      {/* BODY ONLY. The card shell — wrapper, disclosure header, chevron, accent icon chip,
+          label/subtitle stack, count pill, bordered body — was byte-identical to `SearchPanel`'s and
+          now lives once in `ui/DisclosureCard`, along with the clipped-focus-ring fix both copies
+          needed and the `aria-controls` neither of them had. */}
+      <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
+      <div data-type="caption" className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1"
+        style={meta.chain ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+        <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+        {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
+      </div>
 
-      {open && (
-        <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
-          <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
-          <div data-type="caption" className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1"
-            style={meta.chain ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-            <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-            {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
-          </div>
-
-          {/* ES-4's "one user action": the judge benchmark measured this axis and named the
-              cheapest ADEQUATE tier, so binding it is a click rather than a hand-copy from the
-              Learning page's table. It sets the recommended ref as the DEFAULT — position 0 of a
-              chain, or the single selection — because "rebind the judge" means change what
-              resolves, not append a fallback that never runs.
-              The harness still only recommends: no code binds this without the click. */}
-          {judgeRec && judgeRec.model_ref && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-2.5 py-2">
-              <Gavel size={13} className="shrink-0 text-on-surface-low" />
-              <span data-type="caption" className="text-on-surface-low">
-                Judge benchmark: cheapest adequate tier is <span className="text-on-surface">{judgeRec.tier}</span>
-                {' '}at {judgeRec.samples} sample{judgeRec.samples === 1 ? '' : 's'} — <span className="text-on-surface">{judgeRec.model_ref}</span>
-              </span>
-              {activeModels[0] === judgeRec.model_ref ? (
-                <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low">
-                  <Check size={12} /> already the default
-                </span>
-              ) : (
-                <Button size="sm" variant="tonal" disabled={saving} disabledReason={BUSY_REASON}
-                  onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
-                  Bind as default
-                </Button>
-              )}
-            </div>
-          )}
-
-          {/* The ordered chain editor: position 0 is the default; reorder with the
-              arrow buttons (keyboard-accessible), remove with ×. Each entry carries
-              its provider's breaker-health dot. */}
-          {meta.chain && activeModels.length > 0 && (
-            <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
-              {activeModels.map((ref, i) => {
-                const sep = ref.indexOf(':')
-                const provider = sep >= 0 ? ref.slice(0, sep) : ''
-                const id = sep >= 0 ? ref.slice(sep + 1) : ref
-                return (
-                  <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
-                    <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
-                      {i === 0 ? 'default' : `fallback ${i}`}
-                    </span>
-                    <HealthDot provider={provider} health={health} />
-                    <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{id}</span>
-                    {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
-                    {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
-                        last row) is genuine unavailability and keeps `disabled` + the reason that
-                        names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
-                        it into `disabled` made all three arrows announce "unavailable" for the
-                        length of a request they had just started. */}
-                    <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
-                      disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
-                      disabledReason={i === 0 ? 'Already the default' : undefined} />
-                    <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
-                      disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
-                      disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
-                    <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
-                      loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {useCase === 'embedding' && reindex && (
-            <div data-type="caption" className="rounded-md px-3 py-2"
-              style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
-              {/* "Re-index not started" is only true when the POST itself failed — that path sets
-                  `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
-                  speaks for itself rather than carrying a prefix that contradicts it. */}
-              {reindex.status === 'error' ? (
-                <span style={{ color: 'var(--color-danger)' }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
-              ) : reindex.status === 'done' ? (
-                <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>
-                  {/* 🔴 A bar must never invent a fill it cannot compute. While a phase has no
-                      total yet (`total === 0`) this parked the bar at a hardcoded 40% — a
-                      fabricated claim that the job is nearly half done, and one that then
-                      JUMPED backwards the moment a real total arrived. Determinate only when
-                      there is a denominator; otherwise the indeterminate wave, which is the
-                      one primitive that already expresses "running, extent unknown" (Meter
-                      deliberately has no indeterminate mode). The wave is aria-hidden on
-                      purpose — the sentence above it already reports the phase, so a second
-                      valueless progressbar would only repeat it. */}
-                  {reindex.total > 0 ? (
-                    <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
-                      <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` }} />
-                    </div>
-                  ) : (
-                    <WavyProgress width={140} />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {capable.length === 0 ? (
-            <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
-              {meta.fallback ? (
-                <>Already uses your <span className="text-on-surface not-italic fw-500">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
-              ) : (
-                <>No models with {meta.label} capability. Add a backend with compatible models first.</>
-              )}
-            </div>
+      {/* ES-4's "one user action": the judge benchmark measured this axis and named the
+          cheapest ADEQUATE tier, so binding it is a click rather than a hand-copy from the
+          Learning page's table. It sets the recommended ref as the DEFAULT — position 0 of a
+          chain, or the single selection — because "rebind the judge" means change what
+          resolves, not append a fallback that never runs.
+          The harness still only recommends: no code binds this without the click. */}
+      {judgeRec && judgeRec.model_ref && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-2.5 py-2">
+          <Gavel size={13} className="shrink-0 text-on-surface-low" />
+          <span data-type="caption" className="text-on-surface-low">
+            Judge benchmark: cheapest adequate tier is <span className="text-on-surface">{judgeRec.tier}</span>
+            {' '}at {judgeRec.samples} sample{judgeRec.samples === 1 ? '' : 's'} — <span className="text-on-surface">{judgeRec.model_ref}</span>
+          </span>
+          {activeModels[0] === judgeRec.model_ref ? (
+            <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low">
+              <Check size={12} /> already the default
+            </span>
           ) : (
-            <>
-              {capable.length > 8 && (
-                <>
-                  <SearchField value={query} onChange={setQuery} size="md"
-                    placeholder={`Search ${capable.length} models — name or provider`}
-                    ariaLabel="Search models" />
-                  {/* `filtered` is `matched` re-ordered (active models floated to the top), so it is
-                      the array the body maps and the one the count must come from. */}
-                  <ResultAnnouncement count={filtered.length} noun="models" active={!!query.trim()} />
-                </>
-              )}
-              {filtered.length === 0 ? (
-                <div data-type="body-s" className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
-                  No models match “{query}”.
-                </div>
-              ) : (
-                <div className="-m-1 flex max-h-[300px] flex-col gap-0.5 overflow-y-auto p-1" style={{ opacity: saving ? 0.6 : 1 }}>
-                  {filtered.map((m) => {
-                const ref = `${m.provider}:${m.id}`
-                const on = activeModels.includes(ref)
-                // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
-                // downloaded won't actually run — surface it so "configured" never
-                // silently means "inert" (e.g. after deleting a bound model's weights).
-                const notDownloaded = m.downloaded === false
-                return (
-                  // A row, not a bare button: the Repair affordance is itself a button and
-                  // can't nest inside one. The toggle lives on the flex-1 inner button; the
-                  // chips + Repair sit beside it as siblings.
-                  <div key={ref}
-                    className="flex items-center gap-2.5 rounded-md pr-3 transition-colors hover:bg-surface-high"
-                    style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                    <button type="button" onClick={() => toggle(ref)} disabled={saving}
-                      className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
-                      <span className="grid size-4 shrink-0 place-items-center rounded border"
-                        style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                        {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                      </span>
-                      <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
-                    </button>
-                    <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
-                    {on && notDownloaded && (
-                      <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
-                        style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
-                        title="Bound but not downloaded — download it in Providers to activate.">
-                        <Download size={9} /> not downloaded
-                      </span>
-                    )}
-                    <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
-                  </div>
-                )
-                  })}
-                </div>
-              )}
-            </>
+            <Button size="sm" variant="tonal" disabled={saving} disabledReason={BUSY_REASON}
+              onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
+              Bind as default
+            </Button>
           )}
         </div>
       )}
-    </div>
+
+      {/* The ordered chain editor: position 0 is the default; reorder with the
+          arrow buttons (keyboard-accessible), remove with ×. Each entry carries
+          its provider's breaker-health dot. */}
+      {meta.chain && activeModels.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
+          {activeModels.map((ref, i) => {
+            const sep = ref.indexOf(':')
+            const provider = sep >= 0 ? ref.slice(0, sep) : ''
+            const id = sep >= 0 ? ref.slice(sep + 1) : ref
+            return (
+              <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
+                <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
+                  {i === 0 ? 'default' : `fallback ${i}`}
+                </span>
+                <HealthDot provider={provider} health={health} />
+                <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{id}</span>
+                {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
+                {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
+                    last row) is genuine unavailability and keeps `disabled` + the reason that
+                    names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
+                    it into `disabled` made all three arrows announce "unavailable" for the
+                    length of a request they had just started. */}
+                <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
+                  disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
+                  disabledReason={i === 0 ? 'Already the default' : undefined} />
+                <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
+                  disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
+                  disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
+                <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
+                  loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {useCase === 'embedding' && reindex && (
+        <div data-type="caption" className="rounded-md px-3 py-2"
+          style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
+          {/* "Re-index not started" is only true when the POST itself failed — that path sets
+              `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
+              speaks for itself rather than carrying a prefix that contradicts it. */}
+          {reindex.status === 'error' ? (
+            <span style={{ color: 'var(--color-danger)' }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
+          ) : reindex.status === 'done' ? (
+            <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>
+              {/* 🔴 A bar must never invent a fill it cannot compute. While a phase has no
+                  total yet (`total === 0`) this parked the bar at a hardcoded 40% — a
+                  fabricated claim that the job is nearly half done, and one that then
+                  JUMPED backwards the moment a real total arrived. Determinate only when
+                  there is a denominator; otherwise the indeterminate wave, which is the
+                  one primitive that already expresses "running, extent unknown" (Meter
+                  deliberately has no indeterminate mode). The wave is aria-hidden on
+                  purpose — the sentence above it already reports the phase, so a second
+                  valueless progressbar would only repeat it. */}
+              {reindex.total > 0 ? (
+                <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
+                  <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` }} />
+                </div>
+              ) : (
+                <WavyProgress width={140} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {capable.length === 0 ? (
+        <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
+          {meta.fallback ? (
+            <>Already uses your <span className="text-on-surface not-italic fw-500">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
+          ) : (
+            <>No models with {meta.label} capability. Add a backend with compatible models first.</>
+          )}
+        </div>
+      ) : (
+        <>
+          {capable.length > 8 && (
+            <>
+              <SearchField value={query} onChange={setQuery} size="md"
+                placeholder={`Search ${capable.length} models — name or provider`}
+                ariaLabel="Search models" />
+              {/* `filtered` is `matched` re-ordered (active models floated to the top), so it is
+                  the array the body maps and the one the count must come from. */}
+              <ResultAnnouncement count={filtered.length} noun="models" active={!!query.trim()} />
+            </>
+          )}
+          {filtered.length === 0 ? (
+            <div data-type="body-s" className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
+              No models match “{query}”.
+            </div>
+          ) : (
+            <div className="-m-1 flex max-h-[300px] flex-col gap-0.5 overflow-y-auto p-1" style={{ opacity: saving ? 0.6 : 1 }}>
+              {filtered.map((m) => {
+            const ref = `${m.provider}:${m.id}`
+            const on = activeModels.includes(ref)
+            // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
+            // downloaded won't actually run — surface it so "configured" never
+            // silently means "inert" (e.g. after deleting a bound model's weights).
+            const notDownloaded = m.downloaded === false
+            return (
+              // A row, not a bare button: the Repair affordance is itself a button and
+              // can't nest inside one. The toggle lives on the flex-1 inner button; the
+              // chips + Repair sit beside it as siblings.
+              <div key={ref}
+                className="flex items-center gap-2.5 rounded-md pr-3 transition-colors hover:bg-surface-high"
+                style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
+                <button type="button" onClick={() => toggle(ref)} disabled={saving}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
+                  <span className="grid size-4 shrink-0 place-items-center rounded border"
+                    style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                    {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                  </span>
+                  <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
+                </button>
+                <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
+                {on && notDownloaded && (
+                  <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+                    style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+                    title="Bound but not downloaded — download it in Providers to activate.">
+                    <Download size={9} /> not downloaded
+                  </span>
+                )}
+                <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
+              </div>
+            )
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </DisclosureCard>
   )
 }
