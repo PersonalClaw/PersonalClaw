@@ -16,7 +16,7 @@
     "postinstall": "sh scripts/install_git_hooks.sh"
   },
   "devDependencies": {
-    "playwright": "^1.62.1"
+    "playwright": "^1.63.0"
   },
   "overrides": {
     "react": "^19.2.8",
