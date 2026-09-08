@@ -196,7 +196,11 @@ function scanStandardScaleFixed(): { byFile: Record<string, number>; total: numb
     let n = 0
     for (const m of text.matchAll(FIXED_STANDARD_Z)) {
       const lit = m[2]
-      if (/\bfixed\b/.test(lit) && /\bz-\d+\b/.test(lit)) n++
+      // 🪤 A POSITIVE RUNG ONLY. `\bz-\d+\b` also matched the `z-10` INSIDE `-z-10`, and both widget
+      // frames draw their expanded-mode backdrop with `fixed inset-0 -z-10`. A negative z-index puts
+      // an element behind its own stacking context, so it takes part in no layer contest at all —
+      // counting it inflated this census by two and implied a migration that would mean nothing.
+      if (/\bfixed\b/.test(lit) && /(?:^|[\s'"`])z-\d+\b/.test(lit)) n++
     }
     if (n) { byFile[rel] = n; total += n }
   }
@@ -225,6 +229,81 @@ describe('the standard-scale spelling is ratcheted too', () => {
     expect(z.menu, 'a menu must out-paint a dialog').toBeGreaterThan(z.modal)
   })
 
+  it("the tree's THIRD control-anchored menu rides --z-menu too", () => {
+    // 🪤 THE FAMILY WAS CALLED "LATENT, NOT LIVE", and that held for the two primitives above —
+    // neither is currently rendered inside a `<Modal>`. It did not hold for the tree.
+    // `pages/files/browse/FileTree.tsx` hand-rolls a third one: a portaled, cursor-positioned
+    // `role="menu"` with menu-cursor keyboard handling, which rode a bare `z-50` — the CONTENT
+    // ceiling, below every dialog. It was invisible to this rail because the rail could only see the
+    // arbitrary `z-[N]` spelling, so a census scoped to one spelling certified a fix as complete.
+    const tree = readFileSync(join(SRC, 'pages/files/browse/FileTree.tsx'), 'utf8')
+    expect(tree, 'the file-tree context menu must ride the menu rung')
+      .toMatch(/fixed z-\[var\(--z-menu\)\]/)
+    expect(tree, 'and must not go back to a bare z-50 while fixed').not.toMatch(/fixed z-50\b/)
+  })
+
+  it('an overlay that DECLARES role=dialog rides --z-modal, not the content ceiling', () => {
+    // 🔴 The second value fix. `ui/NavRail`'s mobile drawer declares `role="dialog"` and draws its own
+    // scrim, which is what tokens.css assigns to --z-modal ("dialogs, sheets, blocking takeovers"). At
+    // a bare z-50 it rode the CONTENT ceiling, tying with `ui/SidePanel` and `chat/ChatFilePanel`
+    // (both `fixed inset-0 z-50`). Three overlays on one rung do not stack by design — they stack by
+    // DOM/portal order, so which covered which was an accident of mount sequence.
+    const rail = readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8')
+    expect(rail, 'the drawer must ride the modal rung').toMatch(/fixed left-0 top-0 z-\[var\(--z-modal\)\]/)
+    // And its scrim is expressed AGAINST that rung rather than as a bare neighbouring number: a
+    // literal 40 was chosen relative to the drawer's old 50, so moving the drawer would have left the
+    // scrim two rungs adrift and silently painted it over nothing.
+    expect(rail, "the scrim must track the drawer's rung, not a hardcoded neighbour")
+      .toMatch(/fixed inset-0 z-\[calc\(var\(--z-modal\)-1\)\]/)
+  })
+
+  it('the full-screen content takeovers ride --z-content by name', () => {
+    // Value-identical (--z-content IS 50) — the point is that the RUNG is now named, so a future
+    // change to the scale moves them with it instead of leaving them behind on a literal.
+    const named: Array<[string, RegExp]> = [
+      ['pages/chat/ChatFilePanel.tsx', /fixed inset-0 z-\[var\(--z-content\)\] flex flex-col bg-surface/],
+      ['ui/SidePanel.tsx', /fixed inset-0 z-\[var\(--z-content\)\] flex flex-col bg-surface/],
+      ['pages/knowledge/KnowledgeDetail.tsx', /fixed inset-0 z-\[var\(--z-content\)\] flex flex-col/],
+      ['ui/widget/WidgetFrame.tsx', /fixed inset-4 z-\[var\(--z-content\)\]/],
+      ['ui/widget/ReactWidgetFrame.tsx', /fixed inset-4 z-\[var\(--z-content\)\]/],
+    ]
+    for (const [rel, re] of named) {
+      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must name the content rung`).toMatch(re)
+    }
+  })
+
+  it('every remaining standard-scale entry is exempt for a reason that still HOLDS', () => {
+    // 🔑 The five left are NOT pending migrations, and the baseline says why per file. An exemption
+    // nobody verifies is a silent gap with a comment attached, so each reason is checked here: three
+    // are scrims that must sit one step under their OWN sibling menu (a LOCAL relationship, which a
+    // global rung would be the wrong vocabulary for), and two are positioned beneath the content
+    // ceiling, where no token exists because "ordinary content, ordered among itself" is not a rung.
+    const reasons: Record<string, RegExp> = baseline.standardScaleFixedFiles.length
+      ? {
+          // Each scrim's proof: it has a SIBLING absolute menu in the same file, which is what makes
+          // its z a local ordering rather than a layer claim.
+          'ui/DegradedChip.tsx': /absolute right-0 z-50/,
+          'ui/FeedbackThumbs.tsx': /absolute right-0 top-7 z-50/,
+          'ui/content/ContentSurface.tsx': /absolute right-0 z-50/,
+          // Each sub-ceiling element's proof: it sits BELOW --z-content numerically.
+          'pages/tasks/TasksListPage.tsx': /fixed inset-x-0 bottom-6 z-30/,
+          'pages/terminal/TerminalDrawer.tsx': /fixed inset-x-0 bottom-0 z-40/,
+        }
+      : {}
+    // The baseline list and the checked reasons must be the SAME set — a file baselined without a
+    // reason is the shape this whole block exists to prevent.
+    expect(Object.keys(reasons).sort(), 'every baselined file needs a checked reason, and vice versa')
+      .toEqual([...baseline.standardScaleFixedFiles].sort())
+    for (const [rel, proof] of Object.entries(reasons)) {
+      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel}: its exemption reason must still hold`)
+        .toMatch(proof)
+    }
+    for (const rel of Object.keys(reasons)) {
+      expect(baseline._perFile[rel], `${rel}: the baseline must state the reason in words too`)
+        .toBeTruthy()
+    }
+  })
+
   it('no NEW file puts a fixed overlay on the standard scale', () => {
     const unlisted = Object.keys(byFile).sort().filter((f) => !baseline.standardScaleFixedFiles.includes(f))
     expect(
@@ -244,6 +323,11 @@ describe('the standard-scale spelling is ratcheted too', () => {
   })
 
   it('the scanner finds the population it is filtering (not vacuously green)', () => {
-    expect(total, 'the class-literal scan must still find the baselined overlays').toBeGreaterThanOrEqual(10)
+    // 🪤 THE FLOOR HAD TO COME DOWN WITH THE MIGRATION, and getting that wrong is a trap this repo has
+    // already recorded twice: a `>=` floor detects a REMOVAL and never an ADDITION, so its only job is
+    // anti-vacuity — proving the class-literal scan still finds this family rather than silently
+    // matching nothing after a regex change. Pinned at 10 it would have RED on the very migration it
+    // was written to encourage (15 → 5). Held at 3, well under the 5 that remain.
+    expect(total, 'the class-literal scan must still find the baselined overlays').toBeGreaterThanOrEqual(3)
   })
 })

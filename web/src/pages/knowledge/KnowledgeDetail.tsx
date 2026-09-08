@@ -1026,7 +1026,13 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <div ref={trapRef} className="fixed inset-0 z-50 flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
+    // `--z-content` IS 50: spelling migration, byte-identical computed value. This is focus-trapped
+    // and Escape-dismissable, which invites `--z-modal` — but it declares NO dialog role, and
+    // `chat/ChatFilePanel` records the repo's ruling on exactly that shape: page-level ad-hoc
+    // takeovers deliberately do not claim one (`primitiveAdoption` holds them at 0; `ui/Modal` is
+    // canonical). So the rule applied across this migration is DECLARED ROLE, not felt modality —
+    // `role="dialog"` earns the modal rung, a full-screen content takeover gets the content ceiling.
+    <div ref={trapRef} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
       <div className="flex items-center gap-s border-b border-outline-variant/40 px-l py-3">
         <span data-type="title-m" className="flex-1 truncate text-on-surface" style={fvs(500)}>{title}</span>
         <button type="button" onClick={onClose} aria-label="Close fullscreen"
