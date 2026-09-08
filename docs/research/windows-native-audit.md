@@ -9,7 +9,7 @@ Native Windows is rung 3. Rungs 1 and 2 already give Windows users a tested path
 
 - **Rung 1 — Docker Desktop.** Published multi-arch images run under Docker
   Desktop's own Linux VM. The user never touches a Linux shell. See
-  [platforms.md](../../guides/platforms.md).
+  [platforms.md](../guides/platforms.md).
 - **Rung 2 — WSL2.** PersonalClaw runs as an ordinary Linux install inside a real
   Linux kernel. Fully supported, with a per-release checklist.
 

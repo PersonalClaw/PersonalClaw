@@ -553,11 +553,8 @@ def test_the_model_is_never_shown_a_count(home, tmp_path):
     """The narrative cannot misquote a figure it was never given.
 
     Asserted on the facts payload rather than on the prose: the seeded group sizes are
-    absent from what the model reads, and the fenced marker is present, so the record
-    arrives as data rather than as instructions.
+    absent from what the model reads.
     """
-    from personalclaw.security import fence_untrusted
-
     vs = _memory(tmp_path)
     for i in range(7):
         _facet(vs, f"prefers style {i}")
@@ -568,7 +565,36 @@ def test_the_model_is_never_shown_a_count(home, tmp_path):
     assert "prefers style 0" in facts, "the record reached the model empty"
     assert "7" not in facts.replace("prefers style 7", "")
     assert str(report.facets.count) not in facts.replace("prefers style 7", "")
-    assert "untrusted_content" in fence_untrusted(facts, source="learning")
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_the_model_RECEIVES_is_fenced(home, tmp_path, monkeypatch):
+    """A facet's text is user prose from a turn, so it reaches the model as DATA.
+
+    Asserted on the prompt ``narrate_identity_report`` actually hands to
+    ``one_shot_completion``, not on a fence this test computed for itself. Calling
+    ``fence_untrusted`` here and checking its own output would assert a property of the
+    helper: it passes byte-identically when the production call site skips the fence
+    altogether, which is the one thing this test exists to catch. Measured — dropping the
+    fence from :func:`~personalclaw.learning_report.narrate_identity_report` reddens this
+    and nothing else in the file.
+    """
+    vs = _memory(tmp_path)
+    _facet(vs, "prefers terse replies")
+    calls = _patch_model(monkeypatch, "a sentence")
+
+    report = await LR.build_identity_report(now=NOW, vs=vs)
+
+    assert report.narrative_status == LR.NARRATIVE_WRITTEN
+    assert len(calls) == 1
+    prompt = calls[0]
+    assert "prefers terse replies" in prompt, "the record reached the model empty"
+    # The provenance attributes, not just the tag: a fence that cannot say WHERE the text
+    # came from is a fence the hygiene parser reads as an unattributed block.
+    assert "<untrusted_content" in prompt
+    assert "source=learning" in prompt
+    assert "source_type=learning_record" in prompt
+    assert "</untrusted_content>" in prompt, "an unclosed fence ends at the model's discretion"
 
 
 # ── 4. delivery: artifact first, then one attention item ───────────────────────────

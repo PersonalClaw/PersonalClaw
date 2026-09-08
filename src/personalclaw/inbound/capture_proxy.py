@@ -380,6 +380,24 @@ def _provider_upstream(name: str) -> tuple[str, str]:
 
 # ── Egress: the one place a socket is opened ──────────────────────────────────
 
+#: 3xx codes that carry a ``Location`` this module refuses to follow. Mirrors the set
+#: `net/client.py` re-evaluates, so the two egress paths recognise the same hop.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+class UpstreamRedirected(Exception):
+    """The upstream answered a redirect. Raised instead of following it.
+
+    Carries the hop so the route can name it in the refusal and the audit line — an
+    operator whose endpoint moved needs the new URL to fix their client record, and a
+    redirect toward a private or link-local address is exactly the thing worth logging.
+    """
+
+    def __init__(self, status: int, location: str) -> None:
+        super().__init__(f"upstream answered {status} to {location!r}; redirects are not followed")
+        self.status = status
+        self.location = location
+
 
 @dataclass
 class _UpstreamReply:
@@ -414,6 +432,17 @@ async def _forward(
     shares with `web/render.py`: ``decision.pinned_ips`` are resolved but this client
     dials by hostname, so a rebind between evaluate and connect is possible. Same
     trade-off, same layer, stated rather than implied.
+
+    **Redirects are NOT followed.** The guard evaluated ONE url; aiohttp's default
+    ``allow_redirects=True`` would open a second connection to a ``Location`` the
+    upstream chose and the guard never saw — including a private or link-local one —
+    which makes this module's own "a denied host is never dialed" claim false. So the
+    hop is refused rather than followed, and the 3xx is handed back as an upstream
+    error. ``net/client.py`` takes the other road for the same hazard (it re-evaluates
+    each hop under the same policy, and its comment names "the gap an
+    ``allow_redirects=True`` client leaves open") because a byte-capped fetch can
+    afford to re-enter its own loop; a streaming relay that has already written the
+    caller's first bytes cannot. Refusing is the fail-closed half of the same rule.
     """
     import aiohttp
 
@@ -422,7 +451,11 @@ async def _forward(
         total=None if stream else timeout_s, sock_connect=timeout_s, sock_read=timeout_s
     )
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(upstream.url, data=body, headers=headers) as resp:
+        async with session.post(
+            upstream.url, data=body, headers=headers, allow_redirects=False
+        ) as resp:
+            if resp.status in _REDIRECT_STATUSES and resp.headers.get("Location"):
+                raise UpstreamRedirected(resp.status, str(resp.headers["Location"]))
             out = _response_headers(resp.headers)
             reply = _UpstreamReply(status=resp.status, headers=out)
             if on_start is not None:
@@ -576,6 +609,25 @@ async def _handle(request: web.Request, dialect: str, route: str) -> web.StreamR
             timeout_s=float(policy.timeout_s),
             on_chunk=_chunk if stream else None,
             on_start=_start if stream else None,
+        )
+    except UpstreamRedirected as exc:
+        # Its own code, not the generic upstream_failed: an operator whose endpoint moved
+        # has to edit their client record, and "the host you allowed redirected elsewhere"
+        # is the only message that says so. `sent` is always None here — the redirect is
+        # detected before `on_start`, so nothing was streamed.
+        logger.warning("capture: refused to follow upstream redirect to %r", exc.location)
+        audit(CAPTURE_SURFACE, route=route, status=502, refused=str(exc), client_id=client_id)
+        return json_error(
+            "upstream_redirected",
+            status=502,
+            error_extra={
+                "reason": str(exc),
+                "location": exc.location,
+                "recovery_hints": [
+                    "Point the client record's upstream at the redirect target directly, "
+                    "then add that host to the egress allow-list so the guard can see it.",
+                ],
+            },
         )
     except Exception as exc:  # noqa: BLE001 — an upstream fault is a 502, not a crash
         logger.warning("capture: upstream call failed", exc_info=True)

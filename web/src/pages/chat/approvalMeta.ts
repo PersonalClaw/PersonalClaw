@@ -1,5 +1,5 @@
 /** Blast-radius DERIVATION for an approval prompt (Contract C2,
- *  `docs/roadmap/plans/ONBOARDING-UX.md`).
+ *  the plan (internal, not in this repo)).
  *
  *  This module DESCRIBES what a pending tool call can touch so the human weighing
  *  an approval can see it at a glance. It DECIDES nothing. Nothing gates on its

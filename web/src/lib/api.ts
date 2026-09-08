@@ -27,11 +27,17 @@ const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
 export class ApiError extends Error {
   status: number
   code: string
-  constructor(message: string, status: number, code = '') {
+  /** The envelope's structured `error.detail`, or `undefined`. Same reason `.code` is here: a
+   *  route that answers with more than a sentence had nowhere to put it, so the extra was
+   *  discarded one line before every caller. `unknown` on purpose — a caller that knows its own
+   *  route narrows it, and no other caller has to care. */
+  detail?: unknown
+  constructor(message: string, status: number, code = '', detail?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.detail = detail
   }
 }
 
@@ -39,8 +45,8 @@ export class ApiError extends Error {
  *  sentence and the code have to come out of the SAME read — hence one builder every thrower
  *  below calls, rather than `errText` here and a second parse somewhere else. */
 async function apiError(r: Response): Promise<ApiError> {
-  const { message, code } = await errEnvelope(r)
-  return new ApiError(message, r.status, code)
+  const { message, code, detail } = await errEnvelope(r)
+  return new ApiError(message, r.status, code, detail)
 }
 
 /** True when a rejection is this gateway's typed failure carrying exactly `code`.

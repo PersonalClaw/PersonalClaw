@@ -2,7 +2,7 @@
 
 Source-agnostic distillation of a 95-source competitive-research corpus, created 2026-07-13. Each topic file compresses everything the corpus taught about one domain into two sections: **Principles** (the durable truths, each backed by convergent evidence across independent systems) and **Mechanisms** (implementation-ready designs with concrete parameters, schemas, and thresholds).
 
-Provenance: distilled from 95 per-source research files (5 batches, 2026-07-12/13). The originals have been retired — all durable content lives here; all roadmap-actionable items have been folded into the 26 plans under `docs/roadmap/plans/`.
+Provenance: distilled from 95 per-source research files (5 batches, 2026-07-12/13). The originals have been retired — all durable content lives here; all roadmap-actionable items have been folded into the 26 plans under the internal plans.
 
 ## How to use this library
 

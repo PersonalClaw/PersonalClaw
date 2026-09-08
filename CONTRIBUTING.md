@@ -18,8 +18,8 @@ engineering bar is not lowered.
 - **The roadmap is maintainer-owned, with a written intake path** — not a closed
   door. To propose or reshape roadmap work: open an **issue** describing the
   problem → discuss in **[Discussions → Roadmap Input](https://github.com/PersonalClaw/PersonalClaw/discussions)**
-  → the maintainer files or updates a plan under `docs/roadmap/plans/`. Please
-  don't edit `docs/roadmap/` directly in a PR; the plan set is curated so the
+  → the maintainer files or updates a plan under the internal plans. Please
+  don't edit the owner's internal roadmap (not in this repo) directly in a PR; the plan set is curated so the
   execution order stays coherent.
 - **The newcomer ramp is the [apps repo](https://github.com/PersonalClaw/PersonalClawApps)**,
   not a softened core. First-party and community apps meet the SDK-contract bar
@@ -353,7 +353,7 @@ read-only token on a fork and cannot comment.
 - Frontend: `web/` (Vite + React SPA).
 - Reference docs: [docs/reference/](docs/reference/); user guides:
   [docs/guides/](docs/guides/); forward-looking plans:
-  [docs/roadmap/](docs/roadmap/roadmap.md) (the roadmap is maintained by the
+  the maintainer's roadmap, which is not in this repository (it is maintained by the
   project owner — open an issue to discuss it rather than editing it in a PR).
 
 ## License

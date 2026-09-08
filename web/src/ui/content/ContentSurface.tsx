@@ -294,7 +294,12 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
             {headerExtras}
             {exports.length > 0 && (
               <div className="relative">
-                <SquareIconButton icon={Download} label="Export" iconSize={13} onClick={() => setExportOpen((v) => !v)} />
+                {/* `ariaExpanded`, not `on`: this opens the export menu below rather than turning a
+                    setting on, and the primitive suppresses `aria-pressed` when it is given — a
+                    control that claims both states claims one of them wrongly. Its sibling
+                    "Toggle word wrap" is the opposite case and correctly uses `on={wrap}`. */}
+                <SquareIconButton icon={Download} label="Export" iconSize={13}
+                  ariaExpanded={exportOpen} onClick={() => setExportOpen((v) => !v)} />
                 {exportOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />

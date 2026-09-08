@@ -138,7 +138,17 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
         <TopBar
           keepCornerPadding
           left={<PageTitle>Triggers</PageTitle>}
-          right={<HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={onCreate} /></HeaderActions>}
+          right={
+            /* `() => onCreate()`, NOT `onCreate` — the blank path must pass NO preset id.
+               `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
+               is assignable to it, so tsc accepts the bare reference while React still hands the
+               handler its click event. That event landed in `presetId` and rode into the URL:
+               clicking this button produced
+               `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D`. The preset lookup is
+               tolerant, so no field was corrupted — the damage was to the URL this page's own
+               contract says is shareable and reload-survivable. */
+            <HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={() => onCreate()} /></HeaderActions>
+          }
         />
       }
       controls={(triggers === null || counts.all > 0)

@@ -207,7 +207,7 @@ re-invents a shape another touches:
   don't ship it — see Doctrine).
 - A backend/behavior change with no test, or a config field that skips the
   round-trip wiring.
-- Editing `docs/roadmap/` to reshape the roadmap in a PR (open an issue instead).
+- Editing the owner's internal roadmap (not in this repo) to reshape the roadmap in a PR (open an issue instead).
 - Unsigned commits (missing DCO), commits authored by an agent, or a force-push
   to `main`.
 - Reworded security/consent copy that wasn't the point of the change.

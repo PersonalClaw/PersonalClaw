@@ -88,6 +88,21 @@ describe('the panel only claims "stopped surfacing" where something stops', () =
     expect(screen.queryAllByText(/^(suppressed|retire proposed)$/)).toHaveLength(1)
   })
 
+  it('the panel HEADER does not promise a withholding only one kind gets', async () => {
+    // The pills above are pinned; the header hint was not. It is what a user reads first, and on an
+    // empty panel it is the ONLY thing said on the subject — so an unconditional "keeps being wrong
+    // stops surfacing" reproduced, in the copy, exactly the overclaim the pills were rewritten to
+    // avoid. Asserted on the empty render because that is the state where nothing else corrects it.
+    rows()
+    render(<FeedbackPanel />)
+    const hint = await waitFor(() => screen.getByText(/attributed to the source that produced it/))
+    expect(hint.textContent ?? '').toMatch(/asks to be reviewed/)
+    expect(
+      hint.textContent ?? '',
+      'unconditional "stops surfacing" holds for one of the six producer kinds',
+    ).not.toMatch(/keeps being wrong stops surfacing/)
+  })
+
   it('a healthy producer claims neither', async () => {
     rows({ ...UNENFORCED, accuracy: 0.95, proposal_only: undefined, suppressed: false })
     render(<FeedbackPanel />)

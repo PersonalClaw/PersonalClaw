@@ -37,7 +37,15 @@ red is always a real regression):
    chronic — so validating that every ``:NNN`` points at a semantically-correct line is
    impossible and noisy. Only a stale PATH is a hard dead citation.
 
-3. ``stale_header`` — a plan under ``docs/roadmap/plans/`` whose ``**Status:**`` header
+3. ``stale_header`` — **DORMANT since the plans left this repository.** The check is scoped
+   to ``docs/roadmap/plans/``, and that tree is no longer published (it is internal planning
+   state, kept in the maintainer's workspace), so this kind can never fire against a real
+   file here. It is retained rather than deleted because its reproduction test seeds a
+   synthetic path under that prefix and still proves the checker works — so if plans ever
+   return to the repository the check engages immediately. Said plainly because a checker
+   that cannot fire, left undocumented, reads as coverage it does not provide.
+
+   A plan under ``docs/roadmap/plans/`` whose ``**Status:**`` header
    matches a stale shape (``DESIGNED``/``PROPOSED``/``READY``/``NOT STARTED``) while the file
    carries a populated ``## Execution log`` containing a ``DONE`` entry: the exact "plan
    headers lie" drift the 2026-08-04 audit surfaced. The ``**Status:**`` line is parsed with

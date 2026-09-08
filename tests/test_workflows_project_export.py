@@ -287,6 +287,68 @@ def test_an_ordinary_member_is_accepted():
     assert safe_member("context/overview.md") == (True, "")
 
 
+# ── the ZIP extractor's own resolve-and-compare ──
+#
+# `test_the_real_filter_still_rejects_symlinks` above pins `snapshot._data_filter`, which is the
+# TAR path (snapshot restore). Project import is the ZIP path, and its extraction-time half is
+# `project_archive._extract_one`'s resolve-and-compare. Nothing asserted that: removing the
+# comparison leaves this whole file green, so the layer the module's own docstring calls "what
+# closes the TOCTOU gap" was held by a test of a different mechanism. Measured.
+
+
+def _zip_with(tmp_path, member: str, body: bytes):
+    """A one-member zip, returned open, so `_extract_one` has a real `ZipInfo` to write."""
+    import zipfile
+
+    path = tmp_path / "one.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(member, body)
+    zf = zipfile.ZipFile(path)
+    return zf, zf.getinfo(member)
+
+
+def test_a_NAME_CLEAN_member_whose_parent_is_a_SYMLINK_out_is_refused(tmp_path):
+    """The case a name-only check cannot see, which is the whole reason for the second layer.
+
+    ``a/b.txt`` is accepted by ``safe_member`` — no traversal, no absolute path, nothing to
+    object to in the string. The escape is in the FILESYSTEM: ``work/a`` is a symlink pointing
+    outside the extraction root, so writing ``work/a/b.txt`` lands outside it. Only the
+    resolve-and-compare in ``_extract_one`` catches this, and it must return ``None`` without
+    writing the body anywhere.
+    """
+    from personalclaw.workflows.project_archive import _extract_one
+
+    assert safe_member("a/b.txt") == (True, ""), "the premise: the NAME is clean"
+
+    work = tmp_path / "work"
+    work.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (work / "a").symlink_to(outside, target_is_directory=True)
+
+    zf, info = _zip_with(tmp_path, "a/b.txt", b"escaped")
+    try:
+        assert _extract_one(zf, info, work, "a/b.txt") is None
+    finally:
+        zf.close()
+    assert not (outside / "b.txt").exists(), "the body was written outside the extraction root"
+
+
+def test_an_ordinary_member_IS_extracted_and_read_back(tmp_path):
+    """The vacuity floor for the refusal above: `_extract_one` can succeed at all, so the
+    `None` there is the guard firing rather than the helper being broken."""
+    from personalclaw.workflows.project_archive import _extract_one
+
+    work = tmp_path / "work"
+    work.mkdir()
+    zf, info = _zip_with(tmp_path, "context/overview.md", b"# hello")
+    try:
+        assert _extract_one(zf, info, work, "context/overview.md") == b"# hello"
+    finally:
+        zf.close()
+    assert (work / "context" / "overview.md").read_bytes() == b"# hello"
+
+
 # ── digest verification refuses ──
 
 

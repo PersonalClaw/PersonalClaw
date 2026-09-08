@@ -75,7 +75,7 @@ const EMPTY_INBOX: LearningInbox = {
 const WEEK: StagingWeek = {
   days: 7, buckets: [], silent_days: [], error_days: [], produced_total: 0, cost_usd: 0,
 }
-const DOC = 'docs/roadmap/research/learning-benchmark-protocol.md'
+const DOC = 'docs/research/learning-benchmark-protocol.md'
 
 /** The binding a real run records — the exact shape `cell_provider.CellProviderBinding.to_dict()`
  *  emits, verified against a measured `report.json` from a run against a local Ollama. It carries

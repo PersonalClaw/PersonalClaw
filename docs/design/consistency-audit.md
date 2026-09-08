@@ -1,6 +1,6 @@
 # Design-System Consistency Audit — S1 Drift Map
 
-**Plan:** [DESIGN-SYSTEM-CONSISTENCY](../roadmap/plans/DESIGN-SYSTEM-CONSISTENCY.md) · **Session:** S1 (audit — measure only, no fixes)
+**Plan:** DESIGN-SYSTEM-CONSISTENCY · **Session:** S1 (audit — measure only, no fixes)
 **Generated from:** `web/src/design/consistencyAudit.report.ts` — run `npm run audit:consistency` from the repo root to rewrite `docs/design/consistency-audit.json`. A plain `npm test` measures but writes nothing (issue 261), so regenerating is now a deliberate step.
 **Status:** LIVING — regenerate the JSON, then refresh the tables below, each cycle the scanner changes.
 

@@ -191,9 +191,27 @@ describe('the population this reaches, so the primitives were the right place', 
   })
 
   it('each primitive binds the attribute to its own `active` prop', () => {
-    for (const rel of ['ui/HeaderActions.tsx', 'ui/IconButton.tsx']) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must bind aria-pressed to active`)
-        .toMatch(/aria-pressed=\{active\}/)
+    // 🪤 THE BINDING, NOT ITS SPELLING. This asserted the literal `aria-pressed={active}`, which is
+    // one way to write the property and not the property itself — `SquareIconButton` has never
+    // matched it (it writes `aria-pressed={ariaExpanded === undefined ? on : undefined}`, which is
+    // why it is absent from the list here), and `HeaderControl` stopped matching the moment it
+    // gained the same disclosure escape. A rail that pins one spelling reds on a correct change and
+    // says nothing about the two primitives that spell it differently.
+    //
+    // The property is: `aria-pressed` is bound to an expression that reads the primitive's OWN
+    // state prop. Where the primitive also supports `ariaExpanded`, that expression must yield to
+    // it — a control claiming both pressed and expanded claims one of them wrongly.
+    for (const rel of ['ui/HeaderActions.tsx', 'ui/IconButton.tsx', 'ui/SquareIconButton.tsx']) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      const bind = src.match(/aria-pressed=\{([^}]*)\}/)
+      expect(bind, `${rel} must bind aria-pressed`).not.toBeNull()
+      const expr = bind![1]
+      expect(expr, `${rel}: aria-pressed must read its own state prop (active/on)`)
+        .toMatch(/\b(active|on)\b/)
+      if (/ariaExpanded\?:/.test(src)) {
+        expect(expr, `${rel}: aria-pressed must defer to ariaExpanded when the primitive has one`)
+          .toMatch(/ariaExpanded/)
+      }
     }
   })
 })

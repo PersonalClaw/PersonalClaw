@@ -33,17 +33,23 @@ _REGISTER = _WEB / "ui" / "content" / "registerBuiltins.ts"
 pytestmark = pytest.mark.skipif(not _WEB.exists(), reason="web sources not present")
 
 
-def _registry_kinds() -> set[str]:
-    """The artifact `kinds` the FE registry declares (the `kinds: [...]` arrays).
+def _declared_kinds() -> list[str]:
+    """Every artifact kind the FE registry declares, WITH multiplicity, in file order.
 
-    Types reached only by file-extension (code/csv/image/pdf) declare no `kinds`
-    and are intentionally excluded — they aren't artifact kinds.
+    A list rather than a set because the duplicate check below needs the repeats — a
+    kind claimed by two types is exactly what a set silently collapses. A type reached
+    only by file extension declares no `kinds` and does not appear here at all.
     """
     text = _REGISTER.read_text(encoding="utf-8")
-    kinds: set[str] = set()
+    kinds: list[str] = []
     for arr in re.findall(r"kinds:\s*\[([^\]]*)\]", text):
-        kinds.update(re.findall(r"'([^']+)'", arr))
+        kinds.extend(re.findall(r"'([^']+)'", arr))
     return kinds
+
+
+def _registry_kinds() -> set[str]:
+    """The distinct artifact kinds the FE registry declares."""
+    return set(_declared_kinds())
 
 
 def test_registry_kinds_match_backend_allowed_kinds():
@@ -58,6 +64,30 @@ def test_registry_kinds_match_backend_allowed_kinds():
     assert not missing_in_registry, (
         f"backend ALLOWED_KINDS has kinds the FE registry doesn't render: {sorted(missing_in_registry)}. "  # noqa: E501
         "Register them in web/src/ui/content/registerBuiltins.ts (or remove from ALLOWED_KINDS)."
+    )
+
+
+def test_no_kind_is_claimed_by_two_content_types():
+    """One kind, one type — because `resolveContentType` is FIRST-MATCH-WINS.
+
+    ``contentTypes.ts:209`` walks the registration list in order and returns the first
+    type whose `kinds` contains the probe's kind, so a second type claiming an existing
+    kind does not conflict loudly: it silently SHADOWS, and which one wins depends on
+    registration order in `registerBuiltins.ts`. `registerContentType` cannot catch it
+    either — it de-duplicates on type `id`, not on the kinds a type claims.
+
+    The alignment test above cannot see this, and that is not an oversight of its own
+    design: it compares SETS against `ALLOWED_KINDS`, and a set collapses the duplicate
+    it would need to notice. Hence a separate check over the declarations WITH
+    multiplicity.
+    """
+    declared = _declared_kinds()
+    duplicates = sorted({k for k in declared if declared.count(k) > 1})
+    assert not duplicates, (
+        f"these artifact kinds are claimed by more than one content type: {duplicates}. "
+        "resolveContentType returns the FIRST registered match, so the later type never "
+        "renders and the shadowing is silent — give the kind to exactly one type in "
+        "web/src/ui/content/registerBuiltins.ts."
     )
 
 

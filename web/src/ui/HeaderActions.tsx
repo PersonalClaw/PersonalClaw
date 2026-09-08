@@ -455,13 +455,22 @@ const variants: Record<Variant, string> = {
  *  the greedy fill — as a row in the container's `…` menu (nothing is rendered here
  *  in that case; the container draws the menu row from this control's declaration). */
 export function HeaderControl({
-  icon: Icon, label, onClick, variant = 'ghost', active, disabled, danger, priority = 'default', hint, className,
+  icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, danger,
+  priority = 'default', hint, className,
 }: {
   icon?: LucideIcon
   label: string
   onClick?: () => void
   variant?: Variant
   active?: boolean
+  /** This control shows/hides an adjacent region — announces `aria-expanded`.
+   *
+   *  Same pair, and the same rule, as `SquareIconButton`'s `on`/`ariaExpanded`: passing this
+   *  SUPPRESSES `aria-pressed`, because a control claiming both states claims one of them wrongly.
+   *  `active` is for an on/off SETTING; this is for a disclosure. The distinction is not cosmetic —
+   *  a screen-reader user told "pressed" looks for a mode that changed, and told "expanded" looks
+   *  for content that appeared. */
+  ariaExpanded?: boolean
   disabled?: boolean
   danger?: boolean
   priority?: Priority
@@ -498,7 +507,8 @@ export function HeaderControl({
       // button acting as a SELECTED/UNSELECTED choice must announce that state, or a screen-reader user
       // hears an identical label for the row they are on and the row they are not." `undefined` when
       // `active` is not passed, so a plain header action gains no misleading state.
-      aria-pressed={active}
+      aria-pressed={ariaExpanded === undefined ? active : undefined}
+      aria-expanded={ariaExpanded}
       whileTap={disabled ? undefined : { scale: 0.96 }}
       transition={spring.spatialFast}
       data-type="label-s"

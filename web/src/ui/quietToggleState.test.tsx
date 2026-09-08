@@ -212,7 +212,7 @@ describe('SquareIconButton asks the right question of the right caller', () => {
   })
 })
 
-describe('the SquareIconButton state family is classified, all ten of it', () => {
+describe('the SquareIconButton state family is classified, all eleven of it', () => {
   const SRC = join(process.cwd(), 'src')
   const walkTsx = (d: string): string[] =>
     readdirSync(d).flatMap((n) => {
@@ -245,10 +245,13 @@ describe('the SquareIconButton state family is classified, all ten of it', () =>
     return out
   }
 
-  it('is 6 disclosures and 4 toggles — and nothing unclassified', () => {
+  it('is 7 disclosures and 4 toggles — and nothing unclassified', () => {
+    // 7, not 6: `ContentSurface`'s Export menu joined the family. It was the ONE genuine defect in
+    // the seven-site worklist `rawToggleState` had recorded — a disclosure claiming no state at all
+    // — and it is a disclosure rather than a toggle because it reveals the export list below it.
     const all = stateBearing()
-    expect(all.length, 'the state-bearing population').toBe(10)
-    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(6)
+    expect(all.length, 'the state-bearing population').toBe(11)
+    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(7)
     expect(all.filter((x) => x.kind === 'toggle').length, 'toggles').toBe(4)
   })
 
@@ -274,6 +277,7 @@ describe('the SquareIconButton state family is classified, all ten of it', () =>
       ['pages/settings/MultiInstanceCard.tsx', /ariaExpanded=\{editing && props\.length > 0\}/],
       ['ui/widget/WidgetFrame.tsx', /ariaExpanded=\{railOpen\}/],
       ['pages/ChatPage.tsx', /ariaExpanded=\{open\}/],
+      ['ui/content/ContentSurface.tsx', /ariaExpanded=\{exportOpen\}/],
     ]
     for (const [rel, re] of pairs) {
       expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must bind ${re}`).toMatch(re)

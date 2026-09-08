@@ -118,6 +118,20 @@ const GATEWAY_COMMAND = [
   `S="$PWD/${SCRIPTED.scriptPath}"`,
   `[ -f "$S" ] || { echo "PERSONALCLAW_E2E_FATAL: scripted-provider script not found at $S (cwd $PWD)" >&2; exit 1; }`,
   `printf '%s' '{"dashboard":{"user_name":"Keyur"}}' > "$D/config.json"`,
+  // Install the app-UI fixture, so the sweep reaches app-AUTHORED DOM and not just the
+  // app-hosting shell. `#/app/<name>` needs a real installed app WITH a bundle: the asset route
+  // reads `installed.json` and refuses an app that is absent or disabled, so the fixture ships
+  // both files plus its ESM entry (`e2e/fixtures/app-ui/`). Copied rather than generated here —
+  // an ESM module printf'd into a shell string is unreviewable and unlintable.
+  'mkdir -p "$D/apps"',
+  'cp -R e2e/fixtures/app-ui "$D/apps/e2e-ui-fixture"',
+  // 🪤 FAIL THE BOOT if the copy did not land, for the same reason the scripted-provider guard
+  // above exists — and here the silent mode is worse than a crash. With the app absent,
+  // `#/app/e2e-ui-fixture` renders the SHELL's "isn't installed" EmptyState, which is already
+  // covered by `app/not-a-real-app`: axe and both detectors would sweep it, pass, and report the
+  // app-authored surface clean while never having loaded a line of app code.
+  '[ -f "$D/apps/e2e-ui-fixture/installed.json" ] && [ -f "$D/apps/e2e-ui-fixture/ui/index.mjs" ] '
+    + '|| { echo "PERSONALCLAW_E2E_FATAL: app-UI fixture did not install into $D/apps (cwd $PWD)" >&2; exit 1; }',
   'PC="../.venv/bin/personalclaw"; [ -x "$PC" ] || PC=personalclaw',
   // Pin the gateway to THIS tree's source. Without it a worktree run boots whatever
   // `personalclaw` is on PATH — the editable install from the MAIN checkout — so the

@@ -250,6 +250,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "upstream_unavailable": "No upstream base URL could be resolved for this dialect.",
     "upstream_denied": "The resolved upstream is not on the operator's egress allow-list.",
     "upstream_failed": "The upstream call was attempted and did not complete.",
+    "upstream_redirected": (
+        "The allow-listed upstream answered a redirect. It is not followed, because the "
+        "egress guard evaluated the original host and never saw the redirect target."
+    ),
     "service_unavailable": "The service is temporarily suspended; retry later.",
     "unknown_action": "The named control-bridge action does not exist.",
     "action_not_bound": "The calling client's bindings do not include this action.",

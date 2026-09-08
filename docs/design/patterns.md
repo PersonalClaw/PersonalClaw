@@ -1,6 +1,6 @@
 # Design-System Pattern Gallery
 
-**Plan:** [DESIGN-SYSTEM-CONSISTENCY](../roadmap/plans/DESIGN-SYSTEM-CONSISTENCY.md) · **Contract:** C2 · **Authority:** `web/DESIGN.md` + `web/PRODUCT.md`
+**Plan:** DESIGN-SYSTEM-CONSISTENCY · **Contract:** C2 · **Authority:** `web/DESIGN.md` + `web/PRODUCT.md`
 
 The canonical usage of each shared primitive + each interaction pattern. Every page-touching plan cites this to "stay consistent." A new shared primitive lands here the moment it's added (that's how it stops being a one-off). This is a static doc (zero new dep) — the plan's default over a live Storybook route.
 

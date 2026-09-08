@@ -126,6 +126,38 @@ def _doctor_paths() -> None:
         print(f"{label}\t{path}")
 
 
+def _doctor_rebuild_routing_stats() -> None:
+    """Refold ``routing_stats.json`` from the model-call audit — the §1.3 rebuild path.
+
+    🔑 THIS IS THE FLAG `routing/stats.py` ALREADY NAMED. Its :func:`~personalclaw.routing.
+    stats.rebuild` docstring calls itself "the ``--rebuild-routing-stats`` maintenance path" and
+    `routing/usage.py` notes in as many words that no argument implemented it — so the recovery
+    function shipped tested and unreachable, with the audit rows it needs sitting on disk.
+
+    That mattered because the two folds recover differently. The usage fold self-heals: every
+    ``GET /api/usage`` calls ``usage.refresh``, which refolds. The routing fold has no such read
+    path — ``GET /api/models/telemetry`` calls ``load_stats`` only, and a missing file reads as an
+    empty fold rather than an error (correct, and never fatal). So a deleted or truncated
+    ``routing_stats.json`` left the Routing & Efficiency view permanently blank and dropped the
+    learned policy's per-ref sample counts below its ``n >= 5`` floor, silently stopping it from
+    proposing — while ``model_calls.jsonl`` still held everything needed to restore both.
+
+    Reports the row count, because the number is the finding: the audit JSONL is capped and
+    rotated, so a rebuild recovers the retained tail rather than all history, and a caller who is
+    not told how many rows were folded cannot tell a successful rebuild from an empty one.
+    """
+    from personalclaw.routing.stats import _stats_path, rebuild
+
+    home = config_dir()
+    folded = rebuild(home)
+    print(f"routing stats: refolded {folded} attempt row(s) → {_stats_path(home)}")
+    if not folded:
+        # Not an error and not sys.exit(1): a fresh install has no audit rows, and an empty fold
+        # is the honest result there. Saying so beats a bare success line that reads identically
+        # to a recovered one.
+        print("  (no attempt rows in the audit log — the fold is empty, not broken)")
+
+
 def _doctor_credentials() -> list[str]:
     """Print which credential store is holding the secrets; return any issues (SH-1).
 
@@ -395,17 +427,20 @@ def _doctor() -> None:
     # ── Python Runtime ──
     print("\nRuntime")
     print(f"  python:      ✅ {sys.executable} ({sys.version.split()[0]})")
-    print(f"  backend:   ✅ {_pc_version}")
+    print(f"  backend:     ✅ {_pc_version}")
     if is_venv_install:
         try:
             py_result = subprocess.run(
                 [str(venv_py), "--version"], capture_output=True, text=True, timeout=5
             )
             py_result.check_returncode()
-            ver = py_result.stdout.strip()
-            print(f"  python:      ✅ {venv_py} ({ver})")
+            # `python3 --version` prints "Python 3.13.14"; the label already says
+            # python, so the prefix would read "(Python 3.13.14)" beside the row
+            # above's bare "(3.13.14)" for the same fact.
+            ver = py_result.stdout.strip().removeprefix("Python ").strip()
+            print(f"  venv python: ✅ {venv_py} ({ver})")
         except Exception as exc:
-            print(f"  python:      ❌ venv python broken: {exc}")
+            print(f"  venv python: ❌ broken: {exc}")
             issues.append("venv python")
         else:
             try:
@@ -441,7 +476,9 @@ def _doctor() -> None:
                 print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
         else:
-            print("  python:      ⚠️  python3 not found on PATH")
+            # Same probe as the `fallback:` row above — its other outcome, so it
+            # carries the same label rather than a second "python:".
+            print("  fallback:    ⚠️  python3 not found on PATH")
 
     # WSL note: the background service depends on systemd, which WSL2 only runs
     # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether
