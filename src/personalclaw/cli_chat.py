@@ -6,9 +6,19 @@ import sys
 
 from personalclaw.acp.errors import AcpError, AcpTimeoutError
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import config_path
+from personalclaw.config import loader as config_loader
 from personalclaw.constants import DATA_WARNING
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, ModelProvider
+
+
+def config_path():
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()
+
 
 BANNER = r"""
    __  __         _    ___ _

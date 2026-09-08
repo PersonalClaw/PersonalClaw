@@ -18,7 +18,8 @@ from aiohttp import web
 from personalclaw import trace_recorder as _trace
 from personalclaw import trust_mode
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import DASHBOARD_PORT, config_dir
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.guardrails.loop_breaker import LoopBreaker
@@ -30,6 +31,16 @@ from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for das
     resolve_effective_risk,
     shell_command,
 )
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 if TYPE_CHECKING:
     from personalclaw.dashboard._types import (  # noqa: F401

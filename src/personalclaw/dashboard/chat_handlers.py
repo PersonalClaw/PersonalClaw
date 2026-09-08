@@ -14,12 +14,8 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import (
-    AppConfig,
-    config_dir,
-    default_workspace_dir,
-    resolve_session_workspace,
-)
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
 from personalclaw.dashboard.chat_persistence import (
     _attach_variants,
     _redact_meta,
@@ -52,6 +48,16 @@ from personalclaw.loop import files as loop_files
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 logger = logging.getLogger(__name__)
 

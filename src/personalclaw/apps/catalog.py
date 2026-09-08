@@ -28,7 +28,7 @@ from typing import Any
 
 from personalclaw.apps.manifest import AppManifest, version_tuple
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,16 @@ def _first_party_source() -> Path | None:
 # (e.g. this workspace's PersonalClawApps clone) instead of the published git source
 # in _DEFAULT_GIT_SOURCES — used for offline dev + tests.
 import os as _os  # noqa: E402
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 _FIRST_PARTY_ENV = "PERSONALCLAW_FIRST_PARTY_APPS_DIR"
 

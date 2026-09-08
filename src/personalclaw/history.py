@@ -17,11 +17,21 @@ from typing import TYPE_CHECKING
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY
 from personalclaw.skills import AutoSkillProvenance
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 if TYPE_CHECKING:
     from personalclaw.memory import MemoryStore
