@@ -263,13 +263,20 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
 
   it('finds the population it is filtering (not vacuously green)', () => {
     const { population, announced, A, B, C, D } = census()
-    expect(population, 'the matcher must find the disabled Buttons').toBeGreaterThanOrEqual(200)
+    // 🪤 AN ANTI-VACUITY FLOOR, NOT A CENSUS — and it must be generous, because THIS FAMILY'S FIXES
+    // SHRINK IT. A converted site loses its `disabled=` entirely (it becomes `loading=`), so every
+    // fix removes a member: 235 at first measurement, 196 after this change. A floor set near the
+    // measured value would red on the next correct fix, which is the opposite of what it is for.
+    expect(population, 'the matcher must find the disabled Buttons').toBeGreaterThanOrEqual(150)
     const busyGated = announced.length + A.length + B.length + C.length + D.length
-    expect(busyGated, 'and the busy-gated subset the exemption covers').toBeGreaterThanOrEqual(150)
+    // Same reasoning as the floor above: the busy-gated subset shrinks with every fix (185 → 145),
+    // so this is a "the scan still resolves the subset" floor and nothing more.
+    expect(busyGated, 'and the busy-gated subset the exemption covers').toBeGreaterThanOrEqual(100)
   })
 
   it('🔴 THE RATCHET: the number of busy-gated Buttons announcing nothing may only go DOWN', () => {
-    // 179 as first measured; **151 after this change closes Class A** — the 28 converted sites drop
+    // 179 as first measured; **114 after this change closes Class A, the self-spun bystanders, and the
+    // identity-gated half of Class B** — the 28 converted sites drop
     // out of the population entirely, because `disabled={busy}` is GONE from them rather than
     // supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that PR), and a
     // NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
@@ -284,7 +291,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(128)
+    ).toBeLessThanOrEqual(114)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {
@@ -297,7 +304,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
     expect(A, 'a hand-rolled spinner whose condition IS the disabled gate — use `loading=` instead')
       .toEqual([])
     expect(C.length, 'Class C — mixed gate; `loading` takes the busy disjunct, `disabled` keeps the gate')
-      .toBeGreaterThanOrEqual(9)
+      .toBeGreaterThanOrEqual(5)
     expect(D.length, 'Class D — bystander shared flag with NO spinner to derive identity from')
       .toBeGreaterThanOrEqual(95)
     // Class D is the majority, which is the single most important thing this census establishes:

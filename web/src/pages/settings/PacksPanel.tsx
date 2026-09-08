@@ -263,7 +263,7 @@ export function PackStoreSection({ installed, onInstalled }: {
             <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
               {have.has(p.name)
                 ? <span data-type="caption" className="text-on-surface-low">Installed</span>
-                : <Button variant="primary" size="sm" disabled={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
+                : <Button variant="primary" size="sm" loading={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
             </Row>
           </RowGroup>
         ))}
