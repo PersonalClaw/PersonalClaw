@@ -124,7 +124,24 @@ const CATEGORIES: DriftCategory[] = ['color', 'spacing', 'radius', 'shadow', 'du
 function scanPrimitives(file: string, rel: string): PrimitiveHit[] {
   // ui/ primitives ARE the canonical elements — don't flag their internals.
   if (rel.startsWith('ui/')) return []
+  // 🪤 COMMENTS BLANKED IN PLACE — this ratchet was counting PROSE as bespoke chrome. A design note
+  // that writes out `role="dialog"`, or quotes the `<button>` it is telling you not to write, scored
+  // against the very budget it was explaining: documenting a decision made the rail redder, and
+  // documenting nothing made it greener. Measured on the tree at the time of this fix:
+  //
+  //     as-is (reads comments)   raw-button=249  raw-input=150  raw-dialog=1
+  //     comments blanked         raw-button=243  raw-input=140  raw-dialog=0
+  //
+  // So SIX raw buttons and TEN raw inputs in the live count were sentences. `primitiveAdoption`'s own
+  // baseline warns *"Keep every counter at the measured actual — slack is not a safety margin here,
+  // it is a hole"* — and it held ten units of exactly that hole, arriving by a route the warning did
+  // not anticipate. The baselines are ratcheted down to the true counts in the same commit.
+  //
+  // Length-preserving on purpose, so any future line report stays accurate.
   const text = readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
   const count = (re: RegExp) => (text.match(re) ?? []).length
   const out: PrimitiveHit[] = []
   const btn = count(/<button[\s>]/g)
