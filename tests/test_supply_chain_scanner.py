@@ -305,21 +305,23 @@ _SUPPLY_CHAIN_PY = Path(personalclaw.supply_chain.__file__)
 
 
 def _emittable_rules() -> set[str]:
-    """Every ``rule`` name a ``Finding`` can carry. Two sources, because the scanner has
-    two idioms: the pattern catalogs (a rule per ``(name, regex)`` pair) and the
-    hand-built findings for the co-occurrence/Unicode heuristics, whose rule is a literal
-    at the ``Finding(...)`` call. Derived rather than listed so a rule added either way is
-    caught here instead of shipping unexplained."""
+    """Every ``rule`` name a ``Finding`` can carry. THREE sources, because the scanner has
+    three idioms: the pattern catalogs (a rule per ``(name, regex)`` pair), the AST-decided
+    native-destruction family (a NAME LIST, because a call-site rule has no regex to key on —
+    #2607), and the hand-built findings for the co-occurrence/Unicode heuristics, whose rule is
+    a literal at the ``Finding(...)`` call. Derived rather than listed so a rule added by any of
+    the three is caught here instead of shipping unexplained."""
     from personalclaw.supply_chain import (
         _DANGEROUS_SCRIPT,
         _INJECTION_PROSE,
+        _NATIVE_DESTRUCTION_RULES,
         _WARNING_SCRIPT,
     )
 
     catalogued = {name for name, _ in (*_DANGEROUS_SCRIPT, *_WARNING_SCRIPT, *_INJECTION_PROSE)}
     src = _SUPPLY_CHAIN_PY.read_text(encoding="utf-8")
     literal = set(re.findall(r'Verdict\.\w+,\s*"([a-z_]+)"', src, re.S))
-    return catalogued | literal
+    return catalogued | set(_NATIVE_DESTRUCTION_RULES) | literal
 
 
 def _glossed_rules() -> set[str]:
