@@ -25,6 +25,9 @@
     "aimed at the assistant that reads the content's own text."
   ],
   "destructive_root": "This code deletes files from the root of the filesystem or your home directory.",
+  "destructive_delete": "This code erases a folder that your account or this machine depends on.",
+  "destructive_walk": "This code sweeps a whole folder tree and erases every file it comes across.",
+  "destructive_truncate": "This code empties out a file that this machine needs in order to work.",
   "fork_bomb": "This code spawns processes without limit until the machine stops responding.",
   "disk_wipe": "This code writes straight to a raw disk device, destroying what is on it.",
   "remote_exec_pipe": "This code downloads more code from the internet and runs it immediately, unread.",
