@@ -43,6 +43,12 @@ from tools.audit_landed_atoms import (
     CLEAN,
     GATED,
     KNOWN_LANDED,
+    MATCH_MAKE_TARGET,
+    MATCH_NAME_MENTION,
+    MATCH_TEXT,
+    MATCH_TREE_DIR,
+    MATCH_TREE_PATH,
+    MATCH_VERBS,
     MUT_MARK,
     OPEN,
     RE_ANSI,
@@ -1128,15 +1134,259 @@ def test_no_atom_on_main_scores_strong_on_a_container_alone(real_verdicts: list)
     assert offenders == [], f"container-only evidence still scores STRONG: {offenders}"
 
 
-def test_the_five_measured_2663_atoms_are_labelled_trivial_on_main(real_verdicts: list) -> None:
-    """The named instances, end to end, with the bucket held constant."""
+def test_the_measured_2663_atoms_are_labelled_trivial_on_main(real_verdicts: list) -> None:
+    """The named instances, end to end, with the bucket held constant.
+
+    ``ET-8`` is deliberately NOT in this list, and #2676's own PR body says why: its
+    ``registry.json`` "no such path exists", so it was never a container that pre-exists the work
+    — it was a *mention* of a filename inside ``.github/workflows/full.yml``. #2676 was scoped to
+    the strength a path citation earns and left the provenance alone, so the atom carried a
+    TRIVIAL whose printed reason ("the paths the atom cites are on the ref") was false in letter.
+    #2679 corrects that: see ``test_the_two_measured_2679_mentions_are_labelled_and_score_nothing``.
+    """
     by_id = {v.atom.id: v for v in real_verdicts}
-    selected = {a: by_id[a] for a in ("AR-8", "CRE-7", "CA-8", "ET-8", "SH-11") if a in by_id}
+    selected = {a: by_id[a] for a in ("AR-8", "CRE-7", "CA-8", "SH-11") if a in by_id}
     if not selected:
-        pytest.skip("all five #2663 atoms have left the census selection; see the invariant test")
+        pytest.skip("all four #2663 atoms have left the census selection; see the invariant test")
     for atom_id, v in selected.items():
         assert v.evidence == TRIVIAL, f"{atom_id} scored {v.evidence}"
         assert v.bucket == UNKNOWN, f"{atom_id} landed in {v.bucket}, not the honest-gap bucket"
+
+
+# ---------------------------------------------------------------------------
+# a file is not a filename (#2679) — the evidence line must name its match kind
+# ---------------------------------------------------------------------------
+
+
+def _exists_atom() -> Atom:
+    """One path citation that IS a tree entry. ``CA-8`` reduced to a fixture."""
+    return make_atom(scope="the packaged app boots from desktop/main.js", done_when="it launches")
+
+
+def _mention_atom() -> Atom:
+    """One path citation that is NOT a tree entry. ``ET-8`` reduced to a fixture."""
+    return make_atom(
+        title="Registry surface generated from registry.json",
+        scope="the site renders the registry",
+        done_when="the page lists every app in registry.json",
+    )
+
+
+def _mention_corpus() -> Corpus:
+    """No ``registry.json`` anywhere in ``paths``; the NAME occurs inside a workflow."""
+    return make_corpus(
+        {".github/workflows/full.yml": "cp scratch/registry/app-registry.json $TMP/measured.json"}
+    )
+
+
+def test_a_path_that_exists_and_a_name_mentioned_inside_a_file_render_differently() -> None:
+    """The defect, stated as an assertion: the two cases must not be confusable by eye.
+
+    Both used to render as ``<key>@<path>``, in which ``@`` reads as "at" — a location. So
+    ``registry.json@.github/workflows/full.yml`` asserted a file that is not in the tree, and the
+    output was byte-identical in shape to ``desktop/main.js@desktop/main.js``, which is a file.
+    """
+    exists = _exists_atom()
+    exists_keys = extract_keys(exists)
+    probe(exists_keys, make_corpus({"desktop/main.js": "app.whenReady()"}))
+
+    mention = _mention_atom()
+    mention_keys = extract_keys(mention)
+    probe(mention_keys, _mention_corpus())
+
+    # the fixtures must be the two shapes this test is about, or it proves nothing
+    assert [k.text for k in exists_keys] == ["desktop/main.js"]
+    assert [k.text for k in mention_keys] == ["registry.json"]
+    assert exists_keys[0].match == MATCH_TREE_PATH
+    assert mention_keys[0].match == MATCH_NAME_MENTION
+    assert mention_keys[0].in_impl, "the mention is still a hit — the signal is kept, not dropped"
+
+    exists_line = classify(exists, exists_keys, []).key_summary()
+    mention_line = classify(mention, mention_keys, []).key_summary()
+
+    assert exists_line == "desktop/main.js PATH-EXISTS desktop/main.js"
+    assert mention_line == "registry.json NAME-MENTIONED-IN .github/workflows/full.yml"
+    # the whole point: a reader can tell them apart without reading the tool
+    assert MATCH_VERBS[MATCH_TREE_PATH] not in mention_line
+    assert MATCH_VERBS[MATCH_NAME_MENTION] not in exists_line
+    assert "@" not in exists_line + mention_line, "`@` renders a string match as a location"
+
+
+def test_a_directory_and_a_make_target_also_name_their_match_kind() -> None:
+    """Five match kinds, five verbs. A ``dir`` hit is a MEMBER of the cited directory, and a
+    ``make`` hit is a Makefile declaration — neither is "the cited thing is at this path" either.
+    """
+    atom = make_atom(scope="adds web/src/lib/ and make widgetcheck", done_when="grid_widget shows")
+    keys = extract_keys(atom)
+    probe(
+        keys,
+        make_corpus(
+            {
+                "web/src/lib/rooms.ts": "export const grid_widget = 1",
+                "Makefile": "widgetcheck:\n\techo hi\n",
+            }
+        ),
+    )
+    by_text = {k.text: k for k in keys}
+    assert by_text["web/src/lib/"].match == MATCH_TREE_DIR
+    assert by_text["widgetcheck"].match == MATCH_MAKE_TARGET
+    assert by_text["grid_widget"].match == MATCH_TEXT
+    rendered = classify(atom, keys, []).key_summary()
+    assert "web/src/lib/ DIR-CONTAINS web/src/lib/rooms.ts" in rendered
+    assert "widgetcheck MAKE-TARGET-IN Makefile" in rendered
+    assert "grid_widget TEXT-IN web/src/lib/rooms.ts" in rendered
+
+
+def test_every_match_kind_has_a_verb() -> None:
+    """``Key.render`` indexes ``MATCH_VERBS``. A kind with no verb must be a red here, not a
+    ``KeyError`` in front of an operator mid-census."""
+    kinds = {MATCH_TREE_PATH, MATCH_TREE_DIR, MATCH_NAME_MENTION, MATCH_TEXT, MATCH_MAKE_TARGET}
+    assert set(MATCH_VERBS) == kinds
+    assert len(set(MATCH_VERBS.values())) == len(kinds), "two kinds sharing a verb is the defect"
+
+
+def test_a_name_mentioned_inside_another_file_is_not_a_satisfied_path_citation() -> None:
+    """The strength half of #2679: should the basename fallback count as evidence at all?
+
+    No — not as evidence for the *citation*. An atom naming ``registry.json`` as a deliverable
+    asserts a file will exist. Another file writing that name down is a fact about the other file.
+    ``path_exists`` already matches at a path boundary under any prefix, so by the time the
+    fallback runs the file is nowhere in the tree; what is left is a substring search of contents.
+    So it earns no strength — but it is still probed and still printed, which is #2676's own
+    discipline (keep the signal, stop the label overstating it) applied one level down.
+    """
+    atom = _mention_atom()
+    keys = extract_keys(atom)
+    probe(keys, _mention_corpus())
+
+    assert not keys[0].resolves_on_ref, "nothing in the tree answers this citation"
+    strength, detail = score_evidence(keys)
+    assert strength == "ABSENT", f"a mention scored {strength}"
+    assert "0/1 cited paths exist" in detail
+    assert "NOT in the tree" in detail, detail
+    assert "NAME-MENTIONED-IN" in detail, "the reason must carry the hit, not swallow it"
+
+    verdict = classify(atom, keys, [])
+    assert verdict.bucket == OPEN
+    # the signal survives into the report
+    assert verdict.impl_keys and "registry.json" in verdict.key_summary()
+
+
+def test_a_mention_alone_no_longer_carries_an_atom_into_the_just_flip_it_bucket() -> None:
+    """The live consequence, and the reason this is not only a rendering fix.
+
+    ``score_evidence`` returns WEAK on ``ratio >= 0.34 or paths_ok``, and WEAK plus a
+    complete-but-unmerged log entry IS LANDED-AND-CLEAN. So a single mention — a filename written
+    inside some unrelated file — was enough to satisfy ``paths_ok``, and an atom whose named symbol
+    is nowhere on the ref reached the just-flip-it bucket on that alone. Measured on this fixture
+    with ``resolves_on_ref`` reverted to ``in_impl``: WEAK, LANDED-AND-CLEAN.
+    """
+    atom = make_atom(
+        title="Registry surface generated from registry.json",
+        scope="the site renders the registry",
+        done_when="every app in registry.json appears, via render_registry",
+    )
+    keys = extract_keys(atom)
+    probe(keys, _mention_corpus())
+    by_text = {k.text: k for k in keys}
+    assert by_text["registry.json"].match == MATCH_NAME_MENTION
+    assert not by_text["render_registry"].found, "the fixture's only hit must be the mention"
+
+    flip = [LogHit(LogVerdict.FLIP, 1, "…", "ZZ-PLAN.md", headline=True)]
+    assert score_evidence(keys)[0] == "ABSENT"
+    assert classify(atom, keys, flip).bucket == UNKNOWN, "a mention must not gate a flip"
+
+    # scoped guard: the same atom whose registry.json IS in the tree keeps its old reading
+    real_keys = extract_keys(atom)
+    probe(real_keys, make_corpus({"src/personalclaw/registry.json": "[]"}))
+    assert real_keys[0].match == MATCH_TREE_PATH
+    assert score_evidence(real_keys)[0] == "WEAK"
+    assert classify(atom, real_keys, flip).bucket == CLEAN
+
+
+def test_a_mention_cannot_complete_the_paths_all_exist_gate_for_strong() -> None:
+    """The label half: ``paths_ok == len(paths)`` gates STRONG over two corroborating symbols.
+
+    Two named symbols found is ``ratio 1.0`` with ``n_impl 2``, which is BELOW the symbol-driven
+    STRONG route (``n_impl >= 3``) — so the only way this atom reaches STRONG is the all-cited-
+    paths-exist branch, and a mention used to supply the path it is missing.
+    """
+    atom = make_atom(
+        scope="adds widgets/thing.py and registry.json",
+        done_when="make_widget returns a WidgetThing",
+    )
+    blob = {"src/widgets/thing.py": "def make_widget(): return WidgetThing()  # app-registry.json"}
+    keys = extract_keys(atom)
+    probe(keys, make_corpus(blob))
+    by_text = {k.text: k for k in keys}
+    assert by_text["widgets/thing.py"].match == MATCH_TREE_PATH
+    assert by_text["registry.json"].match == MATCH_NAME_MENTION, "the fixture needs one of each"
+    assert (
+        sum(1 for k in keys if k.kind == "symbol" and k.in_impl) == 2
+    ), "below the n_impl>=3 route"
+
+    strength, detail = score_evidence(keys)
+    assert "1/2 cited paths exist" in detail
+    assert strength == "WEAK", f"a mention supplied the missing path and earned {strength}"
+
+    # scoped guard: with registry.json actually in the tree the atom still earns STRONG
+    real_keys = extract_keys(atom)
+    probe(real_keys, make_corpus({**blob, "src/widgets/registry.json": "[]"}))
+    assert score_evidence(real_keys)[0] == "STRONG"
+
+
+def test_the_two_measured_2679_mentions_are_labelled_and_score_nothing(
+    real_verdicts: list, real_corpus: Corpus
+) -> None:
+    """The two instances from the issue, re-measured against the real ref rather than a fixture.
+
+    ``ET-8`` cites ``registry.json`` and ``ET-4`` cites ``app-sources.json``. Neither is a path in
+    the tree — the nearest thing to the first is ``scratch/registry/app-registry.json``, which the
+    substring search matched, so the reported hit was not even the same filename.
+    """
+    assert not real_corpus.path_exists("registry.json"), "the premise: no such tree entry"
+    assert not real_corpus.path_exists("app-sources.json")
+
+    by_id = {v.atom.id: v for v in real_verdicts}
+    measured = {a: by_id[a] for a in ("ET-8", "ET-4") if a in by_id}
+    if not measured:
+        pytest.skip("both #2679 atoms have left the census selection; see the invariant test")
+    for atom_id, v in measured.items():
+        mentions = [k for k in v.keys if k.match == MATCH_NAME_MENTION]
+        assert mentions, f"{atom_id} no longer reproduces the mention shape"
+        assert v.evidence == "ABSENT", f"{atom_id} scored {v.evidence} off a mention"
+        assert v.bucket == OPEN, f"{atom_id} landed in {v.bucket}"
+        assert "NAME-MENTIONED-IN" in v.key_summary(), v.key_summary()
+        assert "@" not in v.key_summary()
+
+
+def test_no_evidence_line_on_main_claims_a_path_it_cannot_show(
+    real_verdicts: list, real_corpus: Corpus
+) -> None:
+    """#2679's invariant over the whole real census, and checked against the TREE, not the label.
+
+    Every rendered hit carries a verb from the closed set, and the verb has to be true of the ref:
+    a ``PATH-EXISTS`` / ``DIR-CONTAINS`` line must cite an entry that ``ls-tree`` really lists, and
+    a ``NAME-MENTIONED-IN`` line must cite a key that really resolves to no path at all. Asserting
+    against ``Key.match`` instead would be circular — it would only re-read the label.
+    """
+    on_ref = set(real_corpus.paths)
+    checked = 0
+    for v in real_verdicts:
+        for key in v.keys:
+            if not key.found:
+                continue
+            assert key.match in MATCH_VERBS, f"{v.atom.id}:{key.text} has match {key.match!r}"
+            where = (key.found_impl or key.found_test)[0]
+            assert MATCH_VERBS[key.match] in key.render()
+            checked += 1
+            if key.match in (MATCH_TREE_PATH, MATCH_TREE_DIR):
+                assert where in on_ref, f"{v.atom.id}:{key.text} cites {where}, not in the tree"
+            elif key.match == MATCH_NAME_MENTION:
+                assert not real_corpus.path_exists(
+                    key.text
+                ), f"{v.atom.id}:{key.text} is a real path but rendered as a mention"
+    assert checked > 10, f"vacuity floor: only {checked} hits examined"
 
 
 # ---------------------------------------------------------------------------
@@ -1237,6 +1487,59 @@ def test_self_check_fires_when_the_named_key_half_of_the_extractor_dies(
     # and it must NOT fire on the real census
     assert not any(
         "named-key half" in p for p in self_check(real_verdicts, real_corpus, real_log_hits)
+    )
+
+
+def test_self_check_fires_when_the_tree_half_of_the_probe_dies(
+    real_verdicts: list, real_corpus: Corpus, real_log_hits: dict
+) -> None:
+    """The mirror of the named-key floor, on the other half of ``probe``.
+
+    Since #2679 only a TREE resolution satisfies a path citation. So if ``path_exists`` /
+    ``dir_exists`` dies — a broken ``ls-tree`` read, a suffix rule that stops anchoring — every
+    path key degrades to a name-mention or to nothing, no atom can score STRONG, and the census
+    prints an empty LANDED-AND-CLEAN and exits 0: the same false zero the catalog-shape guard
+    refuses, reached from the other side.
+    """
+    # copied: the shared fixture must not be poisoned for other tests
+    blinded = [
+        replace(
+            v,
+            keys=[
+                (
+                    replace(k, match=MATCH_NAME_MENTION)
+                    if k.kind in ("path", "dir") and k.in_impl
+                    else k
+                )
+                for k in v.keys
+            ],
+        )
+        for v in real_verdicts
+    ]
+    problems = self_check(blinded, real_corpus, real_log_hits)
+    assert any("path/dir half of the probe is dead" in p for p in problems), problems
+    # and it must NOT fire on the real census
+    assert not any(
+        "path/dir half" in p for p in self_check(real_verdicts, real_corpus, real_log_hits)
+    )
+
+
+def test_self_check_fires_when_a_hit_carries_no_match_kind(
+    real_verdicts: list, real_corpus: Corpus, real_log_hits: dict
+) -> None:
+    """A found key with no match kind is the #2679 defect returning: a locator with no provenance.
+
+    ``Key.render`` would raise a ``KeyError`` mid-census, which is a crash rather than a finding,
+    so the invariant is asserted where every other one is.
+    """
+    stripped = [
+        replace(v, keys=[replace(k, match="") if k.found else k for k in v.keys])
+        for v in real_verdicts
+    ]
+    problems = self_check(stripped, real_corpus, real_log_hits)
+    assert any("carry no match kind" in p for p in problems), problems
+    assert not any(
+        "carry no match kind" in p for p in self_check(real_verdicts, real_corpus, real_log_hits)
     )
 
 

@@ -55,6 +55,19 @@ kept and printed, the label stops overstating it, and ``TRIVIAL`` can never reac
 LANDED-AND-CLEAN. Five ``todo`` atoms read STRONG off a pre-existing tree before this
 (``AR-8``/``CRE-7``/``CA-8``/``ET-8``/``SH-11``; see ``score_evidence``).
 
+**An evidence line must say what kind of match produced it.** Six probes in this repo have now
+failed the same way — a grep hit inside a docstring that *denied* its symbol, a census blind to
+secondary capabilities, a manifest reader that knew one of two shapes, a residual-text probe
+matching its own quoted "before" text, a pre-existing container earning STRONG, and this one — and
+not one of them could separate *presence* from *a mention of the name*. So a hit now carries a
+verb naming its provenance (``MATCH_VERBS``): ``PATH-EXISTS`` is a tree entry,
+``NAME-MENTIONED-IN`` is a filename occurring as text inside some other file with no such path in
+the tree at all. Those two used to
+render identically as ``<key>@<path>``, in which ``@`` reads as "at" — a location — so a line could
+assert a file that is not there and no reader could tell (#2679: ``ET-8``'s ``registry.json``,
+``ET-4``'s ``app-sources.json``). A name-mention is printed but earns no strength: it answers
+"is this name written down", not "did the work produce this file".
+
 ``log verdict`` — the owning plan's ``## Execution log`` is split into entries, each entry
 classified into a small closed set (``LogVerdict``), and each attributed to the atom ids it
 names. Only the atom's **own** plan adjudicates it, and an id in an entry's headline
@@ -513,12 +526,48 @@ RE_MAKE = re.compile(r"\bmake ([a-z][a-z0-9-]{2,})")
 RE_ENV = re.compile(r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b")
 
 
+# HOW a key matched, not merely WHERE. Every evidence line must say which of these produced
+# it, because two of them are routinely confused by eye and mean opposite things: ``TREE_PATH``
+# is "this file is in the tree", ``NAME_MENTION`` is "no such file, but its name is written
+# inside another one". Rendered as ``<key>@<path>`` they were indistinguishable, and ``@`` reads
+# as "at" — a location. Measured on ``origin/main`` (#2679):
+#
+#   ET-8   registry.json@.github/workflows/full.yml       ← NAME_MENTION (no such path exists;
+#                                                            and the hit is a *substring* of
+#                                                            ``app-registry.json``, a different
+#                                                            filename)
+#   ET-4   app-sources.json@src/personalclaw/apps/catalog.py  ← NAME_MENTION (a string constant)
+#
+# The general rule this makes explicit, after six probes in this repo that could not separate
+# presence from a mention of the name: **an evidence line must say what kind of match produced
+# it.** A reader must be able to tell a file from a filename without reading this module.
+MATCH_TREE_PATH = "tree-path"  # ``path_exists``: the cited path IS an entry in the ref's tree
+MATCH_TREE_DIR = "tree-dir"  # ``dir_exists``: the cited directory holds this entry
+MATCH_NAME_MENTION = "name-mention"  # basename fallback: NO such path; the name occurs as text
+MATCH_TEXT = "text"  # a symbol / env var occurring in a file's contents
+MATCH_MAKE_TARGET = "make-target"  # the Makefile declares the target
+
+# The verb printed between a key and its hit. Indexed, never ``.get``: a new match kind with no
+# label must raise here rather than quietly render an unlabelled locator, which is the defect.
+MATCH_VERBS = {
+    MATCH_TREE_PATH: "PATH-EXISTS",
+    MATCH_TREE_DIR: "DIR-CONTAINS",
+    MATCH_NAME_MENTION: "NAME-MENTIONED-IN",
+    MATCH_TEXT: "TEXT-IN",
+    MATCH_MAKE_TARGET: "MAKE-TARGET-IN",
+}
+# The kinds that answer "the thing the atom named is THERE". A mention is not one of them, and
+# ``score_evidence`` counts only these as a satisfied path citation.
+MATCH_PRESENT = (MATCH_TREE_PATH, MATCH_TREE_DIR)
+
+
 @dataclass
 class Key:
     text: str
-    kind: str  # path | symbol | make | env
+    kind: str  # path | dir | symbol | make | env
     found_impl: list[str] = field(default_factory=list)
     found_test: list[str] = field(default_factory=list)
+    match: str = ""  # one of MATCH_*, set by ``probe``; "" while unprobed or not found
 
     @property
     def found(self) -> bool:
@@ -527,6 +576,21 @@ class Key:
     @property
     def in_impl(self) -> bool:
         return bool(self.found_impl)
+
+    @property
+    def resolves_on_ref(self) -> bool:
+        """Did the ref's TREE answer this key, as opposed to some file's contents?
+
+        Only true for a path/dir key that ``ls-tree`` resolved. A ``NAME_MENTION`` is false
+        here even though ``in_impl`` is true: the name was found, the file was not.
+        """
+        return self.in_impl and self.match in MATCH_PRESENT
+
+    def render(self) -> str:
+        """``<key> <VERB> <path>`` — the verb names the match kind, so a file and a filename
+        mentioned inside someone else's file cannot be confused by eye."""
+        where = (self.found_impl or self.found_test or ["?"])[0]
+        return f"{self.text} {MATCH_VERBS[self.match]} {where}"
 
 
 def extract_keys(atom: Atom) -> list[Key]:
@@ -576,24 +640,41 @@ def extract_keys(atom: Atom) -> list[Key]:
 
 
 def probe(keys: Iterable[Key], corpus: Corpus) -> None:
+    """Look every key up on the ref, and record HOW it matched as well as where.
+
+    The basename fallback is the reason ``match`` exists. ``path_exists`` already matches at a
+    path boundary under ANY prefix (``apps/catalog.py`` resolves
+    ``src/personalclaw/apps/catalog.py``), so by the time the fallback runs the cited file does
+    not exist anywhere in the tree. What is left is a substring search of file *contents*, which
+    answers a different question — "is this name written down somewhere" — and it is a different
+    kind of evidence, so it is labelled ``MATCH_NAME_MENTION`` and is NOT counted as a satisfied
+    path citation (see ``score_evidence``).
+    """
     targets = corpus.make_targets()
     for key in keys:
         if key.kind in ("path", "dir"):
             hits = (
                 corpus.dir_exists(key.text) if key.kind == "dir" else corpus.path_exists(key.text)
             )
-            key.found_impl = [h for h in hits if h.startswith(IMPL_PREFIXES)]
-            key.found_test = [h for h in hits if h not in key.found_impl]
-            if not hits and key.kind == "path":
-                # the cited path may not exist under that exact prefix; try the basename
+            if hits:
+                key.found_impl = [h for h in hits if h.startswith(IMPL_PREFIXES)]
+                key.found_test = [h for h in hits if h not in key.found_impl]
+                key.match = MATCH_TREE_DIR if key.kind == "dir" else MATCH_TREE_PATH
+            elif key.kind == "path":
+                # No such path under ANY prefix. Fall back to the name as TEXT, and say so.
                 impl, tst = corpus.find(Path(key.text).name)
                 key.found_impl, key.found_test = impl[:4], tst[:4]
+                if key.found:
+                    key.match = MATCH_NAME_MENTION
         elif key.kind == "make":
             if key.text in targets:
                 key.found_impl = ["Makefile"]
+                key.match = MATCH_MAKE_TARGET
         else:
             impl, tst = corpus.find(key.text)
             key.found_impl, key.found_test = impl[:6], tst[:6]
+            if key.found:
+                key.match = MATCH_TEXT
 
 
 # ---------------------------------------------------------------------------
@@ -931,12 +1012,18 @@ class Verdict:
         return [k for k in self.keys if k.in_impl]
 
     def key_summary(self, limit: int = 4) -> str:
+        """One spot-checkable line of evidence: every hit carries the VERB of its match kind.
+
+        The previous form was ``<key>@<path>``, which renders a string match in the grammar of a
+        location — see ``MATCH_VERBS``. ``registry.json@.github/workflows/full.yml`` asserted a
+        file that is not in the tree, and a reader had no way to see that from the output.
+        """
         found = [k for k in self.keys if k.in_impl]
         if not found:
             return "—"
         shown = found[:limit]
         extra = f" +{len(found) - limit}" if len(found) > limit else ""
-        return ", ".join(f"{k.text}@{(k.found_impl or ['?'])[0]}" for k in shown) + extra
+        return "; ".join(k.render() for k in shown) + extra
 
 
 # A path is a CONTAINER; a symbol, a make target or an env var is CONTENT. Only content had to
@@ -962,6 +1049,23 @@ class Verdict:
 # claiming more than presence. This is the mirror of the SYMBOL-ONLY caveat below, which names the
 # same hazard for the other half of the pair and is the weaker of the two — a symbol at least had
 # to be typed somewhere.
+#
+# #2679 finishes the job one level down. TRIVIAL bounds what a path citation can be WORTH; it does
+# not check whether the path is THERE. ``paths_ok`` counted any ``in_impl`` path key, and
+# ``probe``'s basename fallback sets ``in_impl`` for a path that does not exist anywhere in the
+# tree — its NAME merely occurs as text inside some other file. That is not weak evidence for the
+# citation, it is evidence for a different proposition, and it had two live consequences:
+#
+#   * a mention could COMPLETE ``paths_ok == len(paths)`` and so gate STRONG — which can reach
+#     LANDED-AND-CLEAN — on the strength of a filename written in a comment;
+#   * a mention-only atom scored TRIVIAL, whose printed ``why`` says "the paths the atom cites are
+#     on the ref". For ``ET-8`` that sentence is simply false: no ``registry.json`` is in the tree.
+#
+# So only a TREE resolution counts as a satisfied path citation (``Key.resolves_on_ref``). A
+# mention is still probed, still counted in ``in_impl``, and still printed — with the verb
+# ``NAME-MENTIONED-IN``, so the reader sees exactly what it is — but it earns no strength. Measured
+# on ``origin/main``: ``ET-8`` and ``ET-4`` are the two mention-only atoms, and both move to
+# ABSENT/NOT-LANDED, which is what "the file the atom names is not there" means.
 TRIVIAL = "TRIVIAL"
 
 
@@ -972,11 +1076,19 @@ def score_evidence(keys: Sequence[Key]) -> tuple[str, str]:
     paths = [k for k in keys if k.kind in ("path", "dir")]
     named = [k for k in keys if k.kind in ("symbol", "make", "env")]
     n_impl = sum(1 for k in named if k.in_impl)
-    paths_ok = sum(1 for k in paths if k.in_impl)
+    # ``resolves_on_ref``, not ``in_impl``: a path whose NAME was found inside another file has
+    # not been shown to exist. See the note above.
+    paths_ok = sum(1 for k in paths if k.resolves_on_ref)
+    mentioned = [k for k in paths if k.in_impl and not k.resolves_on_ref]
     ratio = (n_impl / len(named)) if named else 0.0
     detail = (
         f"{n_impl}/{len(named)} named symbols in impl, {paths_ok}/{len(paths)} cited paths exist"
     )
+    if mentioned:
+        detail += (
+            f"; {len(mentioned)} cited path(s) are NOT in the tree and matched only as a name"
+            f" written inside another file ({', '.join(k.render() for k in mentioned[:3])})"
+        )
     if paths and paths_ok == len(paths):
         if named and ratio >= 0.5:
             return "STRONG", detail
@@ -1138,9 +1250,11 @@ def classify(
         # TRIVIAL groups with WEAK here, and that is the conservative direction rather than an
         # oversight: when the LOG carries the ruling, presence only chooses GATED vs NOT-LANDED,
         # and demoting a trivially-matched atom to "no deliverable on the ref" would swap one
-        # false claim for another. Measured on ``origin/main``: ``ET-4`` (`app-sources.json`) and
-        # ``LV-7`` (a bare `scripts/`) are path-only and genuinely part-built, and both keep the
-        # bucket their own plan log gives them.
+        # false claim for another. Measured on ``origin/main``: ``LV-7`` (a bare `scripts/`) is
+        # path-only and genuinely part-built, and it keeps the bucket its own plan log gives it.
+        # ``ET-4`` used to be the second such case and is no longer: its one path key,
+        # `app-sources.json`, is not in the tree at all (#2679), so after the mention rule it has
+        # no evidence and falls to the ``else`` — which is the honest reading, not a demotion.
         if evidence in ("STRONG", "WEAK", TRIVIAL):
             present = (
                 "only non-discriminating path evidence is present"
@@ -2551,6 +2665,30 @@ def self_check(
             "of the extractor is dead, so every path-bearing atom would degrade to TRIVIAL and "
             "no atom could score STRONG"
         )
+    # The vacuity floor on the TREE half of the probe, and the mirror of the one above. Since
+    # #2679 only a tree resolution satisfies a path citation, so if ``path_exists``/``dir_exists``
+    # dies — a broken ``ls-tree`` read, a suffix rule that stops anchoring — EVERY path key
+    # degrades to a name-mention or to nothing, no atom can reach STRONG, and the census reads as
+    # a clean roadmap. That is the same false zero the catalog-shape guard refuses, reached by a
+    # different route. One tree-resolved path anywhere in the selection proves the half is alive.
+    probed_paths = [k for v in verdicts for k in v.keys if k.kind in ("path", "dir")]
+    if probed_paths and not any(k.resolves_on_ref for k in probed_paths):
+        problems.append(
+            f"not one of {len(probed_paths)} cited paths resolved to an entry in the ref's tree: "
+            "the path/dir half of the probe is dead, so no atom could score STRONG and every "
+            "path citation would degrade to a name-mention"
+        )
+    # Every hit must be able to SAY how it matched. ``Key.render`` indexes ``MATCH_VERBS``, so an
+    # unlabelled hit is the #2679 defect returning: an evidence line printing a bare locator with
+    # no provenance. Asserted rather than left to a KeyError inside the renderer.
+    unlabelled = [
+        f"{v.atom.id}:{k.text}" for v in verdicts for k in v.keys if k.found and not k.match
+    ]
+    if unlabelled:
+        problems.append(
+            f"{len(unlabelled)} probed key(s) were found but carry no match kind "
+            f"({unlabelled[:4]}): their evidence line cannot say what produced it"
+        )
     keyless = [v.atom.id for v in verdicts if not v.keys]
     if verdicts and len(keyless) > 0.6 * len(verdicts):
         problems.append(
@@ -2749,7 +2887,15 @@ def to_json(verdicts: Sequence[Verdict], corpus: Corpus, branches: Sequence[Bran
                     "log_verdict": v.log_verdict,
                     "why": v.why,
                     "found": [
-                        {"key": k.text, "kind": k.kind, "impl": k.found_impl[:3]}
+                        # ``match`` is not optional colour: without it ``impl`` carries the same
+                        # ambiguity the text form had — a tree path and a file that merely names
+                        # the key are both just a path string here.
+                        {
+                            "key": k.text,
+                            "kind": k.kind,
+                            "match": k.match,
+                            "impl": k.found_impl[:3],
+                        }
                         for k in v.keys
                         if k.in_impl
                     ],
