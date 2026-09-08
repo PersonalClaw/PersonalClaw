@@ -21,6 +21,7 @@ const {
   registerNativeNotificationIpc,
 } = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
+const { buildGatewayEnv } = require("./gatewayEnv");
 const { openShellStore } = require("./shellStore");
 const { loadRegistry } = require("./endpointRegistry");
 const {
@@ -155,8 +156,6 @@ function startGateway() {
     sendStatus("Starting gateway…");
     console.log(`Starting gateway: ${bin} ${args.join(" ")}`);
 
-    // Drop any inherited PERSONALCLAW_PORT so the gateway honors `--port auto`.
-    const { PERSONALCLAW_PORT: _ignored, ...baseEnv } = process.env;
     gatewayProcess = spawn(
       bin,
       args,
@@ -170,15 +169,13 @@ function startGateway() {
         // unavailable rather than merely unused. Deliberately NOT `unref()`ed: we
         // still track the handle, wait for its `exit`, and reap it in `before-quit`.
         detached: true,
-        env: {
-          ...baseEnv,
-          // Restore the user's real login-shell PATH so the backend can resolve
-          // provider CLIs (claude, node, npx) that live outside the
-          // minimal PATH a Finder-launched .app inherits from launchd.
-          PATH: resolveLoginPath(),
-          PERSONALCLAW_DEV_NO_AUTH: "1",
-          PERSONALCLAW_PROJECT_DIR: path.resolve(__dirname, ".."),
-        },
+        // One builder, executed by its own test — including the install kind, which the
+        // gateway cannot infer for itself inside a frozen bundle. See gatewayEnv.js.
+        env: buildGatewayEnv({
+          env: process.env,
+          loginPath: resolveLoginPath(),
+          projectDir: path.resolve(__dirname, ".."),
+        }),
       }
     );
 

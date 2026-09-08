@@ -23,6 +23,8 @@ const path = require("node:path");
 
 const MAIN = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 const PRELOAD_MAIN = fs.readFileSync(path.join(__dirname, "..", "preload.js"), "utf8");
+/** The child env moved into its own pure module so a test could EXECUTE it (issue 2673). */
+const GATEWAY_ENV = fs.readFileSync(path.join(__dirname, "..", "gatewayEnv.js"), "utf8");
 
 describe("the scans below are not vacuous", () => {
   it("is reading a main.js that still contains the things it looks for", () => {
@@ -117,20 +119,41 @@ describe("the spawn-local path is unchanged", () => {
 
   it("still spawns with the same argv and the same loopback auth-off env", () => {
     assert.match(MAIN, /\["gateway", "--port", "auto", "--json-ready", "--no-open"\]/);
-    assert.match(MAIN, /PERSONALCLAW_DEV_NO_AUTH: "1"/);
+    // The env literal moved to `gatewayEnv.js` (issue 2673) so a node test could execute it
+    // instead of grepping it. The auth-off key is still exactly one setting — it just lives in
+    // the module that owns the child env, which nothing but the spawn calls.
+    assert.match(GATEWAY_ENV, /PERSONALCLAW_DEV_NO_AUTH: "1"/);
   });
 
   it("keeps `PERSONALCLAW_DEV_NO_AUTH` out of every non-local path", () => {
     // Auth-off is only ever sound because the gateway it applies to is a private loopback child.
-    // Exactly one SETTING of it, in the spawn env of the child this shell owns; connect-mode must
-    // never carry it to a gateway it did not spawn. (Prose mentions are counted separately so a
-    // comment cannot mask a second real assignment.)
-    const assignments = [...MAIN.matchAll(/PERSONALCLAW_DEV_NO_AUTH\s*:/g)];
+    // Exactly one SETTING of it, in the env of the child this shell owns; connect-mode must never
+    // carry it to a gateway it did not spawn. (Prose mentions are counted separately so a comment
+    // cannot mask a second real assignment.)
+    const assignments = [...GATEWAY_ENV.matchAll(/PERSONALCLAW_DEV_NO_AUTH\s*:/g)];
     assert.strictEqual(assignments.length, 1, `expected one assignment, found ${assignments.length}`);
-    // A generous window: the spawn call carries a long comment block before its `env`.
-    const before = MAIN.slice(Math.max(0, assignments[0].index - 2500), assignments[0].index);
-    assert.match(before, /gatewayProcess = spawn\(/, "auth-off is set somewhere other than the spawn env");
-    assert.strictEqual(/activeUrl/.test(before), false, "auth-off is near a user-supplied endpoint");
+    // main.js must not have grown a second one back, in a connect-mode path or anywhere else.
+    assert.strictEqual(
+      [...MAIN.matchAll(/PERSONALCLAW_DEV_NO_AUTH\s*[:=]/g)].length, 0,
+      "main.js sets auth-off directly again — the child env belongs to gatewayEnv.js",
+    );
+    // And the builder that carries it is reached from ONE place: the spawn of the child this shell
+    // owns. A second call site is how auth-off would reach a gateway the shell did not spawn.
+    const calls = [...MAIN.matchAll(/buildGatewayEnv\(/g)];
+    assert.strictEqual(calls.length, 1, `expected one buildGatewayEnv call, found ${calls.length}`);
+    const spawnAt = MAIN.indexOf("gatewayProcess = spawn(");
+    assert.ok(spawnAt > 0, "the spawn call is gone — this rail is now blind");
+    assert.ok(calls[0].index > spawnAt, "auth-off is built somewhere other than the spawn env");
+    assert.strictEqual(
+      /activeUrl/.test(MAIN.slice(spawnAt, calls[0].index)), false,
+      "auth-off is near a user-supplied endpoint",
+    );
+    // Stronger than the window: the module that OWNS the child env cannot even name a
+    // user-supplied endpoint, so no future edit there can hand auth-off to one.
+    assert.strictEqual(
+      /activeUrl|connect/i.test(GATEWAY_ENV), false,
+      "gatewayEnv.js mentions connect-mode — it must only ever describe the spawned child",
+    );
   });
 });
 

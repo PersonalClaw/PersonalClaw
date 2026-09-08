@@ -168,9 +168,16 @@ export function UpdatesPanel() {
                 data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
             </div>
           )}
-          {/* Desktop: the shell (electron-updater) owns updates. */}
+          {/* Desktop: the SHELL owns updates, so there is no in-app apply. What the shell does
+              about it is a re-download today — the electron-updater half of `DC-1` is unbuilt
+              (no electron-updater dependency in desktop/package.json, nothing in the shell
+              checks for a release), and this note promised a self-update on next launch for the
+              whole life of the shipped Linux artifact (issue 2673). Naming the release page is
+              the same answer `personalclaw update` gives on this kind. */}
           {isDesktop && info.available && (
-            <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">The desktop app updates itself on the next launch.</div>
+            <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
+              Install the new version from the <a className="underline" href="https://github.com/PersonalClaw/PersonalClaw/releases" target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
+            </div>
           )}
         </div>
       </Section>
