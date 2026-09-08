@@ -66,3 +66,34 @@ test('the non-axe detectors still recognise the defects they exist for', async (
 
   await page.evaluate(`(() => { document.getElementById('non-axe-probe')?.remove() })()`)
 })
+
+// ── The other half of anti-vacuity: a scanned route must actually RENDER something ────────────────
+//
+// 🪤 `a11y.spec.ts`'s Tier-1/2 loop navigates, runs axe, and runs these detectors — and asserts
+// NOTHING about the page having mounted. That is fine for a nav route, which visibly is what it is,
+// and it is NOT fine for the entry this change adds: `app/not-a-real-app` exists precisely because
+// `AppHostPage`'s 404 branch is a real surface, and a route that came back blank (or was hijacked by
+// an onboarding gate) would sail through axe and both detectors and report the shell "clean" while
+// scanning nothing at all. That is the shape of vacuous coverage this campaign keeps finding, so the
+// claim gets its own check rather than an assumption.
+//
+// Asserted here rather than inside that loop because it is about ONE route, and adding a per-route
+// mount assertion to a 100-test loop is a different change with its own cost.
+test('the app-host shell this manifest scans really does render', async ({ page }) => {
+  await gotoRoute(page, 'app/not-a-real-app')
+
+  // The 404 branch names the app it could not find — that is the surface being scanned.
+  await expect(
+    page.getByText(/isn’t installed/),
+    'the app-host 404 EmptyState must be what a scan of #/app/<not-installed> sees',
+  ).toBeVisible()
+
+  // And its action is a real, reachable control — the thing a mouse-only or clipped-ring defect
+  // would live on. Without this the route could render a bare sentence and the detectors would have
+  // no focusable element to judge, which is indistinguishable from "no defects".
+  const cta = page.getByRole('button', { name: /Open the Store/i })
+  await expect(cta, 'the EmptyState action must be a real control').toBeVisible()
+  await cta.focus()
+  await expect(cta, 'and it must be focusable, or there is nothing here for these checks to sweep')
+    .toBeFocused()
+})

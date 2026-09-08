@@ -103,8 +103,25 @@ export const VIEW_ROUTES: RouteEntry[] = [
 //   · notifications   — attention surface, reached from the header bell.
 //   · discover        — store/discovery surface, reached from Apps.
 // The ones still exempt are exempt for a REAL reason (see EXEMPT_FROM_THE_HARNESS): they
-// need a path parameter to address a specific record (`#/loops/<id>`, `#/code/<id>`,
-// `#/app/<name>`), or carry a pending owner taste call that would red the gate on arrival.
+// need a path parameter to address a specific record (`#/loops/<id>`, `#/code/<id>`), or
+// carry a pending owner taste call that would red the gate on arrival.
+//
+// 🔑 `#/app/<name>` USED TO BE ON THAT LIST, AND IT WAS HALF WRONG. The exemption read "needs
+// an installed app name; one route per app", which is true of an app's OWN UI and not true of
+// the SHELL that hosts it. `AppHostPage` renders three surfaces before any app code runs — a
+// 404 EmptyState (`"<name>" isn't installed`, with a focusable "Open the Store" action), a
+// retryable LoadError for any other failure, and a spinner — and a name that is not installed
+// reaches the first one deterministically, with no fixture, no path record and no interaction
+// recipe. So a whole page's worth of chrome sat outside every scan because the harder half of
+// the same route was genuinely blocked. **An exemption that covers two things and is true of
+// one of them is a gap with a reason attached.** `app/<not-installed>` is in the list below.
+//
+// ⚠️ WHAT IS STILL NOT COVERED, stated so the coverage claim cannot be over-read: app-AUTHORED
+// UI. Three of ~51 first-party apps render their own surface (two React ESM bundles into the
+// HOST DOM — not iframes — plus a native menu-bar companion), and reaching one needs an
+// installed app WITH its bundle built at install time, i.e. a fixture that seeds the e2e home
+// AND has the apps repo present. The detectors are route-independent pure DOM functions, so
+// they would apply unchanged; what is missing is the fixture, not the check.
 //
 // Deliberately a SEPARATE list from ROUTES, for the same reason VIEW_ROUTES is:
 // `routeManifestParity.test.ts` holds ROUTES to an exact mirror of App.tsx's NAV ids,
@@ -115,6 +132,11 @@ export const NON_NAV_ROUTES: RouteEntry[] = [
   { route: 'mission-control', label: 'Mission Control', needsData: true },
   { route: 'notifications', label: 'Notifications', needsData: true },
   { route: 'discover', label: 'Discover', needsData: true },
+  // The app-hosting SHELL, reached with a name that is deliberately not installed. 🪤 The name
+  // matters: anything the e2e home might plausibly have would make this route's rendering depend
+  // on fixture state, and the point is a DETERMINISTIC 404 branch. `needsData` because the
+  // EmptyState only appears once `/api/apps/{name}` has answered.
+  { route: 'app/not-a-real-app', id: 'app-host-not-installed', label: 'App host › not installed', needsData: true },
 ]
 
 export const THEMES = ['light', 'dark'] as const
