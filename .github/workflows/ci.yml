@@ -424,6 +424,14 @@ jobs:
       - name: non-axe a11y detectors still recognise their defects (web/e2e/nonAxeA11yChecks.spec.ts)
         working-directory: web
         run: npx playwright test e2e/nonAxeA11yChecks.spec.ts --project=chromium
+      # The app-AUTHORED half of the same coverage. `app/e2e-ui-fixture` is in NON_NAV_ROUTES, so
+      # the axe sweep and both detectors already visit it — but a clean fixture makes "swept" and
+      # "never swept" the same output, and a failed fixture install degrades into the shell's
+      # already-covered 404 branch. This asserts the app's own bundle actually mounted and its
+      # control takes focus, which is what makes those green results mean something.
+      - name: app-authored DOM is really mounted and swept (web/e2e/appSurface.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/appSurface.spec.ts --project=chromium
       # DSC-11's OTHER half. axe cannot express any of these three: whether a focus stop is
       # VISIBLE (it checks name/role, not "was the user told"), what a user with
       # prefers-reduced-motion actually gets, or whether the page pans sideways on a phone.
