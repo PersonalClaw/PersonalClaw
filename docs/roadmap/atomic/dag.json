@@ -5623,7 +5623,7 @@
           "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
           "status": "todo",
           "scope": "Session 1 — Rebuild + signing + updater (T1.1-T1.4, V1); Contract C4 (install-kind + updater)",
-          "done_when": "CI mac-runner job builds `make desktop` -> electron-builder signed+notarized dmg/zip attached to the GitHub Release (spctl -a passes on a clean Mac); electron-updater checks Releases and prompts a one-version-behind install; shell sets PERSONALCLAW_INSTALL_KIND=desktop and the gateway Updates panel shows 'managed by the desktop app'; desktop/test/packaging.test.js green; V1 clean-machine install+update recorded. (Owner task 1 supplies the four Apple Developer signing secrets to the CI `release` environment.)",
+          "done_when": "CI mac-runner job builds `make desktop` -> electron-builder signed+notarized dmg/zip attached to the GitHub Release (spctl -a passes on a clean Mac); electron-updater checks Releases and prompts a one-version-behind install; the gateway Updates panel shows 'managed by the desktop app' (the shell half — setting PERSONALCLAW_INSTALL_KIND=desktop — is MET: desktop/gatewayEnv.js:56 declares it, landed 2026-09-07 by PR #2696 after the #2673 audit found it had THREE consumers and no producer, so a shipped AppImage/.deb was running pip against its own frozen interpreter); desktop/test/packaging.test.js green; V1 clean-machine install+update recorded. (Owner task 1 supplies the four Apple Developer signing secrets to the CI `release` environment.)",
           "deps": [
             "SH-11"
           ],
