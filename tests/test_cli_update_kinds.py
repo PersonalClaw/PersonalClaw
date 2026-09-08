@@ -404,7 +404,12 @@ def test_desktop_kind_delegates_to_the_app_and_exits_zero(
 
     cli_server._update()
 
-    assert "updates itself" in capsys.readouterr().out
+    # The delegation must name WHERE the new version comes from. "the app updates itself"
+    # (the wording this asserted before #2673) described the unbuilt electron-updater half
+    # of DC-1, so a reader followed an instruction with nothing behind it.
+    out = capsys.readouterr().out
+    assert "desktop install" in out
+    assert "https://github.com/PersonalClaw/PersonalClaw/releases" in out
     assert not git.calls and not spawns
 
 

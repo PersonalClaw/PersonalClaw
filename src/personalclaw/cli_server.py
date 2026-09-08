@@ -518,13 +518,23 @@ def _update_container() -> None:
 
 
 def _update_desktop() -> None:
-    """The desktop shell owns its own updater — delegate, don't fight it.
+    """The desktop SHELL owns this install — delegate, don't fight it.
+
+    No in-place apply: the gateway is a child of the Electron shell, so upgrading the
+    wheel under it or re-execing it is the wrong move even where it would work (a packaged
+    app has no interpreter to upgrade — the backend is a frozen PyInstaller bundle).
+
+    What the shell then does is a RE-DOWNLOAD, not an in-app update: the electron-updater
+    half of `DC-1` is unbuilt (no electron-updater dependency in ``desktop/package.json``,
+    nothing in the shell checks for a release), so "accept the update it offers" named an
+    offer that never arrives (#2673). Restore that wording when the updater lands, not
+    before — the rail in ``tests/test_desktop_install_kind.py`` reds when it does.
 
     Exit code 0 for the same reason as the container branch.
     """
-    print("  🖥  This is a desktop install — the PersonalClaw app updates itself.")
-    print("  Open the app and accept the update it offers (or re-download the latest")
-    print("  release from https://github.com/PersonalClaw/PersonalClaw/releases).")
+    print("  🖥  This is a desktop install — the PersonalClaw app manages its own version.")
+    print("  Install the new version from the releases page, then reopen the app:")
+    print("  https://github.com/PersonalClaw/PersonalClaw/releases")
 
 
 def _is_current(latest: str) -> bool:

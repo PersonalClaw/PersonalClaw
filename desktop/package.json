@@ -50,6 +50,7 @@
       "loginItem.js",
       "nativeNotifications.js",
       "gatewayShutdown.js",
+      "gatewayEnv.js",
       "gatewayUrl.js",
       "endpointRegistry.js",
       "shellStore.js",
