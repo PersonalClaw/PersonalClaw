@@ -89,6 +89,16 @@ export default defineConfig({
     port: 3100,
     proxy: {
       '/api': { target: BACKEND, changeOrigin: true, ws: true },
+      // 🔴 App-CONTRIBUTED UI bundles, and without this they cannot load in ANY vite session.
+      // `AppHostPage` builds a ROOT-RELATIVE `/apps/<name>/ui/<entry>` — correct in production,
+      // where the gateway serves the SPA and the bundle from one origin. Under vite the SPA has
+      // its own origin, so an unproxied `/apps/...` hits the SPA fallback and the app page fails
+      // with `Unexpected token '<'`: the dynamic import received index.html. That breaks the app
+      // page for the three first-party apps that contribute UI, in `npm run dev` and in the e2e
+      // harness's `vite preview` alike — measured, not inferred.
+      // `preview` inherits `server.proxy` (vite defaults proxy/port/host from `server`), which is
+      // why `/api` already works there and why one entry is enough for both.
+      '/apps': { target: BACKEND, changeOrigin: true },
     },
   },
   build: { outDir: 'dist' },
