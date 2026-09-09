@@ -31,9 +31,26 @@ docx/xlsx content types + .doc.ts registered following the image precedent; GET 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- artifacts/handlers.py:788 GET /api/artifacts/{slug}/extract, registered at :1429, 'Reuses the SAME reader that ingests uploaded documents rather than a second extraction path, so a generated file is read exactly like a user's own'
+- handlers.py:628 records the deliberate split between /extract (redacted preview) and the edit surface ('Not redacted, unlike /extract's preview. This is an EDIT surface')
+- web/src/ui/content/registerBuiltins.ts:208 docx and :217 xlsx types; OfficeDocPreview wired in registerBuiltins.ts + renderers.tsx
+- tests/test_rendering_registry_parity.py:49 is the cross-tier kind gate (bidirectional against ALLOWED_KINDS)
+
+**Driven in the UI:** The best-evidenced atom of this cycle, driven end to end on a real generated .docx. The library card reads 'Word · v1 · just now' (a kind tile, not a broken image). The Word filter tab narrows 5 cards to exactly the 2 docx artifacts. Opening the artifact renders the office preview with its honest sentence — 'Text preview — download for full formatting. The editable source is whatever this document was generated from.' — above correctly extracted text: the heading, the paragraph with inline formatting flattened, both bullets, and the table's rows. A Download link points at /raw.
+
+**Notes:** This closes the clause DFE-1 could only confirm from code and tests last cycle, because no office artifact existed to render. Seeding one through the product's OWN writer and provider (rather than hand-written meta.json) made the whole S1 frontend surface observable.
+
+**Follow-ups filed:**
+
+- issue #2753 (a document save does not refresh the version summary)
 
 ## Recorded history
 

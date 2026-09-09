@@ -30,9 +30,23 @@ reportlab>=4,<5 added to core dependencies (with WHY comment) and NOT in persona
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- pyproject.toml:71 reportlab pinned in CORE dependencies with the WHY comment above it, including the spec clause explicitly: 'Deliberately NOT in personalclaw-backend.spec's excludes (unlike faiss/torch): a PDF writer that vanished in the desktop build would recreate that same problem'
+- no reportlab entry in personalclaw-backend.spec (checked directly) — the excludes clause holds
+- uv.lock carries reportlab at 2303/2441/3242 with the same specifier, so the lock matches the manifest
+- MEASURED: available_formats() returned pdf unconditionally in the validation home, and the pdf writer produced a real artifact from the same DocumentModel as the docx
+- documents/writers/pdf_writer.py (187 lines) renders the model through platypus flowables
+
+**Driven in the UI:** The generated .pdf artifact appears in the library and its detail resolves through the EXISTING pdf renderer rather than a duplicate type (DHT-9's clause), so the two atoms confirm each other on the same fixture.
+
+**Notes:** One drift worth recording: the atom says reportlab>=4,<5 and the shipped pin is >=4,<6. That is a later widening after reportlab 5 shipped, not a missed clause — the intent (a bounded core pin, not excluded from the desktop build) holds. The reportlab comment is now cited BY the argon2id block at :108 as the precedent for a core dependency, which is a good sign the reasoning got reused rather than re-litigated.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 52 | `done_when` checked against the code and it holds |
+| `confirmed` | 62 | `done_when` checked against the code and it holds |
 | `partial` | 88 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 542 | not yet checked |
+| `unaudited` | 532 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -286,7 +286,7 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 | [`DFE-2`](DFE-2.md) | `done` | `confirmed` | Style-carrying document model + from_markup runs + docx writer emits new fields |
 | [`DFE-3`](DFE-3.md) | `done` | `partial` | First real docx→model parser with LossReport + parse→write→parse round-trip proof |
 | [`DFE-4`](DFE-4.md) | `done` | `confirmed` | Binary artifact write path + model read/render endpoints |
-| [`DFE-5`](DFE-5.md) | `done` | `partial` | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config |
+| [`DFE-5`](DFE-5.md) | `done` | `confirmed` | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config |
 | [`DFE-6`](DFE-6.md) | `done` | `partial` | Layout control: page setup, paragraph layout, headers/footers, page-geometry preview |
 | [`DFE-7`](DFE-7.md) | `done` | `confirmed` | Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas) |
 | [`DFE-8`](DFE-8.md) | `done` | `confirmed` | Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor |
@@ -295,16 +295,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DHT-1`](DHT-1.md) | `done` | `unaudited` | Writer seam: documents/ package (declarative model + writer registry) |
-| [`DHT-2`](DHT-2.md) | `done` | `unaudited` | docx writer + markdown/HTML->model authoring path (sanitize + redact) |
-| [`DHT-3`](DHT-3.md) | `done` | `unaudited` | xlsx writer (named sheets, header row, preserved cell types) |
-| [`DHT-4`](DHT-4.md) | `done` | `unaudited` | Artifact kinds + MIME map + create_binary hardening (#94 fix) |
-| [`DHT-5`](DHT-5.md) | `done` | `unaudited` | Agent tools: document_create + sheet_create + document_formats |
-| [`DHT-6`](DHT-6.md) | `done` | `unaudited` | Frontend S1: docx/xlsx content types + OfficeDocPreview + extract endpoint |
-| [`DHT-7`](DHT-7.md) | `done` | `unaudited` | pptx writer + deck_from_markdown + deck_create tool + pptx kind |
-| [`DHT-8`](DHT-8.md) | `done` | `unaudited` | reportlab core dependency + pdf writer (platypus flowables) |
-| [`DHT-9`](DHT-9.md) | `done` | `unaudited` | Frontend S2: pptx content type + pdf/csv kinds on existing types |
-| [`DHT-10`](DHT-10.md) | `done` | `unaudited` | Round-trip export: knowledge item / text artifact -> writer format (+ csv writer) |
+| [`DHT-1`](DHT-1.md) | `done` | `confirmed` | Writer seam: documents/ package (declarative model + writer registry) |
+| [`DHT-2`](DHT-2.md) | `done` | `confirmed` | docx writer + markdown/HTML->model authoring path (sanitize + redact) |
+| [`DHT-3`](DHT-3.md) | `done` | `confirmed` | xlsx writer (named sheets, header row, preserved cell types) |
+| [`DHT-4`](DHT-4.md) | `done` | `confirmed` | Artifact kinds + MIME map + create_binary hardening (#94 fix) |
+| [`DHT-5`](DHT-5.md) | `done` | `confirmed` | Agent tools: document_create + sheet_create + document_formats |
+| [`DHT-6`](DHT-6.md) | `done` | `confirmed` | Frontend S1: docx/xlsx content types + OfficeDocPreview + extract endpoint |
+| [`DHT-7`](DHT-7.md) | `done` | `confirmed` | pptx writer + deck_from_markdown + deck_create tool + pptx kind |
+| [`DHT-8`](DHT-8.md) | `done` | `confirmed` | reportlab core dependency + pdf writer (platypus flowables) |
+| [`DHT-9`](DHT-9.md) | `done` | `partial` | Frontend S2: pptx content type + pdf/csv kinds on existing types |
+| [`DHT-10`](DHT-10.md) | `done` | `confirmed` | Round-trip export: knowledge item / text artifact -> writer format (+ csv writer) |
 
 ### `DIST` — DISTRIBUTION (11/13 done)
 

@@ -30,26 +30,27 @@ every existing content type still renders Monaco (asserted); an office type moun
 
 ## Verification
 
-**Audit verdict:** `partial`
+**Audit verdict:** `confirmed`
 
 **Checked on:** 2026-09-09
 
-**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+**Checked by:** audit cycle 13 (DFE), upgraded in cycle 15 (DHT) on new observed evidence — DRIVEN in a real browser
 
 **Code evidence:**
 
-- web/src/ui/content/contentTypes.ts:44 EditCapability.render?: ComponentType<DocumentEditorProps> — the renderer slot is additive and optional, and the comment says <ContentSurface> renders THIS instead of Monaco
-- src/personalclaw/config/loader.py:1495 document_editing: bool = field(default False); :3503 reads it from dashboard_data with False as the fallback
-- tests/test_document_editing_gate.py: the flag is off by default, is in the PATCH allowlist, and survives load + to_dict (the config round-trip contract)
-- web/src/ui/content/DocumentEditor.tsx + documentEditorContract.test.tsx + documentEditorSlot.test.tsx green (part of the 137 web tests)
+- web/src/ui/content/contentTypes.ts:44 EditCapability.render? renderer slot; config/loader.py:1495 document_editing defaults False; tests/test_document_editing_gate.py green
+- web/src/ui/content/DocumentEditor.tsx:157 gates the save-confirm on !loaded.loss.lossless
+- OBSERVED READ-BACK: after the browser edit below, python-docx read versions/v1.docx bold runs ['fidelity'] and versions/v2.docx bold runs ['fidelity', '.'] — the bold applied in the UI is in the saved file
+- OBSERVED on disk: meta.json version 2, events ['created','edited'], and BOTH versions/v1.docx and versions/v2.docx present — the pre-edit copy is a real restorable artifact, not a promise
 
-**Driven in the UI:** Drove #/settings/documents: heading 'Documents' with the subtitle 'How generated Word, Excel and PowerPoint files behave. Download-only by default — editing one re-creates it, which is a trade worth choosing deliberately', and a single switch 'Edit documents in place'. Toggled it ON, then forced a FULL page load (new snapshot ref generation, not a hash change) — it came back checked. Persistence proved by reload, not by a file scan.
+**Driven in the UI:** The clause cycle 13 could not reach, now driven: with document_editing on, opened a generated .docx, clicked Edit, and the model editor mounted — Bold/Italic/Code with the hint 'Select text in a paragraph to format it', a Page layout control, a per-paragraph layout control, an editable paragraph textbox, and the honest non-editable disclosure ('Bulleted list — kept exactly as it was parsed. This editor does not change it.' / '2 blocks of this document (tables, images, page breaks) are shown above but not editable here — they are written back unchanged.'). Double-clicked to select text, which ENABLED Bold; clicked Bold; clicked Save. The save landed (v2 on disk, bold read back).
 
-**Notes:** The config half and the lossy-edit contract are confirmed as a user, and the contract is unusually well stated in the UI: the hint says saving RE-CREATES the file, names what a document model cannot hold (comments, footnotes, embedded objects, exact styling), promises the report before the first edit AND in the save confirmation, points at Details › Versions for the pre-edit copy, and says the server refuses a document save outright with the flag off. What could NOT be validated is the clause that matters most — 'a user bolds a word, saves, and the downloaded file opens bold in Word' — because no office artifact can be created through any UI route (#2748), so the editor never mounts. It has a test (test_docx_run_fidelity.py) and a two-tab 409 test; it has no observed user drive. Partial on that basis, deliberately: a read-back test is not the same evidence as a user's file opening bold in Word.
+**Notes:** UPGRADED from partial. Cycle 13 recorded partial because no office artifact could be created through any UI route (#2748), so the editor never mounted; seeding one through the product's own writer + provider in cycle 15 made it reachable. Two clauses now confirmed by observation rather than by test: the editor mounts for an office type, and a bold applied in the browser survives into the saved .docx. The save-confirm dialog did NOT appear, and that is correct rather than missing — it is gated on the document being LOSSY, and a file this project's own writer generated round-trips losslessly. The lossy path keeps its test coverage (test_docx_word_authored.py) rather than a user drive. One real defect found in the process and filed separately: the header still read 'Details · v1 · 1 event' after a successful save and only showed v2 after a reload (#2753).
 
 **Follow-ups filed:**
 
 - issue #2748 (empty state points at a route that dead-ends for binary kinds)
+- issue #2753 (a document save does not refresh the version summary)
 
 ## Recorded history
 

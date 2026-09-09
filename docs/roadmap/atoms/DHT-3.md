@@ -30,9 +30,20 @@ xlsx_writer.py multi-sheet output re-reads through the existing xlsx reader with
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- documents/writers/xlsx_writer.py:86-93 writes a formula through the formula path and PINS a value-only cell back to string, so a literal '=WORK IN PROGRESS' cannot become a broken formula
+- documents/model.py:196-248 SheetCell separates value from formula, and :199 states that separation IS the fidelity
+- tests/test_sheets.py green (part of the 145-passed run); illegal sheet-name sanitization and ragged rows covered there
+- MEASURED: seeded a real .xlsx artifact through the shipped writer with mixed str/int cells; it wrote and rendered
+
+**Notes:** Recorded drift, not a defect: the atom describes a SheetModel with `rows`, and today `Sheet.rows` is a read-only derived property over `cells` (model.py:267) — DFE-2 replaced the stored field, and its own deps declare it EXTENDS this plan's model. The docstring explains the choice ('Derived means it cannot go stale'). The atom text is older than the code; the code is right.
 
 ## Recorded history
 

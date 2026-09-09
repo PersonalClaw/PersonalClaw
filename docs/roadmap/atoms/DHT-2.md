@@ -30,9 +30,20 @@ docx_writer.py renders every Block.kind and its output re-reads through the exis
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- documents/writers/docx_writer.py renders every Block.kind; from_markup.py:145 parse_inline + :168 document_from_markdown + :267 document_from_html
+- from_markup.py:272-276 routes HTML through the platform's EXISTING sanitize_html then redact_credentials — the docstring says why: 'never a second implementation'
+- tests/test_documents.py:153 plants a real-shaped AWS key next to a <script> tag and :159 asserts 'a credential must not survive into a file'
+- part of the 145-passed documents/sheets/decks/binary run
+
+**Notes:** Checked one thing before recording it as a gap and it collapsed: the redaction is on the HTML path only, not on markdown. That is deliberate and stated — the module docstring scopes the threat precisely ('HTML reaching here is agent- or web-authored and therefore untrusted'), and the atom's own done_when says 'route HTML through sanitize_html + redact_credentials'. Markdown is the author's own input. Withdrawn. ARCC's Secure File Uploads guidance is about inbound files rather than generated ones, so it does not bear on this atom beyond the extension allowlist DHT-4 satisfies.
 
 ## Recorded history
 

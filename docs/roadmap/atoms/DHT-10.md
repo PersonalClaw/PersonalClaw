@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- mcp_artifacts.py:1140-1159 the source argument resolves through _resolve_document_source and flows into the SAME writer path — 'no parallel export pipeline'
+- :1221-1232 knowledge is tried first because 'its ids are uuids while artifact slugs are kebab-case, so the two namespaces don't realistically collide'
+- :1255-1259 a binary artifact is REFUSED with the reason stated: 'A binary artifact's content is a raw URL, not text — exporting one would write the URL into the document body'
+- :1152-1157 the title is passed only when the body does not already open with an H1, and the comment names the bug it fixes: 'supplying the item's name as well printed the same heading twice'
+- a knowledge item's summary is prepended when the body does not already start with it
+
+**Driven in the UI:** Not driven: the source round trip is a tool argument, and invoking the tool needs a bound model.
+
+**Notes:** Every clause is present including the two easy-to-miss ones (the binary refusal and the H1 de-duplication), and each carries the reason inline. The 'no new endpoint' constraint is visibly honoured — the resolution happens in the tool and hands markdown to the shared writer path.
 
 ## Recorded history
 

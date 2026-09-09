@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- registerBuiltins.ts: exactly one type per kind — pdf at :195, csv at :170, docx :208, xlsx :217, pptx :226, image :181, video :236. No duplicates exist today
+- MEASURED the gate's absence: test_rendering_registry_parity.py:49 compares SETS against ALLOWED_KINDS, so it cannot see a duplicate; contentTypes.ts:188 registerContentType de-duplicates on type ID, not on claimed kinds; contentTypes.ts:209 resolveContentType is FIRST-MATCH-WINS over registration order, so a second claimant silently SHADOWS
+- no test named or asserting one-registration-per-kind existed anywhere in web/src or tests/
+
+**Driven in the UI:** Drove the resolution the clause protects: the generated pdf artifact resolved through the existing PDF renderer and the xlsx through the spreadsheet type — one type per kind is the resolution actually in use, not just the declaration.
+
+**Notes:** The STATE is correct; the GATE the clause names did not exist, so the invariant rested on the file's discipline alone. This is the same shape as BA-5's finding one cycle earlier — a contract with no rail — and here it was cheap to close, so I fixed it rather than filing it: PR #2752 adds the uniqueness check to the file that already owns cross-tier registry invariants, falsified by planting a second type claiming 'pdf' and watching only the new check red while the pre-existing alignment test stayed green. That green is the argument for a separate check rather than an extra assertion. The PR also corrects a stale docstring in the helper it touches, which claimed csv/image/pdf 'declare no kinds' — true before DHT-9, and the opposite of the code after it. Partial rather than confirmed because the clause was not met when I found it; it will be confirmed once #2752 lands.
+
+**Follow-ups filed:**
+
+- PR #2752 (rail: one artifact kind, one content type)
 
 ## Recorded history
 

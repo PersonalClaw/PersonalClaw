@@ -32,9 +32,23 @@ tools in mcp_artifacts.py create real artifacts, project-scoped + SEL-audited on
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- mcp_artifacts.py:300/347/381/415 declare document_create, sheet_create, deck_create and document_formats; :678 dispatches the three creates through one _document_create
+- :1174-1180 the oversized refusal names the REAL size ('came to {mb:.1f}MB (cap {cap:.0f}MB)') and refuses BEFORE storing
+- :1185-1198 re-generating under an existing slug updates in place and bumps a version rather than minting a '-2' twin, 'the same dedup posture artifact_save takes'
+- the same block records a real bug it fixed: passing snapshot= to update_binary 'raised TypeError, so every attempt to regenerate a document under an existing slug crashed'
+- _audit called on denied/error paths as well as success
+
+**Driven in the UI:** Indirectly: the artifacts the tools produce are what I drove in the library. The tools themselves need a bound model to invoke, and none is configured in this home.
+
+**Notes:** The reply carries slug + version + raw URL rather than bytes, which is the same posture DFE-4's /model endpoint takes. Worth noting the dedup boundary I observed by accident: create_binary WITHOUT a slug mints a unique slug, so my second seeding run produced q3-field-report-2 beside q3-field-report — update-in-place is keyed on an explicitly passed slug, exactly as the code says.
 
 ## Recorded history
 

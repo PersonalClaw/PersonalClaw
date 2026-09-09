@@ -31,9 +31,22 @@ pptx_writer.py + deck_from_markdown (#/## slide boundaries, <!-- notes: --> spea
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- documents/writers/pptx_writer.py + documents/pptx_shapes.py; deck_from_markdown lives in from_markup.py alongside the document path
+- pptx_writer.py:8 'A bullet's depth is written, not assumed. This writer used to pin level = 0' — the placeholder-identity and level clauses both carry their history inline
+- mcp_artifacts.py:381 deck_create; 'pptx' present in BINARY_KINDS and registered at registerBuiltins.ts:226
+- tests/test_decks.py green (part of the 145-passed run)
+
+**Driven in the UI:** Not driven: I seeded docx, pdf and xlsx artifacts but not a deck, and the Slides filter tab exists with no card behind it.
+
+**Notes:** Confirmed on code + tests. The placeholder-identity regression the atom names (title-via-idx rather than object identity) is the sort of thing that only shows up on a second slide layout, and it has a test rather than a comment.
 
 ## Recorded history
 

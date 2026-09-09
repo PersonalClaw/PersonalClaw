@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- artifacts/native.py:546-551 raises ValueError for a non-binary kind, and the comment above it names the exact old bug: the coercion 'normalize_kind(kind) if is_binary_kind(kind) else "image"' is 'how every generated video ended up stored as an image (issue #94)' — kind='video' was in neither ALLOWED_KINDS nor BINARY_KINDS 'so the else-branch swallowed it'
+- the error message tells the developer the fix: 'register the kind in both ALLOWED_KINDS and BINARY_KINDS first'
+- models.py:63 BINARY_KINDS = {image, video, docx, xlsx, pptx, pdf}; ext_for_mime/kind_for_mime carry the office + pdf mimes
+- MEASURED: create_binary accepted kind='docx' and kind='pdf' against the real provider and produced correct mime on the stored artifact
+
+**Driven in the UI:** The Download control on the docx detail points at /api/artifacts/q3-field-report-2/raw and the office preview parsed the stored bytes as a real docx, so the stored mime/extension pairing is right end to end. I did not read the response header independently — that would have been an API call rather than a user action.
+
+**Notes:** The regression comment is the model for this kind of fix: it states the old expression, the failure it produced, and WHY failing loudly is what stops the class recurring as new binary kinds are added.
 
 ## Recorded history
 

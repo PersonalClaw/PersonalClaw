@@ -28,9 +28,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 15 (DHT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- documents/registry.py:27 get_writer returns None and its docstring states the contract: 'Never raises: an unknown format is a caller-facing refusal, not an exception to catch at every call site'
+- registry.py:34 available_formats reports what is USABLE — 'Registration itself is the availability check — a writer whose library is missing never registers, so this cannot claim a format that would fail on use'
+- documents/model.py (435 lines) holds DocumentModel/SheetModel/DeckModel with no OOXML vocabulary; the Writer type is declared PURE ('no I/O, no store access — so it cannot half-write on failure')
+- MEASURED at runtime in the validation home: available_formats() returned ['docx', 'pdf', 'pptx', 'xlsx']
+
+**Notes:** The seam's two design decisions are both stated where they are made: refuse-rather-than-raise, and availability-derived-from-registration rather than declared. The lazy _ensure_registered import is what makes the second true — a writer whose dependency is missing degrades to 'format not offered' instead of breaking the import of everything else.
 
 ## Recorded history
 

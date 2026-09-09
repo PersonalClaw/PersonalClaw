@@ -1289,19 +1289,20 @@
     "notes": "The strongest atom in the plan. Two details worth keeping: the oversized-body test asserts the INSTRUMENT (that the body was not read) rather than just the status code, and the no-OOXML test makes 'the browser never sees OOXML' a checked property rather than an intention. ARCC's Secure File Uploads guidance says not to trust Content-Type and to detect type from the file; this path does trust the header for the type, but the exploit that requirement guards is closed by different means — the mime allowlist admits no active type (no text/html), the declared kind must match the artifact's server-side kind, and the read path serves stored mime with X-Content-Type-Options: nosniff (handlers.py:347). Malware scanning and S3-only storage are Amazon-internal mechanisms with no meaning for a self-hosted local app."
   },
   "DFE-5": {
-    "verdict": "partial",
+    "verdict": "confirmed",
     "date": "2026-09-09",
-    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "by": "audit cycle 13 (DFE), upgraded in cycle 15 (DHT) on new observed evidence — DRIVEN in a real browser",
     "evidence": [
-      "web/src/ui/content/contentTypes.ts:44 EditCapability.render?: ComponentType<DocumentEditorProps> — the renderer slot is additive and optional, and the comment says <ContentSurface> renders THIS instead of Monaco",
-      "src/personalclaw/config/loader.py:1495 document_editing: bool = field(default False); :3503 reads it from dashboard_data with False as the fallback",
-      "tests/test_document_editing_gate.py: the flag is off by default, is in the PATCH allowlist, and survives load + to_dict (the config round-trip contract)",
-      "web/src/ui/content/DocumentEditor.tsx + documentEditorContract.test.tsx + documentEditorSlot.test.tsx green (part of the 137 web tests)"
+      "web/src/ui/content/contentTypes.ts:44 EditCapability.render? renderer slot; config/loader.py:1495 document_editing defaults False; tests/test_document_editing_gate.py green",
+      "web/src/ui/content/DocumentEditor.tsx:157 gates the save-confirm on !loaded.loss.lossless",
+      "OBSERVED READ-BACK: after the browser edit below, python-docx read versions/v1.docx bold runs ['fidelity'] and versions/v2.docx bold runs ['fidelity', '.'] — the bold applied in the UI is in the saved file",
+      "OBSERVED on disk: meta.json version 2, events ['created','edited'], and BOTH versions/v1.docx and versions/v2.docx present — the pre-edit copy is a real restorable artifact, not a promise"
     ],
-    "ui_validated": "Drove #/settings/documents: heading 'Documents' with the subtitle 'How generated Word, Excel and PowerPoint files behave. Download-only by default — editing one re-creates it, which is a trade worth choosing deliberately', and a single switch 'Edit documents in place'. Toggled it ON, then forced a FULL page load (new snapshot ref generation, not a hash change) — it came back checked. Persistence proved by reload, not by a file scan.",
-    "notes": "The config half and the lossy-edit contract are confirmed as a user, and the contract is unusually well stated in the UI: the hint says saving RE-CREATES the file, names what a document model cannot hold (comments, footnotes, embedded objects, exact styling), promises the report before the first edit AND in the save confirmation, points at Details › Versions for the pre-edit copy, and says the server refuses a document save outright with the flag off. What could NOT be validated is the clause that matters most — 'a user bolds a word, saves, and the downloaded file opens bold in Word' — because no office artifact can be created through any UI route (#2748), so the editor never mounts. It has a test (test_docx_run_fidelity.py) and a two-tab 409 test; it has no observed user drive. Partial on that basis, deliberately: a read-back test is not the same evidence as a user's file opening bold in Word.",
+    "ui_validated": "The clause cycle 13 could not reach, now driven: with document_editing on, opened a generated .docx, clicked Edit, and the model editor mounted — Bold/Italic/Code with the hint 'Select text in a paragraph to format it', a Page layout control, a per-paragraph layout control, an editable paragraph textbox, and the honest non-editable disclosure ('Bulleted list — kept exactly as it was parsed. This editor does not change it.' / '2 blocks of this document (tables, images, page breaks) are shown above but not editable here — they are written back unchanged.'). Double-clicked to select text, which ENABLED Bold; clicked Bold; clicked Save. The save landed (v2 on disk, bold read back).",
+    "notes": "UPGRADED from partial. Cycle 13 recorded partial because no office artifact could be created through any UI route (#2748), so the editor never mounted; seeding one through the product's own writer + provider in cycle 15 made it reachable. Two clauses now confirmed by observation rather than by test: the editor mounts for an office type, and a bold applied in the browser survives into the saved .docx. The save-confirm dialog did NOT appear, and that is correct rather than missing — it is gated on the document being LOSSY, and a file this project's own writer generated round-trips losslessly. The lossy path keeps its test coverage (test_docx_word_authored.py) rather than a user drive. One real defect found in the process and filed separately: the header still read 'Details · v1 · 1 event' after a successful save and only showed v2 after a reload (#2753).",
     "follow_ups": [
-      "issue #2748 (empty state points at a route that dead-ends for binary kinds)"
+      "issue #2748 (empty state points at a route that dead-ends for binary kinds)",
+      "issue #2753 (a document save does not refresh the version summary)"
     ]
   },
   "DFE-6": {
@@ -1462,5 +1463,140 @@
     "follow_ups": [
       "issue #2750 (BA-5's mirror panel + kill switch have no frontend)"
     ]
+  },
+  "DHT-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "documents/registry.py:27 get_writer returns None and its docstring states the contract: 'Never raises: an unknown format is a caller-facing refusal, not an exception to catch at every call site'",
+      "registry.py:34 available_formats reports what is USABLE — 'Registration itself is the availability check — a writer whose library is missing never registers, so this cannot claim a format that would fail on use'",
+      "documents/model.py (435 lines) holds DocumentModel/SheetModel/DeckModel with no OOXML vocabulary; the Writer type is declared PURE ('no I/O, no store access — so it cannot half-write on failure')",
+      "MEASURED at runtime in the validation home: available_formats() returned ['docx', 'pdf', 'pptx', 'xlsx']"
+    ],
+    "notes": "The seam's two design decisions are both stated where they are made: refuse-rather-than-raise, and availability-derived-from-registration rather than declared. The lazy _ensure_registered import is what makes the second true — a writer whose dependency is missing degrades to 'format not offered' instead of breaking the import of everything else."
+  },
+  "DHT-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "documents/writers/docx_writer.py renders every Block.kind; from_markup.py:145 parse_inline + :168 document_from_markdown + :267 document_from_html",
+      "from_markup.py:272-276 routes HTML through the platform's EXISTING sanitize_html then redact_credentials — the docstring says why: 'never a second implementation'",
+      "tests/test_documents.py:153 plants a real-shaped AWS key next to a <script> tag and :159 asserts 'a credential must not survive into a file'",
+      "part of the 145-passed documents/sheets/decks/binary run"
+    ],
+    "notes": "Checked one thing before recording it as a gap and it collapsed: the redaction is on the HTML path only, not on markdown. That is deliberate and stated — the module docstring scopes the threat precisely ('HTML reaching here is agent- or web-authored and therefore untrusted'), and the atom's own done_when says 'route HTML through sanitize_html + redact_credentials'. Markdown is the author's own input. Withdrawn. ARCC's Secure File Uploads guidance is about inbound files rather than generated ones, so it does not bear on this atom beyond the extension allowlist DHT-4 satisfies."
+  },
+  "DHT-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "documents/writers/xlsx_writer.py:86-93 writes a formula through the formula path and PINS a value-only cell back to string, so a literal '=WORK IN PROGRESS' cannot become a broken formula",
+      "documents/model.py:196-248 SheetCell separates value from formula, and :199 states that separation IS the fidelity",
+      "tests/test_sheets.py green (part of the 145-passed run); illegal sheet-name sanitization and ragged rows covered there",
+      "MEASURED: seeded a real .xlsx artifact through the shipped writer with mixed str/int cells; it wrote and rendered"
+    ],
+    "notes": "Recorded drift, not a defect: the atom describes a SheetModel with `rows`, and today `Sheet.rows` is a read-only derived property over `cells` (model.py:267) — DFE-2 replaced the stored field, and its own deps declare it EXTENDS this plan's model. The docstring explains the choice ('Derived means it cannot go stale'). The atom text is older than the code; the code is right."
+  },
+  "DHT-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "artifacts/native.py:546-551 raises ValueError for a non-binary kind, and the comment above it names the exact old bug: the coercion 'normalize_kind(kind) if is_binary_kind(kind) else \"image\"' is 'how every generated video ended up stored as an image (issue #94)' — kind='video' was in neither ALLOWED_KINDS nor BINARY_KINDS 'so the else-branch swallowed it'",
+      "the error message tells the developer the fix: 'register the kind in both ALLOWED_KINDS and BINARY_KINDS first'",
+      "models.py:63 BINARY_KINDS = {image, video, docx, xlsx, pptx, pdf}; ext_for_mime/kind_for_mime carry the office + pdf mimes",
+      "MEASURED: create_binary accepted kind='docx' and kind='pdf' against the real provider and produced correct mime on the stored artifact"
+    ],
+    "ui_validated": "The Download control on the docx detail points at /api/artifacts/q3-field-report-2/raw and the office preview parsed the stored bytes as a real docx, so the stored mime/extension pairing is right end to end. I did not read the response header independently — that would have been an API call rather than a user action.",
+    "notes": "The regression comment is the model for this kind of fix: it states the old expression, the failure it produced, and WHY failing loudly is what stops the class recurring as new binary kinds are added."
+  },
+  "DHT-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "mcp_artifacts.py:300/347/381/415 declare document_create, sheet_create, deck_create and document_formats; :678 dispatches the three creates through one _document_create",
+      ":1174-1180 the oversized refusal names the REAL size ('came to {mb:.1f}MB (cap {cap:.0f}MB)') and refuses BEFORE storing",
+      ":1185-1198 re-generating under an existing slug updates in place and bumps a version rather than minting a '-2' twin, 'the same dedup posture artifact_save takes'",
+      "the same block records a real bug it fixed: passing snapshot= to update_binary 'raised TypeError, so every attempt to regenerate a document under an existing slug crashed'",
+      "_audit called on denied/error paths as well as success"
+    ],
+    "ui_validated": "Indirectly: the artifacts the tools produce are what I drove in the library. The tools themselves need a bound model to invoke, and none is configured in this home.",
+    "notes": "The reply carries slug + version + raw URL rather than bytes, which is the same posture DFE-4's /model endpoint takes. Worth noting the dedup boundary I observed by accident: create_binary WITHOUT a slug mints a unique slug, so my second seeding run produced q3-field-report-2 beside q3-field-report — update-in-place is keyed on an explicitly passed slug, exactly as the code says."
+  },
+  "DHT-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "artifacts/handlers.py:788 GET /api/artifacts/{slug}/extract, registered at :1429, 'Reuses the SAME reader that ingests uploaded documents rather than a second extraction path, so a generated file is read exactly like a user's own'",
+      "handlers.py:628 records the deliberate split between /extract (redacted preview) and the edit surface ('Not redacted, unlike /extract's preview. This is an EDIT surface')",
+      "web/src/ui/content/registerBuiltins.ts:208 docx and :217 xlsx types; OfficeDocPreview wired in registerBuiltins.ts + renderers.tsx",
+      "tests/test_rendering_registry_parity.py:49 is the cross-tier kind gate (bidirectional against ALLOWED_KINDS)"
+    ],
+    "ui_validated": "The best-evidenced atom of this cycle, driven end to end on a real generated .docx. The library card reads 'Word · v1 · just now' (a kind tile, not a broken image). The Word filter tab narrows 5 cards to exactly the 2 docx artifacts. Opening the artifact renders the office preview with its honest sentence — 'Text preview — download for full formatting. The editable source is whatever this document was generated from.' — above correctly extracted text: the heading, the paragraph with inline formatting flattened, both bullets, and the table's rows. A Download link points at /raw.",
+    "notes": "This closes the clause DFE-1 could only confirm from code and tests last cycle, because no office artifact existed to render. Seeding one through the product's OWN writer and provider (rather than hand-written meta.json) made the whole S1 frontend surface observable.",
+    "follow_ups": [
+      "issue #2753 (a document save does not refresh the version summary)"
+    ]
+  },
+  "DHT-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "documents/writers/pptx_writer.py + documents/pptx_shapes.py; deck_from_markdown lives in from_markup.py alongside the document path",
+      "pptx_writer.py:8 'A bullet's depth is written, not assumed. This writer used to pin level = 0' — the placeholder-identity and level clauses both carry their history inline",
+      "mcp_artifacts.py:381 deck_create; 'pptx' present in BINARY_KINDS and registered at registerBuiltins.ts:226",
+      "tests/test_decks.py green (part of the 145-passed run)"
+    ],
+    "ui_validated": "Not driven: I seeded docx, pdf and xlsx artifacts but not a deck, and the Slides filter tab exists with no card behind it.",
+    "notes": "Confirmed on code + tests. The placeholder-identity regression the atom names (title-via-idx rather than object identity) is the sort of thing that only shows up on a second slide layout, and it has a test rather than a comment."
+  },
+  "DHT-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "pyproject.toml:71 reportlab pinned in CORE dependencies with the WHY comment above it, including the spec clause explicitly: 'Deliberately NOT in personalclaw-backend.spec's excludes (unlike faiss/torch): a PDF writer that vanished in the desktop build would recreate that same problem'",
+      "no reportlab entry in personalclaw-backend.spec (checked directly) — the excludes clause holds",
+      "uv.lock carries reportlab at 2303/2441/3242 with the same specifier, so the lock matches the manifest",
+      "MEASURED: available_formats() returned pdf unconditionally in the validation home, and the pdf writer produced a real artifact from the same DocumentModel as the docx",
+      "documents/writers/pdf_writer.py (187 lines) renders the model through platypus flowables"
+    ],
+    "ui_validated": "The generated .pdf artifact appears in the library and its detail resolves through the EXISTING pdf renderer rather than a duplicate type (DHT-9's clause), so the two atoms confirm each other on the same fixture.",
+    "notes": "One drift worth recording: the atom says reportlab>=4,<5 and the shipped pin is >=4,<6. That is a later widening after reportlab 5 shipped, not a missed clause — the intent (a bounded core pin, not excluded from the desktop build) holds. The reportlab comment is now cited BY the argon2id block at :108 as the precedent for a core dependency, which is a good sign the reasoning got reused rather than re-litigated."
+  },
+  "DHT-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "registerBuiltins.ts: exactly one type per kind — pdf at :195, csv at :170, docx :208, xlsx :217, pptx :226, image :181, video :236. No duplicates exist today",
+      "MEASURED the gate's absence: test_rendering_registry_parity.py:49 compares SETS against ALLOWED_KINDS, so it cannot see a duplicate; contentTypes.ts:188 registerContentType de-duplicates on type ID, not on claimed kinds; contentTypes.ts:209 resolveContentType is FIRST-MATCH-WINS over registration order, so a second claimant silently SHADOWS",
+      "no test named or asserting one-registration-per-kind existed anywhere in web/src or tests/"
+    ],
+    "ui_validated": "Drove the resolution the clause protects: the generated pdf artifact resolved through the existing PDF renderer and the xlsx through the spreadsheet type — one type per kind is the resolution actually in use, not just the declaration.",
+    "notes": "The STATE is correct; the GATE the clause names did not exist, so the invariant rested on the file's discipline alone. This is the same shape as BA-5's finding one cycle earlier — a contract with no rail — and here it was cheap to close, so I fixed it rather than filing it: PR #2752 adds the uniqueness check to the file that already owns cross-tier registry invariants, falsified by planting a second type claiming 'pdf' and watching only the new check red while the pre-existing alignment test stayed green. That green is the argument for a separate check rather than an extra assertion. The PR also corrects a stale docstring in the helper it touches, which claimed csv/image/pdf 'declare no kinds' — true before DHT-9, and the opposite of the code after it. Partial rather than confirmed because the clause was not met when I found it; it will be confirmed once #2752 lands.",
+    "follow_ups": [
+      "PR #2752 (rail: one artifact kind, one content type)"
+    ]
+  },
+  "DHT-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 15 (DHT) — DRIVEN in a real browser",
+    "evidence": [
+      "mcp_artifacts.py:1140-1159 the source argument resolves through _resolve_document_source and flows into the SAME writer path — 'no parallel export pipeline'",
+      ":1221-1232 knowledge is tried first because 'its ids are uuids while artifact slugs are kebab-case, so the two namespaces don't realistically collide'",
+      ":1255-1259 a binary artifact is REFUSED with the reason stated: 'A binary artifact's content is a raw URL, not text — exporting one would write the URL into the document body'",
+      ":1152-1157 the title is passed only when the body does not already open with an H1, and the comment names the bug it fixes: 'supplying the item's name as well printed the same heading twice'",
+      "a knowledge item's summary is prepended when the body does not already start with it"
+    ],
+    "ui_validated": "Not driven: the source round trip is a tool argument, and invoking the tool needs a bound model.",
+    "notes": "Every clause is present including the two easy-to-miss ones (the binary refusal and the H1 de-duplication), and each carries the reason inline. The 'no new endpoint' constraint is visibly honoured — the resolution happens in the tool and hands markdown to the shared writer path."
   }
 }
