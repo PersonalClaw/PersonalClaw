@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- `container` joins the workspace mode enum (`workspace.py:97`) and `container_env.py` carries the typed manifest; `tests/test_container_workspace.py` green inside the 228
+- 🔑 `image` XOR `build` IS CALLED LOAD-BEARING AND IT IS: 'both is ambiguous about which wins'. A manifest that accepted both would resolve differently per backend, which is the worst kind of environment bug — reproducible on one machine only
+- 🔴 THREE BACKENDS AND NO HARD DOCKER DEPENDENCY, detected by CLI probe on purpose: an import-time `docker-py` dependency 'would tax every [install]' for a feature that is 'local-first and opt-in'. Docker, containerd via nerdctl, and Apple Virtualization
+- the build budget is separated from the probe ceiling because 'a cold `docker build` legitimately takes minutes' — one timeout for both would have made the honest case look like a hang
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: no container backend is running on this host.
+
+**Notes:** Deferred and opt-in is the honest posture for a tier that needs a container runtime the user may not have — and the manifest being validated at save time rather than at run time means an author learns about a bad declaration before a run depends on it.
 
 ## Recorded history
 

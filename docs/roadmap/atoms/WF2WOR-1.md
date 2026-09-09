@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- all three routes are registered, read off the router rather than the plan: `GET /api/projects/{project_id}/work`, plus `/work/claim` and `/work/release` (`tasks/hierarchy_handlers.py:997-999`)
+- 🔑 I DROVE THE BOARD. A project detail page renders `Work · 0` with an ON-RAMP empty state — 'No work here yet — use New above to launch a loop, or start a chat' — so a count sits in the section header and an empty board reads as empty rather than as a board that failed to load
+- the board is local-first + stale-while-revalidate on the same seam as the rest of the page ('the board paints from cache, then swaps in the fresh projection when it lands'), so a slow projection does not blank a surface that already had content
+- 🔴 AND A LOAD FAILURE IS NOT A DELETION — observed directly: a bad project id renders 'Couldn't load your project', with the source recording why ('`error` was previously discarded, so a 500 fell through to `!project` and the page claimed the project was DELETED. A failed read is not a deletion')
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Driven on :10011: the project list, a project's detail page with its Work section, and the load-failure surface.
+
+**Notes:** Confirmed on the endpoint plus the rendered board. The state-GROUPED columns with real runs, legacy loops and tasks in them were not observed — this home has no work items in a project — so the grouping is unit-shaped here.
 
 ## Recorded history
 

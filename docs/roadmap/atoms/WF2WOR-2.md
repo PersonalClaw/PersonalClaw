@@ -33,9 +33,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- `tests/test_workflows_needs_input.py` green inside the 555
+- 🔑 THE ATOM'S REAL WORK IS THAT THREE UNLIKE THINGS BECOME ONE CARD TYPE — a gated run, an attention-state loop and a blocked task all surface as `NeedsInputItem`. Three inboxes for three shapes is how a user learns to check only one of them
+- the reply resumes 'the exact blocked node via resume_token' rather than restarting the run, which is the difference between answering a question and redoing the work
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: needs a gated run, an attention-state loop and a blocked task to exist simultaneously.
+
+**Notes:** Modify-and-approve as a distinct outcome from plain approve is the clause most likely to erode — it is the one that lets a human correct rather than only accept or reject.
 
 ## Recorded history
 

@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- `tests/test_project_memory_locality.py` green inside the 166
+- 🏅 'ORDERING ONLY, NEVER ADMISSION' IS THE BEST DESIGN SENTENCE IN THIS PLAN, and the reason is this campaign's own recurring class: the locality rule changes only WHERE a hit appears and HOW it is framed, never whether it appears, because 'a locality rule that dropped hits would silently delete recall results, WHICH IS INDISTINGUISHABLE FROM MEMORY LOSS'
+- when the local partition has nothing the global block is returned alone — so a project with no memory of its own still recalls, rather than reading as a project that never learned anything
+- 🔑 CROSS-PARTITION HITS ARE LABELLED AND FENCED, with the label 'carried into `fence_untrusted(source=...)` so the provenance rides the fence ATTRIBUTES rather than being prose the model may skim past'. Provenance as structure rather than as a sentence — the same choice LV-4's identity report makes
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: recall needs an embedding provider.
+
+**Notes:** Admission staying on the store's own relevance scoring is what keeps this a locality feature rather than a second, invisible filter with its own bugs.
 
 ## Recorded history
 

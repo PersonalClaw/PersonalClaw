@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- `tests/test_workflows_introspection.py` green inside the 161
+- 🔑 THE ACCEPTANCE BAR IS AN EVALUATOR ANSWERING NINE QUESTIONS FROM THE SURFACES ALONE, which is a far better test of a cockpit than a list of components — a panel can exist and still leave a reader unable to say why a run did what it did
+- the 'said-no fake-check badge' is the one worth naming: a check that reported success without running is the failure mode a cost/latency strip cannot show, so it gets its own badge
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: an empty home has no runs, so the cockpit has nothing to introspect.
+
+**Notes:** Template p50/p95 cards beside a per-run strip is the right pairing — a single run's latency is noise without the template's distribution to read it against.
 
 ## Recorded history
 

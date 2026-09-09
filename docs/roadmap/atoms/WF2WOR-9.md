@@ -31,9 +31,22 @@ C2.1: a leaf without an explicit objective/output-format/boundary fails compilat
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- the leaf-contract and measurement suites are green, including `tests/test_harness_fanout_measure.py`
+- 🔑 A LEAF WITHOUT AN EXPLICIT OBJECTIVE, OUTPUT FORMAT AND BOUNDARY FAILS COMPILATION — refusing at compile time rather than judging the output afterwards is what makes the contract real; a leaf with no declared format has no wrong answer
+- 🔑 TWO MUTATING LEAVES NEVER RUN CONCURRENTLY, enforced from the declared capability. Concurrency over a shared tree is the one place a fan-out turns from cheap into corrupting, and capability is the right axis to bound it on
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven.
+
+**Notes:** Homogeneous leaves plus off-format detection is what makes fan-out results comparable at all — a batch whose members answer in different shapes cannot be reduced without a human re-reading every one.
 
 ## Recorded history
 

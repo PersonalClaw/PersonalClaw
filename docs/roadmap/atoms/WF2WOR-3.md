@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- 161 green across the publish, filedrop, introspection and outbox-media suites
+- 🔑 VERSIONED ONLY ON MATERIAL CHANGE, WITH A CHANGE NOTE — a publish that minted a version per run would make the version history unreadable exactly when it matters, and the change note is what makes a version diff answerable later
+- local files are copied into the version dir under CONTENT-HASH names, so an artifact version is self-contained rather than a pointer into a workspace that may be torn down
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: a publish output needs a run that produces one.
+
+**Notes:** Media self-containment is the clause that makes an exported or snapshotted artifact still render — a version that referenced the worktree would break the moment the worktree was reclaimed.
 
 ## Recorded history
 

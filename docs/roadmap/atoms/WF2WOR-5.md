@@ -33,9 +33,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- the fan-out, validate and persistence suites are green (166 across those plus worktrees and memory locality)
+- 🔑 SURVIVING A GATEWAY RESTART IS THE CLAUSE THAT SEPARATES A WIDGET FROM A LIVE OBJECT, and it is asserted — a batch widget that vanished on restart would leave the user with N running children and no surface to reach them
+- individually-retryable branches mean one failed leaf does not cost the other N-1 their work
+- `__wf_depth` as a tool-handler seam is the recursion bound: without a depth marker a sub-agent that spawns sub-agents has no ceiling but the budget
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: needs two or more real sub-agent tasks.
+
+**Notes:** The compile-cutover at N>=2 is the right threshold — a single task routed through a batch compiler would pay the widget cost for nothing.
 
 ## Recorded history
 

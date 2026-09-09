@@ -29,9 +29,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- 🪤 THE CYCLE'S FINDING, AND IT IS THE LV-4 SHAPE IN A NEW MECHANISM. The extraction-time resolve-and-compare in `project_archive._extract_one` is the layer the module's own header calls 'what closes the TOCTOU gap' — and REMOVING IT ENTIRELY LEFT ALL 65 TESTS IN THE FILE GREEN. Fixed in #2825; the mutation now reds the new test with the escaped body in the message (`assert b'escaped' is None`), restored 67/67
+- 🔑 WHY IT WAS EASY TO MISS: a test two screens above is named for rejecting symlinks and its docstring says the refusal 'lives in the extraction filter — which is also where the TOCTOU gap is', but it exercises `snapshot._data_filter`, the TAR path used by snapshot restore. Project import is the ZIP path in another module. A symlink refusal sitting among the path-safety tests read as coverage of a mechanism it does not touch
+- 🔑 THE TWO-LAYER DESIGN ITSELF IS RIGHT AND SAYS SO: `safe_member` is 'the readable half' and runs at plan time; the extractor re-applies the predicate as it writes 'because a plan-time scan is a promise about a list and EXTRACTION IS WHAT TOUCHES THE FILESYSTEM'. And they deliberately mirror rather than diverge — 'two checkers with different rules would mean the weaker one wins wherever it runs'
+- the rest of the atom holds: unique temp dir, janitor cleanup on EVERY exit path ('a quarantine that survives a failed import leaves the archive's contents unpacked on disk after the import that would have vetted them refused'), optional AES-GCM, and a registered `projects` snapshot component. 65 → 67 green
+- 🔴 ENCRYPTION IS OFF BY DEFAULT FOR A STATED REASON, which is the right call: 'an encrypted archive is a file the user cannot read without the passphrase they chose, which is a real way to lose a project'
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: export/import is a CLI and REST surface.
+
+**Notes:** Confirmed on acceptance — every clause including path safety is implemented. The defect was in the COVERAGE of the load-bearing layer, not in the layer, which is why this is a confirmed atom with a fix PR rather than a partial.
 
 ## Recorded history
 

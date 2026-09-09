@@ -7681,5 +7681,168 @@
     ],
     "ui_validated": "The consent wording was read against enforcement; app installs were not driven here.",
     "notes": "The shared venv is a real limitation, disclosed in `limitations.md` rather than hidden, and the conflict refusal is the narrow guarantee that limitation still permits. Stating both is what makes the pair honest — either alone would mislead."
+  },
+  "WF2WOR-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "all three routes are registered, read off the router rather than the plan: `GET /api/projects/{project_id}/work`, plus `/work/claim` and `/work/release` (`tasks/hierarchy_handlers.py:997-999`)",
+      "🔑 I DROVE THE BOARD. A project detail page renders `Work · 0` with an ON-RAMP empty state — 'No work here yet — use New above to launch a loop, or start a chat' — so a count sits in the section header and an empty board reads as empty rather than as a board that failed to load",
+      "the board is local-first + stale-while-revalidate on the same seam as the rest of the page ('the board paints from cache, then swaps in the fresh projection when it lands'), so a slow projection does not blank a surface that already had content",
+      "🔴 AND A LOAD FAILURE IS NOT A DELETION — observed directly: a bad project id renders 'Couldn't load your project', with the source recording why ('`error` was previously discarded, so a 500 fell through to `!project` and the page claimed the project was DELETED. A failed read is not a deletion')",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Driven on :10011: the project list, a project's detail page with its Work section, and the load-failure surface.",
+    "notes": "Confirmed on the endpoint plus the rendered board. The state-GROUPED columns with real runs, legacy loops and tasks in them were not observed — this home has no work items in a project — so the grouping is unit-shaped here."
+  },
+  "WF2WOR-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "`tests/test_workflows_needs_input.py` green inside the 555",
+      "🔑 THE ATOM'S REAL WORK IS THAT THREE UNLIKE THINGS BECOME ONE CARD TYPE — a gated run, an attention-state loop and a blocked task all surface as `NeedsInputItem`. Three inboxes for three shapes is how a user learns to check only one of them",
+      "the reply resumes 'the exact blocked node via resume_token' rather than restarting the run, which is the difference between answering a question and redoing the work",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs a gated run, an attention-state loop and a blocked task to exist simultaneously.",
+    "notes": "Modify-and-approve as a distinct outcome from plain approve is the clause most likely to erode — it is the one that lets a human correct rather than only accept or reject."
+  },
+  "WF2WOR-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "161 green across the publish, filedrop, introspection and outbox-media suites",
+      "🔑 VERSIONED ONLY ON MATERIAL CHANGE, WITH A CHANGE NOTE — a publish that minted a version per run would make the version history unreadable exactly when it matters, and the change note is what makes a version diff answerable later",
+      "local files are copied into the version dir under CONTENT-HASH names, so an artifact version is self-contained rather than a pointer into a workspace that may be torn down",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: a publish output needs a run that produces one.",
+    "notes": "Media self-containment is the clause that makes an exported or snapshotted artifact still render — a version that referenced the worktree would break the moment the worktree was reclaimed."
+  },
+  "WF2WOR-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "`workflows/worktrees.py` and `workflows/provisioning.py` both import `containers`, and the worktree suite is green inside the 555",
+      "🔑 PID-LIVENESS LOCK FILES RATHER THAN A FLAG: a lock whose holder is a dead process is a lock nobody can clear, and a liveness check is what stops a crashed run from stranding its workspace forever",
+      "`preserved_workspace_path` on the run record is what makes a post-mortem possible — a teardown that always ran would delete the evidence of the failure that needed it",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs a code run with a bound workspace.",
+    "notes": "Setup and teardown executing as real subprocesses (rather than as declared intent) is the clause worth re-checking after any controller refactor — a provisioning step that silently no-ops looks identical to one that succeeded."
+  },
+  "WF2WOR-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "the fan-out, validate and persistence suites are green (166 across those plus worktrees and memory locality)",
+      "🔑 SURVIVING A GATEWAY RESTART IS THE CLAUSE THAT SEPARATES A WIDGET FROM A LIVE OBJECT, and it is asserted — a batch widget that vanished on restart would leave the user with N running children and no surface to reach them",
+      "individually-retryable branches mean one failed leaf does not cost the other N-1 their work",
+      "`__wf_depth` as a tool-handler seam is the recursion bound: without a depth marker a sub-agent that spawns sub-agents has no ceiling but the budget",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs two or more real sub-agent tasks.",
+    "notes": "The compile-cutover at N>=2 is the right threshold — a single task routed through a batch compiler would pay the widget cost for nothing."
+  },
+  "WF2WOR-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "🔑 THE ENFORCEMENT IS AT RUN START AND THE CODE SAYS WHY THE OBVIOUS SHORTCUT IS WRONG: `controller.py:4415` denies an incognito/temporary session's terminal run, and the neighbouring comment rules out re-opening it downstream — '`is_restricted=False` there would re-open the gate an incognito origin closed. Belt [and braces]'",
+      "the same path performs the session_restrictions mark and the memory-mode write, so a run launched from a restricted session cannot quietly acquire a memory posture its origin refused",
+      "a completion summary is mirrored back into the launching session, which is what keeps a background run legible to the chat that started it",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs an incognito session and a blocking run.",
+    "notes": "Denying at run START rather than at write time is the correct layer: a run that started under a restricted origin and only discovered the restriction on its first write would already have done work it was not allowed to do."
+  },
+  "WF2WOR-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "`tests/test_workflows_introspection.py` green inside the 161",
+      "🔑 THE ACCEPTANCE BAR IS AN EVALUATOR ANSWERING NINE QUESTIONS FROM THE SURFACES ALONE, which is a far better test of a cockpit than a list of components — a panel can exist and still leave a reader unable to say why a run did what it did",
+      "the 'said-no fake-check badge' is the one worth naming: a check that reported success without running is the failure mode a cost/latency strip cannot show, so it gets its own badge",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: an empty home has no runs, so the cockpit has nothing to introspect.",
+    "notes": "Template p50/p95 cards beside a per-run strip is the right pairing — a single run's latency is noise without the template's distribution to read it against."
+  },
+  "WF2WOR-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "the fan-out and validate suites are green; the atom is a defect-fix bundle and each fix has its own assertions",
+      "🔑 EIGHT NEAR-SIMULTANEOUS COMPLETIONS DELIVERING 'WITHOUT LOSS AND WITHOUT RESETTING THE PARENT SESSION' is the real bug class here — a lost completion is invisible, and a reset parent session is worse than a lost one because it destroys context the user still needs",
+      "`_validate_agent` returning a TYPED error with 'no silent downgrade' is the anti-pattern this campaign keeps meeting: a silent downgrade to a default agent produces work nobody asked for under a name nobody chose",
+      "queued spawns carrying the full parameter set and real cancellable ids — a queued item with a partial parameter set is a different job from the one requested, and an uncancellable id is a spawn the user cannot stop",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs eight concurrent sub-agents.",
+    "notes": "An injection wall on the fan-out path is the security-relevant half: a leaf's output is another leaf's input, so the parent must treat child text as data."
+  },
+  "WF2WOR-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "the leaf-contract and measurement suites are green, including `tests/test_harness_fanout_measure.py`",
+      "🔑 A LEAF WITHOUT AN EXPLICIT OBJECTIVE, OUTPUT FORMAT AND BOUNDARY FAILS COMPILATION — refusing at compile time rather than judging the output afterwards is what makes the contract real; a leaf with no declared format has no wrong answer",
+      "🔑 TWO MUTATING LEAVES NEVER RUN CONCURRENTLY, enforced from the declared capability. Concurrency over a shared tree is the one place a fan-out turns from cheap into corrupting, and capability is the right axis to bound it on",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven.",
+    "notes": "Homogeneous leaves plus off-format detection is what makes fan-out results comparable at all — a batch whose members answer in different shapes cannot be reduced without a human re-reading every one."
+  },
+  "WF2WOR-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "🪤 THE CYCLE'S FINDING, AND IT IS THE LV-4 SHAPE IN A NEW MECHANISM. The extraction-time resolve-and-compare in `project_archive._extract_one` is the layer the module's own header calls 'what closes the TOCTOU gap' — and REMOVING IT ENTIRELY LEFT ALL 65 TESTS IN THE FILE GREEN. Fixed in #2825; the mutation now reds the new test with the escaped body in the message (`assert b'escaped' is None`), restored 67/67",
+      "🔑 WHY IT WAS EASY TO MISS: a test two screens above is named for rejecting symlinks and its docstring says the refusal 'lives in the extraction filter — which is also where the TOCTOU gap is', but it exercises `snapshot._data_filter`, the TAR path used by snapshot restore. Project import is the ZIP path in another module. A symlink refusal sitting among the path-safety tests read as coverage of a mechanism it does not touch",
+      "🔑 THE TWO-LAYER DESIGN ITSELF IS RIGHT AND SAYS SO: `safe_member` is 'the readable half' and runs at plan time; the extractor re-applies the predicate as it writes 'because a plan-time scan is a promise about a list and EXTRACTION IS WHAT TOUCHES THE FILESYSTEM'. And they deliberately mirror rather than diverge — 'two checkers with different rules would mean the weaker one wins wherever it runs'",
+      "the rest of the atom holds: unique temp dir, janitor cleanup on EVERY exit path ('a quarantine that survives a failed import leaves the archive's contents unpacked on disk after the import that would have vetted them refused'), optional AES-GCM, and a registered `projects` snapshot component. 65 → 67 green",
+      "🔴 ENCRYPTION IS OFF BY DEFAULT FOR A STATED REASON, which is the right call: 'an encrypted archive is a file the user cannot read without the passphrase they chose, which is a real way to lose a project'",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: export/import is a CLI and REST surface.",
+    "notes": "Confirmed on acceptance — every clause including path safety is implemented. The defect was in the COVERAGE of the load-bearing layer, not in the layer, which is why this is a confirmed atom with a fix PR rather than a partial."
+  },
+  "WF2WOR-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "`tests/test_project_memory_locality.py` green inside the 166",
+      "🏅 'ORDERING ONLY, NEVER ADMISSION' IS THE BEST DESIGN SENTENCE IN THIS PLAN, and the reason is this campaign's own recurring class: the locality rule changes only WHERE a hit appears and HOW it is framed, never whether it appears, because 'a locality rule that dropped hits would silently delete recall results, WHICH IS INDISTINGUISHABLE FROM MEMORY LOSS'",
+      "when the local partition has nothing the global block is returned alone — so a project with no memory of its own still recalls, rather than reading as a project that never learned anything",
+      "🔑 CROSS-PARTITION HITS ARE LABELLED AND FENCED, with the label 'carried into `fence_untrusted(source=...)` so the provenance rides the fence ATTRIBUTES rather than being prose the model may skim past'. Provenance as structure rather than as a sentence — the same choice LV-4's identity report makes",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: recall needs an embedding provider.",
+    "notes": "Admission staying on the store's own relevance scoring is what keeps this a locality feature rather than a second, invisible filter with its own bugs."
+  },
+  "WF2WOR-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser",
+    "evidence": [
+      "`container` joins the workspace mode enum (`workspace.py:97`) and `container_env.py` carries the typed manifest; `tests/test_container_workspace.py` green inside the 228",
+      "🔑 `image` XOR `build` IS CALLED LOAD-BEARING AND IT IS: 'both is ambiguous about which wins'. A manifest that accepted both would resolve differently per backend, which is the worst kind of environment bug — reproducible on one machine only",
+      "🔴 THREE BACKENDS AND NO HARD DOCKER DEPENDENCY, detected by CLI probe on purpose: an import-time `docker-py` dependency 'would tax every [install]' for a feature that is 'local-first and opt-in'. Docker, containerd via nerdctl, and Apple Virtualization",
+      "the build budget is separated from the probe ceiling because 'a cold `docker build` legitimately takes minutes' — one timeout for both would have made the honest case look like a hang",
+      "555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011"
+    ],
+    "ui_validated": "Not driven: no container backend is running on this host.",
+    "notes": "Deferred and opt-in is the honest posture for a tier that needs a container runtime the user may not have — and the manifest being validated at save time rather than at run time means an author learns about a bad declaration before a run depends on it."
   }
 }

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 374 | `done_when` checked against the code and it holds |
+| `confirmed` | 386 | `done_when` checked against the code and it holds |
 | `partial` | 226 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 70 | not yet checked |
+| `unaudited` | 58 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -1013,18 +1013,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2WOR-1`](WF2WOR-1.md) | `done` | `unaudited` | Project umbrella + Work board: /work endpoint, lease files, hub FE |
-| [`WF2WOR-2`](WF2WOR-2.md) | `done` | `unaudited` | Cross-project needs-input inbox FE + reply-resume routing |
-| [`WF2WOR-3`](WF2WOR-3.md) | `done` | `unaudited` | Artifact publishing: media self-containment, file drop/outbox, cockpit diffs |
-| [`WF2WOR-4`](WF2WOR-4.md) | `done` | `unaudited` | Run workspace + worktree execution wiring + code-run cockpit |
-| [`WF2WOR-5`](WF2WOR-5.md) | `done` | `unaudited` | Batch subagent_run compile-cutover + tool-handler posture seam + agent roster |
-| [`WF2WOR-6`](WF2WOR-6.md) | `done` | `unaudited` | Session-ownership run-start wiring + incognito enforcement at run start |
-| [`WF2WOR-7`](WF2WOR-7.md) | `done` | `unaudited` | Run cockpit + introspection/RunStats FE + live-adoption plumbing |
-| [`WF2WOR-8`](WF2WOR-8.md) | `done` | `unaudited` | Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget) |
-| [`WF2WOR-9`](WF2WOR-9.md) | `done` | `unaudited` | Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC) |
-| [`WF2WOR-10`](WF2WOR-10.md) | `done` | `unaudited` | Project export/import archive I/O + snapshot/portability registration + CLI/REST/FE |
-| [`WF2WOR-11`](WF2WOR-11.md) | `done` | `unaudited` | Project-scoped memory locality + knowledge project tagging |
-| [`WF2WOR-12`](WF2WOR-12.md) | `done` | `unaudited` | Container workspace mode + snapshot-anchored fork (deferred, opt-in) |
+| [`WF2WOR-1`](WF2WOR-1.md) | `done` | `confirmed` | Project umbrella + Work board: /work endpoint, lease files, hub FE |
+| [`WF2WOR-2`](WF2WOR-2.md) | `done` | `confirmed` | Cross-project needs-input inbox FE + reply-resume routing |
+| [`WF2WOR-3`](WF2WOR-3.md) | `done` | `confirmed` | Artifact publishing: media self-containment, file drop/outbox, cockpit diffs |
+| [`WF2WOR-4`](WF2WOR-4.md) | `done` | `confirmed` | Run workspace + worktree execution wiring + code-run cockpit |
+| [`WF2WOR-5`](WF2WOR-5.md) | `done` | `confirmed` | Batch subagent_run compile-cutover + tool-handler posture seam + agent roster |
+| [`WF2WOR-6`](WF2WOR-6.md) | `done` | `confirmed` | Session-ownership run-start wiring + incognito enforcement at run start |
+| [`WF2WOR-7`](WF2WOR-7.md) | `done` | `confirmed` | Run cockpit + introspection/RunStats FE + live-adoption plumbing |
+| [`WF2WOR-8`](WF2WOR-8.md) | `done` | `confirmed` | Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget) |
+| [`WF2WOR-9`](WF2WOR-9.md) | `done` | `confirmed` | Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC) |
+| [`WF2WOR-10`](WF2WOR-10.md) | `done` | `confirmed` | Project export/import archive I/O + snapshot/portability registration + CLI/REST/FE |
+| [`WF2WOR-11`](WF2WOR-11.md) | `done` | `confirmed` | Project-scoped memory locality + knowledge project tagging |
+| [`WF2WOR-12`](WF2WOR-12.md) | `done` | `confirmed` | Container workspace mode + snapshot-anchored fork (deferred, opt-in) |
 
 ### `WS` — WATCHED-SOURCES (9/9 done)
 

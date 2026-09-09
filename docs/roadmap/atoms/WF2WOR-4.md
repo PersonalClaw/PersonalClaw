@@ -31,9 +31,22 @@ Success Criterion 7: plan_provisioning/pending_setup/plan_teardown are wired int
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- `workflows/worktrees.py` and `workflows/provisioning.py` both import `containers`, and the worktree suite is green inside the 555
+- 🔑 PID-LIVENESS LOCK FILES RATHER THAN A FLAG: a lock whose holder is a dead process is a lock nobody can clear, and a liveness check is what stops a crashed run from stranding its workspace forever
+- `preserved_workspace_path` on the run record is what makes a post-mortem possible — a teardown that always ran would delete the evidence of the failure that needed it
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: needs a code run with a bound workspace.
+
+**Notes:** Setup and teardown executing as real subprocesses (rather than as declared intent) is the clause worth re-checking after any controller refactor — a provisioning step that silently no-ops looks identical to one that succeeded.
 
 ## Recorded history
 

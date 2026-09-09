@@ -31,9 +31,23 @@ Amendment §'Audit findings that must be fixed before any width increase' + Amen
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- the fan-out and validate suites are green; the atom is a defect-fix bundle and each fix has its own assertions
+- 🔑 EIGHT NEAR-SIMULTANEOUS COMPLETIONS DELIVERING 'WITHOUT LOSS AND WITHOUT RESETTING THE PARENT SESSION' is the real bug class here — a lost completion is invisible, and a reset parent session is worse than a lost one because it destroys context the user still needs
+- `_validate_agent` returning a TYPED error with 'no silent downgrade' is the anti-pattern this campaign keeps meeting: a silent downgrade to a default agent produces work nobody asked for under a name nobody chose
+- queued spawns carrying the full parameter set and real cancellable ids — a queued item with a partial parameter set is a different job from the one requested, and an uncancellable id is a spawn the user cannot stop
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: needs eight concurrent sub-agents.
+
+**Notes:** An injection wall on the fan-out path is the security-relevant half: a leaf's output is another leaf's input, so the parent must treat child text as data.
 
 ## Recorded history
 

@@ -31,9 +31,22 @@ Success Criterion 5: at run start the controller performs the session_restrictio
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 66 (WF2WOR) — the archive extractor's path safety falsified and found unasserted (fixed in #2825); the Work board driven in a real browser
+
+**Code evidence:**
+
+- 🔑 THE ENFORCEMENT IS AT RUN START AND THE CODE SAYS WHY THE OBVIOUS SHORTCUT IS WRONG: `controller.py:4415` denies an incognito/temporary session's terminal run, and the neighbouring comment rules out re-opening it downstream — '`is_restricted=False` there would re-open the gate an incognito origin closed. Belt [and braces]'
+- the same path performs the session_restrictions mark and the memory-mode write, so a run launched from a restricted session cannot quietly acquire a memory posture its origin refused
+- a completion summary is mirrored back into the launching session, which is what keeps a background run legible to the chat that started it
+- 555 passed across the containers, needs-input, export, container-workspace, publish, filedrop, introspection, fan-out, worktree and memory-locality suites; the Work board and a project detail page driven on :10011
+
+**Driven in the UI:** Not driven: needs an incognito session and a blocking run.
+
+**Notes:** Denying at run START rather than at write time is the correct layer: a run that started under a restricted origin and only discovered the restriction on its first write would already have done work it was not allowed to do.
 
 ## Recorded history
 
