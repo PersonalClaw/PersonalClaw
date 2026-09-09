@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 1 | `done_when` checked against the code and it holds |
+| `confirmed` | 2 | `done_when` checked against the code and it holds |
 | `partial` | 0 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 683 | not yet checked |
+| `unaudited` | 682 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -632,7 +632,7 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`OU-1`](OU-1.md) | `done` | `unaudited` | Extend onboarding state backend (step/provider/first_success fields + POST write path) |
+| [`OU-1`](OU-1.md) | `done` | `confirmed` | Extend onboarding state backend (step/provider/first_success fields + POST write path) |
 | [`OU-2`](OU-2.md) | `done` | `unaudited` | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) |
 | [`OU-3`](OU-3.md) | `done` | `unaudited` | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) |
 | [`OU-4`](OU-4.md) | `done` | `unaudited` | Onboarding done screen + resume + per-step skip + CLI setup pointer |
