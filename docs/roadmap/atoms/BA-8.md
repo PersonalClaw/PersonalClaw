@@ -30,9 +30,21 @@ The extension connects to the gateway over loopback only (LOOPBACK_INTERNAL rail
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- ../PersonalClawApps/browser-connector/ ships as a real app bundle: app.json, connector.py, test_contract.py, README.md, LICENSE, and extension/{manifest.json,background.js,content.js,contract.js}
+- src/personalclaw/dashboard/handlers/browse_connector.py + tests/test_browse_connector_route.py green in the 426-passed run
+- CompanionPanel.tsx:191 records the pairing decision: 'the connector is a companion client — BA-8 pairs it through the same device-session machinery the section above advertises for'
+
+**Driven in the UI:** Drove #/settings/companion. The paired-devices section is conditional and rendered nothing, because no extension is paired on this machine — so 'listed as a connected device' could not be observed.
+
+**Notes:** The bundle, the typed local contract and the loopback route all exist and are tested. The clause I could not settle is the observable one: the extension being LISTED as a connected device requires loading an unpacked extension into a real Chrome and completing the pairing, which needs a browser install step outside this audit. Also worth recording: tests/test_acp_bundles.py skips here with 'workspace apps/ dir not present (standalone clone)' — this workspace's apps clone is named PersonalClawApps, so the app-bundle rail that would cover this atom does not run in this tree at all.
 
 ## Recorded history
 

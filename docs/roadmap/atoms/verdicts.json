@@ -1346,5 +1346,121 @@
     ],
     "ui_validated": "Not drivable (no pptx artifact can be created — see DFE-1).",
     "notes": "The 1-based-for-the-user vs 0-based-in-the-file split is the kind of detail that usually leaks into the UI; here it is a named constant mirrored from the server with a test that counts 'the way a person counts'."
+  },
+  "BA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/browse/extraction.py + compress.py exist as standalone modules; compress.py:9 states the <=4000-char body budget and :43 carries _BASE64_IMG_RE with assert_no_base64 as the 'belt-and-suspenders guard'",
+      "compress.py:14 states the reason the screenshot is a PATH: 'Inlining even one base64 screenshot would blow the entire' context budget — the atom's 100K-token-DOM-to-<1K-token clause is the module's stated purpose, not an afterthought",
+      "tests/test_browse_extraction.py, test_browse_compress.py, test_browse_sentinels.py green inside a 426-passed browse run"
+    ],
+    "notes": "The no-base64 regression guard is the clause most likely to rot silently (a renderer change re-inlines an image and nothing else notices), and it is the one with a dedicated assertion helper. ElementRef stability across a DOM mutation and the CLICK <ref> / TYPE <ref>(value) parse both have tests in the same run."
+  },
+  "BA-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/net/policy.py:234 BROWSE = EgressPolicy(...) registered at :296; browse/cdp.py pre-flights every navigation through net/guard.py:evaluate",
+      "net/guard.py:74-102 covers the full forbidden set — loopback, RFC-1918, link-local INCLUDING 169.254.0.0/16 (IMDS), ULA fc00::/7, multicast, reserved, unspecified — and :86-88 unwraps IPv4-mapped IPv6 because 'a private v4 hidden in a v6 literal' is the bypass v4-only guards miss",
+      "guard.py:57-65 pinned_ips are 'the already-resolved, validated IPs the client must dial — no second resolution (that is the rebind window)'",
+      "browse/cdp.py:20-22 re-judges a client-side redirect on Page.frameNavigated and TEARS DOWN a denied one; :80 keeps preflight and redirect denials as distinguishable SEL rows",
+      "MEASURED: tests/test_browse_safety_script.py + test_browse_cdp_live.py + test_browse_behavioural_proof_is_reachable.py = 53 passed, ZERO skipped on this machine — a real Chromium opened and the injected script's fetch()/media/bluetooth blocks were proven behaviourally, not structurally"
+    ],
+    "notes": "This atom answers ARCC's SSRF Mitigation guidance point for point: deny private/local/metadata (169.254.169.254 named explicitly in both), DNS-rebinding protection by pinning the resolved IPs rather than re-resolving, redirects re-validated rather than followed blindly, and every denial logged to the SEL. It also carries the campaign's best example of a false-green being closed: tests/test_browse_live_legs_run_in_ci.py exists because the behavioural layer used to SKIP on the merge machine ('Measured on a browser-less tree: 20 skipped'), and 'a skipped surface reads exactly like a pass, so the green check said the safety script blocks fetch() while having never opened a browser'. The rail is over the CI WIRING and is derived rather than pinned by job name. I verified the same legs run here: 53 passed, 0 skipped."
+  },
+  "BA-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/validation.py:930 adds 'browse' to ALLOWED_HOOK_PROVIDERS with the comment naming what breaks without it: 'a hook, trigger or workflow naming browse is rejected'",
+      "src/personalclaw/action_providers/browse_provider.py implements the ActionProvider ABC; browse/loop.py carries the step loop, fencing and guards",
+      "tests/test_browse_loop_and_provider.py green in the 426-passed run"
+    ],
+    "notes": "The provider-fidelity clause is the one that decides whether browse inherits denylist/budget/profile from the standard seams or re-implements them; the ALLOWED_HOOK_PROVIDERS entry is the observable proof it went through the shipped path rather than beside it."
+  },
+  "BA-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_browse_credential_handoff.py is the strongest invariant suite in this plan: a password value never reaches any surface (WITH a control test), a 2FA field screened even though its type is text, an OAuth authorization code in the URL screened, an implicit-flow bearer token in the FRAGMENT screened, the CSRF state parameter deliberately KEPT, and the refusal warning names the field and never the value",
+      "profile persistence has its own clauses: a second run reuses the persisted profile without re-auth; a broken persistence re-authenticates; a corrupt meta 'fails toward asking the human'; the meta file holds no credential fields; the handoff binds the headful window to the SAME profile; the unattended form is headless",
+      "path safety: no URL can escape the profiles root (hostile-input parametrised), userinfo never lands in a directory name, the slug comes from the host only",
+      "browse/handoff.py + credentials.py present; the profile root is claimed by the state inventory (so the durability audit can see it)"
+    ],
+    "ui_validated": "Not drivable end to end: the done_when's own terms need a real login page and a human authenticating in a headful window.",
+    "notes": "The credentials-never-transit-the-agent invariant is confirmed, and confirmed the right way — with control tests proving the guard is what does the work rather than the fixture. What is NOT observed is the clause as literally written: 'Form fill + submit on a REAL login page… the user authenticates in a headful window… a subsequent run reuses the persisted profile'. Every step has a test; none was driven by a person against a real site, which is owner validation. Partial on the same standard applied to DFE-5 this campaign: a read-back test is not a user drive, and I am not treating them as interchangeable."
+  },
+  "BA-5": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "dag.json records BA-5 as done; the plan's own log at BROWSE-AUTOMATION.md:1158-1160 claims 'The FE mirror panel' shipped in core PR #2353",
+      "MEASURED: PR #2353 is merged and its complete file list is 13 files, NOT ONE under web/ — the frontend deliverable it claims is absent from the PR that claims it",
+      "no consumer of browse_step / browse_kill / browse_auth_expired anywhere under web/; no caller of /api/browse/status or /api/browse/kill in web/src (the only api/browse hit is the unrelated /api/browse-dirs picker at web/src/lib/api.ts:7090)",
+      "'BrowseMirror' appears in exactly two files repo-wide: the plan, and a docstring at browse/mirror.py:9 describing a panel a human watches. No component exists",
+      "the backend half IS real and tested: browse/mirror.py, killswitch.py, dashboard/handlers/browse_mirror.py (3 routes registered from server.py:433), and 18 tests in test_browse_mirror.py including a running loop parking on kill and a credential in the URL screened on the relayed step"
+    ],
+    "ui_validated": "Expanded the sidebar's 'Everything, show 9 more surfaces' and enumerated all 18 surfaces as a user: Home, Chat, Projects, Knowledge, Tasks, Inbox, Triggers, Files, Artifacts, Terminal, Agents, Tools, Skills, Learning, Prompts, Workflows, Apps, Settings. There is no browse or mirror surface and no kill control anywhere in the shell. A user cannot watch a browse run and CANNOT STOP ONE.",
+    "notes": "The campaign's FIRST contradicted verdict, and the one the governing rule was written for — the documented proof is specific, cites a real merged PR, and is wrong. Two of three deliverables do land: auth_state=expired is persisted, and surface_auth_expired emits its needs_input row through the SHIPPED emit_attention_item seam, so the inbox item genuinely reaches the user; BROWSE_PROFILE_KEY_<slug> lives in the credential store. What is missing is exactly the two pieces that needed NEW frontend — the panel and the persistent banner. The deferral chain is worth keeping whole because each link was reasonable on its own: BA-4's log (:1057) closes '(b) No FE control: the needs-input inbox item is the user surface and it already renders; the banner and the live mirror are BA-5's declared scope', deferring the frontend to BA-5, which then recorded it as delivered. Nothing in the suite could notice: every assertion is on the broadcast, and a broadcast nobody consumes passes. Filed as #2750, which proposes the dag.json flip rather than making it.",
+    "follow_ups": [
+      "issue #2750 (BA-5's mirror panel + kill switch have no frontend)"
+    ]
+  },
+  "BA-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/browse/plans.py:5-6 states the idempotency contract in the module docstring — a cursor that is 'the whole of its progress, so killing the gateway mid-flow loses at most one step and re-firing the same tick is a no-op at the same cursor'",
+      "plans.py:10-11 watch_page re-extracts and diffs against the cursor; an unchanged tick 'reports no change and leaves the cursor untouched'",
+      "browse/plan_runner.py present; tests/test_browse_plans.py + test_browse_plan_runner.py green in the 426-passed run"
+    ],
+    "ui_validated": "Not drivable: plans are files under browse/plans/ with no user surface, and the escalation clause needs a live JS-rendered page.",
+    "notes": "The persistence and idempotency clauses hold and are tested. Two clauses were not observed: the WATCHED-SOURCES escalation chain 'falls through from web_fetch to exactly one browse tick that returns MEANINGFUL CONTENT for a JS-rendered page' (SC 7) needs a live external page, and the rung-cap clause (a SUBMIT-bearing plan registering floor=draft_only and refusing to run unattended until promoted) is a guardrails interaction I did not exercise. Partial for what was not observed, not for anything found wrong."
+  },
+  "BA-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/settings/CompanionPanel.tsx:198-201 renders the Browser control section; SettingsPage.tsx:120 mounts CompanionPanel as { id: 'companion', label: 'Companion apps' }",
+      "web/src/pages/settings/browserControlToggle.test.tsx asserts the PATH STRING the click sends, and says why: 'the switch renders, the user flips it, and nothing is written — because the panel PATCHes the wrong section prefix, or no path at all… the config round-trip's Python half cannot see this'",
+      "src/personalclaw/browse/target.py + tests/test_browse_target.py green in the 426-passed run"
+    ],
+    "ui_validated": "Drove #/settings/companion. The 'Browser control' section reads 'Whether a browse task may drive your own browser, with the sites you are already signed in to', and its hint states all three done_when clauses in plain language: 'Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all.' Toggled 'Let tasks drive my browser' ON, then forced a FULL page load (new snapshot ref generation) — it came back checked. Persistence proved by reload.",
+    "notes": "The rare case where the UI copy states the atom's whole contract, including the two things 'a user cannot infer from a switch labelled with a verb' (its own test's words): skipped-not-switched, and never-for-a-scheduled-run. The frontend test asserting the PATCH path string rather than the rendered state is the right rail for this class of defect — a control bound to nothing looks identical to a working one."
+  },
+  "BA-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "../PersonalClawApps/browser-connector/ ships as a real app bundle: app.json, connector.py, test_contract.py, README.md, LICENSE, and extension/{manifest.json,background.js,content.js,contract.js}",
+      "src/personalclaw/dashboard/handlers/browse_connector.py + tests/test_browse_connector_route.py green in the 426-passed run",
+      "CompanionPanel.tsx:191 records the pairing decision: 'the connector is a companion client — BA-8 pairs it through the same device-session machinery the section above advertises for'"
+    ],
+    "ui_validated": "Drove #/settings/companion. The paired-devices section is conditional and rendered nothing, because no extension is paired on this machine — so 'listed as a connected device' could not be observed.",
+    "notes": "The bundle, the typed local contract and the loopback route all exist and are tested. The clause I could not settle is the observable one: the extension being LISTED as a connected device requires loading an unpacked extension into a real Chrome and completing the pairing, which needs a browser install step outside this audit. Also worth recording: tests/test_acp_bundles.py skips here with 'workspace apps/ dir not present (standalone clone)' — this workspace's apps clone is named PersonalClawApps, so the app-bundle rail that would cover this atom does not run in this tree at all."
+  },
+  "BA-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 14 (BA) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/browse/grant.py has live production callers, not just tests: action_providers/browse_provider.py:316 imports the grant helpers and :420 revoke_grant; browse/loop.py:189 checks make_close_check before every model call",
+      "docs/architecture/security.md:205-234 states the whole posture: per-task fail-closed grant through the shipped ApprovalGate ('No answer within 300s, no approval channel, or any gate error is a REJECT'), the no-credential-access invariant naming what the SEL rows carry (task label, host scope, reason — 'never a credential, cookie, or token'), close-to-kill as distinct from the browse kill switch, and 'Not an anti-bot surface' refusing to describe CAPTCHA avoidance as a capability",
+      "tests/test_browse_grant.py green in the 426-passed run"
+    ],
+    "ui_validated": "Partially: the shell shows an approvals affordance ('0 approvals waiting' on Home) so the ApprovalGate has a real surface, but no grant could be raised — no extension is paired, so the user_browser path never starts.",
+    "notes": "The docs clause is not only met, it is the most honest security page I have read in this repo: 'Honest limit — no IP pinning on a real browser… every navigation is still pre-flighted through the egress guard, but that is validation only and stays rebind-vulnerable. This is inherent to driving any real browser and is stated here rather than implied away.' That is the exact residual ARCC's SSRF guidance asks about (DNS rebinding), answered by disclosure rather than a claim — the gateway target satisfies the requirement with pinned_ips, the user_browser target cannot, and the page says which is which. What is NOT confirmed is the atom's own final clause, 'validated end-to-end as a user (grant, watch, take-over, close-to-kill, unattended refusal, unconnected skip)': the watch half depends on BA-5's panel, which does not exist (#2750), and the rest needs a paired extension. Partial.",
+    "follow_ups": [
+      "issue #2750 (BA-5's mirror panel + kill switch have no frontend)"
+    ]
   }
 }

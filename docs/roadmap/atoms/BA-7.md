@@ -31,9 +31,21 @@ browse action config gains target: 'gateway'|'user_browser' (default 'gateway', 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/settings/CompanionPanel.tsx:198-201 renders the Browser control section; SettingsPage.tsx:120 mounts CompanionPanel as { id: 'companion', label: 'Companion apps' }
+- web/src/pages/settings/browserControlToggle.test.tsx asserts the PATH STRING the click sends, and says why: 'the switch renders, the user flips it, and nothing is written — because the panel PATCHes the wrong section prefix, or no path at all… the config round-trip's Python half cannot see this'
+- src/personalclaw/browse/target.py + tests/test_browse_target.py green in the 426-passed run
+
+**Driven in the UI:** Drove #/settings/companion. The 'Browser control' section reads 'Whether a browse task may drive your own browser, with the sites you are already signed in to', and its hint states all three done_when clauses in plain language: 'Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all.' Toggled 'Let tasks drive my browser' ON, then forced a FULL page load (new snapshot ref generation) — it came back checked. Persistence proved by reload.
+
+**Notes:** The rare case where the UI copy states the atom's whole contract, including the two things 'a user cannot infer from a switch labelled with a verb' (its own test's words): skipped-not-switched, and never-for-a-scheduled-run. The frontend test asserting the PATCH path string rather than the rendered state is the right rail for this class of defect — a control bound to nothing looks identical to a working one.
 
 ## Recorded history
 

@@ -32,9 +32,19 @@ BrowseActionProvider implements the ActionProvider ABC and 'browse' is added to 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/validation.py:930 adds 'browse' to ALLOWED_HOOK_PROVIDERS with the comment naming what breaks without it: 'a hook, trigger or workflow naming browse is rejected'
+- src/personalclaw/action_providers/browse_provider.py implements the ActionProvider ABC; browse/loop.py carries the step loop, fencing and guards
+- tests/test_browse_loop_and_provider.py green in the 426-passed run
+
+**Notes:** The provider-fidelity clause is the one that decides whether browse inherits denylist/budget/profile from the standard seams or re-implements them; the ALLOWED_HOOK_PROVIDERS entry is the observable proof it went through the shipped path rather than beside it.
 
 ## Recorded history
 

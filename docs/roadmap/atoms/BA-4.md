@@ -30,9 +30,22 @@ Form fill + submit on a real login page via credential handoff works end-to-end:
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_browse_credential_handoff.py is the strongest invariant suite in this plan: a password value never reaches any surface (WITH a control test), a 2FA field screened even though its type is text, an OAuth authorization code in the URL screened, an implicit-flow bearer token in the FRAGMENT screened, the CSRF state parameter deliberately KEPT, and the refusal warning names the field and never the value
+- profile persistence has its own clauses: a second run reuses the persisted profile without re-auth; a broken persistence re-authenticates; a corrupt meta 'fails toward asking the human'; the meta file holds no credential fields; the handoff binds the headful window to the SAME profile; the unattended form is headless
+- path safety: no URL can escape the profiles root (hostile-input parametrised), userinfo never lands in a directory name, the slug comes from the host only
+- browse/handoff.py + credentials.py present; the profile root is claimed by the state inventory (so the durability audit can see it)
+
+**Driven in the UI:** Not drivable end to end: the done_when's own terms need a real login page and a human authenticating in a headful window.
+
+**Notes:** The credentials-never-transit-the-agent invariant is confirmed, and confirmed the right way — with control tests proving the guard is what does the work rather than the fixture. What is NOT observed is the clause as literally written: 'Form fill + submit on a REAL login page… the user authenticates in a headful window… a subsequent run reuses the persisted profile'. Every step has a test; none was driven by a person against a real site, which is owner validation. Partial on the same standard applied to DFE-5 this campaign: a read-back test is not a user drive, and I am not treating them as interchangeable.
 
 ## Recorded history
 

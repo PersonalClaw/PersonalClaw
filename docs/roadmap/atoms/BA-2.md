@@ -31,9 +31,21 @@ Every CDP navigation is pre-flighted through net/guard.py:evaluate against a new
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/net/policy.py:234 BROWSE = EgressPolicy(...) registered at :296; browse/cdp.py pre-flights every navigation through net/guard.py:evaluate
+- net/guard.py:74-102 covers the full forbidden set — loopback, RFC-1918, link-local INCLUDING 169.254.0.0/16 (IMDS), ULA fc00::/7, multicast, reserved, unspecified — and :86-88 unwraps IPv4-mapped IPv6 because 'a private v4 hidden in a v6 literal' is the bypass v4-only guards miss
+- guard.py:57-65 pinned_ips are 'the already-resolved, validated IPs the client must dial — no second resolution (that is the rebind window)'
+- browse/cdp.py:20-22 re-judges a client-side redirect on Page.frameNavigated and TEARS DOWN a denied one; :80 keeps preflight and redirect denials as distinguishable SEL rows
+- MEASURED: tests/test_browse_safety_script.py + test_browse_cdp_live.py + test_browse_behavioural_proof_is_reachable.py = 53 passed, ZERO skipped on this machine — a real Chromium opened and the injected script's fetch()/media/bluetooth blocks were proven behaviourally, not structurally
+
+**Notes:** This atom answers ARCC's SSRF Mitigation guidance point for point: deny private/local/metadata (169.254.169.254 named explicitly in both), DNS-rebinding protection by pinning the resolved IPs rather than re-resolving, redirects re-validated rather than followed blindly, and every denial logged to the SEL. It also carries the campaign's best example of a false-green being closed: tests/test_browse_live_legs_run_in_ci.py exists because the behavioural layer used to SKIP on the merge machine ('Measured on a browser-less tree: 20 skipped'), and 'a skipped surface reads exactly like a pass, so the green check said the safety script blocks fetch() while having never opened a browser'. The rail is over the CI WIRING and is derived rather than pinned by job name. I verified the same legs run here: 53 passed, 0 skipped.
 
 ## Recorded history
 

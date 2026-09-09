@@ -31,9 +31,27 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- dag.json records BA-5 as done; the plan's own log at BROWSE-AUTOMATION.md:1158-1160 claims 'The FE mirror panel' shipped in core PR #2353
+- MEASURED: PR #2353 is merged and its complete file list is 13 files, NOT ONE under web/ — the frontend deliverable it claims is absent from the PR that claims it
+- no consumer of browse_step / browse_kill / browse_auth_expired anywhere under web/; no caller of /api/browse/status or /api/browse/kill in web/src (the only api/browse hit is the unrelated /api/browse-dirs picker at web/src/lib/api.ts:7090)
+- 'BrowseMirror' appears in exactly two files repo-wide: the plan, and a docstring at browse/mirror.py:9 describing a panel a human watches. No component exists
+- the backend half IS real and tested: browse/mirror.py, killswitch.py, dashboard/handlers/browse_mirror.py (3 routes registered from server.py:433), and 18 tests in test_browse_mirror.py including a running loop parking on kill and a credential in the URL screened on the relayed step
+
+**Driven in the UI:** Expanded the sidebar's 'Everything, show 9 more surfaces' and enumerated all 18 surfaces as a user: Home, Chat, Projects, Knowledge, Tasks, Inbox, Triggers, Files, Artifacts, Terminal, Agents, Tools, Skills, Learning, Prompts, Workflows, Apps, Settings. There is no browse or mirror surface and no kill control anywhere in the shell. A user cannot watch a browse run and CANNOT STOP ONE.
+
+**Notes:** The campaign's FIRST contradicted verdict, and the one the governing rule was written for — the documented proof is specific, cites a real merged PR, and is wrong. Two of three deliverables do land: auth_state=expired is persisted, and surface_auth_expired emits its needs_input row through the SHIPPED emit_attention_item seam, so the inbox item genuinely reaches the user; BROWSE_PROFILE_KEY_<slug> lives in the credential store. What is missing is exactly the two pieces that needed NEW frontend — the panel and the persistent banner. The deferral chain is worth keeping whole because each link was reasonable on its own: BA-4's log (:1057) closes '(b) No FE control: the needs-input inbox item is the user surface and it already renders; the banner and the live mirror are BA-5's declared scope', deferring the frontend to BA-5, which then recorded it as delivered. Nothing in the suite could notice: every assertion is on the broadcast, and a broadcast nobody consumes passes. Filed as #2750, which proposes the dag.json flip rather than making it.
+
+**Follow-ups filed:**
+
+- issue #2750 (BA-5's mirror panel + kill switch have no frontend)
 
 ## Recorded history
 

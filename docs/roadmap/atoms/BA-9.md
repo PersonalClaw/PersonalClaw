@@ -30,9 +30,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/browse/grant.py has live production callers, not just tests: action_providers/browse_provider.py:316 imports the grant helpers and :420 revoke_grant; browse/loop.py:189 checks make_close_check before every model call
+- docs/architecture/security.md:205-234 states the whole posture: per-task fail-closed grant through the shipped ApprovalGate ('No answer within 300s, no approval channel, or any gate error is a REJECT'), the no-credential-access invariant naming what the SEL rows carry (task label, host scope, reason — 'never a credential, cookie, or token'), close-to-kill as distinct from the browse kill switch, and 'Not an anti-bot surface' refusing to describe CAPTCHA avoidance as a capability
+- tests/test_browse_grant.py green in the 426-passed run
+
+**Driven in the UI:** Partially: the shell shows an approvals affordance ('0 approvals waiting' on Home) so the ApprovalGate has a real surface, but no grant could be raised — no extension is paired, so the user_browser path never starts.
+
+**Notes:** The docs clause is not only met, it is the most honest security page I have read in this repo: 'Honest limit — no IP pinning on a real browser… every navigation is still pre-flighted through the egress guard, but that is validation only and stays rebind-vulnerable. This is inherent to driving any real browser and is stated here rather than implied away.' That is the exact residual ARCC's SSRF guidance asks about (DNS rebinding), answered by disclosure rather than a claim — the gateway target satisfies the requirement with pinned_ips, the user_browser target cannot, and the page says which is which. What is NOT confirmed is the atom's own final clause, 'validated end-to-end as a user (grant, watch, take-over, close-to-kill, unattended refusal, unconnected skip)': the watch half depends on BA-5's panel, which does not exist (#2750), and the rest needs a paired extension. Partial.
+
+**Follow-ups filed:**
+
+- issue #2750 (BA-5's mirror panel + kill switch have no frontend)
 
 ## Recorded history
 

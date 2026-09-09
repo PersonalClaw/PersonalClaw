@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 48 | `done_when` checked against the code and it holds |
-| `partial` | 84 | some `done_when` clauses hold, others do not |
-| `contradicted` | 0 | the recorded status disagrees with the code |
+| `confirmed` | 52 | `done_when` checked against the code and it holds |
+| `partial` | 88 | some `done_when` clauses hold, others do not |
+| `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 551 | not yet checked |
+| `unaudited` | 542 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -149,15 +149,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`BA-1`](BA-1.md) | `done` | `unaudited` | Text-only page extraction + compression module (stable ElementRefs, screenshot-as-path, sentinel parser) |
-| [`BA-2`](BA-2.md) | `done` | `unaudited` | CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval |
-| [`BA-3`](BA-3.md) | `done` | `unaudited` | Browse loop + BrowseActionProvider contract + provider-fidelity wiring (ALLOWED_HOOK_PROVIDERS, fencing, loop guards, budget) |
-| [`BA-4`](BA-4.md) | `done` | `unaudited` | Browser-session credential handoff (persistent per-site profiles, request_login needs-input flow, session-validity check) |
-| [`BA-5`](BA-5.md) | `done` | `unaudited` | Live browse mirror panel + kill switch + auth_needed first-class state |
-| [`BA-6`](BA-6.md) | `done` | `unaudited` | Scheduled-actuator: persisted idempotent browse plans + WATCHED-SOURCES escalation tick + rung caps |
-| [`BA-7`](BA-7.md) | `done` | `unaudited` | user_browser execution-target selector on the browse action config (default gateway, no silent fallback, unattended refusal) |
-| [`BA-8`](BA-8.md) | `done` | `unaudited` | Browser extension connector: loopback-only typed local contract, paired via COMPANION-APPS device-session machinery, shipped as an app bundle |
-| [`BA-9`](BA-9.md) | `done` | `unaudited` | Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation |
+| [`BA-1`](BA-1.md) | `done` | `confirmed` | Text-only page extraction + compression module (stable ElementRefs, screenshot-as-path, sentinel parser) |
+| [`BA-2`](BA-2.md) | `done` | `confirmed` | CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval |
+| [`BA-3`](BA-3.md) | `done` | `confirmed` | Browse loop + BrowseActionProvider contract + provider-fidelity wiring (ALLOWED_HOOK_PROVIDERS, fencing, loop guards, budget) |
+| [`BA-4`](BA-4.md) | `done` | `partial` | Browser-session credential handoff (persistent per-site profiles, request_login needs-input flow, session-validity check) |
+| [`BA-5`](BA-5.md) | `done` | `contradicted` | Live browse mirror panel + kill switch + auth_needed first-class state |
+| [`BA-6`](BA-6.md) | `done` | `partial` | Scheduled-actuator: persisted idempotent browse plans + WATCHED-SOURCES escalation tick + rung caps |
+| [`BA-7`](BA-7.md) | `done` | `confirmed` | user_browser execution-target selector on the browse action config (default gateway, no silent fallback, unattended refusal) |
+| [`BA-8`](BA-8.md) | `done` | `partial` | Browser extension connector: loopback-only typed local contract, paired via COMPANION-APPS device-session machinery, shipped as an app bundle |
+| [`BA-9`](BA-9.md) | `done` | `partial` | Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation |
 
 ### `CA` — COMPANION-APPS (8/9 done)
 

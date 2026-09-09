@@ -29,9 +29,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/browse/extraction.py + compress.py exist as standalone modules; compress.py:9 states the <=4000-char body budget and :43 carries _BASE64_IMG_RE with assert_no_base64 as the 'belt-and-suspenders guard'
+- compress.py:14 states the reason the screenshot is a PATH: 'Inlining even one base64 screenshot would blow the entire' context budget — the atom's 100K-token-DOM-to-<1K-token clause is the module's stated purpose, not an afterthought
+- tests/test_browse_extraction.py, test_browse_compress.py, test_browse_sentinels.py green inside a 426-passed browse run
+
+**Notes:** The no-base64 regression guard is the clause most likely to rot silently (a renderer change re-inlines an image and nothing else notices), and it is the one with a dedicated assertion helper. ElementRef stability across a DOM mutation and the CLICK <ref> / TYPE <ref>(value) parse both have tests in the same run.
 
 ## Recorded history
 

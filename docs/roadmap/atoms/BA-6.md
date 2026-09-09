@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 14 (BA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/browse/plans.py:5-6 states the idempotency contract in the module docstring — a cursor that is 'the whole of its progress, so killing the gateway mid-flow loses at most one step and re-firing the same tick is a no-op at the same cursor'
+- plans.py:10-11 watch_page re-extracts and diffs against the cursor; an unchanged tick 'reports no change and leaves the cursor untouched'
+- browse/plan_runner.py present; tests/test_browse_plans.py + test_browse_plan_runner.py green in the 426-passed run
+
+**Driven in the UI:** Not drivable: plans are files under browse/plans/ with no user surface, and the escalation clause needs a live JS-rendered page.
+
+**Notes:** The persistence and idempotency clauses hold and are tested. Two clauses were not observed: the WATCHED-SOURCES escalation chain 'falls through from web_fetch to exactly one browse tick that returns MEANINGFUL CONTENT for a JS-rendered page' (SC 7) needs a live external page, and the rung-cap clause (a SUBMIT-bearing plan registering floor=draft_only and refusing to run unattended until promoted) is a guardrails interaction I did not exercise. Partial for what was not observed, not for anything found wrong.
 
 ## Recorded history
 
