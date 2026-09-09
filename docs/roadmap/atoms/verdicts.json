@@ -19,6 +19,50 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "RUA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 2 (RUA) — observed",
+    "evidence": [
+      "tests/test_session_store.py passes as part of a 132-passed run with the other two RUA modules — this is the module the atom names for its 34 cases",
+      "the durable-store claim is asserted BY that suite (persisted signing key, nonce/binding registry in auth/sessions.json, corrupt-file forces re-auth and never falls open)"
+    ],
+    "notes": "Stated precisely so the evidence is not overread: the atom's done_when says 'Verified across 3 boots', and I did NOT perform a three-boot token-survival run myself. My evidence is the passing test module that encodes that behaviour, which is code-level observation rather than a reading of the plan's log. Recorded confirmed on that basis; a reader wanting the boot-level proof should re-drive it."
+  },
+  "RUA-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 2 (RUA) — observed",
+    "evidence": [
+      "src/personalclaw/auth/credentials.py is argon2id and says so explicitly ('argon2id, not a hand-rolled PBKDF2 — memory-hard and tunable'); src/personalclaw/durability/crypto.py:191-200 uses argon2.low_level with type=Type.ID, so the algorithm claim holds in code rather than in prose",
+      "'login_enabled defaults off' is observed from the USER side: two fresh homes were driven all session over the LAN-less loopback and neither ever presented a login gate, and neither home has an auth/ directory at all",
+      "the CLI's own control is observed too — `personalclaw auth set-password` refuses a non-TTY, which is why I could not provision a credential from this session (see RUA-3)"
+    ],
+    "notes": "The no-echo/non-TTY refusal is worth recording as a feature rather than an obstacle: it is what stopped an automated session from setting an owner password, and it did its job on me. I did not run test_config_roundtrip.py this cycle, so the 'wired through all 5 config points' clause rests on the atom's own rail rather than on my run — named here so the gap is visible."
+  },
+  "RUA-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 2 (RUA) — observed",
+    "evidence": [
+      "tests/test_auth_login.py passes (part of the 132-passed run) — the module the atom names for its 45 cases",
+      "src/personalclaw/dashboard/handlers/auth.py:230-249 mints the session cookie through the SAME resolver the middleware uses, which is the atom's central claim ('one validation path, indistinguishable to middleware'); the docstring states that intent and the code matches it",
+      "the legacy non-port-scoped `pc_token` cookie is actively cleared on login (max_age=0), so the two cookie generations cannot coexist"
+    ],
+    "notes": "PARTIAL because the browser half is NOT reachable from this session, for a reason that is itself a working control. The /login redirect, the 429 lockout with Retry-After, and the Settings > Account panel only activate when login_enabled is on AND a credential exists. Provisioning one needs `personalclaw auth set-password`, which refuses a non-TTY by design, and the documented alternative is seeding PERSONALCLAW_LOGIN_USER/PASSWORD — i.e. minting a credential from an automated session, which I declined to do rather than work around a deliberate boundary. So the login flow is unvalidated by driving; no defect is implied."
+  },
+  "RUA-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 2 (RUA) — observed, against ARCC governance",
+    "evidence": [
+      "cookie attributes observed at dashboard/handlers/auth.py:239-247 — httponly=True, samesite='Lax', path='/', max_age=ttl, secure=secure_cookies(), and NO Domain attribute. That satisfies every clause of ARCC's Secure Cookie Handling guidance (Secure, HttpOnly, SameSite Lax/Strict, Path=/, no wildcard Domain, bounded Max-Age)",
+      "token_auth.py:669-685 secure_cookies() returns True only for a declared https public URL and fails to False, with the reasoning written out: Secure on plain http makes the cookie undeliverable, which is how essentially every local install runs",
+      "the wss CSP clause holds: server.py:1880 emits connect-src with _ws_csp_sources(), documented as returning '' for a normal local install so the policy stays byte-identical there",
+      "tests/test_auth_exposure.py passes (part of the 132-passed run)"
+    ],
+    "notes": "PARTIAL, and it produced the cycle's one real finding — issue #2735. The dashboard middleware that sets Cache-Control/Pragma/Expires and a detailed CSP sets NO frame-ancestors directive and NO X-Frame-Options anywhere in src/. frame-ancestors does not fall back to default-src, and frame-src is the opposite control, so nothing restricts who may frame the authenticated dashboard — in exactly the public-exposure scenario this atom hardens. The finding is strong because the project already holds the standard elsewhere: artifacts/deploy.py:109 sets frame-ancestors 'self' with a test asserting it at test_artifact_deploy_serve.py:344. Severity is genuinely reduced by SameSite=Lax (a cross-site frame carries no session cookie), and the issue says so rather than overstating; what remains is login-page UI redressing and the deliberate ?token= path, which SameSite does not cover. FILED rather than fixed because the change would break any legitimate cross-origin embedder (Electron shell, preview panes) and that compatibility check is the part that makes it not a ten-minute job. ARCC's Secure HTTP Headers guidance also asks for Referrer-Policy and X-Content-Type-Options on ALL responses; both exist only on specific artifact/file responses here, and #2735 covers promoting them. I did NOT verify the TOTP or enrollment-code clauses — both need a provisioned credential, same blocker as RUA-3."
+  },
   "PL-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",
