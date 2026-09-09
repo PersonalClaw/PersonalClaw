@@ -29,9 +29,25 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- 🔑 ARCC'S CSRF/TOKEN GUIDANCE APPLIES TO THIS LOOPBACK REGISTRATION ENDPOINT AND ALL FOUR OF ITS ASKS ARE MET. Per-session token: `shell_token`, rotated on re-registration. Validated on receipt: every shell write path runs `_require_loopback` then `_require_shell_token`. Constant-time comparison: `hmac.compare_digest` for the local secret at `desktop.py:122` AND inside `DesktopRegistry.verify`, which short-circuits an empty token before comparing. No leakage: the register response is 'the only place the token ever appears', `_deny` 'never echoes' it, and `test_registry_never_exposes_the_token` pins that
+- 🔑 IT FAILS CLOSED WHERE FAILING OPEN WOULD HAVE BEEN EASIER, AND SAYS SO: with no local secret minted the endpoint returns 503 rather than falling back to loopback-only, 'which would let any local process register'. The convenient degradation is named and refused
+- 🔑 THE CHECK ORDER IS ITSELF A CONTROL: `test_non_loopback_register_is_refused_before_the_credential` — a remote caller never reaches the secret comparison, so the endpoint is not an oracle for it
+- 🔑 AUDIT IS FAIL-OPEN, AUTHORIZATION IS FAIL-CLOSED, and the split is stated at the exception handler: 'audit must never change the security decision'. A broken SEL sink cannot become an outage, and cannot become a bypass either
+- 🔑 FALSIFIED THE ISOLATION RAIL: flipping one `contextIsolation: true` to false in `desktop/main.js` reddened exactly one of 358 tests. Reverted; 358/358. The test's own comment is why the rail exists — 'Nothing in the runtime would fail loudly if someone [changed it]' — which is the precise definition of a regression that needs a test rather than a reviewer
+- the manifest normalizer fails closed on garbage, drops unknown capability names, and `test_normalize_forces_requestable_false_when_unavailable` — so the UI cannot offer a Request button for something the OS cannot give
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** 🔑 DRIVEN IN A REAL BROWSER TAB, which is the exact condition the clause names. Settings → Security → 'Desktop capabilities' renders 'Desktop app not connected' plus the reason: 'You are viewing this in a browser tab. Native capabilities — microphone, notifications, the menu-bar item — exist only while the PersonalClaw desktop app is running, so there is nothing to show or grant here.' Not an error, not an empty list of dead buttons — a stated reason.
+
+**Notes:** 🔑 THE SECTION'S OWN COPY IS THE CAMPAIGN'S CONTAINMENT PRINCIPLE IN A NEW FORM — the authority is ELSEWHERE: 'Each one is granted by macOS, not by PersonalClaw — revoking it in System Settings takes effect immediately, and NOTHING HERE CAN GRANT ITSELF.' A permissions panel that cannot grant is a permissions panel that cannot be tricked into granting.
 
 ## Recorded history
 

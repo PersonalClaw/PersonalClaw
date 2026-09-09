@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 286 | `done_when` checked against the code and it holds |
-| `partial` | 189 | some `done_when` clauses hold, others do not |
+| `confirmed` | 288 | `done_when` checked against the code and it holds |
+| `partial` | 193 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 201 | not yet checked |
+| `unaudited` | 195 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -259,12 +259,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DC-1`](DC-1.md) | `todo` | `unaudited` | S1: Rebuild + signing + notarization + electron-updater + install-kind |
-| [`DC-2`](DC-2.md) | `done` | `unaudited` | S2: Typed capability bridge + gateway seam + Settings panel + app perm |
-| [`DC-3`](DC-3.md) | `done` | `unaudited` | S3: Live audio — push-to-talk mic capture to STT |
-| [`DC-4`](DC-4.md) | `done` | `unaudited` | S4: Tray/menu-bar presence + login-item + graceful quit |
-| [`DC-5`](DC-5.md) | `done` | `unaudited` | S4: Native notifications as a plan-42 rules target |
-| [`DC-6`](DC-6.md) | `done` | `unaudited` | S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated) |
+| [`DC-1`](DC-1.md) | `todo` | `partial` | S1: Rebuild + signing + notarization + electron-updater + install-kind |
+| [`DC-2`](DC-2.md) | `done` | `confirmed` | S2: Typed capability bridge + gateway seam + Settings panel + app perm |
+| [`DC-3`](DC-3.md) | `done` | `partial` | S3: Live audio — push-to-talk mic capture to STT |
+| [`DC-4`](DC-4.md) | `done` | `partial` | S4: Tray/menu-bar presence + login-item + graceful quit |
+| [`DC-5`](DC-5.md) | `done` | `partial` | S4: Native notifications as a plan-42 rules target |
+| [`DC-6`](DC-6.md) | `done` | `confirmed` | S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated) |
 
 ### `DCU` — DESKTOP-COMPUTER-USE (6/7 done)
 

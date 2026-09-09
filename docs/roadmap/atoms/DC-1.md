@@ -31,9 +31,25 @@ CI mac-runner job builds `make desktop` -> electron-builder signed+notarized dmg
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- STATUS `todo` IS CORRECT and the gate is a real owner action, not a missing seam: the signed-and-notarized mac build needs four Apple Developer secrets in the CI release environment, tracked as its own owner atom
+- 🔑 THE ONE CLAUSE THAT DID LAND IS VERIFIED ON DISK RATHER THAN TAKEN FROM THE PR: `desktop/gatewayEnv.js:56` declares `PERSONALCLAW_INSTALL_KIND: INSTALL_KIND`, and its three consumers resolve — `self_update.py:125` reads the env var first, plus `cli_server.py:638` and the Updates panel
+- 🔑 THE DEFECT THAT CLAUSE FIXED IS THE CAMPAIGN'S INERT-CONTROL CLASS INVERTED, and it was severe: `desktop` was a value with THREE CONSUMERS AND NO PRODUCER, so inside a shipped bundle the update path fell through to pip and ran an install against the FROZEN PYINSTALLER INTERPRETER. Every test of it set the env var itself, which is why it stayed green — a test that supplies the missing dependency cannot detect that it is missing
+- 🔑 AND THE FIX EXPOSED A SECOND DEFECT, which is worth recording as a general pattern: three surfaces told users the app 'updates itself' via electron-updater, which is in neither `desktop/package.json` nor anywhere in the shell. That copy became REACHABLE for the first time once the kind was declared, so fixing one defect made the other one visible
+- 🔑 THE RAIL GUARDING THAT SECOND DEFECT IS A SHAPE NEW TO THIS CAMPAIGN — A TEST THAT EXPIRES BY FAILING. `test_no_surface_promises_self_update_while_the_updater_is_unbuilt` forbids the promise today AND reds the day `electron-updater` appears, with the failure message naming all three surfaces to restore and telling the reader to relax the rail in the same commit. Its docstring: 'A premise-checked claim, not a permanent ban'
+- FALSIFIED IT: adding `electron-updater` to `desktop/package.json` reddened exactly that test, with its instruction-bearing message. Reverted; 5/5
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** Not driven, and not drivable here: the clause ends in `spctl -a` passing on a clean Mac and an update prompt from a published Release.
+
+**Notes:** Partial rather than unverifiable, because the platform-neutral half is genuinely met and I confirmed it independently. The atom's own note got the discipline right: it said the install-kind clause should be dropped from `done_when` ONLY once the PR merged, on the grounds that recording it as met while it lived on a branch would be 'the same frozen-measurement error this audit exists to correct'. It merged, and the file is on disk.
 
 ## Recorded history
 

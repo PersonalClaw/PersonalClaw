@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- the code is complete and the pieces are named: `makePushToTalk` registered in `main.js`, the `global_hotkey` capability, a Settings control, the chord config through its round-trip points, and a capture indicator
+- 🔑 THE INDICATOR HAS ONE WRITER AND CAPTURE ALWAYS WINS, driven from real renderer state rather than from 'we sent a press' — the difference between an indicator that reports the microphone and one that reports the intention to use it. An always-on capture indicator that could disagree with the microphone is worse than none
+- the composer path is real end to end and stops the tracks afterwards, so a released key does not leave a live capture
+- the system-audio probe returns unavailable WITH A REASON rather than silently offering nothing, and the guide states mic-only
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** Not drivable here: `globalShortcut` is stubbed in the test environment, so neither that macOS delivers the chord nor that the real TCC prompt appears can be observed without the packaged app on a Mac. Two owner tasks remain (a mic-privacy sanity pass and the default chord).
+
+**Notes:** Partial for hardware and consent-dialog reasons rather than for code. The honest recorded residual is worth keeping: the done_when says 'chunk upload' while the shipped recorder does something slightly different — a wording drift in the clause, not a gap in the feature, and it was written down rather than quietly satisfied.
 
 ## Recorded history
 

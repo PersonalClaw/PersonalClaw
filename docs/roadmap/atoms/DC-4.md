@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- 🔑 THE TRAY TITLE HAS A SINGLE WRITER (`composeTrayTitle`) and its precedence is asserted rather than assumed: capture beats the approvals badge, the count shows only when not capturing and nothing at zero, and the tooltip states connectedness with capture still winning
+- 🔑 EVERY DEGRADED INPUT IS A PRODUCT DECISION WITH A TEST: a failed poll is 'not connected with zero counts, not a crash'; an enveloped approvals payload is tolerated 'rather than reporting zero' — a silent zero on a shape change is how a pending approval goes unseen; and a loop with no id is DROPPED because 'an unclickable menu row is worse than none'
+- the approvals row deep-links to the surface that actually renders approvals and 'stays click-through at zero approvals instead of becoming a dead end'
+- 🔑 GRACEFUL SHUTDOWN IS TESTED FOR THE BUG IT ONCE HAD, and the test says which: an earlier version 'sent SIGTERM and never waited'. It now SIGTERMs and waits for exit, escalates to SIGKILL when the grace window expires and reports `killed`, and does not re-signal a child already killed. The fake's own design is defended too — 'a fake that exits on its own would hide exactly' that bug
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** Not drivable: a menu-bar item exists only in the packaged Electron app. The two clauses that need the real thing are the login-item surviving a reboot and the process-table check for an orphaned gateway.
+
+**Notes:** Partial for the two clauses that are literally about machine state after a reboot or a quit. Everything decidable from the shell's own logic is confirmed, and the summarizer's degraded-input cases are the part most likely to matter in practice.
 
 ## Recorded history
 

@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- 🔑 THE OWNER RULING WAS TO SHIP LINUX AND PARK WINDOWS, AND BOTH HALVES ARE OBSERVABLE. Linux ships: `release.yml:188` is a real `desktop-linux` job producing an UNSIGNED AppImage + .deb, and `desktop/package.json` declares both targets. Windows is parked with the dated note citing the native audit, recorded in the plan and in the atom record
+- 🔑 THE JOB ASSERTS ITS OWN ARTIFACT rather than trusting the builder: it inspects the produced package and requires the expected package name, so a job that produced nothing usable would fail rather than pass quietly
+- the job is genuinely independent of the mac-signing atom — no `needs:`, no secrets, no mac dependency — which is exactly why the ruling could split the atom instead of parking both platforms
+- the 'unsigned' status is documented as the platform norm rather than presented as a downgrade, in the guide the workflow points at
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** No user surface: a release job and a deferral note. The artifact itself needs the Linux runner; what is checkable here is that the job exists, is self-contained, and verifies its own output.
+
+**Notes:** 🔑 THE RULING IS THE BEST SCOPE DECISION THIS AUDIT HAS READ, and its reasoning generalises: 'a whole platform should not wait behind an audit it does not depend on'. Splitting one blocked atom into a shippable half and an honestly-parked half beats parking both — and the honesty is load-bearing, because a dated note citing a specific line is auditable while 'later' is not. Worth noting the atom's own follow-up audit was harder on the ruling than the ruling was on itself: it recorded that the ruling 'was right about the half it addressed and SILENT about the half that mattered', because Linux did need one platform-neutral piece of the mac atom — the install kind. That is the self-correction that produced DC-1's fix.
 
 ## Recorded history
 

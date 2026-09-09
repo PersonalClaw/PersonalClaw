@@ -31,9 +31,26 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 52 (DC) — the Security panel driven in a browser tab; contextIsolation and the inverted updater rail both falsified
+
+**Code evidence:**
+
+- 🔑 THE INERT-CONTROL DEFECT WAS ON THREE LAYERS AT ONCE AND ALL THREE ARE NOW WIRED: the target existed in `notification_rules.TARGETS` marked 'accepted and persisted but inert', the shell imported Electron's Notification only for `isSupported()`, and the frontend listed native in `INERT_TARGETS` so a user could tick a checkbox that did nothing. That last one is the worst form of the class — a control that looks like consent and does nothing
+- `native_delivery(rule, capability)` is one pure function with three outcomes and it HAS A NON-TEST CALLER, checked rather than assumed: `dashboard/state.py:1470`, at the single immediate-path delivery choke point
+- 🔑 THE FALLBACK IS THE ABSENCE OF AN ADDITION, NOT A SECOND PATH: 'The dashboard delivery that runs anyway IS the fallback — the caller does not choose a different path, it just does not raise an OS notification.' There is no fallback branch to get wrong
+- 🔑 IT CONSULTS `available` RATHER THAN `granted`, ON A MEASURED PLATFORM FACT: 'macOS never reports notification authorization, so a `granted` check here would mean refusing to deliver on the one platform that cannot answer.' A fail-direction decision made from behaviour rather than from convention
+- 🔑 A MONOTONICITY ARGUMENT, THE SECOND IN TWO CYCLES: it 'never promotes dashboard off the note and never runs for never/badge/digest' because 'native is an interruption, and the three quieter modes have already said not to interrupt'. A target cannot escalate past the user's stated preference
+- the vacuity property is stated in the function itself: a rule that did not name native returns None, so 'a rule that did not ask for the desktop cannot get it, however the shell is configured'
+- the unavailable outcome carries a REASON, because 'I asked for native and got a bell instead' needs an answer and 'a UI that cannot say why reads as a broken toggle'
+- test_desktop_seam + test_desktop_install_kind 37/37; desktop node suite 358/358 across 75 suites (falsified: one contextIsolation flag flipped reds exactly 1 of 358; adding electron-updater to package.json reds exactly the inverted rail)
+
+**Driven in the UI:** Not drivable: raising a real OS notification and tapping it to focus a surface needs the packaged shell. The panel half was observed from the browser as 'not connected', which is the same registry field this function consults.
+
+**Notes:** Partial because the remaining legs are the operating system's, not the code's. The decision function is the best-reasoned small function in this plan: three outcomes, each one a distinct product experience, and a documented reason for every field it does and does not read.
 
 ## Recorded history
 
