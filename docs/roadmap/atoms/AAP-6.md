@@ -33,9 +33,21 @@ An unattended Code loop bound to each provider runs to completion or fails fast 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED: tests/test_aap6_breaker_lifetime_and_buckets.py and test_acp_unattended_and_loop_breaker.py both ship and pass inside the 178, covering the runtime-agnostic breaker the clause names
+- the clause distinguishes the two provider families correctly — Zed dialects via bypassPermissions including cron/scheduled, versus Kiro which 'fail-fasts prompts deterministically' — so 'runs to completion OR fails fast without wedging' is stated as two acceptable outcomes rather than one
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: an unattended Code loop bound to each provider, and a deliberately failing-tool session, both need authenticated CLIs.
+
+**Notes:** Naming fail-fast as an acceptable outcome alongside completion is the right shape for an unattended path: a loop that wedges is worse than a loop that stops, and a clause demanding only completion would have pushed toward retrying into a hang.
 
 ## Recorded history
 

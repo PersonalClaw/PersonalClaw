@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED: kiro-cli is the ONE near-complete column — CONFIRMED 43 / DIVERGED 18 / ENV 1 / NOT-EXERCISED **1** of 63, across two sweeps plus a residual re-drive
+- 🔑 THE 'ENV NOT CAPABILITY' DISCIPLINE THE CLAUSE ASKS FOR IS IN THE DOC'S OWN MARK VOCABULARY: 'ENV (an environment limit, NEVER a capability verdict)' — so an auth failure cannot be misfiled as a missing feature
+- 🔑 THE SINGLE UNMEASURED CELL IS BLOCKED BY AN INSTRUMENTATION GAP, NOT BY EFFORT, and the reason is exactly what this whole audit campaign is about: 'no surface attributes a model call to its caller, so a ladder that declines and a ladder that never ran LOOK IDENTICAL FROM OUTSIDE' (G47, superseding G44)
+- 🔑 THE COLUMN CORRECTED ITSELF RATHER THAN DEFENDING ITSELF: an earlier drive got NO_TOOLS and the doc briefly published every kiro tool row as unreproduced; a second drive on a fresh home enumerated 151 tool names including the whole personalclaw-core surface, diagnosed the first answer as a GATE ARTIFACT (the turn's first tool call parks on an approval card, and the CLI's wording was per-turn), and then found the more serious thing — four rows had been scored off an enumeration that missed the protocol-delivered surface. Three of the four were re-scored BY CALLING the tools rather than re-reading a list
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: the sweep needs an authenticated kiro-cli. The column is a checked-in artefact of a sweep that did run, and the atom's own clause is satisfied for 62 of 63 cells.
+
+**Notes:** Partial rather than contradicted, and the distinction is material: one documented cell with a named blocker is a different claim from thirteen or twenty. Re-scoring by CALLING rather than re-listing is the same move this audit makes when a census under-reads — and it is the reason kiro's column is the trustworthy one.
 
 ## Recorded history
 

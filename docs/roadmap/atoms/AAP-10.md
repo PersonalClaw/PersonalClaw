@@ -38,9 +38,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED: docs/agents/acp-parity.md exists at 511 lines with the structure the clause requires — per provider At parity / Host-compensated / Protocol or CLI constraint, plus Verified versions (adapter and CLI versions pinned per sweep) and a coverage table
+- 🔑 IT IS THE MOST HONEST DOCUMENT AUDITED IN THIS CAMPAIGN, and its honesty is what convicts AAP-1 and AAP-2: it leads with 'claude-code and codex are not complete columns', itemises every unmeasured cell with an observation id, records a row it had earlier published wrongly, and re-derives its own arithmetic — catching two errors in its previous count that had cancelled out
+- 🔑 ONE UNMEASURED CELL WAS LEFT UNMEASURED ON PURPOSE, and the reason is exact: trust/YOLO auto-approve was 'DELIBERATELY LEFT OFF SO THE GATE ITSELF STAYED MEASURABLE' — measuring that cell would have disabled the control under test
+- MEASURED, the README half of the link requirement: all three agent app READMEs reference the doc (claude-code-agent, codex-agent, kiro-cli-agent)
+- 🔴 THE UI HALF IS ABSENT: the clause requires it 'linked from each agent app README AND the discovered-agents UI capability notes'. Nothing under web/src or core src/personalclaw references acp-parity — the only other references are roadmap records
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** The README links were verified in the apps repo. The discovered-agents UI has no link to verify.
+
+**Notes:** Partial on the link clause's second half. Worth stating plainly why it matters rather than treating it as a docs nit: the doc's whole purpose is that a user deciding which agent to bind can see what is at parity and what is host-compensated, and the moment that decision is made is in the agents UI, not in a repository README. The document is excellent and the last few metres to the reader are missing.
 
 ## Recorded history
 

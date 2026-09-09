@@ -29,9 +29,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- 🔴 SAME SHAPE, LARGER GAP: the clause requires 'every audit cell CONFIRMED or DIVERGED (zero UNKNOWN cells: compaction, slash commands, context-%, subagent inject-back resolved)'. The coverage table reads codex CONFIRMED 33 / DIVERGED 10 / ENV 0 / NOT-EXERCISED **20** of 63 — nearly a third of the column
+- the doc names codex alongside claude-code in its bolded incompleteness note and gives codex its own 'Not yet measured (20 of 63 cells)' section
+- the four cells the clause names specifically (compaction, slash commands, context-%, subagent inject-back) may well be resolved; what fails is the universal 'zero UNKNOWN cells'
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Notes:** Recorded as a separate contradiction rather than folded into AAP-1 because the numbers are the evidence and they differ: 13 versus 20. A reader deciding whether to trust the codex column needs to know that a third of it was never driven, and the atom's `done` status says the opposite.
 
 ## Recorded history
 

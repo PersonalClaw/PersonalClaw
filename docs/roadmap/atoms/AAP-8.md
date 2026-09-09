@@ -34,9 +34,22 @@ After an ACP turn a procedural outcome row exists (none under incognito); an ACP
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED: tests/test_acp_tool_card_fidelity.py ships and passes inside the 178 — the diff chip and structured input fields the clause names
+- 🔑 THE CLAUSE'S LAST REQUIREMENT IS AN ANTI-FABRICATION RULE: 'native-only meta stays EMPTY (not fabricated) where frames are empty'. An adapter that synthesised plausible metadata for a provider that sent none would make a thin frame indistinguishable from a rich one
+- the risk-chip requirement is the same rule in the other direction: the approval card for a personalclaw-core destructive tool must show its DECLARED risk 'not the heuristic one', so a tool that says it is dangerous is not downgraded by a guess
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: an ACP edit-tool turn and a procedural-outcome row both need an authenticated provider plus a bound model.
+
+**Notes:** Declared-over-heuristic is worth carrying beyond this atom: a heuristic risk classifier that overrides a tool's own declaration converts a precise statement into a guess, and the direction of that error is toward under-warning.
 
 ## Recorded history
 

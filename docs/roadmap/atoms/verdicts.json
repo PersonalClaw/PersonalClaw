@@ -5195,5 +5195,138 @@
     ],
     "ui_validated": "One of the nine mounts driven end to end; the rest confirmed by their call sites.",
     "notes": "🪤 A SECOND PROBE OF MINE COLLAPSED, and this one nearly became a false finding. Counting files that import InvestigateButton showed KnowledgeDetail absent, which read as a resolver with no way to reach it. KnowledgeDetail DOES mount it — calling the shared helper directly on a HeaderControl, with the comment 'the shared primitive, rendered as a HeaderControl', because that page's controls live in a header row. I was counting COMPONENT importers when the shared thing is the HELPER, so the page that reuses the helper with different chrome looked like a gap. That is the opposite of a bespoke variant. Tenth collapsed finding, third from my own measurement."
+  },
+  "AAP-1": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "🔴 THE CLAUSE REQUIRES 'every audit cell re-marked CONFIRMED or DIVERGED at runtime (ZERO UNKNOWN CELLS)'. The plan's OWN shipped deliverable says otherwise, in its coverage table: claude-code reads CONFIRMED 43 / DIVERGED 7 / ENV 0 / NOT-EXERCISED **13** of 63",
+      "🔴 AND IT SAYS SO IN PROSE, in bold, as one of three things 'a reader must carry into every section below': 'claude-code and codex are NOT COMPLETE COLUMNS. 13 and 20 cells respectively have no runtime observation'",
+      "NOT A MATRIX THAT GREW LATER: the doc states the audit 'defines 63 cells — THE SAME 63 for every provider', and kiro-cli's column reaches NOT-EXERCISED 1 on that same matrix, so the 13 are unmeasured cells rather than rows added after the sweep",
+      "the residual is itemised (docs/agents/acp-parity.md §'Not yet measured (13 of 63 cells)') in four groups with observation ids, and records that NINE of an original 22 were closed on 2026-08-19 — i.e. work continued after the atom was marked done",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "notes": "🔑 THE DELIVERABLE IS HONEST AND THE STATUS IS NOT, which is the cleanest form this contradiction can take: nothing had to be dug out, because the doc leads with the shortfall. Two things make the doc better than the atom it contradicts. It RE-DERIVES the count from the matrix rows and thereby caught two errors in its own earlier 22-cell list that had cancelled out in the total (a sub-clause double-counted as a cell, a real unexercised row omitted). And it classifies correctly: 'a residual is a MISSING FIXTURE, not a verdict, so it stays open only until someone builds the fixture.' The verdict is against the atom's `done` status and its zero-UNKNOWN clause, not against the work."
+  },
+  "AAP-2": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "🔴 SAME SHAPE, LARGER GAP: the clause requires 'every audit cell CONFIRMED or DIVERGED (zero UNKNOWN cells: compaction, slash commands, context-%, subagent inject-back resolved)'. The coverage table reads codex CONFIRMED 33 / DIVERGED 10 / ENV 0 / NOT-EXERCISED **20** of 63 — nearly a third of the column",
+      "the doc names codex alongside claude-code in its bolded incompleteness note and gives codex its own 'Not yet measured (20 of 63 cells)' section",
+      "the four cells the clause names specifically (compaction, slash commands, context-%, subagent inject-back) may well be resolved; what fails is the universal 'zero UNKNOWN cells'",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "notes": "Recorded as a separate contradiction rather than folded into AAP-1 because the numbers are the evidence and they differ: 13 versus 20. A reader deciding whether to trust the codex column needs to know that a third of it was never driven, and the atom's `done` status says the opposite."
+  },
+  "AAP-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED: kiro-cli is the ONE near-complete column — CONFIRMED 43 / DIVERGED 18 / ENV 1 / NOT-EXERCISED **1** of 63, across two sweeps plus a residual re-drive",
+      "🔑 THE 'ENV NOT CAPABILITY' DISCIPLINE THE CLAUSE ASKS FOR IS IN THE DOC'S OWN MARK VOCABULARY: 'ENV (an environment limit, NEVER a capability verdict)' — so an auth failure cannot be misfiled as a missing feature",
+      "🔑 THE SINGLE UNMEASURED CELL IS BLOCKED BY AN INSTRUMENTATION GAP, NOT BY EFFORT, and the reason is exactly what this whole audit campaign is about: 'no surface attributes a model call to its caller, so a ladder that declines and a ladder that never ran LOOK IDENTICAL FROM OUTSIDE' (G47, superseding G44)",
+      "🔑 THE COLUMN CORRECTED ITSELF RATHER THAN DEFENDING ITSELF: an earlier drive got NO_TOOLS and the doc briefly published every kiro tool row as unreproduced; a second drive on a fresh home enumerated 151 tool names including the whole personalclaw-core surface, diagnosed the first answer as a GATE ARTIFACT (the turn's first tool call parks on an approval card, and the CLI's wording was per-turn), and then found the more serious thing — four rows had been scored off an enumeration that missed the protocol-delivered surface. Three of the four were re-scored BY CALLING the tools rather than re-reading a list",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: the sweep needs an authenticated kiro-cli. The column is a checked-in artefact of a sweep that did run, and the atom's own clause is satisfied for 62 of 63 cells.",
+    "notes": "Partial rather than contradicted, and the distinction is material: one documented cell with a named blocker is a different claim from thirteen or twenty. Re-scoring by CALLING rather than re-listing is the same move this audit makes when a census under-reads — and it is the reason kiro's column is the trustworthy one."
+  },
+  "AAP-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED, the inject-back mechanism the clause turns on (mcp_core.py:764-782): the session key resolves through THREE tiers, each with its reason — the env var for subprocess MCP servers, a contextvar for the in-process native runtime ('no per-turn env var and no PID file of its own'), and a PID-file ANCESTOR WALK for warm-pool ACP agents",
+      "🔑 THE ANCESTOR WALK EXISTS BECAUSE POOLING BREAKS THE OBVIOUS ANSWER: 'after rekey, the process tree may be: gateway → ACP agent (pool, has PID file) → ACP agent child → MCP server. os.getppid() returns the immediate parent which has no PID file.' Without the walk a tool call would be attributed to the wrong session — silently",
+      "the clause's own evidence standard is the right one and worth keeping: verification 'by the store row / spawned subagent rather than by a model-reported tool count', because a model can report a tool it cannot actually call",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: reaching personalclaw-core on all three providers needs three authenticated CLIs.",
+    "notes": "The three-tier resolution is the interesting artefact: each tier is a different process topology, and the warm pool — a performance optimisation — is what created the need for the third. A pool that spawns before it knows its session is exactly how attribution goes wrong."
+  },
+  "AAP-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "🔑 THE RESIDUAL SET IS CODE, NOT PROSE: acp/permission_authority.py:270 defines NOT_GATEABLE per provider as typed data (ProviderCoverage / NotGateable / ResidualState), each entry carrying its MEASUREMENT provenance ('AAP-3 sweep (K13, K15) + AAP-5 live re-drive 2026-08-18: one turn, 6 tool calls, 1 gated, 5 ungated') and its reason — kiro's todo_list 'emits a tool_call frame and a SEL invoked row but never a session/request_permission, so NO host gate — deny-list, task-mode, PreToolUse — can run for it'",
+      "🔑 THE TEST SUITE DRIVES CALL SITES, NOT PREDICATES, and says so: 'the mode clamp is asserted on AcpClient (THE CHOKEPOINT EVERY MODE PATH CROSSES), and the gate behaviours are asserted by running run_chat over a synthetic ACP event stream — the same harness test_dashboard_approval.py uses'",
+      "🔑 A VACUITY FLOOR ON A SECURITY CONTROL: 'Each restriction gets its INVERSE FLOOR so it reads as a requirement rather than an always-refuse.' A gate that refused everything would pass a refuse-only suite — this is the fifth instance of that discipline in the campaign and the most consequential place for it",
+      "the clamp's own tests cover the ways it would leak: every declared auto-approve mode clamped, spelling variants refused, an UNKNOWN mode 'clamped not assumed safe', and unattended named as 'the ONLY declared escape'",
+      "ResidualState distinguishes a residual that has been 'blessed — DECLARED vs EXCUSED', so an accepted gap and a merely-observed one are different records",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven end to end: 'a file write via any ACP provider' needs an authenticated provider. The gate path is exercised through the real chat runner over a synthetic ACP stream, which is the closest thing available here.",
+    "notes": "🔑 ARCC'S ONE TRANSFERABLE OBJECTIVE LANDS EXACTLY ON THIS ATOM. Its search keyed on 'third party' and returned Amazon's third-party programmes rather than an authorization pattern — recorded as checked-and-adjacent — but the IAM third-party guidance carries the idea that matters: when an external party genuinely needs privileges you cannot constrain, the answer is to DOCUMENT AND REVIEW the residual rather than to imply it is constrained. That is precisely this clause's 'residual not-gateable set enumerated per provider', and here it is implemented as typed data with per-entry provenance instead of a paragraph. The gate half needs a provider; the honesty half is complete and checkable."
+  },
+  "AAP-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED: tests/test_aap6_breaker_lifetime_and_buckets.py and test_acp_unattended_and_loop_breaker.py both ship and pass inside the 178, covering the runtime-agnostic breaker the clause names",
+      "the clause distinguishes the two provider families correctly — Zed dialects via bypassPermissions including cron/scheduled, versus Kiro which 'fail-fasts prompts deterministically' — so 'runs to completion OR fails fast without wedging' is stated as two acceptable outcomes rather than one",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: an unattended Code loop bound to each provider, and a deliberately failing-tool session, both need authenticated CLIs.",
+    "notes": "Naming fail-fast as an acceptable outcome alongside completion is the right shape for an unattended path: a loop that wedges is worse than a loop that stops, and a clause demanding only completion would have pushed toward retrying into a hang."
+  },
+  "AAP-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "the clause's honest half is the auditable one and it is the right call: a non-capable provider must degrade to compressed history with an accurate 'restored from history' label 'RATHER THAN IMPLYING PROTOCOL RESUME' — a label that overclaimed would make a lossy continuation look lossless",
+      "the ACP suite (32 test modules) covers the surrounding session machinery; resume itself is a per-provider protocol capability",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: a gateway restart mid-conversation on a resume-capable provider needs an authenticated one.",
+    "notes": "Partial for the drive. The label distinction is what a user needs: 'session resumed' and 'restored from history' are different promises about whether the model still has the earlier turns, and conflating them would surface as the model forgetting something the UI implied it kept."
+  },
+  "AAP-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED: tests/test_acp_tool_card_fidelity.py ships and passes inside the 178 — the diff chip and structured input fields the clause names",
+      "🔑 THE CLAUSE'S LAST REQUIREMENT IS AN ANTI-FABRICATION RULE: 'native-only meta stays EMPTY (not fabricated) where frames are empty'. An adapter that synthesised plausible metadata for a provider that sent none would make a thin frame indistinguishable from a rich one",
+      "the risk-chip requirement is the same rule in the other direction: the approval card for a personalclaw-core destructive tool must show its DECLARED risk 'not the heuristic one', so a tool that says it is dangerous is not downgraded by a guess",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: an ACP edit-tool turn and a procedural-outcome row both need an authenticated provider plus a bound model.",
+    "notes": "Declared-over-heuristic is worth carrying beyond this atom: a heuristic risk classifier that overrides a tool's own declaration converts a precise statement into a guess, and the direction of that error is toward under-warning."
+  },
+  "AAP-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED: tests/test_aap9_project_stamping.py ships and passes; the stamping rides PERSONALCLAW_SESSION_KEY, i.e. the SERVER-SIDE key rather than a client-supplied project id — the same never-trust-the-caller posture the investigate plan states",
+      "🔑 THE EFFORT PILL 'GREYS OUT (NOT SILENT NO-OP)' ON KIRO — this campaign's recurring anti-inertness rule, applied to a control that cannot work on one provider. A pill that accepted a click and did nothing would teach the user their setting took effect",
+      "slash commands are labelled 'sent as text' where not negotiated, and there is 'no dead persona UI for Zed dialects' — two more cases of removing or labelling a control rather than leaving it inert",
+      "Kiro's plan mode is enforced by the HOST task-mode gate rather than by the CLI's own mode, which is the same host-authority thesis as AAP-5",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "Not driven: each item is per-provider and needs the corresponding CLI.",
+    "notes": "Three of this atom's four items are the same decision — grey out, label, or remove rather than ship a control that silently does nothing. That the plan applied it three times in one atom is why it reads as doctrine here rather than as a one-off fix."
+  },
+  "AAP-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms",
+    "evidence": [
+      "MEASURED: docs/agents/acp-parity.md exists at 511 lines with the structure the clause requires — per provider At parity / Host-compensated / Protocol or CLI constraint, plus Verified versions (adapter and CLI versions pinned per sweep) and a coverage table",
+      "🔑 IT IS THE MOST HONEST DOCUMENT AUDITED IN THIS CAMPAIGN, and its honesty is what convicts AAP-1 and AAP-2: it leads with 'claude-code and codex are not complete columns', itemises every unmeasured cell with an observation id, records a row it had earlier published wrongly, and re-derives its own arithmetic — catching two errors in its previous count that had cancelled out",
+      "🔑 ONE UNMEASURED CELL WAS LEFT UNMEASURED ON PURPOSE, and the reason is exact: trust/YOLO auto-approve was 'DELIBERATELY LEFT OFF SO THE GATE ITSELF STAYED MEASURABLE' — measuring that cell would have disabled the control under test",
+      "MEASURED, the README half of the link requirement: all three agent app READMEs reference the doc (claude-code-agent, codex-agent, kiro-cli-agent)",
+      "🔴 THE UI HALF IS ABSENT: the clause requires it 'linked from each agent app README AND the discovered-agents UI capability notes'. Nothing under web/src or core src/personalclaw references acp-parity — the only other references are roadmap records",
+      "178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode"
+    ],
+    "ui_validated": "The README links were verified in the apps repo. The discovered-agents UI has no link to verify.",
+    "notes": "Partial on the link clause's second half. Worth stating plainly why it matters rather than treating it as a docs nit: the doc's whole purpose is that a user deciding which agent to bind can see what is at parity and what is host-compensated, and the moment that decision is made is in the agents UI, not in a repository README. The document is excellent and the last few metres to the reader are missing."
   }
 }

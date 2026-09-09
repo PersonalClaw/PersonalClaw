@@ -33,9 +33,22 @@ Per provider, the personalclaw-core surface reaches the CLI and its PLATFORM too
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED, the inject-back mechanism the clause turns on (mcp_core.py:764-782): the session key resolves through THREE tiers, each with its reason — the env var for subprocess MCP servers, a contextvar for the in-process native runtime ('no per-turn env var and no PID file of its own'), and a PID-file ANCESTOR WALK for warm-pool ACP agents
+- 🔑 THE ANCESTOR WALK EXISTS BECAUSE POOLING BREAKS THE OBVIOUS ANSWER: 'after rekey, the process tree may be: gateway → ACP agent (pool, has PID file) → ACP agent child → MCP server. os.getppid() returns the immediate parent which has no PID file.' Without the walk a tool call would be attributed to the wrong session — silently
+- the clause's own evidence standard is the right one and worth keeping: verification 'by the store row / spawned subagent rather than by a model-reported tool count', because a model can report a tool it cannot actually call
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: reaching personalclaw-core on all three providers needs three authenticated CLIs.
+
+**Notes:** The three-tier resolution is the interesting artefact: each tier is a different process topology, and the warm pool — a performance optimisation — is what created the need for the third. A pool that spawns before it knows its session is exactly how attribution goes wrong.
 
 ## Recorded history
 

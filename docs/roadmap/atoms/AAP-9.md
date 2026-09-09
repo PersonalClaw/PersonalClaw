@@ -35,9 +35,23 @@ ACP artifact_save stamps the session's bound project (server-side via PERSONALCL
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- MEASURED: tests/test_aap9_project_stamping.py ships and passes; the stamping rides PERSONALCLAW_SESSION_KEY, i.e. the SERVER-SIDE key rather than a client-supplied project id — the same never-trust-the-caller posture the investigate plan states
+- 🔑 THE EFFORT PILL 'GREYS OUT (NOT SILENT NO-OP)' ON KIRO — this campaign's recurring anti-inertness rule, applied to a control that cannot work on one provider. A pill that accepted a click and did nothing would teach the user their setting took effect
+- slash commands are labelled 'sent as text' where not negotiated, and there is 'no dead persona UI for Zed dialects' — two more cases of removing or labelling a control rather than leaving it inert
+- Kiro's plan mode is enforced by the HOST task-mode gate rather than by the CLI's own mode, which is the same host-authority thesis as AAP-5
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: each item is per-provider and needs the corresponding CLI.
+
+**Notes:** Three of this atom's four items are the same decision — grey out, label, or remove rather than ship a control that silently does nothing. That the plan applied it three times in one atom is why it reads as doctrine here rather than as a one-off fix.
 
 ## Recorded history
 

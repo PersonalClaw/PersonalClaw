@@ -13,10 +13,10 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 | Verdict | Atoms | Meaning |
 |---|---|---|
 | `confirmed` | 264 | `done_when` checked against the code and it holds |
-| `partial` | 163 | some `done_when` clauses hold, others do not |
-| `contradicted` | 3 | the recorded status disagrees with the code |
+| `partial` | 171 | some `done_when` clauses hold, others do not |
+| `contradicted` | 5 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 252 | not yet checked |
+| `unaudited` | 242 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -30,16 +30,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AAP-1`](AAP-1.md) | `done` | `unaudited` | Phase 1 validation — claude-code end-to-end sweep |
-| [`AAP-2`](AAP-2.md) | `done` | `unaudited` | Phase 1 validation — codex end-to-end sweep |
-| [`AAP-3`](AAP-3.md) | `done` | `unaudited` | Phase 1 validation — kiro-cli end-to-end sweep |
-| [`AAP-4`](AAP-4.md) | `done` | `unaudited` | §2.1 MCP reachability — personalclaw-core reachable on all three providers (gap 1) |
-| [`AAP-5`](AAP-5.md) | `done` | `unaudited` | §2.2 Approval-gate coverage — host is permission authority (gap 2, the safety hole) |
-| [`AAP-6`](AAP-6.md) | `done` | `unaudited` | §2.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5) |
-| [`AAP-7`](AAP-7.md) | `done` | `unaudited` | §2.4 Resume — live session/load via bundle session_files_dir (gap 6) |
-| [`AAP-8`](AAP-8.md) | `done` | `unaudited` | §2.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8) |
-| [`AAP-9`](AAP-9.md) | `done` | `unaudited` | §2.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10) |
-| [`AAP-10`](AAP-10.md) | `done` | `unaudited` | §2.7 Parity doc — docs/agents/acp-parity.md (the honest-boundary deliverable) |
+| [`AAP-1`](AAP-1.md) | `done` | `contradicted` | Phase 1 validation — claude-code end-to-end sweep |
+| [`AAP-2`](AAP-2.md) | `done` | `contradicted` | Phase 1 validation — codex end-to-end sweep |
+| [`AAP-3`](AAP-3.md) | `done` | `partial` | Phase 1 validation — kiro-cli end-to-end sweep |
+| [`AAP-4`](AAP-4.md) | `done` | `partial` | §2.1 MCP reachability — personalclaw-core reachable on all three providers (gap 1) |
+| [`AAP-5`](AAP-5.md) | `done` | `partial` | §2.2 Approval-gate coverage — host is permission authority (gap 2, the safety hole) |
+| [`AAP-6`](AAP-6.md) | `done` | `partial` | §2.3 Unattended threading + runtime-agnostic loop breaker for ACP (gaps 3 & 5) |
+| [`AAP-7`](AAP-7.md) | `done` | `partial` | §2.4 Resume — live session/load via bundle session_files_dir (gap 6) |
+| [`AAP-8`](AAP-8.md) | `done` | `partial` | §2.5 Learning capture + tool-card fidelity + risk plumbing for ACP (gaps 4, 7, 8) |
+| [`AAP-9`](AAP-9.md) | `done` | `partial` | §2.6 Dialect asymmetry closure + project_id stamping (gaps 9 & 10) |
+| [`AAP-10`](AAP-10.md) | `done` | `partial` | §2.7 Parity doc — docs/agents/acp-parity.md (the honest-boundary deliverable) |
 
 ### `AE` — ARTIFACTS-EVOLUTION (10/10 done)
 

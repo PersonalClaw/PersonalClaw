@@ -33,9 +33,24 @@ With task-mode=Ask a file write via any ACP provider yields a host approval card
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- 🔑 THE RESIDUAL SET IS CODE, NOT PROSE: acp/permission_authority.py:270 defines NOT_GATEABLE per provider as typed data (ProviderCoverage / NotGateable / ResidualState), each entry carrying its MEASUREMENT provenance ('AAP-3 sweep (K13, K15) + AAP-5 live re-drive 2026-08-18: one turn, 6 tool calls, 1 gated, 5 ungated') and its reason — kiro's todo_list 'emits a tool_call frame and a SEL invoked row but never a session/request_permission, so NO host gate — deny-list, task-mode, PreToolUse — can run for it'
+- 🔑 THE TEST SUITE DRIVES CALL SITES, NOT PREDICATES, and says so: 'the mode clamp is asserted on AcpClient (THE CHOKEPOINT EVERY MODE PATH CROSSES), and the gate behaviours are asserted by running run_chat over a synthetic ACP event stream — the same harness test_dashboard_approval.py uses'
+- 🔑 A VACUITY FLOOR ON A SECURITY CONTROL: 'Each restriction gets its INVERSE FLOOR so it reads as a requirement rather than an always-refuse.' A gate that refused everything would pass a refuse-only suite — this is the fifth instance of that discipline in the campaign and the most consequential place for it
+- the clamp's own tests cover the ways it would leak: every declared auto-approve mode clamped, spelling variants refused, an UNKNOWN mode 'clamped not assumed safe', and unattended named as 'the ONLY declared escape'
+- ResidualState distinguishes a residual that has been 'blessed — DECLARED vs EXCUSED', so an accepted gap and a merely-observed one are different records
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven end to end: 'a file write via any ACP provider' needs an authenticated provider. The gate path is exercised through the real chat runner over a synthetic ACP stream, which is the closest thing available here.
+
+**Notes:** 🔑 ARCC'S ONE TRANSFERABLE OBJECTIVE LANDS EXACTLY ON THIS ATOM. Its search keyed on 'third party' and returned Amazon's third-party programmes rather than an authorization pattern — recorded as checked-and-adjacent — but the IAM third-party guidance carries the idea that matters: when an external party genuinely needs privileges you cannot constrain, the answer is to DOCUMENT AND REVIEW the residual rather than to imply it is constrained. That is precisely this clause's 'residual not-gateable set enumerated per provider', and here it is implemented as typed data with per-entry provenance instead of a paragraph. The gate half needs a provider; the honesty half is complete and checkable.
 
 ## Recorded history
 

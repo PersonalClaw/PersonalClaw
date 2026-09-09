@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- 🔴 THE CLAUSE REQUIRES 'every audit cell re-marked CONFIRMED or DIVERGED at runtime (ZERO UNKNOWN CELLS)'. The plan's OWN shipped deliverable says otherwise, in its coverage table: claude-code reads CONFIRMED 43 / DIVERGED 7 / ENV 0 / NOT-EXERCISED **13** of 63
+- 🔴 AND IT SAYS SO IN PROSE, in bold, as one of three things 'a reader must carry into every section below': 'claude-code and codex are NOT COMPLETE COLUMNS. 13 and 20 cells respectively have no runtime observation'
+- NOT A MATRIX THAT GREW LATER: the doc states the audit 'defines 63 cells — THE SAME 63 for every provider', and kiro-cli's column reaches NOT-EXERCISED 1 on that same matrix, so the 13 are unmeasured cells rather than rows added after the sweep
+- the residual is itemised (docs/agents/acp-parity.md §'Not yet measured (13 of 63 cells)') in four groups with observation ids, and records that NINE of an original 22 were closed on 2026-08-19 — i.e. work continued after the atom was marked done
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Notes:** 🔑 THE DELIVERABLE IS HONEST AND THE STATUS IS NOT, which is the cleanest form this contradiction can take: nothing had to be dug out, because the doc leads with the shortfall. Two things make the doc better than the atom it contradicts. It RE-DERIVES the count from the matrix rows and thereby caught two errors in its own earlier 22-cell list that had cancelled out in the total (a sub-clause double-counted as a cell, a real unexercised row omitted). And it classifies correctly: 'a residual is a MISSING FIXTURE, not a verdict, so it stays open only until someone builds the fixture.' The verdict is against the atom's `done` status and its zero-UNKNOWN clause, not against the work.
 
 ## Recorded history
 

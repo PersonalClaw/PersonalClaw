@@ -33,9 +33,21 @@ Gateway restart mid-conversation on a resume-capable provider shows 'Session res
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 46 (AAP) — the plan's own parity doc contradicts two of its atoms
+
+**Code evidence:**
+
+- the clause's honest half is the auditable one and it is the right call: a non-capable provider must degrade to compressed history with an accurate 'restored from history' label 'RATHER THAN IMPLYING PROTOCOL RESUME' — a label that overclaimed would make a lossy continuation look lossless
+- the ACP suite (32 test modules) covers the surrounding session machinery; resume itself is a per-provider protocol capability
+- 178 across permission-authority/breaker/project-stamping/tool-card/unattended/cwd-containment; +39 bundles/dialect/slash/set-mode
+
+**Driven in the UI:** Not driven: a gateway restart mid-conversation on a resume-capable provider needs an authenticated one.
+
+**Notes:** Partial for the drive. The label distinction is what a user needs: 'session resumed' and 'restored from history' are different promises about whether the model still has the earlier turns, and conflating them would surface as the model forgetting something the UI implied it kept.
 
 ## Recorded history
 
