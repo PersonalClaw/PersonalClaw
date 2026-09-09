@@ -19,6 +19,95 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "INU-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_item_kind_seam.py passes (part of a 132-passed run) — the kind-registry seam this atom owns",
+      "the registry is observable in PRODUCED DATA, not just in tests: the item I created through the UI persisted with item_kind='user_note' and an id prefixed 'user_note_…', so a typed kind is actually stamped on a real record"
+    ],
+    "notes": "Confirmed partly as a side effect of driving INU-9, which is the strongest kind of evidence available for a registry: a real user action produced a correctly-typed record on disk."
+  },
+  "INU-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_inbox.py, test_inbox_attention.py and test_inbox_service.py pass (132 together with the kind-seam module)",
+      "the store is the surface: .validate-home/inbox.json holds an {items:[…]} document that the running gateway both wrote and re-read"
+    ],
+    "ui_validated": "Drove #/inbox on 127.0.0.1:10011. The heading is a live attention count ('Inbox 0 pending · 0 total' before my action, '1 pending · 1 total' after), the list groups under a named lane ('Morning triage'), and the header carries Restart sources / Capture a note / Inbox settings plus Filter & sort. The count moved in response to a real user action rather than a reload.",
+    "notes": "Confirmed on the attention-store behaviour I could actually exercise. I did not drive demotion or the dismiss-all signal; those belong to INU-5 and are recorded there."
+  },
+  "INU-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "the unified entry point exists and is reachable: an 'Inbox settings' control renders in the inbox header (observed in the live DOM, not inferred from code)",
+      "the INU suite covering settings/backfill passes as part of the 218 tests run this cycle"
+    ],
+    "notes": "PARTIAL: I confirmed the control is present but did NOT open it, so the unification claim (one settings surface rather than several) and the alert-fields backfill are unvalidated by driving. No defect implied — an unexercised clause."
+  },
+  "INU-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_proposals.py and tests/test_inbox_app_proposals.py pass (part of an 86-passed run)"
+    ],
+    "notes": "PARTIAL: 'folding the proposal surfaces' is a claim about surfaces a user sees, and the validation home has no proposals to render — nothing generated one, because that needs a model provider or an app emitting them. Code rail observed; the folded UI is unvalidated."
+  },
+  "INU-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_digest_handler.py and tests/test_inbox_dismiss_all_signal.py exist; the digest handler module passes in the 86-passed run"
+    ],
+    "notes": "PARTIAL: a digest is a time-and-volume behaviour — it needs accumulated items across a period, and this home has exactly one item that I created a minute earlier. Not drivable here without fabricating history, which would test my fixture rather than the product."
+  },
+  "INU-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_draft_gate.py passes (part of the 86-passed run)"
+    ],
+    "notes": "PARTIAL for the same blocker that stopped RUA-3 and INU-4: a second-opinion verification gate runs a model over a draft, and no model provider is configured in the validation home. The gate's code path is exercised by its test; its live behaviour is not."
+  },
+  "INU-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_app_proposals.py passes — the app-emission contract's own rail"
+    ],
+    "notes": "PARTIAL: the emission path's other end is an APP, and no app is installed in this home. Worth recording that the workspace's apps clone is named PersonalClawApps, so the gateway only discovers it when PERSONALCLAW_FIRST_PARTY_APPS_DIR points there — the first gateway I started this session had that set, the validation home's does not."
+  },
+  "INU-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — observed",
+    "evidence": [
+      "tests/test_inbox_app_sources.py and tests/test_inbox_native_source.py pass (part of the 86-passed run)",
+      "the header's 'Restart sources' control is present in the live DOM, so the source-management surface this atom feeds is real rather than planned"
+    ],
+    "notes": "PARTIAL: resolving app-contributed sources through the app registry needs an installed app contributing one. Same blocker as INU-7."
+  },
+  "INU-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 3 (INU) — DRIVEN end to end, including a real gateway restart",
+    "evidence": [
+      "tests/test_inbox_user_note.py passes (part of the 132-passed run)",
+      "the persisted record carries item_kind='user_note' with id 'user_note_0953322c_1788920765.065293' — the atom's 'typed kind that identifies it as user-authored rather than synthesized from a system source', stamped on a record a real user action produced",
+      "source='user', channel='user', can_reply=false, status='pending', and message holding the full free text including both lines"
+    ],
+    "ui_validated": "The whole claim, driven: clicked 'Capture a note' in the inbox header (the affordance the atom says must stop being inert), typed a two-line note into the dialog, clicked 'Save to inbox'. The inbox went 0 -> '1 pending · 1 total' and the item rendered as 'Notes — Audit probe note INU-9 …'. Then the RESTART half: killed the gateway process (PID 25766, listeners on 10011 dropped to 0), started a fresh one on the same home (PID 13471, HTTP 200), reloaded the page, and the item was still there — new snapshot generation (refs f5e…), 'Inbox 1 pending · 1 total', same 'Notes —' row. So it was read back off disk by a process that never held it in memory.",
+    "notes": "Two honesty notes. (1) My first post-restart check returned IDENTICAL element refs, which is the signature of a stale snapshot rather than a fresh read — I did not accept it, and re-verified with a forced reload that produced a new ref generation. (2) My guesses at the persisted field names were wrong twice (kind/subject/body); the real fields are item_kind/message. The atom was right; my assumptions were not, which is exactly why the record was read rather than predicted."
+  },
   "RUA-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

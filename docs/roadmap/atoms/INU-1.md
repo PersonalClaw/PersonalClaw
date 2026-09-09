@@ -29,9 +29,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_item_kind_seam.py passes (part of a 132-passed run) — the kind-registry seam this atom owns
+- the registry is observable in PRODUCED DATA, not just in tests: the item I created through the UI persisted with item_kind='user_note' and an id prefixed 'user_note_…', so a typed kind is actually stamped on a real record
+
+**Notes:** Confirmed partly as a side effect of driving INU-9, which is the strongest kind of evidence available for a registry: a real user action produced a correctly-typed record on disk.
 
 ## Recorded history
 
