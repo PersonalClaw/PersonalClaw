@@ -30,9 +30,22 @@ harness run --diff forces the replay profile when touching web/src/pages/chat/; 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- 🔑 DRIVEN WITH A CONTROL, which is what makes it evidence rather than a reading. Baseline: `harness run --diff --dry-run` over the accumulated branch stack (690 changed files) forced NO profile. Then ONE line added to web/src/pages/chat/RoutingChip.tsx: 691 files and 'forced [replay]: chat stream touched — replay guards the K42/K44/K45 coalescer bug class' plus 'forced [web]'. Same command, one file different, selection changed
+- the force table (selection.py:28-45) gives every coupling a REASON naming the bug class it guards, not just a profile — replay for the chat stream, replay for the run stream, replay for the SSE registry
+- 🔑 THE WHAT/WHY/FIX FORMAT IS REAL, observed in live scanner output: 'WHAT: test touches config-dir/local-models/credential paths with no tmp_path/monkeypatch isolation … WHY: an unisolated destructive test can corrupt the real ~/.personalclaw home (A BOUND MODEL WAS ONCE DELETED THIS WAY) … FIX: take tmp_path/monkeypatch and redirect config_dir()'
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Driven as a CLI, which is the surface this atom is.
+
+**Notes:** The destructive-test-isolation rule's WHY cites a real incident, and the same incident is cited independently in workflows/scope.py — so the rule and the code it protects agree about why it exists. A rule whose WHY is a real event is one a reader will not argue with.
 
 ## Recorded history
 

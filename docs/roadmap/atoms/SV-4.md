@@ -30,9 +30,21 @@ FakeMcpServer replays a recorded mcp trace deterministically; harness resume-aud
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- MEASURED: harness/resume_audit.py ships and `resume-audit` is a real subcommand ('Audit whether a loop resumes from disk alone (§2.4)'), and harness/exemplars/README.md exists as the clause requires
+- the subcommand's own help names the load-bearing constraint — FROM DISK ALONE — which is what separates a resume audit from a liveness check
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Not driven: reconstructing a loop needs a real loop in the store, and this home has zero.
+
+**Notes:** Partial for the drive. The FakeMcpServer half is a record/replay fake rather than a mock, which is the same substitution the replay substrate makes: replaying a recorded interaction catches a protocol change a hand-written mock would absorb silently, because a mock is written to the code's current expectations.
 
 ## Recorded history
 

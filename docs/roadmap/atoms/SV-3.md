@@ -30,9 +30,21 @@ PERSONALCLAW_TRACE_DIR-gated recorder writes redacted NDJSON; replaying happy-pa
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- 🔑 RAN IT: `harness replay` reports '4 scenario(s) within baseline', so the recorded traces, the folds and the checked-in baselines all exist and agree
+- the profile wires TWO drivers 'matching where the pure folds live' — a vitest replay of the FE coalescer and the Python metric gate — rather than asserting one side and trusting the other
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Not driven: recording a fresh trace needs PERSONALCLAW_TRACE_DIR set on a live session with real turns, and the clause's sharpest half — 'a re-introduced K44 coalescer bug is caught by replay NOT a hand-written test' — needs re-introducing that bug, which is a code mutation I did not make.
+
+**Notes:** 🔑 THE CLAUSE'S EVIDENCE STANDARD IS THE INTERESTING PART and it is the right one: the proof is that replay catches a bug class A HAND-WRITTEN TEST WOULD MISS. That is the difference between a regression test and a replay harness — the first encodes the bug someone already found, the second reproduces terminal state from a real trace, so it catches the ones nobody thought to write. ARCC was queried on redaction of captured traces (the recorder writes NDJSON of real sessions) and returned VPC-flow-log material only — recorded as checked-and-thin.
 
 ## Recorded history
 

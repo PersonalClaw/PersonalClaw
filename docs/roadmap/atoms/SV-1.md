@@ -28,9 +28,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- 🔑 RAN IT: `python -m harness validate` reports '15 specs valid (0 warning(s))' — 9 rules, 5 scenarios, 1 task, matching the clause's seeded shape
+- 🔑 FALSIFIED THE DANGLING-REFERENCE CLAUSE, which is this atom's own acceptance criterion. Pointed the task's requiredTests at a nonexistent module: validate FAILED with a message naming BOTH checks it performed — 'references node-id that does not resolve (NOT COLLECTED and NOT DEFINED IN THE FILE)'. Reverted; green again
+- AGENT.md exists at repo root as the clause requires
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Notes:** The error message is the part worth keeping: it distinguishes 'pytest did not collect this' from 'this file declares no such node', so a typo in a path and a typo in a test name produce different diagnoses rather than one generic unresolved-reference.
 
 ## Recorded history
 

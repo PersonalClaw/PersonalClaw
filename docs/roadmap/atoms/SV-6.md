@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- MEASURED: the resume-audit machinery ships (harness/resume_audit.py) and the replay substrate it depends on is green
+- the clause's standard is BYTE-EQUAL frontier reconstruction rather than 'equivalent', which is the only version of this claim that cannot be argued with — two frontiers that differ in a field nobody compares are not the same frontier
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Not driven: killing and resuming a persisted workflow run needs a persisted run, and this home has none.
+
+**Notes:** Partial for the drive. Byte-equality is the right bar here for the same reason the journal format needed pinning first: a resume that reconstructs 'close enough' state is a resume whose divergence surfaces later, somewhere else, as a bug nobody traces back to the restart.
 
 ## Recorded history
 

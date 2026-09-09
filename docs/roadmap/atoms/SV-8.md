@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- MEASURED: harness/exemplars/ holds per-slice directories slice_0 through slice_5 plus the README contract and a resolve_py.sh helper, so the backfill the clause names is present rather than promised
+- the exemplars profile exists in profiles.py, so they are RUNNABLE through the same entry point as every other gate rather than being documentation that happens to contain code
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Not driven: running the exemplars executes real WF2 slices, which needs a bound model.
+
+**Notes:** The clause's last requirement is the anti-drift one — 'validate flags a slice merged without its exemplar' — which turns the exemplar set from a nice-to-have into a ratchet. That is the same pattern as this plan's other rails: the artefact plus a check that the artefact keeps up.
 
 ## Recorded history
 

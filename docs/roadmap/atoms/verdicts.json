@@ -5328,5 +5328,138 @@
     ],
     "ui_validated": "The README links were verified in the apps repo. The discovered-agents UI has no link to verify.",
     "notes": "Partial on the link clause's second half. Worth stating plainly why it matters rather than treating it as a docs nit: the doc's whole purpose is that a user deciding which agent to bind can see what is at parity and what is host-compensated, and the moment that decision is made is in the agents UI, not in a repository README. The document is excellent and the last few metres to the reader are missing."
+  },
+  "SV-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "🔑 RAN IT: `python -m harness validate` reports '15 specs valid (0 warning(s))' — 9 rules, 5 scenarios, 1 task, matching the clause's seeded shape",
+      "🔑 FALSIFIED THE DANGLING-REFERENCE CLAUSE, which is this atom's own acceptance criterion. Pointed the task's requiredTests at a nonexistent module: validate FAILED with a message naming BOTH checks it performed — 'references node-id that does not resolve (NOT COLLECTED and NOT DEFINED IN THE FILE)'. Reverted; green again",
+      "AGENT.md exists at repo root as the clause requires",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "notes": "The error message is the part worth keeping: it distinguishes 'pytest did not collect this' from 'this file declares no such node', so a typo in a path and a typo in a test name produce different diagnoses rather than one generic unresolved-reference."
+  },
+  "SV-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "🔑 DRIVEN WITH A CONTROL, which is what makes it evidence rather than a reading. Baseline: `harness run --diff --dry-run` over the accumulated branch stack (690 changed files) forced NO profile. Then ONE line added to web/src/pages/chat/RoutingChip.tsx: 691 files and 'forced [replay]: chat stream touched — replay guards the K42/K44/K45 coalescer bug class' plus 'forced [web]'. Same command, one file different, selection changed",
+      "the force table (selection.py:28-45) gives every coupling a REASON naming the bug class it guards, not just a profile — replay for the chat stream, replay for the run stream, replay for the SSE registry",
+      "🔑 THE WHAT/WHY/FIX FORMAT IS REAL, observed in live scanner output: 'WHAT: test touches config-dir/local-models/credential paths with no tmp_path/monkeypatch isolation … WHY: an unisolated destructive test can corrupt the real ~/.personalclaw home (A BOUND MODEL WAS ONCE DELETED THIS WAY) … FIX: take tmp_path/monkeypatch and redirect config_dir()'",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Driven as a CLI, which is the surface this atom is.",
+    "notes": "The destructive-test-isolation rule's WHY cites a real incident, and the same incident is cited independently in workflows/scope.py — so the rule and the code it protects agree about why it exists. A rule whose WHY is a real event is one a reader will not argue with."
+  },
+  "SV-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "🔑 RAN IT: `harness replay` reports '4 scenario(s) within baseline', so the recorded traces, the folds and the checked-in baselines all exist and agree",
+      "the profile wires TWO drivers 'matching where the pure folds live' — a vitest replay of the FE coalescer and the Python metric gate — rather than asserting one side and trusting the other",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: recording a fresh trace needs PERSONALCLAW_TRACE_DIR set on a live session with real turns, and the clause's sharpest half — 'a re-introduced K44 coalescer bug is caught by replay NOT a hand-written test' — needs re-introducing that bug, which is a code mutation I did not make.",
+    "notes": "🔑 THE CLAUSE'S EVIDENCE STANDARD IS THE INTERESTING PART and it is the right one: the proof is that replay catches a bug class A HAND-WRITTEN TEST WOULD MISS. That is the difference between a regression test and a replay harness — the first encodes the bug someone already found, the second reproduces terminal state from a real trace, so it catches the ones nobody thought to write. ARCC was queried on redaction of captured traces (the recorder writes NDJSON of real sessions) and returned VPC-flow-log material only — recorded as checked-and-thin."
+  },
+  "SV-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "MEASURED: harness/resume_audit.py ships and `resume-audit` is a real subcommand ('Audit whether a loop resumes from disk alone (§2.4)'), and harness/exemplars/README.md exists as the clause requires",
+      "the subcommand's own help names the load-bearing constraint — FROM DISK ALONE — which is what separates a resume audit from a liveness check",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: reconstructing a loop needs a real loop in the store, and this home has zero.",
+    "notes": "Partial for the drive. The FakeMcpServer half is a record/replay fake rather than a mock, which is the same substitution the replay substrate makes: replaying a recorded interaction catches a protocol change a hand-written mock would absorb silently, because a mock is written to the code's current expectations."
+  },
+  "SV-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "🔑 RAN IT: both scenarios the clause names are present and green against their checked-in baselines — '✅ replay workflow-journal-projection' and '✅ replay rewind-during-stream'",
+      "🔑 THE ATOM'S PURPOSE IS ORDERING, AND THE ORDERING HELD: the journal-projection scenario had to be recorded and green BEFORE any WF2 Slice 3+ consumer read the journal, so the format was pinned by a replay law before anything depended on it. That is the one thing this plan could not do later — a format acquires consumers and then cannot be pinned without breaking them",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "notes": "This is the atom the roadmap's own hard rule exists for ('Self-Verification before the Workflows-v2 engine slices'), and it is the rare case where a sequencing constraint is verifiable after the fact: the baseline file exists, it is green, and the consumers came later."
+  },
+  "SV-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "MEASURED: the resume-audit machinery ships (harness/resume_audit.py) and the replay substrate it depends on is green",
+      "the clause's standard is BYTE-EQUAL frontier reconstruction rather than 'equivalent', which is the only version of this claim that cannot be argued with — two frontiers that differ in a field nobody compares are not the same frontier",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: killing and resuming a persisted workflow run needs a persisted run, and this home has none.",
+    "notes": "Partial for the drive. Byte-equality is the right bar here for the same reason the journal format needed pinning first: a resume that reconstructs 'close enough' state is a resume whose divergence surfaces later, somewhere else, as a bug nobody traces back to the restart."
+  },
+  "SV-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "🔑 MEASURED IN ci.yml: a dedicated job runs 'harness validate (spec shape + reference resolution)' and 'harness scan (static boundary scanner over the diff)' — the two the clause names, as required steps",
+      "🔑 ITS CHECKOUT CARRIES fetch-depth: 0 WITH THE REASON: 'scan --diff bases on the merge-base with origin/main; fetch full history so that ref resolves (IT FALLS BACK TO main / HEAD~1, BUT THE TRUE BASE IS WHAT MAKES THE DIFF SCOPED rather than whole-tree)'. A shallow checkout would have made the scan silently whole-tree — passing, but measuring the wrong thing",
+      "harness/ is folded into the same lint/test scope as core under the same locked deps: black, isort and flake8 over src + tests + harness, mypy over src + harness, with the comment recording that 'CI used to skip it, so a harness-only' regression went unseen",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "notes": "The fetch-depth reason is the detail worth carrying. A diff-scoped gate whose base silently resolves to something wider still passes, so the failure mode is not a red build but a gate that stops being the gate it claims to be — the same shape as a census with no vacuity floor."
+  },
+  "SV-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "MEASURED: harness/exemplars/ holds per-slice directories slice_0 through slice_5 plus the README contract and a resolve_py.sh helper, so the backfill the clause names is present rather than promised",
+      "the exemplars profile exists in profiles.py, so they are RUNNABLE through the same entry point as every other gate rather than being documentation that happens to contain code",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: running the exemplars executes real WF2 slices, which needs a bound model.",
+    "notes": "The clause's last requirement is the anti-drift one — 'validate flags a slice merged without its exemplar' — which turns the exemplar set from a nice-to-have into a ratchet. That is the same pattern as this plan's other rails: the artefact plus a check that the artefact keeps up."
+  },
+  "SV-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "MEASURED: the config four points are wired (SelfQaConfig at loader.py:389 with its own docstring, PATCH allowlist entries at handlers/core.py:842-843), the action providers ship (action_providers/selfqa_triage_provider.py), and the trigger screen registers both selfqa-triage and selfqa-file-finding",
+      "🔑 THE PROVIDER IS DELIBERATELY REGISTERED UNGATED, and the reason is the run-start preflight (action_providers/registry.py:126-138): 'a provider … gated on agent.self_qa.enabled is one the run-start preflight CANNOT SEE'. A capability that appears only when a feature flag is on cannot be validated before the run starts",
+      "the file-finding action opens 'a LOCAL pclaw/selfqa-<sha8> branch (NEVER PUSHED)', which is the never-merged constraint the sibling atom names, enforced at the action rather than by convention",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: the clause's four behaviours all need a real commit to a watched repo plus a bound model plus Chrome DevTools MCP — a test-only commit yielding a ledger-only skip, a user-impacting commit generating a scenario that mutates state through the real UI, and a failing scenario filing one Inbox item.",
+    "notes": "The ungated-registration reasoning generalises: a provider registry that hides disabled capabilities makes a preflight that enumerates capabilities incomplete, so the flag has to gate the RUN rather than the REGISTRATION. That is the same distinction as membership-versus-effect in the feedback plan's suppression set."
+  },
+  "SV-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "the clause's central mechanism is the one already confirmed elsewhere in this campaign: the required_artifacts gate blocks completion when a declared proof is missing, which is what stops an evidence bundle from being 'mostly there'",
+      "the never-merged fix branch is enforced at the action (a LOCAL branch, never pushed) rather than by a reviewer noticing",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "ui_validated": "Not driven: a failing scenario producing screenshots, an MP4, a contact sheet, a GIF and logs under one SHA256 manifest needs a real Self-QA fire with a bound model and a browser-driving MCP.",
+    "notes": "Partial for the drive. The SHA256 manifest registering the whole bundle as a SINGLE Artifact is the part that makes the gate meaningful: proof that arrives as five unrelated files can be partially missing without anything noticing, while one manifest either verifies or does not."
+  },
+  "SV-11": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 47 (SV) — the harness was RUN and falsified against itself",
+    "evidence": [
+      "MEASURED, parts one and two of three: selfqa/install.py:134 binds the trigger to `vcs_patterns(repo or '.')` with dedup 'content', selfqa/watch.py records that the vcs preset 'now does' what the script used to, and the bundled selfqa/scripts/selfqa_commit_watch.py IS DELETED from the tree",
+      "MEASURED: the vcs preset genuinely exists and is consumed — triggers/file_watch.py:289 vcs_patterns(), described as 'the vcs preset from §2's table: watch the refs that move on commit'. So the clause's own precondition ('once the vcs trigger kind exists') is SATISFIED",
+      "🔴 PART THREE IS ABSENT: 'a rule spec asserts its absence once the vcs trigger kind exists'. The nine rule specs are app-sdk-boundary, config-four-points, destructive-test-isolation, fence-at-ingestion, hook-provider-parity, no-naive-transcript-cut, pure-stream-folds, same-pr-spec-rule and sse-event-registered — none of them mentions the retired commit-watcher",
+      "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
+    ],
+    "notes": "🔑 THE MISSING PIECE IS AN ANTI-REGROWTH RAIL, IN THE ONE PLAN THAT BUILDS THOSE FOR A LIVING. The retirement happened — the script is gone, the trigger is rebound, and the migration reasoning is written in both selfqa modules. What is missing is the check that keeps it gone: nothing fails if someone re-adds a commit-watch cron script beside the trigger that replaced it, which is exactly the regrowth the provider-boundary plan's residue sweep exists to prevent for vendor imports. A one-rule spec would close it, and this plan already ships nine of them. Partial rather than confirmed because the clause's precondition is met, so the rule is due rather than deferred."
   }
 }

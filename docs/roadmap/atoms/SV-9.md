@@ -31,9 +31,22 @@ a real commit to the watched repo fires the companion within one cron interval; 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- MEASURED: the config four points are wired (SelfQaConfig at loader.py:389 with its own docstring, PATCH allowlist entries at handlers/core.py:842-843), the action providers ship (action_providers/selfqa_triage_provider.py), and the trigger screen registers both selfqa-triage and selfqa-file-finding
+- 🔑 THE PROVIDER IS DELIBERATELY REGISTERED UNGATED, and the reason is the run-start preflight (action_providers/registry.py:126-138): 'a provider … gated on agent.self_qa.enabled is one the run-start preflight CANNOT SEE'. A capability that appears only when a feature flag is on cannot be validated before the run starts
+- the file-finding action opens 'a LOCAL pclaw/selfqa-<sha8> branch (NEVER PUSHED)', which is the never-merged constraint the sibling atom names, enforced at the action rather than by convention
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Driven in the UI:** Not driven: the clause's four behaviours all need a real commit to a watched repo plus a bound model plus Chrome DevTools MCP — a test-only commit yielding a ledger-only skip, a user-impacting commit generating a scenario that mutates state through the real UI, and a failing scenario filing one Inbox item.
+
+**Notes:** The ungated-registration reasoning generalises: a provider registry that hides disabled capabilities makes a preflight that enumerates capabilities incomplete, so the flag has to gate the RUN rather than the REGISTRATION. That is the same distinction as membership-versus-effect in the feedback plan's suppression set.
 
 ## Recorded history
 

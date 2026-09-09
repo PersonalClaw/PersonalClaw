@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- 🔑 MEASURED IN ci.yml: a dedicated job runs 'harness validate (spec shape + reference resolution)' and 'harness scan (static boundary scanner over the diff)' — the two the clause names, as required steps
+- 🔑 ITS CHECKOUT CARRIES fetch-depth: 0 WITH THE REASON: 'scan --diff bases on the merge-base with origin/main; fetch full history so that ref resolves (IT FALLS BACK TO main / HEAD~1, BUT THE TRUE BASE IS WHAT MAKES THE DIFF SCOPED rather than whole-tree)'. A shallow checkout would have made the scan silently whole-tree — passing, but measuring the wrong thing
+- harness/ is folded into the same lint/test scope as core under the same locked deps: black, isort and flake8 over src + tests + harness, mypy over src + harness, with the comment recording that 'CI used to skip it, so a harness-only' regression went unseen
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Notes:** The fetch-depth reason is the detail worth carrying. A diff-scoped gate whose base silently resolves to something wider still passes, so the failure mode is not a red build but a gate that stops being the gate it claims to be — the same shape as a census with no vacuity floor.
 
 ## Recorded history
 

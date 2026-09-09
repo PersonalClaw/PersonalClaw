@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 264 | `done_when` checked against the code and it holds |
-| `partial` | 171 | some `done_when` clauses hold, others do not |
+| `confirmed` | 269 | `done_when` checked against the code and it holds |
+| `partial` | 177 | some `done_when` clauses hold, others do not |
 | `contradicted` | 5 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 242 | not yet checked |
+| `unaudited` | 231 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -873,17 +873,17 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`SV-1`](SV-1.md) | `done` | `unaudited` | Spec harness core: harness/ package, 3 spec kinds, validate/explain, profiles, AGENT.md |
-| [`SV-2`](SV-2.md) | `done` | `unaudited` | Static boundary scanner + diff-aware run + same-PR rule + Makefile wiring |
-| [`SV-3`](SV-3.md) | `done` | `unaudited` | Event-trace replay substrate: recorder taps, Python metrics fold, vitest fold driver, baselines |
-| [`SV-4`](SV-4.md) | `done` | `unaudited` | MCP record/replay-as-fake-server + loop resume-audit + exemplars scaffold |
-| [`SV-5`](SV-5.md) | `done` | `unaudited` | WF2 replay scenarios (workflow-journal-projection + rewind-during-stream) + baselines, gating the journal format |
-| [`SV-6`](SV-6.md) | `done` | `unaudited` | Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold |
-| [`SV-7`](SV-7.md) | `done` | `unaudited` | Wire python -m harness validate\|scan into CI (ci.yml) and fold harness/ into CI lint/test scope |
-| [`SV-8`](SV-8.md) | `done` | `unaudited` | Backfill per-slice runnable exemplars for the landed WF2 slices |
-| [`SV-9`](SV-9.md) | `done` | `unaudited` | Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring |
-| [`SV-10`](SV-10.md) | `done` | `unaudited` | Self-QA evidence bundle capture + optional fix-branch + end-to-end validation |
-| [`SV-11`](SV-11.md) | `done` | `unaudited` | Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands |
+| [`SV-1`](SV-1.md) | `done` | `confirmed` | Spec harness core: harness/ package, 3 spec kinds, validate/explain, profiles, AGENT.md |
+| [`SV-2`](SV-2.md) | `done` | `confirmed` | Static boundary scanner + diff-aware run + same-PR rule + Makefile wiring |
+| [`SV-3`](SV-3.md) | `done` | `partial` | Event-trace replay substrate: recorder taps, Python metrics fold, vitest fold driver, baselines |
+| [`SV-4`](SV-4.md) | `done` | `partial` | MCP record/replay-as-fake-server + loop resume-audit + exemplars scaffold |
+| [`SV-5`](SV-5.md) | `done` | `confirmed` | WF2 replay scenarios (workflow-journal-projection + rewind-during-stream) + baselines, gating the journal format |
+| [`SV-6`](SV-6.md) | `done` | `partial` | Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold |
+| [`SV-7`](SV-7.md) | `done` | `confirmed` | Wire python -m harness validate\|scan into CI (ci.yml) and fold harness/ into CI lint/test scope |
+| [`SV-8`](SV-8.md) | `done` | `confirmed` | Backfill per-slice runnable exemplars for the landed WF2 slices |
+| [`SV-9`](SV-9.md) | `done` | `partial` | Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring |
+| [`SV-10`](SV-10.md) | `done` | `partial` | Self-QA evidence bundle capture + optional fix-branch + end-to-end validation |
+| [`SV-11`](SV-11.md) | `done` | `partial` | Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands |
 
 ### `TSE` — TEAM-SHARED-ENTITIES (5/5 done)
 

@@ -33,9 +33,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 47 (SV) — the harness was RUN and falsified against itself
+
+**Code evidence:**
+
+- 🔑 RAN IT: both scenarios the clause names are present and green against their checked-in baselines — '✅ replay workflow-journal-projection' and '✅ replay rewind-during-stream'
+- 🔑 THE ATOM'S PURPOSE IS ORDERING, AND THE ORDERING HELD: the journal-projection scenario had to be recorded and green BEFORE any WF2 Slice 3+ consumer read the journal, so the format was pinned by a replay law before anything depended on it. That is the one thing this plan could not do later — a format acquires consumers and then cannot be pinned without breaking them
+- python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings
+
+**Notes:** This is the atom the roadmap's own hard rule exists for ('Self-Verification before the Workflows-v2 engine slices'), and it is the rare case where a sequencing constraint is verifiable after the fact: the baseline file exists, it is green, and the consumers came later.
 
 ## Recorded history
 
