@@ -32,9 +32,19 @@ _consolidate_locked restructured to Extract→Gather→Decide with one added str
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- tests/test_memory_formation.py passes (part of the 246-passed run)
+- the Health tab exposes the consolidation control and explains it in the user's terms — 'Like sleep consolidates memories, PersonalClaw reviews its episodic memories … and promotes the recurring, cross-context ones into durable semantic facts — scored on frequency, diversity, recency, and richness', with a trigger-a-pass-now affordance
+- the hygiene half is live too: 'Duplicate, stale, and contradictory facts. Superseded facts auto-purge on each sweep' with a real verdict rendered — 'No issues flagged — memory is clean'
+
+**Notes:** PARTIAL by a hair: the surface and its explanation are observed live, but I did not TRIGGER a consolidation pass, because with zero episodic memories a pass would have nothing to promote and a green result would prove nothing. The Extract->Gather->Decide behaviour therefore rests on its suite.
 
 ## Recorded history
 

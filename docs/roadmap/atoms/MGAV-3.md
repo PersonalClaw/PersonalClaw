@@ -30,9 +30,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- covered by the passing MGAV modules in the 246-passed run
+
+**Notes:** PARTIAL: an ambient push-context reflex fires from runtime activity and records volunteer events. Nothing in a freshly-driven home generates that traffic, so it is unexercised rather than unmet.
 
 ## Recorded history
 
