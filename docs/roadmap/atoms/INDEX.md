@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 319 | `done_when` checked against the code and it holds |
-| `partial` | 206 | some `done_when` clauses hold, others do not |
+| `confirmed` | 323 | `done_when` checked against the code and it holds |
+| `partial` | 211 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
-| `unverifiable` | 5 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 148 | not yet checked |
+| `unverifiable` | 7 | cannot be settled here (needs hardware, a paid key, an owner action) |
+| `unaudited` | 137 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -328,17 +328,17 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DL-1`](DL-1.md) | `done` | `unaudited` | S1: claim + org migration + site scaffold + docs-sync script |
-| [`DL-2`](DL-2.md) | `done` | `unaudited` | S2: docs IA + llms.txt/llms-full.txt + landing page + sitemap/OG + release flip |
-| [`DL-3`](DL-3.md) | `done` | `unaudited` | S3: reproducible screenshot set + README/SHOWCASE rework |
-| [`DL-4`](DL-4.md) | `done` | `unaudited` | T3.1: build the demo-home seed fixture (core) |
-| [`DL-5`](DL-5.md) | `done` | `unaudited` | T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images) |
-| [`DL-6`](DL-6.md) | `done` | `unaudited` | T3.4: launch-post draft (architecture-receipts narrative) |
-| [`DL-7`](DL-7.md) | `done` | `unaudited` | S4 T4.1: released-version capability matrix at /compare |
-| [`DL-8`](DL-8.md) | `done` | `unaudited` | S4 T4.2+T4.3: listing submissions + P0 launch checklist |
-| [`DL-9`](DL-9.md) | `blocked` | `unaudited` | S5 T5.1: research-learnings republication section |
-| [`DL-10`](DL-10.md) | `todo` | `unaudited` | Owner: submit community listings (awesome-self-hosted after the 2026-11-21 eligibility date, awesome-ai-agents, selfh.st, AlternativeTo) |
-| [`DL-11`](DL-11.md) | `todo` | `unaudited` | Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA) |
+| [`DL-1`](DL-1.md) | `done` | `confirmed` | S1: claim + org migration + site scaffold + docs-sync script |
+| [`DL-2`](DL-2.md) | `done` | `partial` | S2: docs IA + llms.txt/llms-full.txt + landing page + sitemap/OG + release flip |
+| [`DL-3`](DL-3.md) | `done` | `confirmed` | S3: reproducible screenshot set + README/SHOWCASE rework |
+| [`DL-4`](DL-4.md) | `done` | `confirmed` | T3.1: build the demo-home seed fixture (core) |
+| [`DL-5`](DL-5.md) | `done` | `partial` | T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images) |
+| [`DL-6`](DL-6.md) | `done` | `partial` | T3.4: launch-post draft (architecture-receipts narrative) |
+| [`DL-7`](DL-7.md) | `done` | `confirmed` | S4 T4.1: released-version capability matrix at /compare |
+| [`DL-8`](DL-8.md) | `done` | `partial` | S4 T4.2+T4.3: listing submissions + P0 launch checklist |
+| [`DL-9`](DL-9.md) | `blocked` | `partial` | S5 T5.1: research-learnings republication section |
+| [`DL-10`](DL-10.md) | `todo` | `unverifiable` | Owner: submit community listings (awesome-self-hosted after the 2026-11-21 eligibility date, awesome-ai-agents, selfh.st, AlternativeTo) |
+| [`DL-11`](DL-11.md) | `todo` | `unverifiable` | Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA) |
 
 ### `DSC` — DESIGN-SYSTEM-CONSISTENCY (12/12 done)
 

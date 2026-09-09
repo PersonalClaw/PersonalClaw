@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- 🔑 BOTH MACHINE-READABLE FILES SHIP AND ARE SUBSTANTIAL, not stubs: `llms.txt` is 80 lines in the conventional shape (an H1 then a blockquote summary), and `llms-full.txt` is 5,417 lines
+- the summary itself is the product's honest one-paragraph description — 'Local-first, provider-agnostic, zero telemetry, MIT' — which matters because this file is what an agent reads instead of the landing page
+- the site's page set covers the IA the atom describes: `index`, `product`, `compare`, `security`, `release`, `apps`, `registry`, a `blog` collection and a generated `robots.txt`
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not driven: link-check green, the two-click reachability bound, the served content type and the OG/sitemap metadata are all properties of the DEPLOYED site, which is outside this audit's local-gateway scope.
+
+**Notes:** Partial for the served-surface clauses rather than for the artifacts. Worth flagging one thing the audit CAN see: `zero telemetry` appears flatly in this file's summary, while the project's own comparison page grades that same claim `partial` (see DL-7). The two are inconsistent in tone even though the comparison page is the more careful one.
 
 ## Recorded history
 

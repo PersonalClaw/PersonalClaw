@@ -30,9 +30,22 @@ src/content/blog/launch.md draft complete citing threat model, scanner gate, egr
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- 🔑 THE LAUNCH POST CITES CODE AT THE RELEASED TAG RATHER THAN AT `main` — links of the form `blob/v0.1.3/src/personalclaw/...` — so a reader following a receipt sees the code as shipped rather than as since-changed. That is the difference between a receipt and a moving reference
+- 🔑 AND IT DISCLOSES AN AWKWARD DETAIL INSTEAD OF OMITTING IT: the post explains that a system endpoint returns an `owner_id_hash`, 'an HMAC-SHA256 of your hostname and username', and links the file where it is derived. A launch post volunteering the one identifier the product computes about its user is doing the honest version of this genre
+- the limitations paragraph the atom requires is present and names the real out-of-scope set — physical access to an unlocked machine and the owner's own auto-approve choices — matching the published threat model audited earlier in this campaign
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not applicable: a draft blog post.
+
+**Notes:** Partial on the owner sign-off clause, which is a recorded human decision this audit cannot observe. The draft itself is complete and its receipts are pinned, which is the substantive half.
 
 ## Recorded history
 

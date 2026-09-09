@@ -30,9 +30,22 @@ docs/screenshots/{light,dark}/*.png ship reproducibly with capture.mjs + CAPTURE
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- verified in the previous cycle by sweeping every reference rather than spot-checking: 31 screenshot references across README and SHOWCASE, all 31 resolving, with matching light and dark sets
+- capture is reproducible by a script (`docs/screenshots/capture.mjs`) beside `CAPTURE.md`, which is what keeps the pairs consistent across a redesign
+- the core README carries the badge row, the three-command install and a security section; the apps README carries badges and org links
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not applicable: committed images and README prose.
+
+**Notes:** Confirmed on evidence gathered one cycle earlier for PUBLICATION's overlapping atom. Recording it here rather than re-running the sweep is the correct reading of two atoms that share a deliverable.
 
 ## Recorded history
 

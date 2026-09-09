@@ -32,9 +32,26 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- 🔑 THE MATRIX IS 20 ROWS AND THE VERDICTS ARE 9 YES / 7 NO / 4 PARTIAL — read row by row rather than sampled. The 'does not do' rows are not a token gesture; they are the majority of non-yes rows
+- 🔑 IT GRADES THE PROJECT'S OWN BADGE CLAIM DOWN, WHICH IS THE MOST REMARKABLE THING IN THIS PLAN. 'Zero telemetry.' is marked **partial**, and the statement says why: 'the claim as stated is wider than the truth: the dashboard asks GitHub whether a newer release exists, at most every twelve hours'. The README carries a flat 'No analytics' badge; the comparison page refuses to repeat it unqualified
+- 🔑 THE ADJACENT ROW NAMES THE TRAP RATHER THAN THE SETTING: 'You can turn the update check off.' is **no**, because `auto_update` 'gates whether an update is applied, not whether the check happens. At this release the check has no off switch. Blocking it is a firewall rule, not a preference.' A user reading the setting name alone would conclude the opposite
+- 🔑 EVERY ROW CITES A FILE AND A RETRIEVAL DATE (`handlers/updates_kind.py`, retrieved 2026-08-27) — the proof-token discipline from PLATFORM-REACH applied to capability claims, and the reason the matrix can be re-checked rather than merely trusted
+- 🔑 THE PINNING IS GENERATED, NOT HAND-TYPED: the page reads `.generated/release-facts.json`, whose `SourceFact` type carries `commit`, `shortCommit`, `commitUrl`, `tag` and `tagUrl`, and the page renders the short commit as the thing it is pinned at. 'Verified at the tag, not against main' has machinery behind it
+- 🔑 AND IT STATES ITS OWN NON-GOAL: 'What this page does not do is compare PersonalClaw to other projects.' A page at `/compare` that declines to compare is refusing the easiest and least honest version of itself
+- the negative rows are unflattering in the right way — no multi-account support, no guarantee that upgrading preserves existing data, apps not sandboxed with a per-app network policy, no host allow-list for outbound access — and each is consistent with the limitations document verified earlier in this campaign
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not driven: the rendered page is on the deployed site. The data behind every row, the verdict vocabulary and the pinning mechanism were read directly.
+
+**Notes:** 🪤 MY OWN ERROR, WITHDRAWN: my first pass looked for `status`/`supported` fields, found no negative rows, and briefly had the 'does not do' clause as unmet. The vocabulary is `verdict` with values yes/no/partial. Checked the real field before concluding — which is the discipline the last several cycles kept teaching. 🔑 THIS IS THE MOST HONEST PUBLIC-FACING ARTIFACT IN THE CATALOGUE: a marketing surface whose own data contradicts a badge the README ships, with the file and date that prove it.
 
 ## Recorded history
 

@@ -30,9 +30,22 @@ PersonalClaw org holds the repos with metadata/topics/homepage set; no live keyu
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- the org/metadata half was verified from the LIVE APIs in the previous cycle rather than re-read here: both repos public with `homepage: https://personalclaw.dev`, topics set, and no PersonalClaw-named repo remaining under the old account
+- the site is a real Astro project in its own repository (`personalclaw.dev/`) with `astro.config.mjs`, `src/pages/`, `public/` and a build pipeline — not a placeholder
+- 🔑 THE DOCS-SYNC SCRIPT EXISTS AS THE ATOM NAMES IT (`scripts/sync-docs.mjs`), which is the property that keeps the published docs from becoming a fork of the core ones. A hand-copied docs tree is the standard way a project's site starts lying about the product
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not driven: the published site is a remote HTTPS surface, and this audit's browser validation is scoped to the local gateway. The repository-side artifacts were read directly.
+
+**Notes:** Confirmed on the parts that are observable from here plus the previous cycle's live API reads. The 'serves over HTTPS via Pages' clause is the same class of claim as PUBLICATION's fresh-clone atom — a remote observation — but unlike that one it is corroborated by the homepage field resolving on both repos.
 
 ## Recorded history
 

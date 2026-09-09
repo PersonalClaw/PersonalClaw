@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- STATUS `blocked` IS CORRECT and the blocker is an owner approval — the preface 'owning the built-agentically story' needs sign-off before publication, which is a judgement about how the project presents itself rather than a missing seam
+- the precondition is in place: the sync script the extension would build on exists (`scripts/sync-docs.mjs`), so the work is an extension of a shipped mechanism rather than a new one
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not applicable: unpublished content behind an approval.
+
+**Notes:** Partial rather than unverifiable because the mechanism half is observable and only the approval is outstanding. Worth noting the honesty of the framing: republishing research learnings behind a preface that owns how they were produced is a harder editorial choice than quietly publishing them.
 
 ## Recorded history
 

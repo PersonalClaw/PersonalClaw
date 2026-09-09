@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- 🔑 I BOOTED IT RATHER THAN READ IT: a fresh gateway on an isolated throwaway home with `--seed demo-home --seed-replace` came up HTTP 200 and rendered a demo-ready dashboard, driven in a browser at a desktop viewport
+- 🔑 THE SEEDED STATE IS BELIEVABLE AND NON-PERSONAL, observed live: the dashboard greets 'Good morning, Alex' — an invented persona — with '6 tasks ready', one unread notification, and 5 knowledge items (the gateway's own re-index warning names the count)
+- 🔑 A PII SWEEP OVER THE FIXTURE FINDS NOTHING: no occurrence of the owner's name, handle or any of their email domains anywhere under the fixture directory. The atom's 'non-personal' clause is the one that would embarrass the project if wrong, and it holds
+- the fixture follows the empty-fixture layout the atom requires — `config.json`, `fixture.yaml`, `projects`, `tasks`, `loop`, `workspace` — so it is a peer of the shipped `empty` fixture rather than a special case
+- seed suites pass 57/57
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** 🔑 THE WHOLE ATOM, END TO END: seeded a fresh home, booted the gateway on it, and drove the resulting dashboard. This is the atom in this plan that was most fully verifiable and it verified.
+
+**Notes:** 🪤 A FALSE ATTRIBUTION I CAUGHT BEFORE IT BECAME EVIDENCE. My first boot targeted port 10012, got HTTP 200, and looked like a success — but the log showed 'Port 10012 already in use', so the 200 came from a PRE-EXISTING gateway from an earlier cycle and NOT from my seeded home. Re-ran on a free port. The seed had in fact loaded before the bind failed, which is exactly the kind of partial success that reads as a clean pass if you only check the status code.
 
 ## Recorded history
 

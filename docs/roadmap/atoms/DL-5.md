@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 58 (DL) — the demo seed booted on a fresh home and driven; the capability matrix read row by row
+
+**Code evidence:**
+
+- the media set is DECLARED rather than ad hoc: `marketing/screenshots.manifest.json` carries `$schema`, `schemaVersion`, `targetRelease`, `capture` and `shots`, with a `screenshots.schema.json` beside it
+- 🔑 `targetRelease` IS THE DETAIL WORTH KEEPING — launch media pinned to a release is media you can tell is stale. An unversioned marketing screenshot set is the artifact most likely to still show last year's product
+- seed suites 57/57; a fresh gateway booted with --seed demo-home on an isolated home and driven in a browser; capabilities matrix 20 rows (9 yes / 7 no / 4 partial); llms.txt 80 lines + llms-full.txt 5417
+
+**Driven in the UI:** Not verifiable from here: a 60-90 second recording and 1280x640 social-preview images are binary artifacts whose CONTENT (the scripted click path, the palette) cannot be judged by reading a manifest, and the atom hands the social-preview upload to the owner.
+
+**Notes:** Partial because the manifest proves the set is declared and pinned, not that the recording exists at the right length showing the right path. The schema-plus-manifest shape is the reproducibility half, and it is the half that survives.
 
 ## Recorded history
 
