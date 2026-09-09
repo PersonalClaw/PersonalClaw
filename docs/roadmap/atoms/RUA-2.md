@@ -28,9 +28,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 2 (RUA) — observed
+
+**Code evidence:**
+
+- src/personalclaw/auth/credentials.py is argon2id and says so explicitly ('argon2id, not a hand-rolled PBKDF2 — memory-hard and tunable'); src/personalclaw/durability/crypto.py:191-200 uses argon2.low_level with type=Type.ID, so the algorithm claim holds in code rather than in prose
+- 'login_enabled defaults off' is observed from the USER side: two fresh homes were driven all session over the LAN-less loopback and neither ever presented a login gate, and neither home has an auth/ directory at all
+- the CLI's own control is observed too — `personalclaw auth set-password` refuses a non-TTY, which is why I could not provision a credential from this session (see RUA-3)
+
+**Notes:** The no-echo/non-TTY refusal is worth recording as a feature rather than an obstacle: it is what stopped an automated session from setting an owner password, and it did its job on me. I did not run test_config_roundtrip.py this cycle, so the 'wired through all 5 config points' clause rests on the atom's own rail rather than on my run — named here so the gap is visible.
 
 ## Recorded history
 

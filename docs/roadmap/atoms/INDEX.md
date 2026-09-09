@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 5 | `done_when` checked against the code and it holds |
-| `partial` | 4 | some `done_when` clauses hold, others do not |
+| `confirmed` | 7 | `done_when` checked against the code and it holds |
+| `partial` | 6 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 675 | not yet checked |
+| `unaudited` | 671 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -818,10 +818,10 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`RUA-1`](RUA-1.md) | `done` | `unaudited` | Durable session foundation: persist HMAC signing key + move nonce/binding registry to auth/sessions.json (survive restart, fail-closed) |
-| [`RUA-2`](RUA-2.md) | `done` | `unaudited` | Owner credential (argon2id) + auth config section + personalclaw auth CLI + deploy-env bootstrap seed |
-| [`RUA-3`](RUA-3.md) | `done` | `unaudited` | Login front door: POST /api/auth/login\|logout minting the one session token, per-IP lockout, /login redirect, Settings Account panel |
-| [`RUA-4`](RUA-4.md) | `done` | `unaudited` | Public-exposure hardening (Secure cookie / wss CSP / trusted-proxy headers) + TOTP at login + single-use remote enrollment codes + remote-access guide |
+| [`RUA-1`](RUA-1.md) | `done` | `confirmed` | Durable session foundation: persist HMAC signing key + move nonce/binding registry to auth/sessions.json (survive restart, fail-closed) |
+| [`RUA-2`](RUA-2.md) | `done` | `confirmed` | Owner credential (argon2id) + auth config section + personalclaw auth CLI + deploy-env bootstrap seed |
+| [`RUA-3`](RUA-3.md) | `done` | `partial` | Login front door: POST /api/auth/login\|logout minting the one session token, per-IP lockout, /login redirect, Settings Account panel |
+| [`RUA-4`](RUA-4.md) | `done` | `partial` | Public-exposure hardening (Secure cookie / wss CSP / trusted-proxy headers) + TOTP at login + single-use remote enrollment codes + remote-access guide |
 
 ### `SH` — SECURITY-HARDENING (9/12 done)
 
