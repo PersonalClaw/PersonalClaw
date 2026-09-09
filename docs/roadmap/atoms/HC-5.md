@@ -32,9 +32,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 49 (HC) — worktree benchmark re-run twice live; the check-work toggle driven through a reload
+
+**Code evidence:**
+
+- 🔑 PARITY VERIFIED BY COMPARING THE TWO CALL SITES, not by trusting the claim: best_of_n_provider.py imports `from personalclaw.sampling import best_of_n` and awaits `best_of_n(prompt, n, criteria)`; mcp_subagents.py:304 calls `best_of_n(prompt, n, criteria)` — the same three positional arguments, so `use_case` defaults identically down both paths and template and skill are behaviourally identical by construction rather than by convention
+- both bundled templates exist as engine-native workflows (workflows/bundled/best-of-n/workflow.json and workflows/bundled/check-work/workflow.json), each backed by a thin action provider that calls the shipped core whole
+- 🔑 THE SHARED-CORE TEST IS NOT VACUOUS, which is the only thing that makes 'behaviourally identical' checkable: it loads the REAL workflow.json and drives it through `dispatch_action`, and it uses a DELIBERATE SCORE TIE, asserting `tmpl['winner_idx'] == tool['winner_idx'] == 1` with the message 'tie must break to the LOWEST index'. A re-owned selection using a naive max() with ties broken high reds on both paths, and a source-level pin asserts the wrappers import the cores rather than their pieces
+- the recorded deviation is the SAFER reading of its own clause: one metered action node instead of the plan's fan-out → judge → select decomposition, because the core's pieces are private and its concurrency proof, fail-open tiers, tie-break contract and outcome record span the whole call — splitting would re-own those four contracts in template config, which is precisely the skill/template drift the plan's risk table forbids
+- test_loop_worktree_timing + test_harness_worktree_bench + test_loop_worktree_sparse(+race) 98/98 (falsified: dropping the auto-widen reds exactly 3, including the diff-identity rail); test_sampling_best_of_n + test_check_work + test_hc5_shared_core 69/69
+
+**Driven in the UI:** No surface of its own: this atom is the engine-side half of two features whose user surfaces belong to HC-3 and HC-4. Validated by driving the real template node through the engine dispatch seam in its test.
+
+**Notes:** The dep on HC-3 is discharged in substance and this audit re-confirmed why: HC-3's blocker is an owner live run, not unlanded code, and the code HC-5 calls is present and threaded. Worth keeping as a general rule — a `blocked` dependency whose blocker is a cost rather than a contract does not block a consumer that only needs the contract.
 
 ## Recorded history
 

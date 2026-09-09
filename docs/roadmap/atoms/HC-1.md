@@ -29,9 +29,26 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 49 (HC) — worktree benchmark re-run twice live; the check-work toggle driven through a reload
+
+**Code evidence:**
+
+- 🔑 I RAN THE BENCHMARK MYSELF, TWICE, rather than reading its recorded number. `python -m harness worktree-bench --files 10000` on a synthesized 10,000-file repo, fan-out of 4: mean 2390 ms, median 1525, max 5275, sequential total 9562 ms, outcomes {created: 4}. Then a 40-file control arm in the same window: mean 166 ms, spread 20 ms
+- 🔑 MY RUN RETURNS A DIFFERENT VERDICT FROM THE RECORDED ONE, AND THE PLAN PREDICTED EXACTLY THAT. Recorded: `proceed` (mean 5216 ms) taken at load average 21–35 on 18 cores. Mine: `unresolved` at load ~6, because 'the samples straddle the gate (1237ms…5275ms against 2000ms ±400ms)'. The plan's own log wrote the fragility down in advance — 'The margin at the floor is thin and I am not going to dress it up: a ~1.25x idle speedup would move that cheapest sample into the ±20% unresolved band' — so reproducing the DISAGREEMENT is stronger evidence for this atom than reproducing the verdict would have been
+- 🔑 THE TOOL CANNOT BE TALKED INTO A VERDICT, which is the property that makes a gate worth building: it returns `unresolved` on a straddling band rather than rounding to whichever side the mean lands on, and my 40-file arm was REFUSED on size — 'repo has 40 tracked files, under the 10000-file benchmark case §1.1 names — these are real numbers about a different repo, so they cannot open or close the gate'
+- the instrumentation is a CONTRACT, not a debug aid, and the code says why: fixed prefix + key=value fields (`worktree add outcome=created task=t-abc ms=812 files=10432 size_class=large`), `outcome` first because it decides whether the row is a hydration sample at all, `failed` carrying a duration too because 'a creation that burned the whole _TIMEOUT before failing is the most interesting row on the page', and `ms` as an integer because a float 'would print 1e-05 on the reuse path'
+- the per-workspace file-count cache exists for a measurement-integrity reason, stated at the cache: `git ls-files` on the very repo being timed is itself a full index walk, so run per creation 'it would make the instrumentation a share of the cost it reports, which is the one thing a measurement may not do'; `_log_creation` resolves the class AFTER the clock stops so a cache miss lands outside the measured window
+- FILE_COUNT_UNKNOWN = -1 rather than 0, because 'an empty repo is a real answer, and conflating them would tag it unknown forever' — the same unknown-versus-zero discrimination this campaign has now seen in the usage ledger and the stats denominator
+- the benchmark refuses to run against the real ~/.personalclaw (worktrees land under config_dir() and its own cleanup would delete inside the user's home) and synthesizes its repo under a TemporaryDirectory, so nothing enters the committed tree
+- test_loop_worktree_timing + test_harness_worktree_bench + test_loop_worktree_sparse(+race) 98/98 (falsified: dropping the auto-widen reds exactly 3, including the diff-identity rail); test_sampling_best_of_n + test_check_work + test_hc5_shared_core 69/69
+
+**Driven in the UI:** No user surface: a log line and a developer benchmark command. Driven instead by running the command twice, at two repo sizes, and reading both verdicts.
+
+**Notes:** 🔑 THE BEST-CALIBRATED MEASUREMENT IN THE CAMPAIGN SO FAR. The atom asks only that the gate be 'evaluated and its outcome documented' — and what was documented is a `proceed` with its own falsification condition attached, a contention caveat carrying THREE trials and the load averages they were taken at, and an instruction to re-run before spending the next atom. My re-run is that instruction being followed, and it lands in the unresolved band the caveat named. Nothing here is contradicted: the recorded number, the recorded caveat and my number are one coherent picture of a cost that is size-driven (1237 ms cheapest 10K sample against a 166 ms same-window 40-file floor) with a machine-dependent multiplier on top.
 
 ## Recorded history
 

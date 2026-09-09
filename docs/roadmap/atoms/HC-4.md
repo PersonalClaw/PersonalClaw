@@ -29,9 +29,26 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 49 (HC) — worktree benchmark re-run twice live; the check-work toggle driven through a reload
+
+**Code evidence:**
+
+- 🔑 DROVE THE ONE USER-FACING HALF THROUGH A RELOAD, which is the decisive persistence test. Settings → Chat renders `switch "Offer 'Check this work'" [checked]` — default ON, observed. Clicked it off, RELOADED, reopened the panel: the switch renders without [checked] and `.validate-home/config.json` shows dashboard.offer_check_work = False. Clicked it back on; the file reads True again, so the home is left as found
+- 🔑 THE UI COPY MAKES THE SAME PROMISE THE CODE KEEPS: 'Only ever an offer — the verification cost is spent on your click, never automatically', against `maybe_offer_check_work`'s docstring 'OFFER only: this never invokes the check-work skill. Invocation is always the user's click'. A test pins it (`test_offer_is_never_an_invocation`)
+- 🔑 THE OFFER HEURISTIC IS DETERMINISTIC AND FREE, and the reason is written at it: 'an offer must never cost anything, since the user may not click it'. `turn_earns_check_work_offer` is ≥3 tool calls AND completion language, no model call, with the floor justified — 'one or two is a lookup, not a build worth re-verifying'
+- 🔑 THE ADVERSARIAL PLANTED-FLAW CASE IS REAL AND TRISTATE, not pass/fail theatre: a session claiming three things against a tree containing one produces pass / fail / **unverifiable** — 'make lint' is claimed-but-not-observed-here and is recorded unverifiable rather than assumed passing — and the zero-self-reported-passes property is asserted structurally (every passing result's evidence must contain the real tmp path)
+- the skill's one rule is the same doctrine as the loop judge and it says so: 'every check is a tool call or it is unverifiable. There is no third option'; plus 'prefer the content form over the existence form … because an empty file passes test -e', with `test_empty_file_is_not_a_pass` pinning exactly that
+- the SDLC post-gate hook is off by default, no-ops when off, catches a claimed-but-missing file when on, and FAILS OPEN on a broken core — four separate tests, so the flag gates the run rather than the registration
+- the QA-Companion light-vs-deep boundary doc is present (references/qa-boundary.md) and referenced from the skill, with a test asserting both
+- test_loop_worktree_timing + test_harness_worktree_bench + test_loop_worktree_sparse(+race) 98/98 (falsified: dropping the auto-widen reds exactly 3, including the diff-identity rail); test_sampling_best_of_n + test_check_work + test_hc5_shared_core 69/69
+
+**Driven in the UI:** The toggle: default state, the write, persistence across a full reload, and restoration. NOT driven: the chip itself appearing after a ≥3-tool-call completion turn, which needs a bound model to produce such a turn.
+
+**Notes:** 🔑 THIS ATOM MAKES THE DISCRIMINATION THE PREVIOUS ONE IS PARTIAL FOR, AND MAKES IT EXPLICITLY. `dashboard.offer_check_work` governs something a user sees, so it has a toggle AND a test that pins the toggle's existence; `loops.check_work_stages` is a developer knob whose write path is the PATCH allowlist, and the test docstring draws the line rather than papering over it. That is the right rule — a frontend control is owed to a user-facing field, not to every field — and it is why the four-wiring-points contract needs its '(if user-facing)' clause read rather than counted. Partial only because the chip's render needs a real turn; the mechanism behind it is synchronous, model-free and fully observed.
 
 ## Recorded history
 

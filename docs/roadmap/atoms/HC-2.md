@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 49 (HC) — worktree benchmark re-run twice live; the check-work toggle driven through a reload
+
+**Code evidence:**
+
+- 🔑 FALSIFIED THE LOAD-BEARING RAIL MYSELF: made `widen_for_pending` return [] before it inspects the tree, and exactly three tests reddened — `test_widening_makes_an_out_of_scope_write_land` (assert [] == ['docs']), `test_merge_back_carries_an_out_of_scope_write`, and `test_merge_back_is_diff_identical_to_a_full_checkout` ('sparse merge-back diverged from full'). 44 passed. Reverted; 47/47
+- 🔑 THE DEFECT AUTO-WIDENING PREVENTS IS SILENT DATA LOSS, and the code names the mechanism: in a cone-mode sparse worktree an out-of-cone write is NOT refused by the filesystem — the file lands — but `git add -A` then declines to stage it and exits 1, staging NOTHING, and the merge reports ok=True. Hence the widen runs INSIDE merge_worktree before its `add -A`, and 'the tests assert the file is in the RESULTING COMMIT, never that a widen command was issued'
+- 🔑 THE PLAN'S OWN PREMISE FOR THIS ATOM WAS FOUND FALSE AND THE DEVIATION RECORDED: §1.2 claims 'SDLC decomposition already produces per-task file scopes'; `Task` has no path/scope field at all. So scope is EXTRACTED from task text (`scope_candidates`) and VALIDATED against the git index (`resolve_scope`) — a hallucinated path is dropped, >8 dirs means 'no scope', any git failure means full hydration. Polarity is deliberately unmodelled: 'do not touch web/src' still contributes `web/src`, because over-inclusion costs some saving while under-inclusion is recovered by widening
+- the config chokepoint is real and singular: `scope_for_task` returns [] when `loops.worktree_sparse` is off, so a caller cannot bypass the flag, and the tests drive the CONSUMER (flipping it produces a full checkout end to end) rather than asserting the field exists
+- `pool_size() = max(1, min(cpu_count, 4, n_items))` is asserted as a NUMBER on both sides of the ceiling with a spy on the real ThreadPoolExecutor construction — the plan notes that on an 18-core box an unbounded pool would satisfy any 'a pool exists' check, which is the vacuity floor for a concurrency claim
+- test_loop_worktree_timing + test_harness_worktree_bench + test_loop_worktree_sparse(+race) 98/98 (falsified: dropping the auto-widen reds exactly 3, including the diff-identity rail); test_sampling_best_of_n + test_check_work + test_hc5_shared_core 69/69
+
+**Driven in the UI:** Nothing to drive: this atom has no frontend surface, and that absence is the partial (below). Validated by running its suites and by falsifying the widen.
+
+**Notes:** 🪤 PARTIAL ON ONE WIRING POINT, AND THE GAP IS A RECORDED DEVIATION RATHER THAN A DEFECT — I checked before calling it one. The done_when asks for four points including '+FE', and there is no frontend control. But no file under web/src reads `config.loops` at all, and a census of the PATCH allowlist shows 4 of 4 `loops.*` keys (worktree_sparse, check_work_stages, judge_use_case, stagnation_window) have no control anywhere — so this is a missing SECTION, not a missing control, and both the plan and a test docstring say so in advance ('a Loops settings panel is new scope'; 'the day one lands, this field belongs in it'). Filed as issue #2801 so the follow-up those notes point at has a tracking home. The atom's substance — sparse hydration, auto-widen, bounded pool, reuse reset, diff-identical merge-back — is confirmed and falsified.
 
 ## Recorded history
 

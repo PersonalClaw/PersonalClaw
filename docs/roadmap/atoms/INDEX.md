@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 272 | `done_when` checked against the code and it holds |
-| `partial` | 180 | some `done_when` clauses hold, others do not |
+| `confirmed` | 274 | `done_when` checked against the code and it holds |
+| `partial` | 183 | some `done_when` clauses hold, others do not |
 | `contradicted` | 5 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 225 | not yet checked |
+| `unaudited` | 220 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -463,11 +463,11 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`HC-1`](HC-1.md) | `done` | `unaudited` | Worktree instrumentation + fan-out-of-4 benchmark & measure-first gate |
-| [`HC-2`](HC-2.md) | `done` | `unaudited` | Sparse + parallel + reuse worktree hydration with loop.worktree_sparse config |
-| [`HC-3`](HC-3.md) | `blocked` | `unaudited` | Best-of-N sampling core (sampling.py) + bundled best-of-n skill |
-| [`HC-4`](HC-4.md) | `done` | `unaudited` | Check-work skill + SDLC post-gate hook + chat suggestion chip |
-| [`HC-5`](HC-5.md) | `done` | `unaudited` | v2 workflow templates for best-of-n and check-work (engine-native halves) |
+| [`HC-1`](HC-1.md) | `done` | `confirmed` | Worktree instrumentation + fan-out-of-4 benchmark & measure-first gate |
+| [`HC-2`](HC-2.md) | `done` | `partial` | Sparse + parallel + reuse worktree hydration with loop.worktree_sparse config |
+| [`HC-3`](HC-3.md) | `blocked` | `partial` | Best-of-N sampling core (sampling.py) + bundled best-of-n skill |
+| [`HC-4`](HC-4.md) | `done` | `partial` | Check-work skill + SDLC post-gate hook + chat suggestion chip |
+| [`HC-5`](HC-5.md) | `done` | `confirmed` | v2 workflow templates for best-of-n and check-work (engine-native halves) |
 
 ### `IA2` — INVESTIGATE-ANYWHERE (7/7 done)
 

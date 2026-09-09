@@ -30,9 +30,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 49 (HC) — worktree benchmark re-run twice live; the check-work toggle driven through a reload
+
+**Code evidence:**
+
+- 🔑 THE CODE IS COMPLETE AND I VERIFIED IT INDEPENDENTLY OF THE PLAN'S CLAIM: `best_of_n(prompt, n, judge_criteria, use_case)` in sampling.py; the fan-out is create_task per candidate + gather; each sample rides `one_shot_completion(prompt, use_case=…, temperature=temperature)` so every call passes the ModelCallGuard chokepoint; `_sample_one` never raises — a failure becomes a candidate with an error string rather than sinking the slate
+- 🔑 THE PLAN'S MEASURED FINDING DID LAND: `one_shot_completion` had NO temperature parameter, so 'temperature-varied' was literally unbuildable as written. It was added and threaded (temperature → extra_options['temperature'] → request kwargs), and the honest caveat travels with it in the module docstring — an extended-thinking model FORBIDS a custom temperature and drops it, collapsing the ladder to zero spread
+- 🔑 'SNAPSHOT-EXCLUDED' IS WIRED THROUGH A TYPED PROPERTY, NOT A FILENAME LIST: durability/inventory.py registers sampling_outcomes.jsonl with derived=True, and the comment states the semantics — 'it is claimed (audit_home sees it) but never backed up' — so the file is inventoried rather than invisible, which is the difference between excluded and forgotten
+- EVERY ENTRY POINT IS REACHABLE, checked rather than assumed: the bundled best-of-n skill carries triggers and a confirmation gate naming the cost ('Sampling 3 candidates — that's 3 model calls (plus judging), not one'), the `best_of_n` MCP tool is registered and dispatched (mcp_subagents.py:228/:315), and the HC-5 action provider imports the same core
+- the skill's ambiguous-trigger branch offers the choice BEFORE spending anything ('Want me to sample a few candidates and judge them (each candidate is its own model call), or just write you one answer?') and caps N at 5 — the propose-don't-spend shape, applied to money rather than to state
+- test_loop_worktree_timing + test_harness_worktree_bench + test_loop_worktree_sparse(+race) 98/98 (falsified: dropping the auto-widen reds exactly 3, including the diff-identity rail); test_sampling_best_of_n + test_check_work + test_hc5_shared_core 69/69
+
+**Driven in the UI:** Not driven, and it cannot be by any agent: the unmet clause is a live end-to-end run whose N samples must appear in model_calls.jsonl, which needs a real paid credential and spends real money on every attempt.
+
+**Notes:** STATUS `blocked` IS CORRECT AND THE BLOCKER IS GENUINELY OWNER-ONLY — this is the cleanest instance of that shape in the campaign, because the blocker is not a missing dependency or an unbuilt seam but an irreducible cost that no agent may incur. The smallest remaining unit is small and already written down in the atom: start the dev gateway on an isolated home with a real credential, ask for three versions and a pick, confirm the gate names 3x cost and that model_calls.jsonl shows three sample calls plus the judge pass.
 
 ## Recorded history
 
