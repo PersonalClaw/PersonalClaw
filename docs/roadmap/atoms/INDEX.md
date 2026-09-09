@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 62 | `done_when` checked against the code and it holds |
-| `partial` | 88 | some `done_when` clauses hold, others do not |
+| `confirmed` | 73 | `done_when` checked against the code and it holds |
+| `partial` | 94 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 532 | not yet checked |
+| `unaudited` | 515 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -403,23 +403,23 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`ES-1`](ES-1.md) | `done` | `unaudited` | Shared eval substrate: store, experiment-matrix runner, subprocess isolation fix, config + SEL wiring |
-| [`ES-2`](ES-2.md) | `done` | `unaudited` | RunPin + versioned scenario library migration (amendment E1) |
-| [`ES-3`](ES-3.md) | `done` | `unaudited` | Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only) |
-| [`ES-4`](ES-4.md) | `done` | `unaudited` | Judge benchmark harness → tier-recommendation table |
-| [`ES-5`](ES-5.md) | `done` | `unaudited` | Pre-registered template A/B studies (the re-opened eval gate) |
-| [`ES-6`](ES-6.md) | `done` | `unaudited` | Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2) |
-| [`ES-7`](ES-7.md) | `done` | `unaudited` | Harness ablation runner + skills bench + model-upgrade watchdog |
-| [`ES-8`](ES-8.md) | `done` | `unaudited` | Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting |
-| [`ES-9`](ES-9.md) | `done` | `unaudited` | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) |
-| [`ES-10`](ES-10.md) | `done` | `unaudited` | Model bake-off from production-sampled inputs → per-use-case recommendation |
-| [`ES-11`](ES-11.md) | `done` | `unaudited` | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) |
-| [`ES-12`](ES-12.md) | `done` | `unaudited` | Judge verdict integrity: verdicts must be answerable from the evidence shown (T04) |
-| [`ES-13`](ES-13.md) | `done` | `unaudited` | Trust record: per-scope trust ledger feeding autonomy.py rung decisions |
-| [`ES-14`](ES-14.md) | `done` | `unaudited` | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips |
-| [`ES-15`](ES-15.md) | `done` | `unaudited` | Graduation/revocation: promote on sustained success, demote on failure/kill events |
-| [`ES-16`](ES-16.md) | `done` | `unaudited` | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal |
-| [`ES-17`](ES-17.md) | `done` | `unaudited` | An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home |
+| [`ES-1`](ES-1.md) | `done` | `confirmed` | Shared eval substrate: store, experiment-matrix runner, subprocess isolation fix, config + SEL wiring |
+| [`ES-2`](ES-2.md) | `done` | `confirmed` | RunPin + versioned scenario library migration (amendment E1) |
+| [`ES-3`](ES-3.md) | `done` | `partial` | Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only) |
+| [`ES-4`](ES-4.md) | `done` | `partial` | Judge benchmark harness → tier-recommendation table |
+| [`ES-5`](ES-5.md) | `done` | `partial` | Pre-registered template A/B studies (the re-opened eval gate) |
+| [`ES-6`](ES-6.md) | `done` | `partial` | Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2) |
+| [`ES-7`](ES-7.md) | `done` | `partial` | Harness ablation runner + skills bench + model-upgrade watchdog |
+| [`ES-8`](ES-8.md) | `done` | `confirmed` | Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting |
+| [`ES-9`](ES-9.md) | `done` | `confirmed` | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) |
+| [`ES-10`](ES-10.md) | `done` | `confirmed` | Model bake-off from production-sampled inputs → per-use-case recommendation |
+| [`ES-11`](ES-11.md) | `done` | `partial` | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) |
+| [`ES-12`](ES-12.md) | `done` | `confirmed` | Judge verdict integrity: verdicts must be answerable from the evidence shown (T04) |
+| [`ES-13`](ES-13.md) | `done` | `confirmed` | Trust record: per-scope trust ledger feeding autonomy.py rung decisions |
+| [`ES-14`](ES-14.md) | `done` | `confirmed` | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips |
+| [`ES-15`](ES-15.md) | `done` | `confirmed` | Graduation/revocation: promote on sustained success, demote on failure/kill events |
+| [`ES-16`](ES-16.md) | `done` | `confirmed` | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal |
+| [`ES-17`](ES-17.md) | `done` | `confirmed` | An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home |
 
 ### `ET` — ECOSYSTEM-TOOLING (5/10 done)
 

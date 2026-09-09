@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/gate.py + tests/test_evals_gate.py green in the 628-passed run
+- the Lab-vs-field table renders a 'Gate' column (driven), so the gate's result has a place to appear on the proposal surface
+
+**Driven in the UI:** The Gate column exists in the rendered table. No gate run produced a before/after pair, because no proposal exists in this home.
+
+**Notes:** Partial on the atom's own decisive clause — 'a planted regression in a candidate skill edit shows a score drop on its own proposal card' — which needs a proposal and a gate run to observe.
 
 ## Recorded history
 

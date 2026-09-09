@@ -32,9 +32,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- guardrails/ladder.py:671 revoke_granted_scopes gives ALL FOUR revocation triggers the atom names — 'a HARMFUL attribution verdict, a failed pre-registered study, a nodding-loop flag, a watchdog rebind' — 'the same consequence sentence: the record flips to revoked with the triggering evidence id, a notification is filed, and the next run falls back to per-stage'
+- ladder.py:679-681 states the fail-safe direction as a consequence argument: 'Revocation needs no human; the cost of over-revoking is a re-grant click, the cost of under-revoking is autonomy running on void evidence'
+- ladder.py:683-687 makes a STANDING trigger idempotent by keying on granted_at, so a nodding gate the user has not fixed does not re-demote every sweep
+- each demotion routes through autonomy.demote, which owns the floor drop, cooldown, trust-record revoked flag and the SEL row — one authority, not a parallel path
+
+**Notes:** VOCABULARY DRIFT, recorded rather than filed: the atom's done_when says a template reaches 'unattended', and no such rung exists. The shipped ladder is draft_only / one_tap / auto_with_undo / autonomous (autonomy.py:65-68), and ES-13's own rail ASSERTS that 'unattended' is invalid (tests/test_guardrails_trust_record.py:160). So a later atom in this same plan deliberately retired the word this earlier atom's done_when is written in. The substance holds — graduation to the top rung needs evidence plus human acceptance, revocation is mechanical — and the rename is the improvement, not a miss.
 
 ## Recorded history
 

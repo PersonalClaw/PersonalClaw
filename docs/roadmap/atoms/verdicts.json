@@ -1598,5 +1598,202 @@
     ],
     "ui_validated": "Not driven: the source round trip is a tool argument, and invoking the tool needs a bound model.",
     "notes": "Every clause is present including the two easy-to-miss ones (the binary refusal and the H1 de-duplication), and each carries the reason inline. The 'no new endpoint' constraint is visibly honoured — the resolution happens in the tool and hands markdown to the shared writer path."
+  },
+  "ES-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/runner.py:171-181 states the isolation contract and its reason: env construction is 'a BUILD rather than a copy' from a measured name allowlist, with PERSONALCLAW_WORKSPACE/PERSONALCLAW_HOME set on that fresh dict 'so both overrides exist in the child and nowhere else and the parent's own env is never touched'",
+      "runner.py:180-182 argues the same decision from VALIDITY, not only security: an os.environ.copy() 'would hand a cell every credential the launching shell exported — a provider key a study never declared is a provider a study never declared, and a benchmark that reached one by accident could not say which model produced its result'",
+      "evals/matrix.py contains no os.environ mutation at all; MatrixSpec/run_matrix + the three-state passed/failed/verifier_absent aggregate live there",
+      "part of the 628-passed eval run (tests/ -k 'evals or eval_harness', 1 unrelated skip)"
+    ],
+    "notes": "The best single piece of reasoning in this plan. One decision serves the credential boundary and the experiment's validity at once, and the docstring makes the second argument rather than assuming the first is enough."
+  },
+  "ES-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/pinning.py:12-29 defines all four RunPin fields the atom names — scenario_sha256 (canonical-JSON hash), model_fingerprint (per-use-case Provider:model), prompt_pack_sha256 (over the RESOLVED pack), config_snapshot_ref (over the relevant AppConfig subset)",
+      "pinning.py:24-26 keeps a cell's own fingerprint as a SECOND fact under its own name (cell_model_fingerprint) rather than overwriting the operator-level one",
+      "tests/test_evals_pinning.py green in the 628-passed run"
+    ],
+    "notes": "The two-facts-not-one-overwrite choice at :24 is what makes a rebind diff readable later: the cell's binding and the operator's binding are different claims and are stored as such."
+  },
+  "ES-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/retrieval_bench.py exists with the arm-masked runner; tests/test_evals_retrieval* / the retrieval half of the 628-passed run green",
+      "the Learning page renders a 'Retrieval arms' region — driven, and with the substrate on it reads 'No retrieval benchmark has run yet. Run …' rather than a generic empty state"
+    ],
+    "ui_validated": "The surface is mounted and its off-state and never-run state are distinct (see notes). No benchmark was RUN.",
+    "notes": "Machinery and surface confirmed; the atom's actual deliverable is a NUMBER ('per-arm marginal contribution is a number'), and producing it needs a qrels set plus real retrieval over a populated home. Partial for the measurement, not for anything found wrong."
+  },
+  "ES-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/judge_bench.py + tests/test_evals_judge_bench.py green in the 628-passed run",
+      "the Learning page renders a 'Judge tiers' region; with the substrate on it reads 'No benchmark has run yet. Run …'",
+      "the flywheel-health card shows 'Judge trustworthiness — unmeasured — no judge verdicts with human labels', which is the honest unmeasured state rather than a zero"
+    ],
+    "ui_validated": "Drove the region. The tier-recommendation table has no row because no benchmark has run.",
+    "notes": "Partial for the same reason as ES-3: the deliverable is a populated tier-recommendation table (agreement, strong-vs-null separation, position-swap flip rate, cost), and every column of it costs real judge calls across tiers and sample counts. The 'unmeasured' wording is itself evidence the unrecorded vocabulary reaches this surface."
+  },
+  "ES-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/studies.py + study_arms.py; tests/test_evals_studies.py + test_evals_study_arms.py green in the 628-passed run",
+      "the Learning page renders a 'Template studies' heading; with the substrate on, 'The eval substrate is off' is replaced by a never-run state",
+      "Settings → Evaluations carries the study defaults with the reasoning in the hint: 'k≈5 is the smallest paired design that survives judge noise; higher k buys confidence at a linear cost in runs and judge calls'"
+    ],
+    "ui_validated": "Drove the settings panel and the Learning region. No study was registered or run.",
+    "notes": "The registration immutability clause (rubric_sha256 pinned; a mid-study rubric edit invalidates) is the one I would most want to see fail closed on a live run. It has test coverage; I did not run a study, because a k=5 paired design with median-of-3 judging is real model spend."
+  },
+  "ES-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/gate.py + tests/test_evals_gate.py green in the 628-passed run",
+      "the Lab-vs-field table renders a 'Gate' column (driven), so the gate's result has a place to appear on the proposal surface"
+    ],
+    "ui_validated": "The Gate column exists in the rendered table. No gate run produced a before/after pair, because no proposal exists in this home.",
+    "notes": "Partial on the atom's own decisive clause — 'a planted regression in a candidate skill edit shows a score drop on its own proposal card' — which needs a proposal and a gate run to observe."
+  },
+  "ES-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/ablation.py, skills_bench.py, model_watchdog.py all present; tests/test_evals_ablation.py, test_evals_skills_bench.py, test_evals_model_watchdog.py green in the 628-passed run",
+      "the Learning page renders 'Component ablation' and 'Skill impact benchmark' regions; with the substrate on they read 'No ablation has run yet. Register a component in …' and 'No skill-impact benchmark has run yet. Start with …' — each names its own next action rather than sharing one placeholder",
+      "the flywheel card carries 'No ablation sweep has run yet. One runs daily alongside an ambient render.'"
+    ],
+    "ui_validated": "Drove both regions. Neither has run.",
+    "notes": "The child-process overlay toggling ('live spec/config never mutated') is the same throwaway_home refusal ES-17 reuses, so the isolation claim is shared machinery rather than a per-atom promise. Partial for the measured on-vs-off deltas."
+  },
+  "ES-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "guardrails/ladder.py:671 revoke_granted_scopes gives ALL FOUR revocation triggers the atom names — 'a HARMFUL attribution verdict, a failed pre-registered study, a nodding-loop flag, a watchdog rebind' — 'the same consequence sentence: the record flips to revoked with the triggering evidence id, a notification is filed, and the next run falls back to per-stage'",
+      "ladder.py:679-681 states the fail-safe direction as a consequence argument: 'Revocation needs no human; the cost of over-revoking is a re-grant click, the cost of under-revoking is autonomy running on void evidence'",
+      "ladder.py:683-687 makes a STANDING trigger idempotent by keying on granted_at, so a nodding gate the user has not fixed does not re-demote every sweep",
+      "each demotion routes through autonomy.demote, which owns the floor drop, cooldown, trust-record revoked flag and the SEL row — one authority, not a parallel path"
+    ],
+    "notes": "VOCABULARY DRIFT, recorded rather than filed: the atom's done_when says a template reaches 'unattended', and no such rung exists. The shipped ladder is draft_only / one_tap / auto_with_undo / autonomous (autonomy.py:65-68), and ES-13's own rail ASSERTS that 'unattended' is invalid (tests/test_guardrails_trust_record.py:160). So a later atom in this same plan deliberately retired the word this earlier atom's done_when is written in. The substance holds — graduation to the top rung needs evidence plus human acceptance, revocation is mechanical — and the rename is the improvement, not a miss."
+  },
+  "ES-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/learning/FieldMetricsPanel.tsx, mounted from LearningPage.tsx (checked both directions — this is not a backend broadcasting to nobody)",
+      "tests/test_evals_field_metrics.py + web FieldMetricsPanel.test.tsx",
+      "evals/field_metrics.py:41 and :524 tie lab_field_divergence to the same consequence a failed study and a nodding gate carry"
+    ],
+    "ui_validated": "The most completely driven atom of this cycle. The 'Lab vs field' region renders a real table captioned 'Lab results beside live field metrics, one row per subject', with exactly the atom's columns: Subject · Lab · Gate · 👍/👎 · Edited before approve · Approvals · Field trend, and a first row for action.artifact_inspect. Its own paragraph states both hard clauses: field metrics are 'computed per request, stored nowhere', and 'A lab rise over a falling field trend is flagged and mechanically files an autonomy demotion.' Cells read 'not measured' rather than 0.",
+    "notes": "'not measured' in the cells is the unrecorded vocabulary from this plan's own rail (#2540/#2561/#2562) reaching the surface — absent is not zero, in the rendering as well as in the model. The rail and the UI agree, which is the part that usually rots."
+  },
+  "ES-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/bakeoff.py:25-29 the capture is OFF by default (EvalsConfig.bakeoff_capture_enabled), each input redacted, stamped for TTL expiry, the directory owner-only 0700 and 'excluded from every export/snapshot'",
+      ":61-71 three independent bounds with their reasons: a TTL because a captured prompt 'is scored ONCE against candidate models and then has served its purpose, so it expires rather than accumulating into a durable corpus'; a per-use-case count cap dropping the oldest; a per-record byte cap because 'the excerpt is for scoring shape, not faithful reproduction'",
+      "tests/test_evals_bakeoff.py green in the 628-passed run"
+    ],
+    "notes": "ARCC was queried first for this domain (stored eval data derived from real traffic). Its applicable guidance is Bedrock Guardrails' PII posture — mask rather than block, so context survives. This is stronger than the guidance's mechanism in the direction that matters here: the data is redacted AND bounded AND expiring AND excluded from export, so the residual is a short-lived owner-only excerpt rather than a masked durable corpus. Same scope-reduction-instead-of-key-management pattern DAS-9 used, which is starting to look like a deliberate house style."
+  },
+  "ES-11": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/workflows/bundled/optimize-harness/workflow.json exists — the starter template is bundled, not merely designed",
+      "evals/optimize.py + tests/test_evals_optimize.py green in the 628-passed run"
+    ],
+    "ui_validated": "Not driven: running the harness is a budgeted loop-node search over a real artifact, which is model spend.",
+    "notes": "Partial for the run. The scope-check clause (a frozen-region touch is a scope_violation) and the dual gate (harvested-suite threshold AND monotonic best-ever) are the parts worth observing on a live search rather than a fixture."
+  },
+  "ES-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_judge_verdict_answerability.py — 13 tests, all green — carries the strongest test shape in the campaign: test_t04_fixture_fabricated_pass_WAS_PREVIOUSLY_ACCEPTED beside test_t04_fixture_fabricated_pass_IS_NOW_REJECTED, a before/after pair on the same fixture, so the fix is proven to CHANGE behaviour rather than merely coexist with a green test",
+      "the response is graded rather than binary: a partially-grounded pass is FLAGGED not rejected; short fragments are never flagged; a non-pass verdict is flagged but never answerability-rejected; a pass with grounded proof survives fabricated refs",
+      "workflows/judge_contract.py:398/482 verdict records carry evidence_hash, and the test asserts it is SLICE-SENSITIVE and empty for no slice; adjudicate carries the hash and flags from the primary"
+    ],
+    "notes": "Nearly recorded this as unimplemented: a search for 'answerab' across src/ returns nothing in the judge code, because the implementation's vocabulary is grounding/citation while the TEST is named answerability. One keyword is not a search — the ninth near-miss of this campaign, avoided by looking for the named artifacts (evidence hash, T04 fixture) instead of the word."
+  },
+  "ES-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "guardrails/trust_record.py:1-22 — one JSON record per action-type scope capturing exactly what resolve_rung already consumes, written through from grant_rung/demote and read back on every decision",
+      "autonomy.py:58 imports it, :550 resolve_rung consults is_revoked and clamps to the floor 'even if the store lost its demotion entry', :842 record_grant, :878 record_demotion — a live read on the decision path, not a write-only ledger",
+      "THE RAIL IS A REAL RAIL: tests/test_guardrails_trust_record.py:150 test_module_mints_no_rung_vocabulary inspects the module SOURCE for foreign rung words and asserts the validator accepts exactly autonomy.RUNGS while REJECTING 'unattended'",
+      "fail-safe reads have their own four tests: unknown rung on disk, corrupt record, key mismatch, absent record — each reads as absent rather than licensing anything"
+    ],
+    "notes": "The direction asymmetry is stated and correct: 'Write failures never block a grant (the grant is the user's decision; the ledger is its receipt). Read failures never license anything.' That is the fail-open/fail-closed convention applied per direction rather than per module, which is the harder and right version."
+  },
+  "ES-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/RungChip.tsx is a dedicated chip component reading resolved_rung; web/src/pages/chat/approvalRungChip.test.tsx covers the approval-dialog half; GuardrailsPanel.tsx is the settings surface; web/src/lib/rungs.ts holds the shared mapping",
+      "web/src/lib/api.ts:174-175 exposes the rungs list with 'Server-owned wording per rung, so a chip and a proposal cannot disagree'",
+      "autonomy.py rung_rank orders the ladder; grant_rung/resolve_rung remain the only path (no parallel ladder — ES-13's rail enforces the vocabulary half)"
+    ],
+    "notes": "FIELD-NAME DRIFT: the atom says the chips render 'rung_state', and no such field exists anywhere in web/src. The shipped field set is resolved_rung / granted_rung / next_rung / rungs. The capability the clause describes is real and the naming is better than the atom's — server-owned wording is what stops a chip and a proposal disagreeing, which a bare state string would not have given. Third naming drift in two cycles where the code is right and the atom text is older."
+  },
+  "ES-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "guardrails/ladder.py:671 revoke_granted_scopes and :711 revoke_scope route every transition through autonomy.demote, which owns the floor drop, cooldown, trust-record flag and SEL row",
+      "all four demotion causes are named in the code, not just the plan: HARMFUL attribution verdict, failed pre-registered study, nodding-loop flag, watchdog rebind",
+      "idempotence is derived from state rather than bolted on: a standing grant is a store entry with granted_at, a demotion floor entry has none, so a repeat sweep returns [] and files nothing"
+    ],
+    "notes": "Shares its machinery with ES-8, which is why both are confirmed off the same reading. The uniform-consequence decision is argued rather than asserted: every grant's evidence was collected under conditions the trigger just invalidated, so one sentence fits all four causes."
+  },
+  "ES-16": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "the Learning page's 'Attention' region is a mounted surface (driven), not a backend metric with no consumer",
+      "evals/field_metrics.py carries the attention accounting beside the field metrics; tests/test_evals_field_metrics.py green",
+      "the demotion half is shared with ES-9/ES-15: a lab rise over a falling field trend 'mechanically files an autonomy demotion' per the rendered panel's own text"
+    ],
+    "ui_validated": "Drove the region. It reads: 'No workflow runs recorded yet. Once workflows run, each template's attention cost — gate answers, mid-flight edits, judge overrides — is tallied here, per run, with a trend the graduation proposal cites.' That sentence names the atom's three input kinds AND its consumer (the graduation proposal) in the empty state, so the feature explains itself before it has data.",
+    "notes": "Confirmed on the surface and the wiring; no workflow runs exist in this home to populate a trend, so the decay curve itself is unobserved. Recording confirmed rather than partial because the atom's deliverable is the accounting surface and its demotion signal, both present, and the empty state is doing real explanatory work rather than hiding an absence."
+  },
+  "ES-17": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 16 (ES) — DRIVEN in a real browser",
+    "evidence": [
+      "evals/cell_provider.py:1-34 names BOTH causes the atom requires and supplies exactly two things: the SELECTION (one providers[] entry + a one-use-case active_models.json in the throwaway home, so the normal resolution path has a ref) and the BUILDABLE TYPE (the wire protocol registered into this process, because llm/registry._CONFIG_TYPE_MAP 'is empty by design after the provider-as-app migration and a cell home has no app to register one')",
+      "the grant is EXPRESSED, never inherited: resolve_binding reads exactly the one named providers[] entry and 'carries nothing else across'",
+      "'the SECRET is never serialized' — a binding may name ONE environment variable and the runner forwards that one variable's value and nothing else; a binding naming none 'gets a placeholder credential and can therefore only reach an unauthenticated endpoint'",
+      "with no binding at all, scripted stays the default and apply_in_child 'is a no-op that writes nothing'; a mis-spawned cell becomes an honest VERIFIER_ABSENT via the same throwaway_home refusal the ablation overlay and gate arm use",
+      "tests/test_evals_cell_provider.py green in the 628-passed run"
+    ],
+    "notes": "This atom is the deliberate answer to the blocker that has produced most of this campaign's partials — 'no model bound, so nothing measures'. Its resolution is notable for what it REFUSES: it will not pass the operator's environment through, so a study cannot silently borrow a credential it never declared. The consequence is that my partials above are the designed behaviour, not a gap: a cell with no expressed binding is SUPPOSED to report VERIFIER_ABSENT rather than quietly measure something with my key."
   }
 }

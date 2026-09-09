@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/learning/FieldMetricsPanel.tsx, mounted from LearningPage.tsx (checked both directions — this is not a backend broadcasting to nobody)
+- tests/test_evals_field_metrics.py + web FieldMetricsPanel.test.tsx
+- evals/field_metrics.py:41 and :524 tie lab_field_divergence to the same consequence a failed study and a nodding gate carry
+
+**Driven in the UI:** The most completely driven atom of this cycle. The 'Lab vs field' region renders a real table captioned 'Lab results beside live field metrics, one row per subject', with exactly the atom's columns: Subject · Lab · Gate · 👍/👎 · Edited before approve · Approvals · Field trend, and a first row for action.artifact_inspect. Its own paragraph states both hard clauses: field metrics are 'computed per request, stored nowhere', and 'A lab rise over a falling field trend is flagged and mechanically files an autonomy demotion.' Cells read 'not measured' rather than 0.
+
+**Notes:** 'not measured' in the cells is the unrecorded vocabulary from this plan's own rail (#2540/#2561/#2562) reaching the surface — absent is not zero, in the rendering as well as in the model. The rail and the UI agree, which is the part that usually rots.
 
 ## Recorded history
 

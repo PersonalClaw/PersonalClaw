@@ -32,9 +32,21 @@ a flywheel template-diff runs a pre-registered study: k=5 paired old-vs-new over
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/studies.py + study_arms.py; tests/test_evals_studies.py + test_evals_study_arms.py green in the 628-passed run
+- the Learning page renders a 'Template studies' heading; with the substrate on, 'The eval substrate is off' is replaced by a never-run state
+- Settings → Evaluations carries the study defaults with the reasoning in the hint: 'k≈5 is the smallest paired design that survives judge noise; higher k buys confidence at a linear cost in runs and judge calls'
+
+**Driven in the UI:** Drove the settings panel and the Learning region. No study was registered or run.
+
+**Notes:** The registration immutability clause (rubric_sha256 pinned; a mid-study rubric edit invalidates) is the one I would most want to see fail closed on a live run. It has test coverage; I did not run a study, because a k=5 paired design with median-of-3 judging is real model spend.
 
 ## Recorded history
 

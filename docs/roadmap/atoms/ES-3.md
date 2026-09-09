@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/retrieval_bench.py exists with the arm-masked runner; tests/test_evals_retrieval* / the retrieval half of the 628-passed run green
+- the Learning page renders a 'Retrieval arms' region — driven, and with the substrate on it reads 'No retrieval benchmark has run yet. Run …' rather than a generic empty state
+
+**Driven in the UI:** The surface is mounted and its off-state and never-run state are distinct (see notes). No benchmark was RUN.
+
+**Notes:** Machinery and surface confirmed; the atom's actual deliverable is a NUMBER ('per-arm marginal contribution is a number'), and producing it needs a qrels set plus real retrieval over a populated home. Partial for the measurement, not for anything found wrong.
 
 ## Recorded history
 

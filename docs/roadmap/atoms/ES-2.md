@@ -31,9 +31,19 @@ eval/scenarios/*.json migrate to versioned ~/.personalclaw/evals/scenarios/ over
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/pinning.py:12-29 defines all four RunPin fields the atom names — scenario_sha256 (canonical-JSON hash), model_fingerprint (per-use-case Provider:model), prompt_pack_sha256 (over the RESOLVED pack), config_snapshot_ref (over the relevant AppConfig subset)
+- pinning.py:24-26 keeps a cell's own fingerprint as a SECOND fact under its own name (cell_model_fingerprint) rather than overwriting the operator-level one
+- tests/test_evals_pinning.py green in the 628-passed run
+
+**Notes:** The two-facts-not-one-overwrite choice at :24 is what makes a rebind diff readable later: the cell's binding and the operator's binding are different claims and are stored as such.
 
 ## Recorded history
 

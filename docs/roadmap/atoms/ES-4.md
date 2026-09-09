@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/judge_bench.py + tests/test_evals_judge_bench.py green in the 628-passed run
+- the Learning page renders a 'Judge tiers' region; with the substrate on it reads 'No benchmark has run yet. Run …'
+- the flywheel-health card shows 'Judge trustworthiness — unmeasured — no judge verdicts with human labels', which is the honest unmeasured state rather than a zero
+
+**Driven in the UI:** Drove the region. The tier-recommendation table has no row because no benchmark has run.
+
+**Notes:** Partial for the same reason as ES-3: the deliverable is a populated tier-recommendation table (agreement, strong-vs-null separation, position-swap flip rate, cost), and every column of it costs real judge calls across tiers and sample counts. The 'unmeasured' wording is itself evidence the unrecorded vocabulary reaches this surface.
 
 ## Recorded history
 

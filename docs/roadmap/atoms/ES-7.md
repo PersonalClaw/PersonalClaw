@@ -31,9 +31,21 @@ the periodic ablation runner produces a keep/remove/lighten report for one compo
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/ablation.py, skills_bench.py, model_watchdog.py all present; tests/test_evals_ablation.py, test_evals_skills_bench.py, test_evals_model_watchdog.py green in the 628-passed run
+- the Learning page renders 'Component ablation' and 'Skill impact benchmark' regions; with the substrate on they read 'No ablation has run yet. Register a component in …' and 'No skill-impact benchmark has run yet. Start with …' — each names its own next action rather than sharing one placeholder
+- the flywheel card carries 'No ablation sweep has run yet. One runs daily alongside an ambient render.'
+
+**Driven in the UI:** Drove both regions. Neither has run.
+
+**Notes:** The child-process overlay toggling ('live spec/config never mutated') is the same throwaway_home refusal ES-17 reuses, so the isolation claim is shared machinery rather than a per-atom promise. Partial for the measured on-vs-off deltas.
 
 ## Recorded history
 

@@ -28,9 +28,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 16 (ES) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- evals/runner.py:171-181 states the isolation contract and its reason: env construction is 'a BUILD rather than a copy' from a measured name allowlist, with PERSONALCLAW_WORKSPACE/PERSONALCLAW_HOME set on that fresh dict 'so both overrides exist in the child and nowhere else and the parent's own env is never touched'
+- runner.py:180-182 argues the same decision from VALIDITY, not only security: an os.environ.copy() 'would hand a cell every credential the launching shell exported — a provider key a study never declared is a provider a study never declared, and a benchmark that reached one by accident could not say which model produced its result'
+- evals/matrix.py contains no os.environ mutation at all; MatrixSpec/run_matrix + the three-state passed/failed/verifier_absent aggregate live there
+- part of the 628-passed eval run (tests/ -k 'evals or eval_harness', 1 unrelated skip)
+
+**Notes:** The best single piece of reasoning in this plan. One decision serves the credential boundary and the experiment's validity at once, and the docstring makes the second argument rather than assuming the first is enough.
 
 ## Recorded history
 
