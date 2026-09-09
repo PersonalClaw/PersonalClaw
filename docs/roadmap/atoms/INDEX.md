@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 157 | `done_when` checked against the code and it holds |
-| `partial` | 137 | some `done_when` clauses hold, others do not |
+| `confirmed` | 166 | `done_when` checked against the code and it holds |
+| `partial` | 142 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 386 | not yet checked |
+| `unaudited` | 372 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -935,20 +935,20 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2LEA-1`](WF2LEA-1.md) | `done` | `unaudited` | Shared lifecycle machine: Capture (gate/hygiene/staging), Propose (queue+decision memory), Curate (usage/decay/curator), Inject (slot allocator) |
-| [`WF2LEA-2`](WF2LEA-2.md) | `done` | `unaudited` | Measure floor + decision spokes + Proposal Inbox + observability panel + Learning HTTP surface (criteria 1/4/5) |
-| [`WF2LEA-3`](WF2LEA-3.md) | `done` | `unaudited` | Step 2: reroute /api/lessons consumers onto memory.db, then delete lessons.jsonl/LessonStore |
-| [`WF2LEA-4`](WF2LEA-4.md) | `done` | `unaudited` | Step 5: run-end capture spoke + route SESSION_END/RUN_END cadences through the gate (criterion 10 remainder) |
-| [`WF2LEA-5`](WF2LEA-5.md) | `done` | `unaudited` | Criterion 9: wire accountability.attribute on the curator tick — Run-Ledger deltas → verdicts → auto-filed HARMFUL reverts |
-| [`WF2LEA-6`](WF2LEA-6.md) | `done` | `unaudited` | Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays |
-| [`WF2LEA-7`](WF2LEA-7.md) | `done` | `unaudited` | Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session |
-| [`WF2LEA-8`](WF2LEA-8.md) | `done` | `unaudited` | Step 8: self-model observer call site + user.selfmodel.* store + ambient slot producer |
-| [`WF2LEA-9`](WF2LEA-9.md) | `done` | `unaudited` | Step 9: polish tier — multi-gate heat promotion, memory-heat kernel migration, observability panel completion, per-tool approval identity, intent-adaptive/ablation sweeps |
-| [`WF2LEA-10`](WF2LEA-10.md) | `done` | `unaudited` | Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check |
-| [`WF2LEA-11`](WF2LEA-11.md) | `done` | `unaudited` | Amendment E1.3: retroactive completed-run/conversation → skill proposal (verify-then-build, no second queue) |
-| [`WF2LEA-12`](WF2LEA-12.md) | `done` | `unaudited` | Amendment E1.4: project_context_review → typed proposals into the §2.2 queue |
-| [`WF2LEA-13`](WF2LEA-13.md) | `done` | `unaudited` | Close the procedural-memory loop: a live reader for procedural_priors + the denied/corrected outcome contract |
-| [`WF2LEA-14`](WF2LEA-14.md) | `done` | `unaudited` | Carry lesson SCOPE through the /api/lessons write path and honor it on read (MemoryScope.WORKSPACE stops being inert) |
+| [`WF2LEA-1`](WF2LEA-1.md) | `done` | `confirmed` | Shared lifecycle machine: Capture (gate/hygiene/staging), Propose (queue+decision memory), Curate (usage/decay/curator), Inject (slot allocator) |
+| [`WF2LEA-2`](WF2LEA-2.md) | `done` | `confirmed` | Measure floor + decision spokes + Proposal Inbox + observability panel + Learning HTTP surface (criteria 1/4/5) |
+| [`WF2LEA-3`](WF2LEA-3.md) | `done` | `confirmed` | Step 2: reroute /api/lessons consumers onto memory.db, then delete lessons.jsonl/LessonStore |
+| [`WF2LEA-4`](WF2LEA-4.md) | `done` | `confirmed` | Step 5: run-end capture spoke + route SESSION_END/RUN_END cadences through the gate (criterion 10 remainder) |
+| [`WF2LEA-5`](WF2LEA-5.md) | `done` | `confirmed` | Criterion 9: wire accountability.attribute on the curator tick — Run-Ledger deltas → verdicts → auto-filed HARMFUL reverts |
+| [`WF2LEA-6`](WF2LEA-6.md) | `done` | `partial` | Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays |
+| [`WF2LEA-7`](WF2LEA-7.md) | `done` | `partial` | Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session |
+| [`WF2LEA-8`](WF2LEA-8.md) | `done` | `partial` | Step 8: self-model observer call site + user.selfmodel.* store + ambient slot producer |
+| [`WF2LEA-9`](WF2LEA-9.md) | `done` | `confirmed` | Step 9: polish tier — multi-gate heat promotion, memory-heat kernel migration, observability panel completion, per-tool approval identity, intent-adaptive/ablation sweeps |
+| [`WF2LEA-10`](WF2LEA-10.md) | `done` | `confirmed` | Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check |
+| [`WF2LEA-11`](WF2LEA-11.md) | `done` | `partial` | Amendment E1.3: retroactive completed-run/conversation → skill proposal (verify-then-build, no second queue) |
+| [`WF2LEA-12`](WF2LEA-12.md) | `done` | `partial` | Amendment E1.4: project_context_review → typed proposals into the §2.2 queue |
+| [`WF2LEA-13`](WF2LEA-13.md) | `done` | `confirmed` | Close the procedural-memory loop: a live reader for procedural_priors + the denied/corrected outcome contract |
+| [`WF2LEA-14`](WF2LEA-14.md) | `done` | `confirmed` | Carry lesson SCOPE through the /api/lessons write path and honor it on read (MemoryScope.WORKSPACE stops being inert) |
 
 ### `WF2LOO` — WORKFLOWS-V2-LOOPS-EVOLUTION (18/18 done)
 

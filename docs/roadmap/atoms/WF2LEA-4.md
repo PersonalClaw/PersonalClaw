@@ -32,9 +32,21 @@ WorkflowRun terminal state routes through LearningGate; step_failed emits write_
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 MEASURED, NOT READ: assert_gate_covers_cadences() executed against a real home returns an EMPTY list — every declared cadence has a live caller, which is exactly the clause's 'reports zero gaps'
+- accountability.py:382 owns that function, and :24 states why it exists rather than a comment: 'the gate cannot suppress a path nobody routes through it. assert_gate_covers_cadences makes that a CHECKABLE FACT rather than a comment'
+- dashboard/chat_utils.py:742 is one of the wired cadences and notes what makes it visible to that check, plus the denial path ('ephemeral, incognito')
+- the run-end spoke ships as learning/run_end.py with loop_end.py and outcome_resolver.py beside it; tests/test_learning_outcome_resolver.py covers the pending-outcome resolution
+- 951 tests pass across the 30 learning suites
+
+**Notes:** 🪤 THE MODULE'S OWN PROSE IS STALE, IN THE SAFE DIRECTION, AND IT IS AN INSTANCE OF THE PHENOMENON ITS SIBLING TEST FILE EXPLAINS. accountability.py:22-24 still says Cadence.SESSION_END and RUN_END 'are declared and have ZERO live callers' — true before this atom, false now, and I only know that because I RAN the function instead of believing either the docstring or the plan. Deliberately NOT filed as a defect and deliberately not proposed as a lint: tests/test_learning_flywheel_wiring.py records that the general docs-lint for exactly this was built, measured across every tracked doc, and REJECTED, because 'roadmap execution logs are full of past-tense narrative … describing gaps that were then closed' and 'a gate that flags correct history teaches people to delete the history'.
 
 ## Recorded history
 

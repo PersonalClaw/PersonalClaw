@@ -31,9 +31,24 @@ surfacing_events per-arm precision + Beta-Binomial trust reportable; self-model/
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 dashboard/handlers/learning.py:16-19 NAMES THE INERTNESS AS THE CAUSE: 'Everything behind that sentence shipped in S75/S76 and had no HTTP surface, so THE CRITERION WAS UNMET FOR WANT OF A ROUTE' — inbox.build_view and StagingStore.week both already returned fully-serialized shapes and this module wires them
+- 🔑 :21-26 THE ACTOR IS DERIVED, NOT ACCEPTED, and the threat is named: 'S75 measured that proposals.accept() knew nothing about who was calling it, and put require_human INSIDE it. A route that omitted the actor would default to `user` and hand every caller — INCLUDING AN APP-SCOPED TOKEN — the reviewer's authority. So the actor is DERIVED from the request rather than accepted from the body: A CALLER THAT COULD NAME ITSELF `user` WOULD MAKE THE GATE DECORATIVE'
+- :66 fails closed on an unknown actor — 'Anything unrecognized returns "", which require_human denies rather than assuming'
+- MEASURED: require_human is enforced inside the shared helper for BOTH verbs (proposals.py:973 reject, :1073 accept), not at the route, so a second caller cannot bypass it
+- 🔑 DRIVEN, THE STAGING WEEK PANEL IS THE BEST OBSERVABILITY DETAIL IN THE PLAN: each of the seven days carries its own tooltip reading 'No capture pass ran — THIS IS THE GAP AN AGGREGATE VIEW CANNOT SEE (0 passes, 0 produced, 0 errors)' and the day is labelled 'silent'. Ran-and-produced-nothing and never-ran are indistinguishable in a 7-day total, and only one of them is a bug
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Drove #/learning. Capture week, the adapted-to-you region, the proposal count ('0 proposals filed') and the health region all render. No proposal exists to accept, so the human-only gate is confirmed in code and by its tests rather than by a click.
+
+**Notes:** The derived-actor rule is the strongest authorization control in this plan and it generalises: any gate whose subject is self-asserted by the caller is decorative. ARCC's guest-user and least-privilege results point the same way without reaching the self-assertion case.
 
 ## Recorded history
 

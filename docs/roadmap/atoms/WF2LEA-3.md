@@ -31,9 +31,19 @@ The three /api/lessons consumers (mcp_memory tools, dashboard backing in handler
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: LessonStore is gone — learning_report.py:18 records 'that class was deleted by' the step, and no definition survives in src/
+- the surviving lessons.jsonl references are exactly the RESIDUAL IMPORT the clause requires, not a failed deletion: vector_memory.py:3193 'Migrate legacy markdown memory files and lessons.jsonl into vector memory' and handlers/memory.py:1026 a residual presence check
+- 951 tests pass across the 30 learning suites
+
+**Notes:** Read the surrounding code before judging: two live mentions of a file the atom says was deleted look like a contradiction until the clause's own 'residual JSONL imported' requirement is read next to them. A migration reader for a deleted store is the deletion done properly, not the deletion missed.
 
 ## Recorded history
 

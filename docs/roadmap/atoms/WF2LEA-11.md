@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: skill_promotion.py has THREE non-self importer files — the clause's retroactive path exists and is wired
+- the clause's 'no second queue' constraint is structural: promotion files into §3.2's existing proposal queue (learning/proposals.py), which is also where require_human sits, so a promoted skill inherits the human-only accept gate rather than needing its own
+- tests/test_learning_promotion_wire.py passes
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Not driven: promoting a successful run needs a completed run, which needs a bound model.
+
+**Notes:** Partial for the drive. The reuse-the-queue decision is the load-bearing part and it is the right shape — a second queue would have needed its own accept gate, and the audited history of this codebase is that a second gate is where the weaker one ships.
 
 ## Recorded history
 

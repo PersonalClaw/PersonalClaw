@@ -31,9 +31,21 @@ A production caller on the curator tick computes fixed[]/regressed[] deltas from
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 TRACED THE FULL CHAIN rather than counting one hop: history.py:1524-1531 (the curator tick) imports learning.attribution and calls grade_accepted_changes(); attribution.py is the only importer of accountability.py. So curator tick → attribution → accountability, and the module is genuinely no longer orphaned
+- history.py:1519-1522 states four properties in four clauses, each earning its place: it 'Reads the Run Ledger (not semantic memory) so it runs on every box regardless of embedder'; it is 'INERT-BY-DATA when nothing has been accepted' (the honest distinction from inert-by-absence); it is 'gated on learning.attribution_* internally'; and it is 'best-effort — a grading failure never blocks curation'
+- 🔑 THE VERDICT NEVER APPLIES ITSELF: 'A HARMFUL verdict files a revert PROPOSAL through the shared queue; NOTHING IS EVER APPLIED HERE'. accountability.py's closing line draws the same boundary — 'Filing the revert is the caller's; this decides that one is owed'
+- tests/test_learning_accountability.py imports assert_gate_covers_cadences and the verdict ladder
+- 951 tests pass across the 30 learning suites
+
+**Notes:** My first measurement said accountability had exactly one importer and it was not the curator — which would have been the finding. It was one hop short. The lesson for this campaign: an importer count answers 'is anything wired to it', never 'is the RIGHT thing wired to it', and only following the chain to the cadence the clause names distinguishes the two.
 
 ## Recorded history
 

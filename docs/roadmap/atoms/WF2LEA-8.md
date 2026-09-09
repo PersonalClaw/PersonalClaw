@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: self_model_observer.py has THREE non-self importer files; self_model.py sits beside it
+- the ambient producer path is real — learning/ambient.py owns the slot allocator and the self_model slot
+- tests/test_learning_self_model_observer.py passes as part of the 951
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Not driven: recording (route, tools, outcome, reaction) after significant turns needs turns, and reinforced habits filing lesson_batch proposals needs accumulated observations.
+
+**Notes:** Partial for the live recording. The clause's own guardrail is the part worth noting: reinforced habits 'file lesson_batch proposals (NEVER self-installed)' — the same propose-don't-write posture as the routing plan's learned stage, and for the same reason, since a self-model that installed its own conclusions about the user would be unfalsifiable by the user.
 
 ## Recorded history
 

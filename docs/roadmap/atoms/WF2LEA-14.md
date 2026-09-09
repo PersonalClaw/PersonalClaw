@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- vector_memory.py:426-435 carries scope + scope_ref as real columns ('scope_ref matches a record to a turn (cwd / agent binding)') and :1094-1105 filters queries on them
+- 🔑 MEASURED: tests/test_lesson_scope.py covers EVERY clause of this atom by name, including the ones a lighter suite would skip — test_workspace_lesson_is_invisible_to_another_workspace, test_lessons_context_service_leg_is_fail_closed (a reader with NO working directory sees nothing rather than everything), test_workspace_write_never_supersedes_a_global_lesson, test_same_rule_text_global_and_workspace_do_not_collide, test_injected_lessons_block_differs_by_working_directory (the end-to-end), test_workspace_scope_without_a_workspace_is_a_400 (the refusal), and test_list_refuses_a_relative_workspace_filter (the realpath requirement)
+- the fail-closed leg is the decisive one: a global-only reader with no cwd must not fall through to workspace rows, and that is the direction an isolation bug takes by default
+- 951 tests pass across the 30 learning suites
+
+**Notes:** This is an anti-inertness fix atom stated in its own title — MemoryScope.WORKSPACE 'stops being inert' — and the shape is the one this campaign keeps finding: an enum member declared, persisted nowhere, honored by no reader. What makes it confirmed rather than partial is that the suite tests the ISOLATION (invisible elsewhere) and the NON-isolation (a global lesson still reaches everyone) and the fail-closed default, which together are what 'scope' has to mean.
 
 ## Recorded history
 

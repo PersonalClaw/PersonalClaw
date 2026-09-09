@@ -32,9 +32,22 @@ detectors.py wired at its call sites: fifth run_skill_ladder_review branch, per-
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: detectors.py has SIX non-self importer files in src/ — the clause's 'module no longer has zero importers' is true by a wide margin
+- 🔑 THE WIRING IS PINNED BY A RAIL, NOT LEFT TO REVIEW: tests/test_learning_flywheel_wiring.py::test_the_module_has_a_production_importer is PARAMETERIZED over the modules and TAGGED WITH THE ATOM ID, and a sibling test — test_the_detector_is_not_fooled_by_the_module_name_in_prose — is a vacuity floor on the detector itself
+- mining.py ships the positive-path trace mining; tests/test_learning_mining.py and test_learning_detectors.py both pass
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Not driven: 'every negative decision writes a skipped(reason) ledger event' and the tier_migration proposals from ledger statistics both need real runs to have happened.
+
+**Notes:** 🎯 THE WIRING RAIL'S DOCSTRING IS THE BEST THING I HAVE READ IN THIRTY CYCLES, AND IT IS ABOUT THIS AUDIT'S OWN DEFECT CLASS. It names the failure mode exactly — 'delete the last call site and the modules keep passing their own unit tests forever while the behaviour they exist for … simply stops happening. That is the same "present but inert" shape the audit found in the first place, and RE-ENTERING IT WOULD LOOK EXACTLY LIKE A HEALTHY SUITE.' Then it explains why the obvious generalisation was built, MEASURED across every tracked doc, and rejected: a markdown table is one paragraph so a claim's scope swallows every module named in it; a 'Done when … (module no longer has zero importers)' clause is an aspirational NEGATION that reads identically to the claim; and execution logs are past-tense narrative about gaps already closed. The conclusion is the sharpest sentence in the campaign: 'Distinguishing "has none" from "had none, then we fixed it" needs TENSE, not pattern matching, and A GATE THAT FLAGS CORRECT HISTORY TEACHES PEOPLE TO DELETE THE HISTORY.' That is the direct answer to a stale-plan-prose lint I might otherwise have proposed — including for WORKFLOWS-V2's own 'zero production importers' header, which I measured wrong last cycle.
 
 ## Recorded history
 

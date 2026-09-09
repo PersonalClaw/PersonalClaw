@@ -32,9 +32,24 @@ heat-earned promotion uses the multi-gate (usage+recency+diversity); memory_reco
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 DRIVEN, AND ALL FOUR COMPONENTS THE CLAUSE NAMES RENDER: the health composite with per-component WEIGHTS SHOWN (Surfacing precision 40%, Capture reliability 30%, Budget utilization 20%, Judge trustworthiness 10%), a Judge calibration section, 'Accepted-change outcomes' (the R16 attribution verdict history) and 'LLM cost by operation'
+- 🔑 THE COMPOSITE READS '—  not measured yet — nothing has run' RATHER THAN 0. A 0/100 health score would read as UNHEALTHY when the truth is UNMEASURED — the same absent-is-not-zero rule the routing plan states for money ('Absent is None, never 0.0'), reached independently in a second domain
+- every unmeasured component gives its OWN reason rather than a shared dash: 'unmeasured — nothing surfaced yet' / 'no capture pass has run' / 'no ambient render recorded' / 'no judge verdicts with human labels'. Four distinct causes, four sentences
+- 'Context budget: … ideal band 50%–80%' names the target band, so the number is interpretable rather than raw; 'A verdict lands once enough runs have gone past the change to measure it' explains the empty attribution section instead of just reporting it
+- decay.py + tests/test_learning_decay_heat.py cover the heat-kernel migration; tests/test_learning_health_panel.py covers the panel
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Drove the whole panel at #/learning. Values are unmeasured because nothing has run in this home — which is what the four distinct reasons say.
+
+**Notes:** This panel is the best empty state in the campaign, for one reason: an observability surface that cannot distinguish 'zero' from 'unknown' silently converts a measurement gap into a verdict, and this one refuses to at every level — per component, on the composite, and on each sub-section.
 
 ## Recorded history
 

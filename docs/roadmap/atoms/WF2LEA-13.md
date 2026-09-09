@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED, the live reader exists end to end: memory_service.py:1196 defines procedural_block, context.py:1266 produces it inside build_session_context, and learning/ambient.py:280 renders it as a named block
+- 🔑 ambient.py:274-283 ONE ALL-OR-NOTHING CANDIDATE, AND THE REASON IS A PRIORITY ARGUMENT IN THE USER'S FAVOUR: `lesson` is the one kind EXEMPT from the diversification cap, so N per-prior candidates 'would enter the lesson slot unrationed and COULD PUSH THE USER'S OWN CORRECTIONS DOWN THE RANKING'. The bound therefore belongs at the producer, 'which is where a bound on observed-about-itself content belongs'
+- 'l0 == l1 == l2 for the same reason block_candidate is all-or-nothing: HALF A PRIOR LIST IS NOT A SHORTER PRIOR LIST' — a truncation that would change the meaning is refused rather than applied
+- the clause's no-sixth-kind constraint is satisfied by mapping onto the existing `lesson` kind, so the block competes INSIDE learning.context_budget_tokens rather than appending beside it
+- tests/test_learning_procedural_loop.py passes
+- 951 tests pass across the 30 learning suites
+
+**Notes:** The strongest design idea here is the one the clause states negatively: a raw '→ failed' / '→ denied' row is never surfaced, because it is synthesize_failures INPUT and the collapsed prior is the durable form. Without that rule the block degrades into a tool-call log, which is the failure mode a procedural-memory feature reaches by default.
 
 ## Recorded history
 

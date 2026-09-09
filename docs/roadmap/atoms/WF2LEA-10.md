@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 skills/loader.py:640-686 read_resource is FIVE ORDERED CONTROLS and the docstring declares each 'load-bearing': the skill resolves (name fenced), the path canonicalizes (absolute / .. / backslash out), it is IN the declared allowlist, containment is verified AFTER realpath, and it is a regular file read with a cap and a truncation flag
+- 🔑 THE ALLOWLIST IS THE POINT, STATED: 'an existing-but-undeclared file is refused, SO THE TOOL CAN NEVER BECOME AN ARBITRARY FILE READ'
+- 🔑 THE ORDERING IS THE SUBTLE CONTROL: containment is checked after realpath, 'which is THE ONLY CHECK A SYMLINK POINTING OUT OF THE SKILL DIR CANNOT SATISFY'. A pre-realpath containment check passes for exactly that attack
+- refusals RAISE SkillResourceRefused with a stable reason 'rather than returning a sentinel, so A REFUSAL CAN NEVER BE MISTAKEN FOR CONTENT', and each message names the fix (the declared list is printed on an undeclared path)
+- the tool contract says the same thing to the model — mcp_core.py:191-198: 'Only paths the skill declared in its `resources:` frontmatter can be loaded — this is not a general file read, and IT NEVER RUNS A SCRIPT RESOURCE, it returns its text'
+- the catalog is L0 by construction: skills/allocation.py:261-267 lists path + description and states 'The steps are NOT loaded'
+- 951 tests pass across the 30 learning suites
+
+**Notes:** 🎯 THE ARCC MATCH OF THIS CYCLE. Secure File Uploads' transferable objectives are allowlist-not-denylist ('Service must implement an allow-list of file extensions'), do not trust the declared type, and enforce size limits. This satisfies all three and tightens each: the allowlist is per-skill DECLARED PATHS rather than file extensions, which is a far smaller surface than any extension list; 'reads-never-executes' is the do-not-trust-the-type objective pushed past type-checking to withholding execute semantics entirely; and the cap ships with a truncation NOTICE so a truncated read cannot be mistaken for a complete one. The symlink ordering is a control ARCC's guidance does not reach at all.
 
 ## Recorded history
 

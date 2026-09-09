@@ -3396,5 +3396,191 @@
       "441 tests pass across the 15 routing suites; make lint clean"
     ],
     "notes": "🎯 THE ARCC CONTRAST IS THE INTERESTING PART OF THIS CYCLE. ARCC returned Chronicle (BSC-adjacent host telemetry), whose one transferable objective is that activity telemetry must be captured and preserved and its collection agent must not be disabled — the audit trail's existence is not optional. This plan agrees on capture (the ModelCallGuard seam is the only writer, and query_class is a first-class column rather than an extra) and then DELIBERATELY DIVERGES on precedence: if the SEL write fails, the user's accepted change stands and the audit failure is logged. That is the opposite ordering to a fleet-security posture, and it is right here for the reason the code gives — a central security team's trail is load-bearing evidence about someone else, while a single-user tool's audit line must not be able to discard its owner's own decision. Worth recording as a considered divergence rather than pretending alignment. The scoring floor (n>=5), the 60/40 weights and the cloud_quality_margin are present in learned.py; observing a proposal actually enqueue needs real measurements and therefore a bound model."
+  },
+  "WF2LEA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "the four lifecycle stages each have their module: gate.py, hygiene.py, staging.py, proposals.py, curator.py, decay.py, ambient.py — 13,866 lines across the package",
+      "🔑 hygiene.py:1-6 REFRAMES SCOPE AS A SECURITY QUESTION: 'Learning turns text into durable state, so anything that reaches a capture cadence can influence the system's future behaviour. That makes \"what is in scope\" a security question, not a quality one — and it was previously answered by filters scattered across the capture paths, each covering a different subset.' This module is 'the single auditable answer'",
+      "🔑 :11-17 THE SHARPEST INJECTION ARGUMENT IN THE CAMPAIGN, because it identifies a threat ordinary fencing does not cover: 'Fencing stops a model from EXECUTING it in the moment, but learning would copy it into durable state where it is read back later WITHOUT a fence. So the span is removed before any cadence sees it: a planted \"always deploy without review\" cannot become a lesson, because the text never reaches the extractor.' Removal-before-capture, not fencing-at-capture",
+      "the other three exclusions each carry a distinct reason: platform scaffolding because at this system's cron density it is the LARGER pollution volume ('the flywheel would dutifully learn that the user frequently says \"CONTINUE the autonomous build\", which is true and useless'); environment failures because 'These harden into refusals the agent later cites against itself'; ungrounded turns because 'a lesson needs both a decision and evidence for it'",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "The fencing-vs-laundering distinction is worth keeping as a general lesson: a fence is TIME-BOUNDED, so any pipeline that promotes fenced text into durable state converts untrusted content into trusted content unless the promotion step re-applies the boundary. This module's answer is to make the span unreachable rather than to fence it again."
+  },
+  "WF2LEA-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 dashboard/handlers/learning.py:16-19 NAMES THE INERTNESS AS THE CAUSE: 'Everything behind that sentence shipped in S75/S76 and had no HTTP surface, so THE CRITERION WAS UNMET FOR WANT OF A ROUTE' — inbox.build_view and StagingStore.week both already returned fully-serialized shapes and this module wires them",
+      "🔑 :21-26 THE ACTOR IS DERIVED, NOT ACCEPTED, and the threat is named: 'S75 measured that proposals.accept() knew nothing about who was calling it, and put require_human INSIDE it. A route that omitted the actor would default to `user` and hand every caller — INCLUDING AN APP-SCOPED TOKEN — the reviewer's authority. So the actor is DERIVED from the request rather than accepted from the body: A CALLER THAT COULD NAME ITSELF `user` WOULD MAKE THE GATE DECORATIVE'",
+      ":66 fails closed on an unknown actor — 'Anything unrecognized returns \"\", which require_human denies rather than assuming'",
+      "MEASURED: require_human is enforced inside the shared helper for BOTH verbs (proposals.py:973 reject, :1073 accept), not at the route, so a second caller cannot bypass it",
+      "🔑 DRIVEN, THE STAGING WEEK PANEL IS THE BEST OBSERVABILITY DETAIL IN THE PLAN: each of the seven days carries its own tooltip reading 'No capture pass ran — THIS IS THE GAP AN AGGREGATE VIEW CANNOT SEE (0 passes, 0 produced, 0 errors)' and the day is labelled 'silent'. Ran-and-produced-nothing and never-ran are indistinguishable in a 7-day total, and only one of them is a bug",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Drove #/learning. Capture week, the adapted-to-you region, the proposal count ('0 proposals filed') and the health region all render. No proposal exists to accept, so the human-only gate is confirmed in code and by its tests rather than by a click.",
+    "notes": "The derived-actor rule is the strongest authorization control in this plan and it generalises: any gate whose subject is self-asserted by the caller is decorative. ARCC's guest-user and least-privilege results point the same way without reaching the self-assertion case."
+  },
+  "WF2LEA-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: LessonStore is gone — learning_report.py:18 records 'that class was deleted by' the step, and no definition survives in src/",
+      "the surviving lessons.jsonl references are exactly the RESIDUAL IMPORT the clause requires, not a failed deletion: vector_memory.py:3193 'Migrate legacy markdown memory files and lessons.jsonl into vector memory' and handlers/memory.py:1026 a residual presence check",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "Read the surrounding code before judging: two live mentions of a file the atom says was deleted look like a contradiction until the clause's own 'residual JSONL imported' requirement is read next to them. A migration reader for a deleted store is the deletion done properly, not the deletion missed."
+  },
+  "WF2LEA-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 MEASURED, NOT READ: assert_gate_covers_cadences() executed against a real home returns an EMPTY list — every declared cadence has a live caller, which is exactly the clause's 'reports zero gaps'",
+      "accountability.py:382 owns that function, and :24 states why it exists rather than a comment: 'the gate cannot suppress a path nobody routes through it. assert_gate_covers_cadences makes that a CHECKABLE FACT rather than a comment'",
+      "dashboard/chat_utils.py:742 is one of the wired cadences and notes what makes it visible to that check, plus the denial path ('ephemeral, incognito')",
+      "the run-end spoke ships as learning/run_end.py with loop_end.py and outcome_resolver.py beside it; tests/test_learning_outcome_resolver.py covers the pending-outcome resolution",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "🪤 THE MODULE'S OWN PROSE IS STALE, IN THE SAFE DIRECTION, AND IT IS AN INSTANCE OF THE PHENOMENON ITS SIBLING TEST FILE EXPLAINS. accountability.py:22-24 still says Cadence.SESSION_END and RUN_END 'are declared and have ZERO live callers' — true before this atom, false now, and I only know that because I RAN the function instead of believing either the docstring or the plan. Deliberately NOT filed as a defect and deliberately not proposed as a lint: tests/test_learning_flywheel_wiring.py records that the general docs-lint for exactly this was built, measured across every tracked doc, and REJECTED, because 'roadmap execution logs are full of past-tense narrative … describing gaps that were then closed' and 'a gate that flags correct history teaches people to delete the history'."
+  },
+  "WF2LEA-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 TRACED THE FULL CHAIN rather than counting one hop: history.py:1524-1531 (the curator tick) imports learning.attribution and calls grade_accepted_changes(); attribution.py is the only importer of accountability.py. So curator tick → attribution → accountability, and the module is genuinely no longer orphaned",
+      "history.py:1519-1522 states four properties in four clauses, each earning its place: it 'Reads the Run Ledger (not semantic memory) so it runs on every box regardless of embedder'; it is 'INERT-BY-DATA when nothing has been accepted' (the honest distinction from inert-by-absence); it is 'gated on learning.attribution_* internally'; and it is 'best-effort — a grading failure never blocks curation'",
+      "🔑 THE VERDICT NEVER APPLIES ITSELF: 'A HARMFUL verdict files a revert PROPOSAL through the shared queue; NOTHING IS EVER APPLIED HERE'. accountability.py's closing line draws the same boundary — 'Filing the revert is the caller's; this decides that one is owed'",
+      "tests/test_learning_accountability.py imports assert_gate_covers_cadences and the verdict ladder",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "My first measurement said accountability had exactly one importer and it was not the curator — which would have been the finding. It was one hop short. The lesson for this campaign: an importer count answers 'is anything wired to it', never 'is the RIGHT thing wired to it', and only following the chain to the cadence the clause names distinguishes the two."
+  },
+  "WF2LEA-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "refiner.py + refiner_tools.py ship the agent and its propose-only tool set; tests/test_learning_refiner.py covers it",
+      "template_gate.py + the workflow version store back the monotonic versioning and re-pin/rollback",
+      "OBSERVED LAST CYCLE while auditing WORKFLOWS-V2: the workflow definition page at #/workflows/defs/<name> carries the Versions and Run Ledger tabs, a maturity chip reading 'Maturity L1: 0 clean runs, gate not yet proven', and a 'Refine now' button — all four FE elements this clause names, rendered",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "The FE half was driven (previous cycle, same gateway). The refiner AGENT itself is not driven: firing it needs a bound model, and no model is bound in this home.",
+    "notes": "Partial for the agent run only. The maturity chip is the detail worth keeping — 'gate not yet proven' says WHY the tier is L1 rather than showing a bare level, so a user learns what would raise it."
+  },
+  "WF2LEA-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: detectors.py has SIX non-self importer files in src/ — the clause's 'module no longer has zero importers' is true by a wide margin",
+      "🔑 THE WIRING IS PINNED BY A RAIL, NOT LEFT TO REVIEW: tests/test_learning_flywheel_wiring.py::test_the_module_has_a_production_importer is PARAMETERIZED over the modules and TAGGED WITH THE ATOM ID, and a sibling test — test_the_detector_is_not_fooled_by_the_module_name_in_prose — is a vacuity floor on the detector itself",
+      "mining.py ships the positive-path trace mining; tests/test_learning_mining.py and test_learning_detectors.py both pass",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Not driven: 'every negative decision writes a skipped(reason) ledger event' and the tier_migration proposals from ledger statistics both need real runs to have happened.",
+    "notes": "🎯 THE WIRING RAIL'S DOCSTRING IS THE BEST THING I HAVE READ IN THIRTY CYCLES, AND IT IS ABOUT THIS AUDIT'S OWN DEFECT CLASS. It names the failure mode exactly — 'delete the last call site and the modules keep passing their own unit tests forever while the behaviour they exist for … simply stops happening. That is the same \"present but inert\" shape the audit found in the first place, and RE-ENTERING IT WOULD LOOK EXACTLY LIKE A HEALTHY SUITE.' Then it explains why the obvious generalisation was built, MEASURED across every tracked doc, and rejected: a markdown table is one paragraph so a claim's scope swallows every module named in it; a 'Done when … (module no longer has zero importers)' clause is an aspirational NEGATION that reads identically to the claim; and execution logs are past-tense narrative about gaps already closed. The conclusion is the sharpest sentence in the campaign: 'Distinguishing \"has none\" from \"had none, then we fixed it\" needs TENSE, not pattern matching, and A GATE THAT FLAGS CORRECT HISTORY TEACHES PEOPLE TO DELETE THE HISTORY.' That is the direct answer to a stale-plan-prose lint I might otherwise have proposed — including for WORKFLOWS-V2's own 'zero production importers' header, which I measured wrong last cycle."
+  },
+  "WF2LEA-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: self_model_observer.py has THREE non-self importer files; self_model.py sits beside it",
+      "the ambient producer path is real — learning/ambient.py owns the slot allocator and the self_model slot",
+      "tests/test_learning_self_model_observer.py passes as part of the 951",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Not driven: recording (route, tools, outcome, reaction) after significant turns needs turns, and reinforced habits filing lesson_batch proposals needs accumulated observations.",
+    "notes": "Partial for the live recording. The clause's own guardrail is the part worth noting: reinforced habits 'file lesson_batch proposals (NEVER self-installed)' — the same propose-don't-write posture as the routing plan's learned stage, and for the same reason, since a self-model that installed its own conclusions about the user would be unfalsifiable by the user."
+  },
+  "WF2LEA-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 DRIVEN, AND ALL FOUR COMPONENTS THE CLAUSE NAMES RENDER: the health composite with per-component WEIGHTS SHOWN (Surfacing precision 40%, Capture reliability 30%, Budget utilization 20%, Judge trustworthiness 10%), a Judge calibration section, 'Accepted-change outcomes' (the R16 attribution verdict history) and 'LLM cost by operation'",
+      "🔑 THE COMPOSITE READS '—  not measured yet — nothing has run' RATHER THAN 0. A 0/100 health score would read as UNHEALTHY when the truth is UNMEASURED — the same absent-is-not-zero rule the routing plan states for money ('Absent is None, never 0.0'), reached independently in a second domain",
+      "every unmeasured component gives its OWN reason rather than a shared dash: 'unmeasured — nothing surfaced yet' / 'no capture pass has run' / 'no ambient render recorded' / 'no judge verdicts with human labels'. Four distinct causes, four sentences",
+      "'Context budget: … ideal band 50%–80%' names the target band, so the number is interpretable rather than raw; 'A verdict lands once enough runs have gone past the change to measure it' explains the empty attribution section instead of just reporting it",
+      "decay.py + tests/test_learning_decay_heat.py cover the heat-kernel migration; tests/test_learning_health_panel.py covers the panel",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Drove the whole panel at #/learning. Values are unmeasured because nothing has run in this home — which is what the four distinct reasons say.",
+    "notes": "This panel is the best empty state in the campaign, for one reason: an observability surface that cannot distinguish 'zero' from 'unknown' silently converts a measurement gap into a verdict, and this one refuses to at every level — per component, on the composite, and on each sub-section."
+  },
+  "WF2LEA-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 skills/loader.py:640-686 read_resource is FIVE ORDERED CONTROLS and the docstring declares each 'load-bearing': the skill resolves (name fenced), the path canonicalizes (absolute / .. / backslash out), it is IN the declared allowlist, containment is verified AFTER realpath, and it is a regular file read with a cap and a truncation flag",
+      "🔑 THE ALLOWLIST IS THE POINT, STATED: 'an existing-but-undeclared file is refused, SO THE TOOL CAN NEVER BECOME AN ARBITRARY FILE READ'",
+      "🔑 THE ORDERING IS THE SUBTLE CONTROL: containment is checked after realpath, 'which is THE ONLY CHECK A SYMLINK POINTING OUT OF THE SKILL DIR CANNOT SATISFY'. A pre-realpath containment check passes for exactly that attack",
+      "refusals RAISE SkillResourceRefused with a stable reason 'rather than returning a sentinel, so A REFUSAL CAN NEVER BE MISTAKEN FOR CONTENT', and each message names the fix (the declared list is printed on an undeclared path)",
+      "the tool contract says the same thing to the model — mcp_core.py:191-198: 'Only paths the skill declared in its `resources:` frontmatter can be loaded — this is not a general file read, and IT NEVER RUNS A SCRIPT RESOURCE, it returns its text'",
+      "the catalog is L0 by construction: skills/allocation.py:261-267 lists path + description and states 'The steps are NOT loaded'",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "🎯 THE ARCC MATCH OF THIS CYCLE. Secure File Uploads' transferable objectives are allowlist-not-denylist ('Service must implement an allow-list of file extensions'), do not trust the declared type, and enforce size limits. This satisfies all three and tightens each: the allowlist is per-skill DECLARED PATHS rather than file extensions, which is a far smaller surface than any extension list; 'reads-never-executes' is the do-not-trust-the-type objective pushed past type-checking to withholding execute semantics entirely; and the cap ships with a truncation NOTICE so a truncated read cannot be mistaken for a complete one. The symlink ordering is a control ARCC's guidance does not reach at all."
+  },
+  "WF2LEA-11": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: skill_promotion.py has THREE non-self importer files — the clause's retroactive path exists and is wired",
+      "the clause's 'no second queue' constraint is structural: promotion files into §3.2's existing proposal queue (learning/proposals.py), which is also where require_human sits, so a promoted skill inherits the human-only accept gate rather than needing its own",
+      "tests/test_learning_promotion_wire.py passes",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Not driven: promoting a successful run needs a completed run, which needs a bound model.",
+    "notes": "Partial for the drive. The reuse-the-queue decision is the load-bearing part and it is the right shape — a second queue would have needed its own accept gate, and the audited history of this codebase is that a second gate is where the weaker one ships."
+  },
+  "WF2LEA-12": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: project_context_review.py has TWO non-self importer files",
+      "the three typed proposal kinds (project_instruction / project_file / project_skill) route into the same §2.2 queue, so 'nothing written until accepted' and the decision-memory suppression are the queue's existing properties rather than new ones",
+      "tests/test_learning_project_context_review.py is part of the 951",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "ui_validated": "Not driven: prompt-triggered only, so it needs a chat turn against a bound model.",
+    "notes": "Partial for the drive. Same architectural note as the promotion atom: the clause's hardest guarantees (nothing written until accepted, a rejected item does not re-propose) are inherited from the shared queue rather than reimplemented, which is why they are cheap to trust here."
+  },
+  "WF2LEA-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED, the live reader exists end to end: memory_service.py:1196 defines procedural_block, context.py:1266 produces it inside build_session_context, and learning/ambient.py:280 renders it as a named block",
+      "🔑 ambient.py:274-283 ONE ALL-OR-NOTHING CANDIDATE, AND THE REASON IS A PRIORITY ARGUMENT IN THE USER'S FAVOUR: `lesson` is the one kind EXEMPT from the diversification cap, so N per-prior candidates 'would enter the lesson slot unrationed and COULD PUSH THE USER'S OWN CORRECTIONS DOWN THE RANKING'. The bound therefore belongs at the producer, 'which is where a bound on observed-about-itself content belongs'",
+      "'l0 == l1 == l2 for the same reason block_candidate is all-or-nothing: HALF A PRIOR LIST IS NOT A SHORTER PRIOR LIST' — a truncation that would change the meaning is refused rather than applied",
+      "the clause's no-sixth-kind constraint is satisfied by mapping onto the existing `lesson` kind, so the block competes INSIDE learning.context_budget_tokens rather than appending beside it",
+      "tests/test_learning_procedural_loop.py passes",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "The strongest design idea here is the one the clause states negatively: a raw '→ failed' / '→ denied' row is never surfaced, because it is synthesize_failures INPUT and the collapsed prior is the durable form. Without that rule the block degrades into a tool-call log, which is the failure mode a procedural-memory feature reaches by default."
+  },
+  "WF2LEA-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 30 (WF2LEA) — DRIVEN in a real browser",
+    "evidence": [
+      "vector_memory.py:426-435 carries scope + scope_ref as real columns ('scope_ref matches a record to a turn (cwd / agent binding)') and :1094-1105 filters queries on them",
+      "🔑 MEASURED: tests/test_lesson_scope.py covers EVERY clause of this atom by name, including the ones a lighter suite would skip — test_workspace_lesson_is_invisible_to_another_workspace, test_lessons_context_service_leg_is_fail_closed (a reader with NO working directory sees nothing rather than everything), test_workspace_write_never_supersedes_a_global_lesson, test_same_rule_text_global_and_workspace_do_not_collide, test_injected_lessons_block_differs_by_working_directory (the end-to-end), test_workspace_scope_without_a_workspace_is_a_400 (the refusal), and test_list_refuses_a_relative_workspace_filter (the realpath requirement)",
+      "the fail-closed leg is the decisive one: a global-only reader with no cwd must not fall through to workspace rows, and that is the direction an isolation bug takes by default",
+      "951 tests pass across the 30 learning suites"
+    ],
+    "notes": "This is an anti-inertness fix atom stated in its own title — MemoryScope.WORKSPACE 'stops being inert' — and the shape is the one this campaign keeps finding: an enum member declared, persisted nowhere, honored by no reader. What makes it confirmed rather than partial is that the suite tests the ISOLATION (invisible elsewhere) and the NON-isolation (a global lesson still reaches everyone) and the fail-closed default, which together are what 'scope' has to mean."
   }
 }

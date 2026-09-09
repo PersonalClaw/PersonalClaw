@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: project_context_review.py has TWO non-self importer files
+- the three typed proposal kinds (project_instruction / project_file / project_skill) route into the same §2.2 queue, so 'nothing written until accepted' and the decision-memory suppression are the queue's existing properties rather than new ones
+- tests/test_learning_project_context_review.py is part of the 951
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** Not driven: prompt-triggered only, so it needs a chat turn against a bound model.
+
+**Notes:** Partial for the drive. Same architectural note as the promotion atom: the clause's hardest guarantees (nothing written until accepted, a rejected item does not re-propose) are inherited from the shared queue rather than reimplemented, which is why they are cheap to trust here.
 
 ## Recorded history
 

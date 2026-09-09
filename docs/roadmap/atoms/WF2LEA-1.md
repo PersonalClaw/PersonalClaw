@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the four lifecycle stages each have their module: gate.py, hygiene.py, staging.py, proposals.py, curator.py, decay.py, ambient.py — 13,866 lines across the package
+- 🔑 hygiene.py:1-6 REFRAMES SCOPE AS A SECURITY QUESTION: 'Learning turns text into durable state, so anything that reaches a capture cadence can influence the system's future behaviour. That makes "what is in scope" a security question, not a quality one — and it was previously answered by filters scattered across the capture paths, each covering a different subset.' This module is 'the single auditable answer'
+- 🔑 :11-17 THE SHARPEST INJECTION ARGUMENT IN THE CAMPAIGN, because it identifies a threat ordinary fencing does not cover: 'Fencing stops a model from EXECUTING it in the moment, but learning would copy it into durable state where it is read back later WITHOUT a fence. So the span is removed before any cadence sees it: a planted "always deploy without review" cannot become a lesson, because the text never reaches the extractor.' Removal-before-capture, not fencing-at-capture
+- the other three exclusions each carry a distinct reason: platform scaffolding because at this system's cron density it is the LARGER pollution volume ('the flywheel would dutifully learn that the user frequently says "CONTINUE the autonomous build", which is true and useless'); environment failures because 'These harden into refusals the agent later cites against itself'; ungrounded turns because 'a lesson needs both a decision and evidence for it'
+- 951 tests pass across the 30 learning suites
+
+**Notes:** The fencing-vs-laundering distinction is worth keeping as a general lesson: a fence is TIME-BOUNDED, so any pipeline that promotes fenced text into durable state converts untrusted content into trusted content unless the promotion step re-applies the boundary. This module's answer is to make the span unreachable rather than to fence it again.
 
 ## Recorded history
 

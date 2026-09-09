@@ -33,9 +33,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 30 (WF2LEA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- refiner.py + refiner_tools.py ship the agent and its propose-only tool set; tests/test_learning_refiner.py covers it
+- template_gate.py + the workflow version store back the monotonic versioning and re-pin/rollback
+- OBSERVED LAST CYCLE while auditing WORKFLOWS-V2: the workflow definition page at #/workflows/defs/<name> carries the Versions and Run Ledger tabs, a maturity chip reading 'Maturity L1: 0 clean runs, gate not yet proven', and a 'Refine now' button — all four FE elements this clause names, rendered
+- 951 tests pass across the 30 learning suites
+
+**Driven in the UI:** The FE half was driven (previous cycle, same gateway). The refiner AGENT itself is not driven: firing it needs a bound model, and no model is bound in this home.
+
+**Notes:** Partial for the agent run only. The maturity chip is the detail worth keeping — 'gate not yet proven' says WHY the tier is L1 rather than showing a bare level, so a user learns what would raise it.
 
 ## Recorded history
 
