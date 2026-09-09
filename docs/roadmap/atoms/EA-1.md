@@ -32,9 +32,21 @@ New ExternalAccessConfig top-level section wired through all 4 points (dataclass
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- MEASURED: inbound/auth.py MIN_TOKEN_BYTES = 32 with a REASON — 'a token shorter than this is refused outright rather than working but weak' — and _validate returns a reason string rather than a bool 'so the mount refusal can name the failing' surface
+- 🔑 THE FORBIDDEN-TOKEN SET IS THE REVOCATION-SCOPING DOCTRINE AGAIN, one plan over: reusing the dashboard token or .local_secret is refused because it 'would silently extend those credentials to a new network surface', and since EA-1 another SURFACE's token is refused too, because 'five surfaces sharing one bearer would collapse five independently revocable credentials into one, so turning off the capture proxy would not stop a capture client from reaching the MCP surface with the same string'
+- 🔑 BINDINGS ARE PINS, NOT SUGGESTIONS (clients.py:10-13): a request argument that disagrees with a binding is 'a 403, SEL-logged — never a silent' override, and the pinned set is 'named as data rather than' prose so each member 'actually produces a 403'
+- config fault ⇒ refuse (auth.py:208, 'unreadable config ⇒ refuse (fail-closed)') — the correct direction for a gate on an ACTION, matching the discriminator this campaign has now seen five times
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** The cross-surface token refusal is the detail worth carrying: it is the same argument COMPANION-APPS makes about device rows and ARCC makes about refresh tokens — a credential that cannot be revoked independently is not really five credentials. Three surfaces reached that conclusion separately.
 
 ## Recorded history
 

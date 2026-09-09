@@ -31,9 +31,21 @@
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- 🔑 THE ATOM'S LITERAL CLAUSE HELD AND ITS GUARANTEE DID NOT. The clause promises a guard.evaluate pre-flight against an operator-visible allowlist, and that is present and correct: policy net.policy.LISTED with allow_only=True, so an EMPTY list refuses every host — 'for an egress allow-list, nothing named yet must mean nowhere to go, not anywhere', because 'a permissive empty list would turn this route into an open relay that spends the operator's credential'
+- 🔴 BUT THE MODULE'S OWN STATED INVARIANT WAS FALSE: '_forward is the SOLE place a socket is opened and the guard runs strictly before it, SO A DENIED HOST IS NEVER DIALED.' The client called aiohttp's session.post with default arguments, and that default FOLLOWS REDIRECTS — so an allow-listed upstream answering a 3xx made the same call open a second connection to a Location the upstream chose and the guard never evaluated, including a private or link-local one
+- MEASURED by falsification: a redirecting upstream plus a second real listener as the redirect target — the target's hit count was NONZERO before the fix. Fixed in PR #2790 (allow_redirects=False + an upstream_redirected refusal naming the hop), and all four new tests fail against the old code and pass against the new
+- the rest of the surface is sound: loopback-only always, stream-first with recording off the hot path via asyncio.to_thread, a recording failure never failing the forwarded request, 0600 capture files
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** 🔑 THIS IS WHAT ARCC WAS FOR, and it is the first cycle where the governance query changed the outcome rather than confirming it. Its SSRF guidance names four objectives; the allowlist one was met, the DNS-rebinding one is met only partly and is DISCLOSED in the docstring ('decision.pinned_ips are resolved but this client dials by hostname, so a rebind between evaluate and connect is possible … stated rather than implied'), and the REDIRECT one — 'disable automatic redirection following in server-side HTTP request implementations' — was simply missing. The sharpest part is that this repository had already solved it: net/client.py sets allow_redirects=False, re-evaluates every hop under the same policy, pins each hop's host to its validated IPs, and its comment names the hazard outright as 'the gap an allow_redirects=True client leaves open'. The proxy declined that client for a CORRECT reason (byte-capped, buffered, cannot stream SSE) but re-implementing egress meant re-implementing this control too. Partial until #2790 lands.
 
 ## Recorded history
 

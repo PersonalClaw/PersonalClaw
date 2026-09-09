@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- the harness ships and its suite passes (test_ea6_replay_harness.py, inside the 333): cases extracted tool-free-preferring, ≤3 per session, provenance-pointed; baseline vs candidate run through one_shot_completion(use_case=background); scored by the LLM judge with a parse failure scored 0 (a reject, not a pass)
+- 🔑 THE CLAUSE ITSELF SAYS 'NOT A GATE' and that is the load-bearing design decision: a verdict is attached to the proposal's evidence manifest and RENDERED on the Proposal Inbox card, so a regressed candidate is visible rather than auto-blocked. An A/B judge that gated proposals would let a judge misfire silently delete work
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Driven in the UI:** Not driven: it needs captured sessions AND a bound model AND a pending proposal — three preconditions this home has none of.
+
+**Notes:** Partial for the drive only. The parse-failure-scores-zero choice is worth keeping: a judge whose output could not be parsed produces a REJECT rather than a neutral, so an unreadable judge cannot accidentally endorse a candidate.
 
 ## Recorded history
 

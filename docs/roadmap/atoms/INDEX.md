@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 220 | `done_when` checked against the code and it holds |
-| `partial` | 160 | some `done_when` clauses hold, others do not |
+| `confirmed` | 227 | `done_when` checked against the code and it holds |
+| `partial` | 162 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 299 | not yet checked |
+| `unaudited` | 290 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -361,15 +361,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`EA-1`](EA-1.md) | `done` | `unaudited` | Shared inbound access seam — widen plan-41 substrate to 5 surfaces + per-client identity |
-| [`EA-2`](EA-2.md) | `done` | `unaudited` | OpenAI-compatible inbound dialect (/v1/*) — agent-as-model + audio aliases |
-| [`EA-3`](EA-3.md) | `done` | `unaudited` | Curated read-only MCP server (/mcp) — INHERITED from plan 41 |
-| [`EA-4`](EA-4.md) | `done` | `unaudited` | Self-describing MCP control bridge — loopback FE semantic actions |
-| [`EA-5`](EA-5.md) | `done` | `unaudited` | External-agent capture proxy (/capture/v1) + telemetry import |
-| [`EA-6`](EA-6.md) | `done` | `unaudited` | Local A/B replay harness — evidence generator on captured sessions |
-| [`EA-7`](EA-7.md) | `done` | `unaudited` | Sender-trust substrate — channels' inbound-identity half + DM pairing |
-| [`EA-8`](EA-8.md) | `done` | `unaudited` | A2A gateway (inbound agent card + tasks→WorkflowRun) + a2a-call outbound provider |
-| [`EA-9`](EA-9.md) | `done` | `unaudited` | Headless CLI mode — `personalclaw run` one-shot scripted turns |
+| [`EA-1`](EA-1.md) | `done` | `confirmed` | Shared inbound access seam — widen plan-41 substrate to 5 surfaces + per-client identity |
+| [`EA-2`](EA-2.md) | `done` | `confirmed` | OpenAI-compatible inbound dialect (/v1/*) — agent-as-model + audio aliases |
+| [`EA-3`](EA-3.md) | `done` | `confirmed` | Curated read-only MCP server (/mcp) — INHERITED from plan 41 |
+| [`EA-4`](EA-4.md) | `done` | `confirmed` | Self-describing MCP control bridge — loopback FE semantic actions |
+| [`EA-5`](EA-5.md) | `done` | `partial` | External-agent capture proxy (/capture/v1) + telemetry import |
+| [`EA-6`](EA-6.md) | `done` | `partial` | Local A/B replay harness — evidence generator on captured sessions |
+| [`EA-7`](EA-7.md) | `done` | `confirmed` | Sender-trust substrate — channels' inbound-identity half + DM pairing |
+| [`EA-8`](EA-8.md) | `done` | `confirmed` | A2A gateway (inbound agent card + tasks→WorkflowRun) + a2a-call outbound provider |
+| [`EA-9`](EA-9.md) | `done` | `confirmed` | Headless CLI mode — `personalclaw run` one-shot scripted turns |
 
 ### `EI` — EXECUTION-ISOLATION (12/12 done)
 

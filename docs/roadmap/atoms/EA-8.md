@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- 🔑 PUBLICATION IS OPT-IN AND THE CHECK IS EXACT: a2a.py:327/:372 admits a template as a skill only when metadata.a2a_published 'is exactly True' — `is not True` rejects a truthy string, so a config typo cannot publish a workflow to an external agent network
+- MEASURED: the routes mount unconditionally and refuse per request (server.py:483-491, 'three literal paths under /a2a'), with the mount failure logged rather than swallowed
+- the clause's own honesty holds — 'card mounts EMPTY until WF2 slices land' — which is why an empty card here is the specified behaviour rather than a gap
+- test_inbound_a2a.py green inside the 333
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** Default-false plus an identity check rather than a truthiness check is the same absent-versus-declared-false discipline this campaign keeps meeting; here the cost of getting it wrong is publishing a workflow to strangers, which is the highest-stakes instance of it so far.
 
 ## Recorded history
 

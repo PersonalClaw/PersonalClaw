@@ -29,9 +29,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- MEASURED: the MCP surface is inherited rather than rebuilt, exactly as the atom says — inbound/mcp_http.py exists and dashboard/server.py:444 mounts it
+- test_inbound_mcp.py green inside the 143
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** A catalogue atom whose whole content is 'this is satisfied EXTERNALLY, do not rebuild it'. Worth confirming precisely because that is the kind of entry a later reader is most likely to mistake for missing work — the DAG needed a node for §3 and this is it.
 
 ## Recorded history
 

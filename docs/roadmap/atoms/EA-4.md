@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- MEASURED: the bridge runs on ITS OWN runner on a random ephemeral port — 'not a route on the dashboard app' — which is what keeps a loopback-only surface from inheriting the dashboard's remote reachability
+- 🔑 requiresConfirmation IS ENFORCED SERVER-SIDE, and the docstring says so in those terms: 'enforced HERE, not by client politeness'. Seventh independent arrival at this campaign's core principle, in a seventh module
+- the descriptor carries schema_version + actions_digest 'beside the list so a client can tell' whether the action SET changed without diffing it, and a pinned client is served a SUBSET whose digest is computed over what it can actually see (:374)
+- test_ea4_control_bridge.py green inside the 333
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** The per-client digest is the subtle part: digesting the FULL action set would tell a scope-pinned client that something changed even when nothing it may call did, which is how a client learns about capabilities it is not allowed to have.
 
 ## Recorded history
 

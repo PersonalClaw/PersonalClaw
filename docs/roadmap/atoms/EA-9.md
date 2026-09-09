@@ -32,9 +32,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- 🔑 DRIVEN TWICE against the real CLI. `personalclaw run -p … --format json --port 10011` returned exactly the document the clause specifies — {result, session, turns, tool_calls, tokens, duration_ms} — with session 'inbound:cli:f3b58c24', so the §2.3 headless prefix is real
+- 🔑 THE READ-ONLY STANCE IS ANNOUNCED, NOT ASSUMED: every run prints 'read-only — session inbound:cli:<id> denies every non-read-only tool. Pass --allow to grant writes.' The user learns the profile and its widening flag before anything runs
+- the exit contract holds under a real failure: with no model bound the run exits 1 and prints a three-line WHAT/WHY/FIX naming the remediation ('add a model provider in Settings → Providers, then bind chat to it') — and it does so identically under --format plain AND --format json
+- --port is present (not in the clause, but it is what let this be driven against a non-default gateway), alongside --agent/--model/--session/--cwd/--allow/--timeout
+- test_cli_run.py green inside the 143
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Driven in the UI:** Driven as a CLI rather than in a browser, which is the surface this atom IS.
+
+**Notes:** 🪤 A FINDING COLLAPSED HERE TOO, and the process note is worth more than the finding. I first read the json run as exiting 0 with an empty result — an inconsistency with plain's exit 1 that would have been a real defect — because I piped combined output through tail and saw only the JSON tail while the diagnostic went to stderr. Capturing the exit code explicitly showed BOTH formats exit 1 with the same diagnostic. Withdrawn. Seventh collapsed finding of this campaign, and the first caused by my own output handling rather than by a misread of the code.
 
 ## Recorded history
 

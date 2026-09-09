@@ -28,9 +28,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- 🔑 EVERY IDENTIFIER AND PATH IN THE done_when IS STALE, AND EVERY DELIVERABLE EXISTS. The clause names channel_transports/trust.py, sender_trust.json, check_sender(...)->TrustDecision and `personalclaw channel pair <transport>`. Reality: channel_trust.py, entity_settings/channel_trust.json, guard_inbound(...)->TrustVerdict, and `personalclaw pair` (cli.py:1097 parser, :1440 dispatch)
+- the chokepoint property the clause actually cares about holds: channel_inbound.py:113 calls guard_inbound 'at most ONCE per' message and :143 keeps redemption inside it, so trust is decided before any agent session
+- unknown senders are dropped-and-counted with a dedupe window rather than spending agent tokens (note_unknown_sender + UNKNOWN_SENDER_RENOTIFY_SECS, 24h)
+- a dashboard surface exists too (handlers/channel_trust.py) and its 404 for an unknown sender is deliberate: 'a request to revoke a sender who is not on the list answers 404 channel_trust_sender_unknown so the UI learns its list is stale'
+- a bonus deliverable the clause never asked for: fence_channel_content, which fences untrusted channel text before it reaches a prompt
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** 🔑 A FINDING COLLAPSED, and it is the most thorough naming drift found so far: FOUR out of four names in the acceptance clause are wrong while the substance is complete, so a reader checking the clause literally would conclude the atom never shipped. Third instance of this shape in the campaign (after PBC-3's grep-for-a-deleted-constant and CA-2's environment cases) and the strongest argument yet for the audit's governing rule — a done_when is a description written before the code, and the code is what shipped.
 
 ## Recorded history
 

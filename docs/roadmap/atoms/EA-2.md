@@ -32,9 +32,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790
+
+**Code evidence:**
+
+- the dialect suite and a real OpenAI-SDK drive test both ship and pass (test_ea2_openai_dialect.py + test_ea2_openai_sdk_drive.py) inside the 333
+- the clause's hard rule is the interesting one and it is implemented: tool calls execute SERVER-SIDE and are never surfaced as tool_calls deltas, so an external client cannot be handed a tool invocation to run on its own; a needs-approval turn returns a dashboard-pointing message instead
+- inbound: is added to _STATELESS_PREFIXES and to the guardrails headless classification, so an external caller cannot silently inherit an interactive profile
+- 333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint
+
+**Notes:** Not driven: an actual /v1/chat/completions round trip needs a bound model. The SDK-drive test is the closest thing to a drive and it ships in-repo, which is the right place for it — a dialect claim is exactly what a real client library should be pointed at rather than asserted about.
 
 ## Recorded history
 

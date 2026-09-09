@@ -4583,5 +4583,121 @@
       "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
     ],
     "notes": "Third self-falsifying census in this campaign, after the skills-suppression consumer census and the provider-boundary residue sweep's teeth test. The pattern is now consistent enough to name as a house style: a census assertion ships WITH a test that the census can fail. This atom is also what makes CA-3 auditable at all — a docs-reconciliation claim became a machine-checked one."
+  },
+  "EA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "MEASURED: inbound/auth.py MIN_TOKEN_BYTES = 32 with a REASON — 'a token shorter than this is refused outright rather than working but weak' — and _validate returns a reason string rather than a bool 'so the mount refusal can name the failing' surface",
+      "🔑 THE FORBIDDEN-TOKEN SET IS THE REVOCATION-SCOPING DOCTRINE AGAIN, one plan over: reusing the dashboard token or .local_secret is refused because it 'would silently extend those credentials to a new network surface', and since EA-1 another SURFACE's token is refused too, because 'five surfaces sharing one bearer would collapse five independently revocable credentials into one, so turning off the capture proxy would not stop a capture client from reaching the MCP surface with the same string'",
+      "🔑 BINDINGS ARE PINS, NOT SUGGESTIONS (clients.py:10-13): a request argument that disagrees with a binding is 'a 403, SEL-logged — never a silent' override, and the pinned set is 'named as data rather than' prose so each member 'actually produces a 403'",
+      "config fault ⇒ refuse (auth.py:208, 'unreadable config ⇒ refuse (fail-closed)') — the correct direction for a gate on an ACTION, matching the discriminator this campaign has now seen five times",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "The cross-surface token refusal is the detail worth carrying: it is the same argument COMPANION-APPS makes about device rows and ARCC makes about refresh tokens — a credential that cannot be revoked independently is not really five credentials. Three surfaces reached that conclusion separately."
+  },
+  "EA-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "the dialect suite and a real OpenAI-SDK drive test both ship and pass (test_ea2_openai_dialect.py + test_ea2_openai_sdk_drive.py) inside the 333",
+      "the clause's hard rule is the interesting one and it is implemented: tool calls execute SERVER-SIDE and are never surfaced as tool_calls deltas, so an external client cannot be handed a tool invocation to run on its own; a needs-approval turn returns a dashboard-pointing message instead",
+      "inbound: is added to _STATELESS_PREFIXES and to the guardrails headless classification, so an external caller cannot silently inherit an interactive profile",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "Not driven: an actual /v1/chat/completions round trip needs a bound model. The SDK-drive test is the closest thing to a drive and it ships in-repo, which is the right place for it — a dialect claim is exactly what a real client library should be pointed at rather than asserted about."
+  },
+  "EA-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "MEASURED: the MCP surface is inherited rather than rebuilt, exactly as the atom says — inbound/mcp_http.py exists and dashboard/server.py:444 mounts it",
+      "test_inbound_mcp.py green inside the 143",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "A catalogue atom whose whole content is 'this is satisfied EXTERNALLY, do not rebuild it'. Worth confirming precisely because that is the kind of entry a later reader is most likely to mistake for missing work — the DAG needed a node for §3 and this is it."
+  },
+  "EA-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "MEASURED: the bridge runs on ITS OWN runner on a random ephemeral port — 'not a route on the dashboard app' — which is what keeps a loopback-only surface from inheriting the dashboard's remote reachability",
+      "🔑 requiresConfirmation IS ENFORCED SERVER-SIDE, and the docstring says so in those terms: 'enforced HERE, not by client politeness'. Seventh independent arrival at this campaign's core principle, in a seventh module",
+      "the descriptor carries schema_version + actions_digest 'beside the list so a client can tell' whether the action SET changed without diffing it, and a pinned client is served a SUBSET whose digest is computed over what it can actually see (:374)",
+      "test_ea4_control_bridge.py green inside the 333",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "The per-client digest is the subtle part: digesting the FULL action set would tell a scope-pinned client that something changed even when nothing it may call did, which is how a client learns about capabilities it is not allowed to have."
+  },
+  "EA-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "🔑 THE ATOM'S LITERAL CLAUSE HELD AND ITS GUARANTEE DID NOT. The clause promises a guard.evaluate pre-flight against an operator-visible allowlist, and that is present and correct: policy net.policy.LISTED with allow_only=True, so an EMPTY list refuses every host — 'for an egress allow-list, nothing named yet must mean nowhere to go, not anywhere', because 'a permissive empty list would turn this route into an open relay that spends the operator's credential'",
+      "🔴 BUT THE MODULE'S OWN STATED INVARIANT WAS FALSE: '_forward is the SOLE place a socket is opened and the guard runs strictly before it, SO A DENIED HOST IS NEVER DIALED.' The client called aiohttp's session.post with default arguments, and that default FOLLOWS REDIRECTS — so an allow-listed upstream answering a 3xx made the same call open a second connection to a Location the upstream chose and the guard never evaluated, including a private or link-local one",
+      "MEASURED by falsification: a redirecting upstream plus a second real listener as the redirect target — the target's hit count was NONZERO before the fix. Fixed in PR #2790 (allow_redirects=False + an upstream_redirected refusal naming the hop), and all four new tests fail against the old code and pass against the new",
+      "the rest of the surface is sound: loopback-only always, stream-first with recording off the hot path via asyncio.to_thread, a recording failure never failing the forwarded request, 0600 capture files",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "🔑 THIS IS WHAT ARCC WAS FOR, and it is the first cycle where the governance query changed the outcome rather than confirming it. Its SSRF guidance names four objectives; the allowlist one was met, the DNS-rebinding one is met only partly and is DISCLOSED in the docstring ('decision.pinned_ips are resolved but this client dials by hostname, so a rebind between evaluate and connect is possible … stated rather than implied'), and the REDIRECT one — 'disable automatic redirection following in server-side HTTP request implementations' — was simply missing. The sharpest part is that this repository had already solved it: net/client.py sets allow_redirects=False, re-evaluates every hop under the same policy, pins each hop's host to its validated IPs, and its comment names the hazard outright as 'the gap an allow_redirects=True client leaves open'. The proxy declined that client for a CORRECT reason (byte-capped, buffered, cannot stream SSE) but re-implementing egress meant re-implementing this control too. Partial until #2790 lands."
+  },
+  "EA-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "the harness ships and its suite passes (test_ea6_replay_harness.py, inside the 333): cases extracted tool-free-preferring, ≤3 per session, provenance-pointed; baseline vs candidate run through one_shot_completion(use_case=background); scored by the LLM judge with a parse failure scored 0 (a reject, not a pass)",
+      "🔑 THE CLAUSE ITSELF SAYS 'NOT A GATE' and that is the load-bearing design decision: a verdict is attached to the proposal's evidence manifest and RENDERED on the Proposal Inbox card, so a regressed candidate is visible rather than auto-blocked. An A/B judge that gated proposals would let a judge misfire silently delete work",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "ui_validated": "Not driven: it needs captured sessions AND a bound model AND a pending proposal — three preconditions this home has none of.",
+    "notes": "Partial for the drive only. The parse-failure-scores-zero choice is worth keeping: a judge whose output could not be parsed produces a REJECT rather than a neutral, so an unreadable judge cannot accidentally endorse a candidate."
+  },
+  "EA-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "🔑 EVERY IDENTIFIER AND PATH IN THE done_when IS STALE, AND EVERY DELIVERABLE EXISTS. The clause names channel_transports/trust.py, sender_trust.json, check_sender(...)->TrustDecision and `personalclaw channel pair <transport>`. Reality: channel_trust.py, entity_settings/channel_trust.json, guard_inbound(...)->TrustVerdict, and `personalclaw pair` (cli.py:1097 parser, :1440 dispatch)",
+      "the chokepoint property the clause actually cares about holds: channel_inbound.py:113 calls guard_inbound 'at most ONCE per' message and :143 keeps redemption inside it, so trust is decided before any agent session",
+      "unknown senders are dropped-and-counted with a dedupe window rather than spending agent tokens (note_unknown_sender + UNKNOWN_SENDER_RENOTIFY_SECS, 24h)",
+      "a dashboard surface exists too (handlers/channel_trust.py) and its 404 for an unknown sender is deliberate: 'a request to revoke a sender who is not on the list answers 404 channel_trust_sender_unknown so the UI learns its list is stale'",
+      "a bonus deliverable the clause never asked for: fence_channel_content, which fences untrusted channel text before it reaches a prompt",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "🔑 A FINDING COLLAPSED, and it is the most thorough naming drift found so far: FOUR out of four names in the acceptance clause are wrong while the substance is complete, so a reader checking the clause literally would conclude the atom never shipped. Third instance of this shape in the campaign (after PBC-3's grep-for-a-deleted-constant and CA-2's environment cases) and the strongest argument yet for the audit's governing rule — a done_when is a description written before the code, and the code is what shipped."
+  },
+  "EA-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "🔑 PUBLICATION IS OPT-IN AND THE CHECK IS EXACT: a2a.py:327/:372 admits a template as a skill only when metadata.a2a_published 'is exactly True' — `is not True` rejects a truthy string, so a config typo cannot publish a workflow to an external agent network",
+      "MEASURED: the routes mount unconditionally and refuse per request (server.py:483-491, 'three literal paths under /a2a'), with the mount failure logged rather than swallowed",
+      "the clause's own honesty holds — 'card mounts EMPTY until WF2 slices land' — which is why an empty card here is the specified behaviour rather than a gap",
+      "test_inbound_a2a.py green inside the 333",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "notes": "Default-false plus an identity check rather than a truthiness check is the same absent-versus-declared-false discipline this campaign keeps meeting; here the cost of getting it wrong is publishing a workflow to strangers, which is the highest-stakes instance of it so far."
+  },
+  "EA-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 40 (EA) — ARCC's SSRF guidance found a real hole; fixed in PR #2790",
+    "evidence": [
+      "🔑 DRIVEN TWICE against the real CLI. `personalclaw run -p … --format json --port 10011` returned exactly the document the clause specifies — {result, session, turns, tool_calls, tokens, duration_ms} — with session 'inbound:cli:f3b58c24', so the §2.3 headless prefix is real",
+      "🔑 THE READ-ONLY STANCE IS ANNOUNCED, NOT ASSUMED: every run prints 'read-only — session inbound:cli:<id> denies every non-read-only tool. Pass --allow to grant writes.' The user learns the profile and its widening flag before anything runs",
+      "the exit contract holds under a real failure: with no model bound the run exits 1 and prints a three-line WHAT/WHY/FIX naming the remediation ('add a model provider in Settings → Providers, then bind chat to it') — and it does so identically under --format plain AND --format json",
+      "--port is present (not in the clause, but it is what let this be driven against a non-default gateway), alongside --agent/--model/--session/--cwd/--allow/--timeout",
+      "test_cli_run.py green inside the 143",
+      "333 across the EA seam/dialect/bridge/capture/replay/a2a suites; +132 capture incl. the new redirect suite; +143 cli_run + inbound_mcp; +28 channel-inbound chokepoint"
+    ],
+    "ui_validated": "Driven as a CLI rather than in a browser, which is the surface this atom IS.",
+    "notes": "🪤 A FINDING COLLAPSED HERE TOO, and the process note is worth more than the finding. I first read the json run as exiting 0 with an empty result — an inconsistency with plain's exit 1 that would have been a real defect — because I piped combined output through tail and saw only the JSON tail while the diagnostic went to stderr. Capturing the exit code explicitly showed BOTH formats exit 1 with the same diagnostic. Withdrawn. Seventh collapsed finding of this campaign, and the first caused by my own output handling rather than by a misread of the code."
   }
 }
