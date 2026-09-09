@@ -5105,5 +5105,95 @@
     ],
     "ui_validated": "Drove the group, all five rows and one expanded row. The chain editor's reorder/remove/append and the dots themselves need bound models plus a called provider, so those are confirmed in code rather than driven.",
     "notes": "The optional-ness line is the best copy in the plan: it converts an empty row from 'you have work to do' into 'this inherits, and here is how to override it'. Combined with the row label, a user cannot mistake an unbound sub-category for a misconfiguration — which matters because there are now five of them and four are usually meant to stay empty."
+  },
+  "IA2-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "MEASURED: investigate.py carries the registry (register_investigate_resolver/resolve) with 15 registrations, and the 36 tests cover the clause's error split — unknown KIND raises KeyError (a programming error) while unknown ENTITY returns None (a data answer)",
+      "🔑 THE ERROR SPLIT IS THE DESIGN DECISION: a missing kind is a wiring bug that must be loud, an absent entity is an ordinary 404. Collapsing them would make a typo'd kind look like a deleted row",
+      "the snapshot cap truncates with a VISIBLE notice line rather than silently — a truncated context the model cannot tell is truncated is worse than a short one",
+      "tests/test_investigate.py 36/36"
+    ],
+    "notes": "The registry's shape is what makes the rest of the plan possible: the owning module registers a pure-read function, so core never learns thirteen stores. It also means the trust boundary is one function signature wide."
+  },
+  "IA2-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "🔑 DRIVEN: opening an inbox item's investigate affordance produced a NEW session whose header reads 'Task mode: Ask' — the read-only posture observed in the product, not inferred",
+      "MEASURED: test_round_trip_stages_envelope_and_sets_ask asserts BOTH the session attribute (_task_mode == 'ask') AND that the real path was used (set_task_mode called with ('dashboard:chat-1', 'ask')). The double assertion is what stops a refactor from setting the attribute while skipping the mode path",
+      "the envelope is staged server-side on the session and mirrored to session meta; SEL log_api_access(operation=investigate_open) is present",
+      "tests/test_investigate.py 36/36"
+    ],
+    "ui_validated": "Drove the full open: inbox list → item detail → 'Investigate in chat' → a new session in Ask mode.",
+    "notes": "🔑 'A CLIENT CAN'T FORGE A SNAPSHOT — COMPOSITION IS SERVER-SIDE' (module docstring). That is the sentence the whole plan rests on: if the client supplied the snapshot, the fence downstream would be protecting content the client chose, and the control would be decorative. ARCC's least-privilege material is the transferable half here, and this is its application to prompt content rather than to permissions."
+  },
+  "IA2-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "MEASURED, chat_runner.py:1503-1535: the staged envelope is prepended as a labelled preamble plus fence_untrusted(snapshot, source='investigate:<kind>'), and the docstring states the reason rather than the rule — 'Entity snapshots contain external/LLM-authored text (an email body, a loop finding), so the fence is NON-NEGOTIABLE: the model reads the envelope as quoted DATA, never instructions'",
+      "🔑 THE ONCE-ONLY GUARD IS THE DATA, NOT A FLAG: after the first turn the code REWRITES the staged context keeping only kind/title/back_link and DROPPING the snapshot — 'the injection guard, so later turns inject nothing'. A boolean could be missed on a new code path; an absent snapshot cannot be injected",
+      "the display fields deliberately survive because 'the header ContextChip reads kind/title/back_link for the session's whole life' — so the guard is scoped to the payload rather than to the whole envelope",
+      "':1514 This is the ONE injection point — no resolver output may reach a prompt any other way'",
+      "tests/test_investigate.py 36/36"
+    ],
+    "notes": "🔑 ARCC'S ONE TRANSFERABLE LINE LANDS EXACTLY HERE. Its Bedrock guardrail guidance says a prompt-attack filter only works if 'builder teams must apply INPUT TAGS to user prompt portion' — i.e. the untrusted span must be delimited for any control to govern it. This codebase agrees on the mechanism (delimit the span) and differs on what acts on it: a managed classifier there, structural containment here. For a self-hosted instance the fence is the better half of that trade, because its correctness is assertable rather than probabilistic."
+  },
+  "IA2-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "🔑 DRIVEN, and the clause's three properties held together: the click opened '#/chat/chat-1-1788954201?seed=Help+me+understand+this+message+—+what+does+it+need+from+me?', the composer CONTAINED that text, and NOTHING WAS SENT (the session still showed its empty-chat landing). Pre-filled, editable, never auto-sent",
+      "MEASURED: lib/investigate.ts is the ONE helper; ui/InvestigateButton.tsx:30 wraps it; app/appSdk.tsx exports useInvestigate (the Tier-S §2.8 clause). Every entry point funnels through the single helper",
+      "the ContextChip reads its fields from the session DETAIL payload (ChatPage.tsx:899) and deep-links via navigate() rather than a raw hash write, as the clause requires (:2878)",
+      "tests/test_investigate.py 36/36"
+    ],
+    "ui_validated": "Drove the open, the seed pre-fill and the unsent state. The ContextChip is NOT observable before the first turn — it hydrates from the session detail, which materialises once the session has a turn, and this home cannot send one (no bound model). Recorded as unobservable here rather than claimed either way.",
+    "notes": "🪤 A PROBE OF MINE COLLAPSED, and it is worth recording because the failure mode is generic. I read the composer with `.value` and got my own 'EMPTY' fallback, which read exactly like a missing pre-fill. The composer is a contenteditable DIV, so `.value` is undefined; reading textContent showed the seed text verbatim. Ninth collapsed finding of the campaign and the second caused by my own probe rather than by the code."
+  },
+  "IA2-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "🔑 DRIVEN END TO END FROM A REAL PAGE, which is precisely this atom's V1 clause: inbox list → the item's detail → 'Investigate in chat' on the verdict row → a new Ask-mode session seeded with the inbox-specific opening prompt",
+      "MEASURED: both reference resolvers exist with their own test classes (TestInboxResolver, TestLoopFindingResolver) and the inbox one asserts suggested_task_mode == 'ask' at the RESOLVER level, so the read-only posture is declared by the entity's owner rather than assumed by the route",
+      "the LoopsListPage mount for the finding header is present",
+      "tests/test_investigate.py 36/36"
+    ],
+    "ui_validated": "Full V1 walk except the grounded answer and the ask-mode mutation denial, both of which need a completed turn.",
+    "notes": "The atom's recorded DEVIATION is worth confirming as still true: the resolvers live in investigate.py rather than in inbox_service/loop 'to avoid import-order coupling'. That is visible in the file — 15 registrations in one module — and it is the right trade: registering from each owning module would make the registry's contents depend on which module imported first."
+  },
+  "IA2-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "🔑 THE VOCABULARY IS A CENSUS WITH ITS CONSEQUENCE STATED: test_all_owner_confirmed_kinds_registered walks eleven kind strings with the comment 'A missing kind means a surface's button 400s' — so the failure mode is named, not just guarded",
+      "the registry is genuinely async-capable and tested for it, with the reason given: 'so a store whose by-id read is a coroutine needs NO PRIVATE SYNC BACK DOOR'",
+      "🔑 THE HONEST-SCOPE CASES ARE EACH TESTED, and they are the interesting ones: test_lifecycle_reports_aggregate_with_the_honest_caveat, test_resolves_entry_and_request_neighbours (the bounded tail scan grouping an audit request_id), test_schedule_kind_defers_to_schedule_run, and test_resolves_capability_probes for the doctor re-run",
+      "🔑 test_path_traversal_rejected — the crash-report resolver takes a path-shaped id, and the traversal refusal is asserted rather than assumed. That is the one file-access control in the plan and ARCC's domain covers it",
+      "tests/test_investigate.py 36/36"
+    ],
+    "notes": "🔑 ONE CLAUSE OVERSTATES WHAT EXISTS, precisely. The done_when says 'all read-only (TEST ASSERTS NO STORE WRITES)'. No such assertion exists under any name: no test compares a file set, an mtime or a store snapshot before and after a resolve. The PROPERTY still holds, by two other means — the resolvers are pure reads by construction (the docstring's first guardrail) and the opened session is forced into ask mode, which is what actually prevents a mutation at turn time and IS driven. So the verdict is confirmed on the property and the atom's evidence sentence is the part that is wrong. Worth recording because 'a test asserts X' is the strongest claim a done_when can make, and it is the one a later reader is least likely to re-check."
+  },
+  "IA2-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 45 (IA2) — driven end to end from the real inbox page; two of my own probes collapsed",
+    "evidence": [
+      "MEASURED: nine production page mounts (notifications, TaskDetail, ScheduleDetail, LoopCockpitPage, LoopsListPage, KnowledgeDetail, MemoryPanel, DoctorPanel, AuditPanel) plus InboxDetail, every one routed through the single lib/investigate.ts helper",
+      "🔑 DRIVEN: the inbox mount produced a per-kind opening prompt that reads naturally in the product — 'Help me understand this message — what does it need from me?' — rather than a generic 'investigate this'",
+      "test_back_links_use_real_frontend_routes locks the two route bugs the atom says it fixed, which is the right shape for that class: a dead back-link is invisible until someone clicks it",
+      "tests/test_investigate.py 36/36"
+    ],
+    "ui_validated": "One of the nine mounts driven end to end; the rest confirmed by their call sites.",
+    "notes": "🪤 A SECOND PROBE OF MINE COLLAPSED, and this one nearly became a false finding. Counting files that import InvestigateButton showed KnowledgeDetail absent, which read as a resolver with no way to reach it. KnowledgeDetail DOES mount it — calling the shared helper directly on a HeaderControl, with the comment 'the shared primitive, rendered as a HeaderControl', because that page's controls live in a header row. I was counting COMPONENT importers when the shared thing is the HELPER, so the page that reuses the helper with different chrome looked like a gap. That is the opposite of a bespoke variant. Tenth collapsed finding, third from my own measurement."
   }
 }

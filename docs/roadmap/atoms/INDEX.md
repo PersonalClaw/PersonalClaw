@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 257 | `done_when` checked against the code and it holds |
+| `confirmed` | 264 | `done_when` checked against the code and it holds |
 | `partial` | 163 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 259 | not yet checked |
+| `unaudited` | 252 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -473,13 +473,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`IA2-1`](IA2-1.md) | `done` | `unaudited` | investigate.py: InvestigateContext envelope + resolver registry + snapshot cap |
-| [`IA2-2`](IA2-2.md) | `done` | `unaudited` | POST /api/investigate endpoint: resolve → create session → set ask mode → stage envelope |
-| [`IA2-3`](IA2-3.md) | `done` | `unaudited` | Turn-time injection _inject_investigate_context (first turn only, fenced once) |
-| [`IA2-4`](IA2-4.md) | `done` | `unaudited` | Frontend primitive: investigate() helper + InvestigateButton + ChatPage ContextChip + useInvestigate SDK export |
-| [`IA2-5`](IA2-5.md) | `done` | `unaudited` | Reference resolver pair (inbox_item + loop_finding) end-to-end from real pages |
-| [`IA2-6`](IA2-6.md) | `done` | `unaudited` | Adoption-sweep backend: 11 resolvers → 13 kinds, async-capable registry |
-| [`IA2-7`](IA2-7.md) | `done` | `unaudited` | Adoption-sweep frontend: mount InvestigateButton across all surfaces + per-kind prompts/agents |
+| [`IA2-1`](IA2-1.md) | `done` | `confirmed` | investigate.py: InvestigateContext envelope + resolver registry + snapshot cap |
+| [`IA2-2`](IA2-2.md) | `done` | `confirmed` | POST /api/investigate endpoint: resolve → create session → set ask mode → stage envelope |
+| [`IA2-3`](IA2-3.md) | `done` | `confirmed` | Turn-time injection _inject_investigate_context (first turn only, fenced once) |
+| [`IA2-4`](IA2-4.md) | `done` | `confirmed` | Frontend primitive: investigate() helper + InvestigateButton + ChatPage ContextChip + useInvestigate SDK export |
+| [`IA2-5`](IA2-5.md) | `done` | `confirmed` | Reference resolver pair (inbox_item + loop_finding) end-to-end from real pages |
+| [`IA2-6`](IA2-6.md) | `done` | `confirmed` | Adoption-sweep backend: 11 resolvers → 13 kinds, async-capable registry |
+| [`IA2-7`](IA2-7.md) | `done` | `confirmed` | Adoption-sweep frontend: mount InvestigateButton across all surfaces + per-kind prompts/agents |
 
 ### `INU` — INBOX-NOTIFICATIONS-UNIFICATION (9/9 done)
 
