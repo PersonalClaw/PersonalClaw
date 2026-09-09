@@ -28,9 +28,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 11 (MRI) — observed, audited against ARCC's network-layer principle
+
+**Code evidence:**
+
+- tests/test_inbound_mcp.py and tests/test_inbound_a2a.py pass — 146 tests together
+- the mount gating is explicitly fail-closed (test_inbound_mcp.py:142 section header)
+- THE AUTH EXEMPTION IS BOUNDED AT THE NETWORK LAYER, not by auth alone: test_loopback_always_allowed asserts the exemption applies to 127.0.0.1, and test_forwarded_headers_cannot_forge_loopback asserts that a request carrying X-Forwarded-For: 127.0.0.1 AND X-Real-IP: 127.0.0.1 still evaluates is_loopback as False
+
+**Notes:** ARCC gave a genuinely transferable principle this cycle, unlike the AG round. Its Azure finding states that requests to a public endpoint 'are still protected by authentication and authorization, but leaving the endpoint open at the network layer unnecessarily expands the attack surface' — i.e. auth is not a substitute for unreachability. This atom answers exactly that: the exemption is scoped to loopback rather than blanket, AND it refuses to trust a forwarded header claiming to be local, which is the obvious attack on a loopback exemption. Both halves matter; either alone would be insufficient.
 
 ## Recorded history
 

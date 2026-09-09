@@ -19,6 +19,52 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "MRI-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 11 (MRI) — observed, audited against ARCC's network-layer principle",
+    "evidence": [
+      "tests/test_inbound_mcp.py and tests/test_inbound_a2a.py pass — 146 tests together",
+      "the mount gating is explicitly fail-closed (test_inbound_mcp.py:142 section header)",
+      "THE AUTH EXEMPTION IS BOUNDED AT THE NETWORK LAYER, not by auth alone: test_loopback_always_allowed asserts the exemption applies to 127.0.0.1, and test_forwarded_headers_cannot_forge_loopback asserts that a request carrying X-Forwarded-For: 127.0.0.1 AND X-Real-IP: 127.0.0.1 still evaluates is_loopback as False"
+    ],
+    "notes": "ARCC gave a genuinely transferable principle this cycle, unlike the AG round. Its Azure finding states that requests to a public endpoint 'are still protected by authentication and authorization, but leaving the endpoint open at the network layer unnecessarily expands the attack surface' — i.e. auth is not a substitute for unreachability. This atom answers exactly that: the exemption is scoped to loopback rather than blanket, AND it refuses to trust a forwarded header claiming to be local, which is the obvious attack on a loopback exemption. Both halves matter; either alone would be insufficient."
+  },
+  "MRI-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 11 (MRI) — read from the live module",
+    "evidence": [
+      "personalclaw.inbound.tools.TOOLS imported at runtime holds EXACTLY 6 entries, matching the atom's 'six-row curated read-only tool table'",
+      "part of the 146-passed inbound run, which includes argument validation"
+    ],
+    "notes": "Confirmed by importing and counting rather than by reading a docstring — the same technique that settled AG-13's fourteen knobs. A curated table is only as good as its curation being real, and six is six."
+  },
+  "MRI-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 11 (MRI) — observed",
+    "evidence": [
+      "src/personalclaw/inbound/mcp_http.py:71 PROTOCOL_VERSION = '2025-06-18' — the bump the atom claims",
+      "line 81 SUPPORTED_PROTOCOL_VERSIONS = ('2025-06-18', '2024-11-05') — the OLD version is still accepted, so existing clients are not broken by the bump",
+      "the code carries the reasoning inline: a recorded G1.1 conformance review explaining why 2025-06-18 and not something newer, and noting that 2025-06-18 REMOVED JSON-RPC batching"
+    ],
+    "notes": "Worth recording for the consolidation tooling: this is one of the atoms that had NO resolvable record when I first generated the per-atom corpus. Its scope cites 'G1.1-G1.4, VG' — a vocabulary no token pattern knew — so it read as an atom with zero evidence. The record was never missing; it lives in the implementation's own comments, where the G1.1 review is written out. A reminder that 'no evidence found' is a statement about the search, not the work."
+  },
+  "MRI-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 11 (MRI) — observed",
+    "evidence": ["part of the 146-passed inbound run"],
+    "notes": "PARTIAL: the atom is a GUIDE (docs/guides/use-from-your-ide.md covering token creation and setup). I did not read it end to end or follow its steps, and a guide's real test is whether a stranger can follow it — which is OU-11's kind of validation, not something I can settle by reading. Recording it unvalidated rather than confirming a document I skimmed."
+  },
+  "MRI-5": {
+    "verdict": "unverifiable",
+    "date": "2026-09-08",
+    "by": "audit cycle 11 (MRI) — observed",
+    "evidence": ["the surface it would drive is confirmed by MRI-1, MRI-2 and MRI-3 above"],
+    "notes": "UNVERIFIABLE here, and the first atom in this audit to earn that verdict rather than 'partial'. Its own title is 'V2 owner validation: drive the surface from a real MCP-enabled client' — the deliverable IS an owner driving it from a real IDE. That cannot be done by me from inside this session at all, as opposed to merely being blocked by a missing provider or absent data. Distinguishing 'unverifiable' from 'partial' matters: a partial might be closed by configuring something, this one requires a person at an IDE."
+  },
   "DSC-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

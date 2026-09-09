@@ -31,9 +31,17 @@ A real MCP-enabled client (IDE MCP config or mcp CLI) on the same machine connec
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `unverifiable`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 11 (MRI) — observed
+
+**Code evidence:**
+
+- the surface it would drive is confirmed by MRI-1, MRI-2 and MRI-3 above
+
+**Notes:** UNVERIFIABLE here, and the first atom in this audit to earn that verdict rather than 'partial'. Its own title is 'V2 owner validation: drive the surface from a real MCP-enabled client' — the deliverable IS an owner driving it from a real IDE. That cannot be done by me from inside this session at all, as opposed to merely being blocked by a missing provider or absent data. Distinguishing 'unverifiable' from 'partial' matters: a partial might be closed by configuring something, this one requires a person at an IDE.
 
 ## Recorded history
 

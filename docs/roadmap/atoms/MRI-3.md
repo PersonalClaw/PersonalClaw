@@ -31,9 +31,19 @@ initialize advertises 2025-06-18 (echoes a supported requested revision back, st
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 11 (MRI) — observed
+
+**Code evidence:**
+
+- src/personalclaw/inbound/mcp_http.py:71 PROTOCOL_VERSION = '2025-06-18' — the bump the atom claims
+- line 81 SUPPORTED_PROTOCOL_VERSIONS = ('2025-06-18', '2024-11-05') — the OLD version is still accepted, so existing clients are not broken by the bump
+- the code carries the reasoning inline: a recorded G1.1 conformance review explaining why 2025-06-18 and not something newer, and noting that 2025-06-18 REMOVED JSON-RPC batching
+
+**Notes:** Worth recording for the consolidation tooling: this is one of the atoms that had NO resolvable record when I first generated the per-atom corpus. Its scope cites 'G1.1-G1.4, VG' — a vocabulary no token pattern knew — so it read as an atom with zero evidence. The record was never missing; it lives in the implementation's own comments, where the G1.1 review is written out. A reminder that 'no evidence found' is a statement about the search, not the work.
 
 ## Recorded history
 

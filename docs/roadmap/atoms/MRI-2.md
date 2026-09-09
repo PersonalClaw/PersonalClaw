@@ -30,9 +30,18 @@ tools/list advertises memory_recall, knowledge_search, tasks_list, task_get, ses
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 11 (MRI) — read from the live module
+
+**Code evidence:**
+
+- personalclaw.inbound.tools.TOOLS imported at runtime holds EXACTLY 6 entries, matching the atom's 'six-row curated read-only tool table'
+- part of the 146-passed inbound run, which includes argument validation
+
+**Notes:** Confirmed by importing and counting rather than by reading a docstring — the same technique that settled AG-13's fourteen knobs. A curated table is only as good as its curation being real, and six is six.
 
 ## Recorded history
 

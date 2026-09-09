@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 11 (MRI) — observed
+
+**Code evidence:**
+
+- part of the 146-passed inbound run
+
+**Notes:** PARTIAL: the atom is a GUIDE (docs/guides/use-from-your-ide.md covering token creation and setup). I did not read it end to end or follow its steps, and a guide's real test is whether a stranger can follow it — which is OU-11's kind of validation, not something I can settle by reading. Recording it unvalidated rather than confirming a document I skimmed.
 
 ## Recorded history
 

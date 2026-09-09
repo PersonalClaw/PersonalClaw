@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 34 | `done_when` checked against the code and it holds |
-| `partial` | 76 | some `done_when` clauses hold, others do not |
+| `confirmed` | 37 | `done_when` checked against the code and it holds |
+| `partial` | 77 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
-| `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 574 | not yet checked |
+| `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
+| `unaudited` | 569 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -587,11 +587,11 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MRI-1`](MRI-1.md) | `done` | `unaudited` | Inbound substrate + fail-closed mount (auth exemption, auth.py, config round-trip, caps+audit, JSON-RPC transport, CLI token) |
-| [`MRI-2`](MRI-2.md) | `done` | `unaudited` | Six-row curated read-only tool table + arg validation + fencing meta-test |
-| [`MRI-3`](MRI-3.md) | `done` | `unaudited` | Protocol-currency amendment: bump 2024-11-05 -> 2025-06-18 with clause-by-clause conformance, legible version negotiation, security regression lock |
-| [`MRI-4`](MRI-4.md) | `done` | `unaudited` | Guide: docs/guides/use-from-your-ide.md (token creation, client-config snippets, loopback caveat, kill switch) |
-| [`MRI-5`](MRI-5.md) | `done` | `unaudited` | V2 owner validation: drive the surface from a real MCP-enabled client end-to-end |
+| [`MRI-1`](MRI-1.md) | `done` | `confirmed` | Inbound substrate + fail-closed mount (auth exemption, auth.py, config round-trip, caps+audit, JSON-RPC transport, CLI token) |
+| [`MRI-2`](MRI-2.md) | `done` | `confirmed` | Six-row curated read-only tool table + arg validation + fencing meta-test |
+| [`MRI-3`](MRI-3.md) | `done` | `confirmed` | Protocol-currency amendment: bump 2024-11-05 -> 2025-06-18 with clause-by-clause conformance, legible version negotiation, security regression lock |
+| [`MRI-4`](MRI-4.md) | `done` | `partial` | Guide: docs/guides/use-from-your-ide.md (token creation, client-config snippets, loopback caveat, kill switch) |
+| [`MRI-5`](MRI-5.md) | `done` | `unverifiable` | V2 owner validation: drive the surface from a real MCP-enabled client end-to-end |
 
 ### `MRT` — MODEL-ROUTING-TELEMETRY (5/5 done)
 
