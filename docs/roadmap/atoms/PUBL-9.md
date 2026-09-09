@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `unverifiable`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- the clause is a git-source install from the published apps URL, which writes an installed app into a home; the validation home has no apps installed and adding one would mutate it
+- the published target exists and is reachable — `PersonalClaw/PersonalClawApps` is public with the homepage set — so the precondition the atom cared about ('previously validated only with local paths') is in place
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not driven: installing from a git source is a write into the validation home, and the audit's rule is to leave it as found.
+
+**Notes:** Unverifiable rather than partial: there is no half of this clause that a read can settle. The install either happened against the published URL or it did not, and only performing it would tell.
 
 ## Recorded history
 

@@ -33,9 +33,24 @@ v0.1.0 tagged on core (anchoring releases); v0.1.0-v0.1.3 published to PyPI (per
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- 🔑 THE RELEASE TRAIN DEMONSTRABLY RAN, read from the live API: tags `v0.1.0` through `v0.1.3` all exist, each has a GitHub Release carrying two assets, and PyPI's `personalclaw` has exactly 0.1.0, 0.1.1, 0.1.2 and 0.1.3 with 0.1.3 latest
+- 🔴 BUT THE CLIENT SERIES HAS A HOLE: PyPI's `personalclaw-client` has 0.1.0, 0.1.2 and 0.1.3 — NO 0.1.1 — against a stated owner policy of LOCKSTEP versioning ('the client's version always equals core's — bumped in every release-prep commit whether or not the client changed')
+- 🔑 I TRACED THE MECHANISM RATHER THAN REPORTING THE ABSENCE: the v0.1.1 release run concluded `failure`, and exactly ONE of its seven jobs failed — `pypi-client`. Every other job (core PyPI, both images, notes, attest) succeeded, which is why a scan for broken releases would miss it. The log shows the artifact was already wrong before the publish step: at that tag the client built as `personalclaw_client-0.1.0`, because its own version had not been bumped
+- 🔑 THIS IS A HISTORICAL GAP RATHER THAN ONGOING DRIFT, and both halves of that were checked: the client's manifest is `0.1.3` today, matching core, and the rail that would have caught it now exists — `test_version_consistency.py::test_client_version_locksteps_core`
+- the GHCR half could not be read: listing org container packages needs a token scope this one lacks, which is a limit of my credentials rather than evidence of absence — recorded as such
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not a product surface: registries, tags and releases, all read from their own APIs.
+
+**Notes:** Partial rather than contradicted, deliberately. The atom's substance — four versions tagged and shipped to PyPI, images and GitHub Releases with no force pushes to main — is real and verified; one sub-artifact of one release is missing. Filed as issue #2812, and the remedy is a maintainer judgement rather than a mechanical fix, because re-running the old job would rebuild 0.1.0 from that tag's tree and cannot produce the missing version. The general lesson is worth keeping: the lockstep test compares two files IN THE REPO, where they cannot drift once the release-prep commit is written, and cannot see a publish that silently did not happen.
 
 ## Recorded history
 

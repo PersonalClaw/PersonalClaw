@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `unverifiable`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- the clause needs a clone deliberately one commit behind the published remote, then an apply that pulls, rebuilds and re-execs — a mutation of a real installation against a live remote
+- the mechanism it exercises IS observable and was audited in DESKTOP-CAPABILITIES this campaign: `self_update.detect_install_kind()` and the apply path, including the defect where a packaged desktop install classified itself as a pip install and would have run an installer against its own frozen interpreter
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not drivable without performing a real self-update, which would rewrite a working tree against the published remote.
+
+**Notes:** Unverifiable for the same reason as PUBL-7 and stated the same way. What this audit CAN say is that the machinery the clause drives has been separately examined and one real defect in it was found and fixed — which is evidence about the code, not about the end-to-end run.
 
 ## Recorded history
 

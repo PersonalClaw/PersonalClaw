@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- STATUS `blocked` IS CORRECT and the blocker is a genuine cross-plan gate: the public announcement waits on DISCOVERABILITY-LAUNCH's marketing site, real screenshots and a working install one-liner
+- 🔑 TWO OF THE THREE GATE CONDITIONS ARE ALREADY OBSERVABLE AS MET, which is worth recording because it narrows what the block actually is: real screenshots ship (31 references, all resolving, per `PUBL-4`) and the install one-liner exists with a verify path and a downgrade floor pinned to the changelog. The outstanding condition is the marketing site being live
+- the site's repository exists and is public in the org (`personalclaw.dev`), so the remaining work has a home rather than being unscoped
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not applicable: the deliverable is an announcement.
+
+**Notes:** Partial rather than blocked-and-unverifiable, because the gate is decomposable and two thirds of it observes as satisfied. A `blocked` atom whose blocker is a checklist is worth auditing item by item — otherwise 'blocked' hides how close it is.
 
 ## Recorded history
 

@@ -30,9 +30,22 @@ hardcoded release URL at dashboard/handlers/core.py points at github.com/Persona
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- the hardcoded release URL in `dashboard/handlers/core.py:116` points at `github.com/PersonalClaw/PersonalClaw/releases` — the new org, checked in the file rather than in the plan
+- 🔑 `homepage` IS SET TO `https://personalclaw.dev` ON BOTH REPOS, read from the API; the core description is the full product sentence and topics are set on both (ten on core, five on apps)
+- 🔑 AND THE SAME RECONCILIATION REACHED PyPI, which the atom does not even claim: the published package's project URLs are all new — Homepage `personalclaw.dev`, Source and Issues on `PersonalClaw/PersonalClaw`, Changelog pointing at the file `PUBL-3` created. A rename that missed the registry metadata would have left the canonical install page pointing at a deleted account
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not a product surface beyond the rendered release link, whose target was verified as a string in the handler.
+
+**Notes:** The interesting property is completeness across surfaces that are maintained separately — repo metadata, README, an in-app link and registry metadata all agree, and the registry one is the easiest to forget because nothing in the repo fails when it is stale.
 
 ## Recorded history
 

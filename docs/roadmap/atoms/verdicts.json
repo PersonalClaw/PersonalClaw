@@ -6345,5 +6345,133 @@
     ],
     "ui_validated": "Not reachable in this home — no apps installed and no Store source bound, so the consent dialog cannot be opened without mutating it. Validated instead by falsifying the exact rendering rule, which is the clause that carries the security meaning.",
     "notes": "🔑 THE BEST CONSENT-DISCLOSURE REASONING IN THE CAMPAIGN. Three separate ideas, each of which most products get wrong: a wildcard grant must be described by its REACH and not its literal text; the enforced list must contain exactly what is enforced, with the two symmetric misreadings named; and an explicit denial is information a user wants, so it must not be flattened into silence. ARCC's least-privilege material treats wildcards as how a grant quietly becomes administrative — this is that concern handled at the moment consent is given."
+  },
+  "PUBL-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "🔑 READ FROM THE LIVE ORG RATHER THAN FROM A LOG: `orgs/PersonalClaw/repos` holds `PersonalClaw`, `PersonalClawApps` and `personalclaw.dev`, all public — the three the atom names — plus `.github`, four community-registry app repos and a push relay",
+      "🔑 THE DELETION HALF CHECKED SPECIFICALLY RATHER THAN BY COUNT: no repository under the old personal account carries a PersonalClaw name. The account still has thirty repositories, which is why the check had to be for the NAMES and not for emptiness",
+      "the domain resolves as the homepage on both repos (below), which is the observable half of 'domain registered'",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not a product surface: this atom is org and registry state, and it was read from the APIs that own it.",
+    "notes": "🪤 A TRAP I NEARLY WALKED INTO, AND IT IS THE FAMILY OF ERROR THIS CYCLE-SET KEEPS PRODUCING: the old account's repo count is thirty, which reads as 'the old repos were not deleted' until you notice the clause is about the PersonalClaw repos, not the account. A personal account having thirty unrelated repositories is not evidence of anything."
+  },
+  "PUBL-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "the hardcoded release URL in `dashboard/handlers/core.py:116` points at `github.com/PersonalClaw/PersonalClaw/releases` — the new org, checked in the file rather than in the plan",
+      "🔑 `homepage` IS SET TO `https://personalclaw.dev` ON BOTH REPOS, read from the API; the core description is the full product sentence and topics are set on both (ten on core, five on apps)",
+      "🔑 AND THE SAME RECONCILIATION REACHED PyPI, which the atom does not even claim: the published package's project URLs are all new — Homepage `personalclaw.dev`, Source and Issues on `PersonalClaw/PersonalClaw`, Changelog pointing at the file `PUBL-3` created. A rename that missed the registry metadata would have left the canonical install page pointing at a deleted account",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not a product surface beyond the rendered release link, whose target was verified as a string in the handler.",
+    "notes": "The interesting property is completeness across surfaces that are maintained separately — repo metadata, README, an in-app link and registry metadata all agree, and the registry one is the easiest to forget because nothing in the repo fails when it is stale."
+  },
+  "PUBL-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "`CHANGELOG.md` is real, large and in Keep-a-Changelog form — dated version headings (`## [0.1.2] — 2026-07-26`) with `### Added` / `### Fixed` sections beneath them",
+      "🔑 THE FILE IS LOAD-BEARING RATHER THAN CEREMONIAL, and two independent consumers prove it: the Updates panel reads it over `GET /api/changelog`, and `test_version_consistency.py::test_changelog_latest_matches_pyproject` pins the newest heading to the shipped version, so the file cannot silently fall behind a release",
+      "🔑 A THIRD CONSUMER FOUND WHILE READING IT, and it is the sharpest use of a changelog I have seen: the install one-liner's downgrade floor is pinned to `CHANGELOG.md`'s SECOND-NEWEST heading, 'so it cannot rot into an unchecked hand-typed version'. The floor lags one release deliberately, because a floor equal to the current version is unsatisfiable in the window before that version reaches PyPI's mirrors",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not driven: the Updates panel needs the endpoint plus a rendered surface, and the file-reading half is what the atom claims.",
+    "notes": "The entries themselves are the strongest evidence for the wider campaign's method — several read as measured incident reports (a seven-hour timezone error, a cross-instance leak reproduced across two homes) rather than as release marketing."
+  },
+  "PUBL-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "🔑 I SWEPT EVERY SCREENSHOT REFERENCE RATHER THAN SPOT-CHECKING: 31 references across `README.md` and `SHOWCASE.md`, and all 31 resolve to files on disk. Both `docs/screenshots/light/` and `docs/screenshots/dark/` carry the same numbered set",
+      "`SHOWCASE.md` and `docs/screenshots/CAPTURE.md` both ship, and the placeholder the atom supersedes is gone",
+      "🔑 CAPTURE IS REPRODUCIBLE BY A SCRIPT, NOT BY A RECIPE: `docs/screenshots/capture.mjs` sits beside the document. A prose capture procedure drifts from the product on the first redesign; an executable one is re-runnable, which is what makes the light/dark pairs consistent",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not driven: the deliverables are committed images and two documents. The reference sweep is the check that matters, since a broken image path is the failure a reader actually meets.",
+    "notes": "🪤 MY OWN ERROR, AND THE FIFTH IN THIS FAMILY THIS CYCLE-SET — this time a SYNTAX assumption rather than a path one. I looked for markdown image syntax and for a path pattern, found neither in the README, and briefly had the references as missing. They are HTML `<img src=...>` tags, which is the form you need for width control. Withdrawn, then replaced with the sweep above."
+  },
+  "PUBL-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "🔑 BOTH REPOSITORIES REPORT `visibility: public` FROM THE API — the single most externally checkable claim in the plan, and it observes as stated",
+      "the green-main precondition is the CI-RELEASE-ENGINEERING gate, and the release history below is downstream evidence that it held: the v0.1.2 and v0.1.3 release runs both concluded success end to end",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not a product surface.",
+    "notes": "ARCC was queried for pre-publication review guidance on flipping a private repository public, since that is a deliberate exposure change. It returned container-registry exposure material and nothing about secret review before open-sourcing a source repo, so this is recorded as checked-and-thin. The transferable concern — that a public repository is open to anyone — is the one `SECURITY-LEGIBILITY` and the credential-file guards elsewhere in this audit already address."
+  },
+  "PUBL-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "🔑 THE RELEASE TRAIN DEMONSTRABLY RAN, read from the live API: tags `v0.1.0` through `v0.1.3` all exist, each has a GitHub Release carrying two assets, and PyPI's `personalclaw` has exactly 0.1.0, 0.1.1, 0.1.2 and 0.1.3 with 0.1.3 latest",
+      "🔴 BUT THE CLIENT SERIES HAS A HOLE: PyPI's `personalclaw-client` has 0.1.0, 0.1.2 and 0.1.3 — NO 0.1.1 — against a stated owner policy of LOCKSTEP versioning ('the client's version always equals core's — bumped in every release-prep commit whether or not the client changed')",
+      "🔑 I TRACED THE MECHANISM RATHER THAN REPORTING THE ABSENCE: the v0.1.1 release run concluded `failure`, and exactly ONE of its seven jobs failed — `pypi-client`. Every other job (core PyPI, both images, notes, attest) succeeded, which is why a scan for broken releases would miss it. The log shows the artifact was already wrong before the publish step: at that tag the client built as `personalclaw_client-0.1.0`, because its own version had not been bumped",
+      "🔑 THIS IS A HISTORICAL GAP RATHER THAN ONGOING DRIFT, and both halves of that were checked: the client's manifest is `0.1.3` today, matching core, and the rail that would have caught it now exists — `test_version_consistency.py::test_client_version_locksteps_core`",
+      "the GHCR half could not be read: listing org container packages needs a token scope this one lacks, which is a limit of my credentials rather than evidence of absence — recorded as such",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not a product surface: registries, tags and releases, all read from their own APIs.",
+    "notes": "Partial rather than contradicted, deliberately. The atom's substance — four versions tagged and shipped to PyPI, images and GitHub Releases with no force pushes to main — is real and verified; one sub-artifact of one release is missing. Filed as issue #2812, and the remedy is a maintainer judgement rather than a mechanical fix, because re-running the old job would rebuild 0.1.0 from that tag's tree and cannot produce the missing version. The general lesson is worth keeping: the lockstep test compares two files IN THE REPO, where they cannot drift once the release-prep commit is written, and cannot see a publish that silently did not happen."
+  },
+  "PUBL-7": {
+    "verdict": "unverifiable",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "the clause is a fresh clone on a CLEAN MACHINE run verbatim through the getting-started guide, which is by construction not reproducible from inside the working tree it would clone",
+      "the downstream evidence that remote friction WAS found and fixed is in the changelog rather than in the atom: the install one-liner's own entry records three measured changes to it, including that its comment 'no longer says the installer verifies its own downloads' — true of the binaries it fetches, false of the bootstrap script piped into a shell, 'which is the line it appeared to defend'",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not drivable: a clean machine is the precondition, and this host is the opposite of one.",
+    "notes": "🔑 UNVERIFIABLE IS THE HONEST VERDICT HERE AND IT IS THE FIRST IN A WHILE. The clause is a good one precisely because it cannot be faked from a warm tree — casing, submodule-freeness and raw-content links all behave differently on a first clone. Recording it as unverifiable rather than inferring it from the changelog keeps the distinction the audit exists for: the changelog is a claim about the walkthrough, not the walkthrough."
+  },
+  "PUBL-8": {
+    "verdict": "unverifiable",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "the clause needs a clone deliberately one commit behind the published remote, then an apply that pulls, rebuilds and re-execs — a mutation of a real installation against a live remote",
+      "the mechanism it exercises IS observable and was audited in DESKTOP-CAPABILITIES this campaign: `self_update.detect_install_kind()` and the apply path, including the defect where a packaged desktop install classified itself as a pip install and would have run an installer against its own frozen interpreter",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not drivable without performing a real self-update, which would rewrite a working tree against the published remote.",
+    "notes": "Unverifiable for the same reason as PUBL-7 and stated the same way. What this audit CAN say is that the machinery the clause drives has been separately examined and one real defect in it was found and fixed — which is evidence about the code, not about the end-to-end run."
+  },
+  "PUBL-9": {
+    "verdict": "unverifiable",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "the clause is a git-source install from the published apps URL, which writes an installed app into a home; the validation home has no apps installed and adding one would mutate it",
+      "the published target exists and is reachable — `PersonalClaw/PersonalClawApps` is public with the homepage set — so the precondition the atom cared about ('previously validated only with local paths') is in place",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not driven: installing from a git source is a write into the validation home, and the audit's rule is to leave it as found.",
+    "notes": "Unverifiable rather than partial: there is no half of this clause that a read can settle. The install either happened against the published URL or it did not, and only performing it would tell."
+  },
+  "PUBL-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree",
+    "evidence": [
+      "STATUS `blocked` IS CORRECT and the blocker is a genuine cross-plan gate: the public announcement waits on DISCOVERABILITY-LAUNCH's marketing site, real screenshots and a working install one-liner",
+      "🔑 TWO OF THE THREE GATE CONDITIONS ARE ALREADY OBSERVABLE AS MET, which is worth recording because it narrows what the block actually is: real screenshots ship (31 references, all resolving, per `PUBL-4`) and the install one-liner exists with a verify path and a downgrade floor pinned to the changelog. The outstanding condition is the marketing site being live",
+      "the site's repository exists and is public in the org (`personalclaw.dev`), so the remaining work has a home rather than being unscoped",
+      "live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve"
+    ],
+    "ui_validated": "Not applicable: the deliverable is an announcement.",
+    "notes": "Partial rather than blocked-and-unverifiable, because the gate is decomposable and two thirds of it observes as satisfied. A `blocked` atom whose blocker is a checklist is worth auditing item by item — otherwise 'blocked' hides how close it is."
   }
 }

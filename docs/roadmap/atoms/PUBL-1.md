@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- 🔑 READ FROM THE LIVE ORG RATHER THAN FROM A LOG: `orgs/PersonalClaw/repos` holds `PersonalClaw`, `PersonalClawApps` and `personalclaw.dev`, all public — the three the atom names — plus `.github`, four community-registry app repos and a push relay
+- 🔑 THE DELETION HALF CHECKED SPECIFICALLY RATHER THAN BY COUNT: no repository under the old personal account carries a PersonalClaw name. The account still has thirty repositories, which is why the check had to be for the NAMES and not for emptiness
+- the domain resolves as the homepage on both repos (below), which is the observable half of 'domain registered'
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not a product surface: this atom is org and registry state, and it was read from the APIs that own it.
+
+**Notes:** 🪤 A TRAP I NEARLY WALKED INTO, AND IT IS THE FAMILY OF ERROR THIS CYCLE-SET KEEPS PRODUCING: the old account's repo count is thirty, which reads as 'the old repos were not deleted' until you notice the clause is about the PersonalClaw repos, not the account. A personal account having thirty unrelated repositories is not evidence of anything.
 
 ## Recorded history
 

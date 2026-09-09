@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- 🔑 BOTH REPOSITORIES REPORT `visibility: public` FROM THE API — the single most externally checkable claim in the plan, and it observes as stated
+- the green-main precondition is the CI-RELEASE-ENGINEERING gate, and the release history below is downstream evidence that it held: the v0.1.2 and v0.1.3 release runs both concluded success end to end
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not a product surface.
+
+**Notes:** ARCC was queried for pre-publication review guidance on flipping a private repository public, since that is a deliberate exposure change. It returned container-registry exposure material and nothing about secret review before open-sourcing a source repo, so this is recorded as checked-and-thin. The transferable concern — that a public repository is open to anyone — is the one `SECURITY-LEGIBILITY` and the credential-file guards elsewhere in this audit already address.
 
 ## Recorded history
 

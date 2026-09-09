@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `unverifiable`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- the clause is a fresh clone on a CLEAN MACHINE run verbatim through the getting-started guide, which is by construction not reproducible from inside the working tree it would clone
+- the downstream evidence that remote friction WAS found and fixed is in the changelog rather than in the atom: the install one-liner's own entry records three measured changes to it, including that its comment 'no longer says the installer verifies its own downloads' — true of the binaries it fetches, false of the bootstrap script piped into a shell, 'which is the line it appeared to defend'
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not drivable: a clean machine is the precondition, and this host is the opposite of one.
+
+**Notes:** 🔑 UNVERIFIABLE IS THE HONEST VERDICT HERE AND IT IS THE FIRST IN A WHILE. The clause is a good one precisely because it cannot be faked from a warm tree — casing, submodule-freeness and raw-content links all behave differently on a first clone. Recording it as unverifiable rather than inferring it from the changelog keeps the distinction the audit exists for: the changelog is a claim about the walkthrough, not the walkthrough.
 
 ## Recorded history
 

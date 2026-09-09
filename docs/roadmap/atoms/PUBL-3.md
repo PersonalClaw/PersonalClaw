@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- `CHANGELOG.md` is real, large and in Keep-a-Changelog form — dated version headings (`## [0.1.2] — 2026-07-26`) with `### Added` / `### Fixed` sections beneath them
+- 🔑 THE FILE IS LOAD-BEARING RATHER THAN CEREMONIAL, and two independent consumers prove it: the Updates panel reads it over `GET /api/changelog`, and `test_version_consistency.py::test_changelog_latest_matches_pyproject` pins the newest heading to the shipped version, so the file cannot silently fall behind a release
+- 🔑 A THIRD CONSUMER FOUND WHILE READING IT, and it is the sharpest use of a changelog I have seen: the install one-liner's downgrade floor is pinned to `CHANGELOG.md`'s SECOND-NEWEST heading, 'so it cannot rot into an unchecked hand-typed version'. The floor lags one release deliberately, because a floor equal to the current version is unsatisfiable in the window before that version reaches PyPI's mirrors
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not driven: the Updates panel needs the endpoint plus a rendered surface, and the file-reading half is what the atom claims.
+
+**Notes:** The entries themselves are the strongest evidence for the wider campaign's method — several read as measured incident reports (a seven-hour timezone error, a cross-instance leak reproduced across two homes) rather than as release marketing.
 
 ## Recorded history
 

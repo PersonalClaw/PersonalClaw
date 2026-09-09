@@ -28,9 +28,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 56 (PUBL) — almost every clause re-read from the live GitHub and PyPI APIs rather than from the tree
+
+**Code evidence:**
+
+- 🔑 I SWEPT EVERY SCREENSHOT REFERENCE RATHER THAN SPOT-CHECKING: 31 references across `README.md` and `SHOWCASE.md`, and all 31 resolve to files on disk. Both `docs/screenshots/light/` and `docs/screenshots/dark/` carry the same numbered set
+- `SHOWCASE.md` and `docs/screenshots/CAPTURE.md` both ship, and the placeholder the atom supersedes is gone
+- 🔑 CAPTURE IS REPRODUCIBLE BY A SCRIPT, NOT BY A RECIPE: `docs/screenshots/capture.mjs` sits beside the document. A prose capture procedure drifts from the product on the first redesign; an executable one is re-runnable, which is what makes the light/dark pairs consistent
+- live API: both repos public with homepage set; org holds the 3 named repos; tags v0.1.0-v0.1.3 with 4 GitHub Releases (2 assets each); PyPI core 0.1.0-0.1.3; 31 of 31 screenshot references resolve
+
+**Driven in the UI:** Not driven: the deliverables are committed images and two documents. The reference sweep is the check that matters, since a broken image path is the failure a reader actually meets.
+
+**Notes:** 🪤 MY OWN ERROR, AND THE FIFTH IN THIS FAMILY THIS CYCLE-SET — this time a SYNTAX assumption rather than a path one. I looked for markdown image syntax and for a path pattern, found neither in the README, and briefly had the references as missing. They are HTML `<img src=...>` tags, which is the form you need for width control. Withdrawn, then replaced with the sweep above.
 
 ## Recorded history
 

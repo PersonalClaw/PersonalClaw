@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 311 | `done_when` checked against the code and it holds |
-| `partial` | 197 | some `done_when` clauses hold, others do not |
+| `confirmed` | 316 | `done_when` checked against the code and it holds |
+| `partial` | 199 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
-| `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 168 | not yet checked |
+| `unverifiable` | 5 | cannot be settled here (needs hardware, a paid key, an owner action) |
+| `unaudited` | 158 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -803,16 +803,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PUBL-1`](PUBL-1.md) | `done` | `unaudited` | Create PersonalClaw org, fresh brand-cased repos, and reserve names |
-| [`PUBL-2`](PUBL-2.md) | `done` | `unaudited` | Reconcile release URL, README clone links, homepage, and repo descriptions/topics |
-| [`PUBL-3`](PUBL-3.md) | `done` | `unaudited` | Create CHANGELOG.md (Keep-a-Changelog) read by the in-app Updates panel |
-| [`PUBL-4`](PUBL-4.md) | `done` | `unaudited` | Ship real dashboard screenshots plus SHOWCASE and reproducible CAPTURE doc |
-| [`PUBL-5`](PUBL-5.md) | `done` | `unaudited` | Verify main green and flip both repos to public visibility |
-| [`PUBL-6`](PUBL-6.md) | `done` | `unaudited` | Tag v0.1.0 and cut releases to PyPI, GHCR, and GitHub Releases |
-| [`PUBL-7`](PUBL-7.md) | `done` | `unaudited` | Fresh-clone getting-started walkthrough on a clean machine and fix remote friction |
-| [`PUBL-8`](PUBL-8.md) | `done` | `unaudited` | Verify the self-update pipeline end-to-end against the real remote |
-| [`PUBL-9`](PUBL-9.md) | `done` | `unaudited` | Verify Store git-source install from the published apps repo URL |
-| [`PUBL-10`](PUBL-10.md) | `blocked` | `unaudited` | Publicize once the DISCOVERABILITY-LAUNCH gate is green |
+| [`PUBL-1`](PUBL-1.md) | `done` | `confirmed` | Create PersonalClaw org, fresh brand-cased repos, and reserve names |
+| [`PUBL-2`](PUBL-2.md) | `done` | `confirmed` | Reconcile release URL, README clone links, homepage, and repo descriptions/topics |
+| [`PUBL-3`](PUBL-3.md) | `done` | `confirmed` | Create CHANGELOG.md (Keep-a-Changelog) read by the in-app Updates panel |
+| [`PUBL-4`](PUBL-4.md) | `done` | `confirmed` | Ship real dashboard screenshots plus SHOWCASE and reproducible CAPTURE doc |
+| [`PUBL-5`](PUBL-5.md) | `done` | `confirmed` | Verify main green and flip both repos to public visibility |
+| [`PUBL-6`](PUBL-6.md) | `done` | `partial` | Tag v0.1.0 and cut releases to PyPI, GHCR, and GitHub Releases |
+| [`PUBL-7`](PUBL-7.md) | `done` | `unverifiable` | Fresh-clone getting-started walkthrough on a clean machine and fix remote friction |
+| [`PUBL-8`](PUBL-8.md) | `done` | `unverifiable` | Verify the self-update pipeline end-to-end against the real remote |
+| [`PUBL-9`](PUBL-9.md) | `done` | `unverifiable` | Verify Store git-source install from the published apps repo URL |
+| [`PUBL-10`](PUBL-10.md) | `blocked` | `partial` | Publicize once the DISCOVERABILITY-LAUNCH gate is green |
 
 ### `RUA` — REMOTE-USER-AUTH (4/4 done)
 
