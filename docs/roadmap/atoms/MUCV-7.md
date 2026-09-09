@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED — the DISCOVERY the clause records is verifiable and still true: web/fetch.py:345 names use_case='reasoning' explicitly, so the axis has a real consumer rather than being an orphan, and llm_helpers.py:376 keeps it as the collapse target for unrecognized labels
+- fetch.py:364's recovery hint even names the fallback relationship to the user — 'Ensure a chat/reasoning model is configured in Settings → Models' — so an unbound axis produces an actionable error rather than a resolution failure
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Driven in the UI:** Not driven: showing code_tools and reasoning resolving distinct models in one audit needs two bound models.
+
+**Notes:** A verification atom whose deliverable is a DISCOVERY rather than code is the easiest kind to fake, since nothing would fail if the check had never run. Re-checking it was cheap and it holds: the axis is consumed by name at a real call site, which is what 'no orphaned reasoning consumer' means.
 
 ## Recorded history
 

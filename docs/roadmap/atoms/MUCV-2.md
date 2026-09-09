@@ -31,9 +31,19 @@ PUT with N ordered refs on any use case (e.g. reasoning) persists verbatim, GET 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED: MULTI_ACTIVE_USE_CASES is narrowed exactly as the clause requires, and the RETIRED meaning is written down rather than deleted (use_cases.py:96-102): 'Historically this set also gated ">1 entry allowed" on the PUT — that meaning is retired: EVERY use case now stores an ordered fallback CHAIN … the constant's only remaining meaning is dropdown-pool membership'
+- the chain-capable PUT and its round-trip are covered by the 40 passing chain tests
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Notes:** Recording the retired meaning beside the current one is the detail worth keeping: a reader who finds this constant while debugging a multi-entry PUT would otherwise re-derive the old gate and 'fix' the route back to single-entry.
 
 ## Recorded history
 

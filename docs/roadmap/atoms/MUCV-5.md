@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED, worker half: the loop-worker keying is off the app attribute rather than the key prefix, as the clause requires — gateway.py:2413-2414 reads _app and sets _is_loop = _app == 'loop', with the comment noting workers are 'app="loop", keyed loop-<id>' so both the main and parallel task-worker keys are covered
+- 🔑 THE JUDGE HALF WAS DELIBERATELY SUPERSEDED BY A LATER ATOM (WF2LOO-17), not broken. loop/judge.py:44-62 introduces judge_use_case() reading loops.judge_use_case (default 'reasoning'), and the vocabulary comment now states the split explicitly: loops is WORKER sessions, 'NOT the judges/gates that grade them'
+- loop/gates.py:127-138 consumes judge_use_case() rather than a hardcoded axis, so the supersession is complete at both sites the clause named
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Notes:** 🔑 THE REASONING FOR THE SUPERSESSION IS BETTER THAN THE CLAUSE IT REPLACED, and it is about ERROR CORRELATION rather than configurability: an independent model binding is what makes the judge 'a genuinely THIRD-PARTY check: independent session, independent prompt, and now an independent model binding, SO A REVIEWER MISTAKE IS NOT CORRELATED WITH THE MISTAKE IT IS REVIEWING'. The degrade direction is chosen on the same axis — an unreadable config falls back to reasoning, not to loops, because 'an unreadable config must not silently hand judgment back to the WORKER'S binding'. That is a fail-direction discriminator about correlated failure, which is a new variant in this campaign. Verdict confirmed on the clause's worker half plus the supersession; the atom's judge sentence is now history rather than current state.
 
 ## Recorded history
 

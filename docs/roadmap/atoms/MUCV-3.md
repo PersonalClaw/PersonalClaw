@@ -31,9 +31,22 @@ one_shot_completion collapses 'background'/'ingestion' to the background axis (e
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED: real consumers pass use_case='background' on the paths the clause names — inbox_service.py:399/:443/:485 (classify/draft/digest) and nl_to_cron.py:62 — so binding a cheap model to background genuinely moves that work off flagship chat
+- provider_bridge.py:392 names 'background' as the axis the lite factory resolves, so the _bg/personalclaw-lite path and the one_shot collapse agree on one axis rather than each choosing
+- the collapse rule is documented where it happens (llm_helpers.py:376, :441): 'unrecognized collapses to reasoning (→ chat fallback either way)', and chat/code_tools 'are never' collapsed
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Driven in the UI:** Not driven: observing titles/tags/digests move to a cheap model needs two bound models. The axis is confirmed at every call site the clause enumerates.
+
+**Notes:** The collapse's parenthetical is the honest part: an unrecognized label lands on reasoning, which itself falls back to chat, so a typo'd axis degrades to today's behaviour rather than to nothing.
 
 ## Recorded history
 

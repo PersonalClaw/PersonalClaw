@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED, llm_helpers.py:540-560: a multi-entry chain advances on CircuitOpenError/provider failure once per remaining entry, bounded by chain length, and 'a one-entry/empty chain takes the plain resolution path below — today's exact behavior'
+- 🔑 THE NON-ADVANCING CASE IS DISCRIMINATED WITH ITS REASON: 'An OutputContractError does NOT advance (THE MODEL RESPONDED; the contract miss is not a provider outage).' Advancing there would walk an entire chain trying models for what is a prompt problem
+- 🔑 A SECOND RULE AT THE SAME SEAM, on the same error-correlation logic as MUCV-5's judge axis (:530-538): an explicit model pin skips the chain ENTIRELY, because for a cross-model judge 'walking the use-case fallback chain would defeat the pin — a fallback entry could be the very family the isolation control excluded'
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Driven in the UI:** Not driven: chain advance needs two bound providers and an induced failure.
+
+**Notes:** The two rules together are the atom's real content: advance on an outage, never on a contract miss, and never at all when a pin exists for isolation. Each is a different answer to 'should we try another model', and each is justified by what the failure MEANS rather than by what is convenient.
 
 ## Recorded history
 

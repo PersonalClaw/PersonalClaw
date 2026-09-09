@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 249 | `done_when` checked against the code and it holds |
+| `confirmed` | 257 | `done_when` checked against the code and it holds |
 | `partial` | 163 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 267 | not yet checked |
+| `unaudited` | 259 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -607,14 +607,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MUCV-1`](MUCV-1.md) | `done` | `unaudited` | Vocabulary growth + tolerant chain reads + resolution_chain resolver + breaker-aware seam walk |
-| [`MUCV-2`](MUCV-2.md) | `done` | `unaudited` | Chain-capable PUT /api/models/active/{use_case} + MULTI_ACTIVE_USE_CASES narrowing |
-| [`MUCV-3`](MUCV-3.md) | `done` | `unaudited` | background axis live: one_shot collapse retarget + _bg/personalclaw-lite factory |
-| [`MUCV-4`](MUCV-4.md) | `done` | `unaudited` | orchestration axis + native inner-model axis threading (E1 fix) |
-| [`MUCV-5`](MUCV-5.md) | `done` | `unaudited` | loops axis live: worker sessions + gates/judges off reasoning |
-| [`MUCV-6`](MUCV-6.md) | `done` | `unaudited` | Call-failure chain-advance for non-interactive axes |
-| [`MUCV-7`](MUCV-7.md) | `done` | `unaudited` | code_tools + reasoning end-to-end verification (+ any drift fixes) |
-| [`MUCV-8`](MUCV-8.md) | `done` | `unaudited` | Settings chain editor + per-entry health dots + composer precedence explainer |
+| [`MUCV-1`](MUCV-1.md) | `done` | `confirmed` | Vocabulary growth + tolerant chain reads + resolution_chain resolver + breaker-aware seam walk |
+| [`MUCV-2`](MUCV-2.md) | `done` | `confirmed` | Chain-capable PUT /api/models/active/{use_case} + MULTI_ACTIVE_USE_CASES narrowing |
+| [`MUCV-3`](MUCV-3.md) | `done` | `confirmed` | background axis live: one_shot collapse retarget + _bg/personalclaw-lite factory |
+| [`MUCV-4`](MUCV-4.md) | `done` | `confirmed` | orchestration axis + native inner-model axis threading (E1 fix) |
+| [`MUCV-5`](MUCV-5.md) | `done` | `confirmed` | loops axis live: worker sessions + gates/judges off reasoning |
+| [`MUCV-6`](MUCV-6.md) | `done` | `confirmed` | Call-failure chain-advance for non-interactive axes |
+| [`MUCV-7`](MUCV-7.md) | `done` | `confirmed` | code_tools + reasoning end-to-end verification (+ any drift fixes) |
+| [`MUCV-8`](MUCV-8.md) | `done` | `confirmed` | Settings chain editor + per-entry health dots + composer precedence explainer |
 
 ### `OO` — OSS-OPERATIONS (7/7 done)
 

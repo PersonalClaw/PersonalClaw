@@ -31,9 +31,20 @@ model-less subagent spawns and orchestrated-chat parent turns resolve use_case='
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED: subagent.py:1934-1937 sets model_axis='orchestration' for a model-less spawn, with the comment naming that an explicit spawn model still wins
+- 🔑 THE ATOM NAMES THE DEFECT IT REPAIRED, and it is this campaign's recurring class (provider_bridge.py:390-396): model_axis threads the governing axis into the native runtime 'so a sub-category binding governs native agents too (PREVIOUSLY THE INNER MODEL HARDCODED "chat", MAKING E.G. A code_tools BINDING COSMETIC)'
+- the same docstring enumerates which axis each caller supplies — background for the lite factory, loops for loop workers, orchestration for model-less spawns, else the session's own use case — so the threading is a table rather than scattered conditionals
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Notes:** A user-settable binding that changed nothing is exactly the inert-control shape this audit keeps finding; here the plan found and fixed its own instance, and recorded the word 'cosmetic' for it. Worth carrying: the fix is threading a parameter, but the DEFECT was that the inner runtime had no way to learn the axis at all.
 
 ## Recorded history
 

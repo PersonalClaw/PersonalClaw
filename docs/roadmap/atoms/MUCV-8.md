@@ -32,9 +32,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- 🔑 DRIVEN: Settings → Models shows a 'Chat routing' group with ALL FIVE sub-category rows, each carrying the fallback empty-state the clause names — 'uses your Chat chain' — so an unbound row reads as INHERITING rather than as unconfigured
+- 🔑 DRIVEN, expanding a row: it states the axis's purpose in product language ('One-shot judgment calls — web-page extraction and other guarded single completions', matching the vocabulary comment), the chain's ordering semantics where the user edits them ('Fallback chain — first is the default, later entries take over on failure'), and an honest optional-ness line: 'Already uses your Chat chain by default — no dedicated Reasoning model is required. Add a backend with a chat-capable model to override.'
+- 🔑 THE HEALTH DOT REFUSES TO GUESS (ModelsPanel.tsx:425-435): 'No health row (provider never called) renders nothing — ABSENCE OF DATA MUST NOT READ AS "HEALTHY"'. A green dot on an unprobed provider would tell the user a fallback works when nobody knows
+- the open-state tooltip explains the CONSEQUENCE rather than the state — 'chain entries on this provider are skipped until it recovers' — which is exactly MUCV-1's breaker-aware walk surfaced to the user
+- role="img" plus a label because 'the dot is the ONLY carrier of the breaker state … on a role-less span aria-label is a PROHIBITED attribute — the name is discarded', the same precedent this codebase cites for its other icon-only state carriers
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Driven in the UI:** Drove the group, all five rows and one expanded row. The chain editor's reorder/remove/append and the dots themselves need bound models plus a called provider, so those are confirmed in code rather than driven.
+
+**Notes:** The optional-ness line is the best copy in the plan: it converts an empty row from 'you have work to do' into 'this inherits, and here is how to override it'. Combined with the row label, a user cannot mistake an unbound sub-category for a misconfiguration — which matters because there are now five of them and four are usually meant to stay empty.
 
 ## Recorded history
 

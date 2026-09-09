@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 44 (MUCV) — Chat-routing rows driven; a later atom's supersession recorded
+
+**Code evidence:**
+
+- MEASURED: all five sub-categories are in the vocabulary (code_tools, reasoning, background, orchestration, loops) and each carries a one-line description of WHICH runtime path rides it — so the axis names are not guessable-only
+- 🔑 resolution_chain's override semantics are stated and correct (use_cases.py:299-314): the session override 'sits ONE LEVEL ABOVE the chain … it is a single ref — NEVER itself a chain', dedupes with the override keeping the front position, and an unbound sub-category composes over the parent chat chain
+- the breaker-aware walk is real and audited: provider_bridge.py:856 logs model.chain_skip with reason 'breaker_open' and :893 with 'unbuildable', so a silently-skipped entry leaves a trace
+- 🔑 split_ref splits on the FIRST colon only 'so model ids that contain colons (e.g. gpt-oss:20b) survive intact' — the kind of parsing detail that silently corrupts an Ollama ref otherwise
+- test_use_case_chains + test_can_resolve_use_case 40/40
+
+**Notes:** Two grains (capability vs chat sub-category) with a stated rule — sub-categories 'are never their own capability — they borrow chat's pool' — is what keeps the picker and the resolver from disagreeing. Diarization is called out as the deliberate exception: its own parent capability with NO fallback, because an unbound diarization model should mean the feature is off rather than silently served by a chat model.
 
 ## Recorded history
 
