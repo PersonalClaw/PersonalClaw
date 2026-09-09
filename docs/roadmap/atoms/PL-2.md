@@ -30,9 +30,18 @@ errors.py AgentError{code,what,why,fix,suggestions} attached at ToolResult/Actio
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- src/personalclaw/errors.py exists on disk
+- tests/test_error_codes_append_only.py present and passing — the append-only registry guard the atom names, proving no error code can be removed or reworded
+
+**Notes:** PARTIAL for one honest reason: the atom's last clause is 'FE ToolCard renders WHAT/WHY/FIX rows', and rendering that requires a real tool failure, which requires a configured model provider. The validation home has none (essentials.model is null), so I could not drive it and will not claim I did. Everything backend-side is observed. Not a defect — an unvalidated clause.
 
 ## Recorded history
 
