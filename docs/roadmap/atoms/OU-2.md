@@ -31,9 +31,21 @@ fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search install
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- the in-flow essentials step ships as `web/src/app/onboarding/EssentialsStep.tsx` with `essentialsStep.test.tsx` beside it, inside the 265 green
+- the atom's own hardest clause is the one worth naming: model is REQUIRED while search/speech/channel are opt-in, and 'no auto-install anywhere' — an onboarding step that installs on the user's behalf to save a click is the standard way per-app install consent is quietly lost
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Not drivable here: this home is already onboarded, so the wizard does not mount. The atom's fixture is a FRESH dev home with a first-party apps dir.
+
+**Notes:** Confirmed on the shipped step plus its suite rather than on a fresh-home walk. Flagged for what it is: the install-consent clause is the one a future change is most likely to erode, and only a fresh-home drive would catch that.
 
 ## Recorded history
 

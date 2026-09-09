@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- the seam carries the brief as additive meta and both sides are real: `approval_brief.py` derives it, `channel_delivery.py` documents `blastRadius` + `blastRadiusLine` on the `request_approval` payload, 71/71 on the brief + onboarding-state suites
+- 🔑 THE APPS-REPO RENDERER IS GENUINELY UPDATED AND ITS TESTS PROVE THE HARDER HALF: `test_approved_notification_names_the_blast_radius` plus a case pinning that 'the blast-radius line also rides the notification FALLBACK'. A field that appears in the rich message and vanishes from the fallback is how a channel user sees a different brief than the dashboard did
+- 🔴 THE SAME HONESTY CONTRACT IS IMPLEMENTED ON BOTH SIDES rather than trusted to the client: `derive_blast_radius` returns `None` when NOTHING was established, matching the frontend's `undefined`. One rule, two languages
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Not applicable to a browser: a channel-delivery payload. Its consumer is the apps-repo Slack renderer, verified through that repo's tests.
+
+**Notes:** The atom keeps the dashboard as the rich surface deliberately, so the channel renderer shows 'what it can today' rather than growing a second brief. That is the right split for a surface with no room for four zones.
 
 ## Recorded history
 

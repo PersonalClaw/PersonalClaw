@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- the module ships and is the best-documented file this audit has read: `approvalMeta.ts` maps tool name + risk to four independent facets, unit-tested against representative tools, with the matching backend derivation in `approval_brief.py` so the chat card, the toast, the companion queue and the channel payload share ONE vocabulary
+- 🔑 IT DECIDES NOTHING AND SAYS SO: 'This module DESCRIBES what a pending tool call can touch… It DECIDES nothing. Nothing gates on its result, and nothing may' — the approval gate, trust-reads and the task-mode gate are unchanged. C2's 'no security-logic change' honoured rather than asserted
+- 🔴 ABSENT IS NOT FALSE, FOR THE FOURTH CONSECUTIVE PLAN: `undefined` is returned when NO facet is established, because 'an all-false object would render as four negatives … a confident claim from zero evidence'. And `readOnly` is claimed only on positive evidence, never beside an established write — 'under-claiming safety is the correct direction to err'
+- 🔑 THE E4 TEMPTATION AROSE AND WAS DECLINED WITH THE REASON RECORDED: the module 'never inspects a command string, because deciding whether a command is read-only IS security logic and it already has an owner'. The atom's `done_when` explicitly demanded that escalation instead of a client-side reimplementation, and it held
+- 🪤 BUT C2'S THIRD INPUT HAS NO SUPPLIER, so one branch is unreachable in production: `is_read_only_bash()` runs per approval and is stored as `perm_meta["is_read_only"]`, and nothing reads it — not the `approval` WS payload, not `PendingApproval`, no frontend call site. Verified in both trees. Filed as #2821
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Not drivable: an approval prompt needs a real tool call from a bound model. The shared chrome (`ui/ApprovalPrompt`) was read rather than driven.
+
+**Notes:** Partial on the third input only. The consequence is concrete rather than theoretical: without the classification a read-only shell call and a mutating one are described identically at the moment of approval, which is the distinction a user most wants there. The module's own doc discloses the gap and assigns it to OU-8/OU-9; neither wired it, and neither one's `done_when` required it — unfinished scope, not a false status.
 
 ## Recorded history
 

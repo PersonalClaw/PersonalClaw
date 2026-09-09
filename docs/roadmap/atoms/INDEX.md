@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 345 | `done_when` checked against the code and it holds |
-| `partial` | 221 | some `done_when` clauses hold, others do not |
+| `confirmed` | 353 | `done_when` checked against the code and it holds |
+| `partial` | 223 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 104 | not yet checked |
+| `unaudited` | 94 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -633,16 +633,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
 | [`OU-1`](OU-1.md) | `done` | `confirmed` | Extend onboarding state backend (step/provider/first_success fields + POST write path) |
-| [`OU-2`](OU-2.md) | `done` | `unaudited` | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) |
-| [`OU-3`](OU-3.md) | `done` | `unaudited` | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) |
-| [`OU-4`](OU-4.md) | `done` | `unaudited` | Onboarding done screen + resume + per-step skip + CLI setup pointer |
-| [`OU-5`](OU-5.md) | `done` | `unaudited` | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test |
-| [`OU-6`](OU-6.md) | `done` | `unaudited` | EmptyState primitive + rollout to the 7 listed pages |
-| [`OU-7`](OU-7.md) | `done` | `unaudited` | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption |
-| [`OU-8`](OU-8.md) | `done` | `unaudited` | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant |
-| [`OU-9`](OU-9.md) | `done` | `unaudited` | Structured approval brief over the ChannelDelivery.request_approval seam |
-| [`OU-10`](OU-10.md) | `done` | `unaudited` | Replayable product tour component + Discover 'Replay the tour' card |
-| [`OU-11`](OU-11.md) | `todo` | `unaudited` | Stranger-validation facilitator kit + 3 think-aloud sessions |
+| [`OU-2`](OU-2.md) | `done` | `confirmed` | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) |
+| [`OU-3`](OU-3.md) | `done` | `confirmed` | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) |
+| [`OU-4`](OU-4.md) | `done` | `confirmed` | Onboarding done screen + resume + per-step skip + CLI setup pointer |
+| [`OU-5`](OU-5.md) | `done` | `confirmed` | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test |
+| [`OU-6`](OU-6.md) | `done` | `confirmed` | EmptyState primitive + rollout to the 7 listed pages |
+| [`OU-7`](OU-7.md) | `done` | `partial` | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption |
+| [`OU-8`](OU-8.md) | `done` | `confirmed` | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant |
+| [`OU-9`](OU-9.md) | `done` | `confirmed` | Structured approval brief over the ChannelDelivery.request_approval seam |
+| [`OU-10`](OU-10.md) | `done` | `confirmed` | Replayable product tour component + Discover 'Replay the tour' card |
+| [`OU-11`](OU-11.md) | `todo` | `partial` | Stranger-validation facilitator kit + 3 think-aloud sessions |
 
 ### `PA` — PROACTIVE-ASSISTANT (6/6 done)
 

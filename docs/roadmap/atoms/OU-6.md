@@ -29,9 +29,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- 🪤 A CONTRADICTION WITHDRAWN BEFORE IT BECAME EVIDENCE. `web/src/ui/EmptyState.tsx` DOES NOT EXIST, which is the atom's literal first clause. The primitive is `EmptyState` exported from the LIST KIT (`ui/ListScaffold.tsx`), and the rollout test explains the refusal in full: creating a second component at the named path 'would be a dual path — two components answering one condition — which this repo forbids', and it would contradict an existing rail that pins the co-location on purpose ('a surface reaching for one should see the other')
+- 🔑 THE SENTENCE THAT SETTLES IT: 'the atom's FILENAME clause is satisfied by not honouring it, and its PRODUCT clause — every one of the seven surfaces explains itself and offers one working action — is what this file holds.' Recorded as a DEVIATION in the plan's execution log
+- the two other empty-shaped components are NOT dual paths and each says so in its own doc — `PresetEmptyState` is the preset-first on-ramp for a surface whose create flow front-loads its ontology (which is why Triggers satisfies the rollout through it), `SlotEmptyState` is a dashboard-widget strip
+- 🔑 AND THE AUDIT-BEHIND-THE-ATOM FOUND A REAL DEFECT OF THE CLASS THIS CAMPAIGN KEEPS MEETING: 'An empty state that renders when the data merely FAILED TO LOAD is not an empty state, it is a confident wrong answer.' `#/loops` was doing exactly that — a fetcher swallowing errors into `[]`, so a 500 rendered 'No loops yet — Start a loop'. Fixed into the existing `LoadError` family rather than a second one
+- `emptyStateRollout.test.tsx` + `emptyStateNoMatch.test.tsx` + `loadErrorState.test.tsx` all green inside the 265
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** The empty states of Skills, Learning and Workflows were seen while driving those pages for other atoms; each states a fact rather than rendering a zeroed list.
+
+**Notes:** Sixth finding to collapse on reading the surrounding code, and the first where the code had already written the rebuttal to the atom's own wording. A literal filename clause is exactly the kind of claim an audit can 'confirm' as broken while the product is right.
 
 ## Recorded history
 

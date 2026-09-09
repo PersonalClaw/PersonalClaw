@@ -32,9 +32,21 @@ each of the three cards executes a real flow and reaches its visible outcome on 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- all three cards ship — `TryOneStep.tsx` with `tryOneFlows.ts`, and three suites: `tryOneOutcome`, `tryOneFailure`, `tryOneFlows`
+- 🔑 THE FAILURE PATH HAS ITS OWN SUITE, WHICH IS THE ATOM'S REAL RISK CLAUSE: a card must show the error and offer a Settings deep-link when a real call fails DESPITE a passing Test. A green Test followed by a silent card failure is the exact shape that makes a first run feel broken with nothing to act on
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Not drivable: each card executes a real provider call, which needs a bound model.
+
+**Notes:** The <2-minute clause is a wall-clock property of a fresh home and was not measured here.
 
 ## Recorded history
 

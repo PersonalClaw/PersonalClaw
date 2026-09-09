@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- 🔑 I DROVE THE WHOLE CLAUSE AND PROVED IT WITH A RELOAD. Expert rail → clicked 'Show fewer, hide 9 surfaces' → starter rail (8 entries + toggle) → deep-linked `#/workflows`, a HIDDEN surface, which RENDERED (heading present) → reloaded the page → `Workflows` is now IN the rail and the toggle reads 'Everything, show 8 more surfaces'. The count moved 9 → 8, so the pin is reflected in the control's own label, not just the list
+- 🔑 'HIDING IS NEVER GATING' IS THE MODULE'S OWN RULE AND IT IS THE INVERSE OF THIS CAMPAIGN'S USUAL FINDING: disclosure governs the RAIL ONLY, every route stays routable from a deep link, the palette, a Discover tip or an in-app link, 'and a visit to a hidden surface PINS it, so the rail grows with use instead of asking to be configured'. `navDisclosure.test.tsx` reds if any of that stops being true
+- 🔴 THE UPGRADE MARKER IS THE RECORD'S ABSENCE, AND IT FAILS **OPEN** ON PURPOSE — the opposite polarity to ET-8 and OU-7, for a stated reason: a stored record means 'onboarded under this version', no record means 'onboarded before it', so absence resolves to `expert`, 'which is also the safe direction to fail in: an unreadable or absent preference shows every surface rather than hiding surfaces someone has been using for months'
+- the starter set adds `dashboard` to the Design's four because it is the app's LANDING route and 'a rail that omits the page it opens on is a defect rather than a decision' — recorded as a deviation
+- the pin lives in `localStorage` beside the other nav prefs because nav shape is per-DEVICE and `identity.tsx` says so in as many words; 'it is also why auto-pin survives a reload: the pin is written the moment the surface renders, not on some later save' — which is exactly what my reload measured
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Fully driven on :10011: mode toggle both ways, a hidden-surface deep link rendering, and the auto-pin surviving a full page reload. The dev home was left in expert mode as found.
+
+**Notes:** 🏅 The best-observed atom of the cycle, because the decisive property is a persistence claim and a reload is the only thing that settles it. Absent-defaults appearing with the FAIL-OPEN direction chosen and justified is new for this campaign — same discipline as the fail-closed cases, opposite direction, because here the risk is hiding a working surface rather than over-claiming safety.
 
 ## Recorded history
 

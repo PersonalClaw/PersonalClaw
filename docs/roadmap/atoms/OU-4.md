@@ -33,9 +33,22 @@ skip at any step lands in a working dashboard; re-entering onboarding resumes at
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- the done screen, the resume path and the exit path all ship with suites — `doneScreen.test.tsx`, `onboardingExit.test.ts`, `exitTo.ts`, `stepProgressAnnounced`, `stepsReachableByKeyboard` — all green
+- 🔑 THE CLI POINTER ANSWERS THE SCOPE QUESTION EXPLICITLY RATHER THAN DRIFTING INTO PARITY: `cli_setup._print_dashboard_pointer` prints one line, and its docstring settles the standing question — 'should `setup` gain full parity?' is answered 'no, the dashboard owns it'. 51/51 on the pointer + import suites
+- one canonical onboarding surface with a pointer from the other is the choice that keeps two flows from disagreeing about what a first run is
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** The done screen's tour launch was driven indirectly through its Discover twin (see OU-10). The onboarding flow itself does not mount on an onboarded home.
+
+**Notes:** V1's four checks (full flow under 5 min, mid-flow reload, full-skip, existing-home upgrade shows NO onboarding) are fresh-home observations recorded in the execution log; the last of them is structurally true of this home, which shows no onboarding.
 
 ## Recorded history
 

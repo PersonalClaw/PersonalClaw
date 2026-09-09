@@ -31,9 +31,25 @@ ApprovalCard renders all four zones; useApprovalToasts gets the compact form; re
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 63 (OU) — the rail's auto-pin driven through a real deep link and proven by a RELOAD; a filename contradiction withdrawn before filing
+
+**Code evidence:**
+
+- all four zones render (`ApprovalCard.tsx`), the toast carries the same vocabulary, and `ApprovalCard.test.tsx` is green inside the 265
+- 🔑 ARCC'S REQUIREMENT LANDS HERE HARDER THAN ANYWHERE ELSE IN THIS CAMPAIGN, AND THE CODE ALREADY OBEYS IT. The guidance's whole subject is UNRESTRICTED user consent as the vulnerability — remediate by allowing consent only for SELECTED permissions, never blanket, and its named threat is 'inadvertent user actions: users may unknowingly grant access'. C2 specified a `tool_always` scope. IT WAS DELIBERATELY NOT SHIPPED, because nothing in this codebase remembers a decision per TOOL: `trust`/`trust_agent`/`yolo` are all 'every tool' at a widening blast radius, so 'labelling any of those "always allow this tool" would be a security-relevant lie about what a click did'. Widening it into `trust` 'was the alternative, and it is the worse of the two by a distance'
+- 🔑 EACH SCOPE'S PROMISE STRING IS HELD TO THE BACKEND ACTION IT POSTS: 'it is what the user is told will be remembered, so it must describe the backend action EXACTLY and claim nothing more', with the action cited per row — so 'This chat' promises 'Every tool in this chat runs without asking', not a per-tool grant it cannot deliver
+- 🔑 THE ANTI-NUDGE CONTRACT IS MECHANICAL, NOT ASPIRATIONAL: no zone says a call looks fine, nothing is recommended, no approve control is the visual primary, nothing is focused or pre-submitted on arrival, and the only preselected scope is the NARROWEST — which remembers nothing. 'A prompt that nudges is worse than no prompt: it trains the reflex it exists to interrupt.' The suite holds that line
+- the card chrome is shared with the phone companion's queue 'so the two surfaces that ask for permission cannot drift'
+- an inert control observed in passing and correctly refused: `config.hooks.auto_approve_tools` is the one per-tool matcher, but it is pinned into a `HookManager` at gateway construction with NO write path, so writing it 'would keep asking until a restart'
+- 265/265 across the onboarding + approval + empty-state frontend suites; 122/122 across the approval-brief and onboarding backend suites; the product tour, the disclosure toggle and a hidden-surface deep link driven on :10011 with a reload
+
+**Driven in the UI:** Not drivable: needs a live approval request from a bound model. The four zones, the scope table and the anti-nudge rules were read against their suite.
+
+**Notes:** 🏅 A specified control was DROPPED rather than faked, and the reason is exactly the guidance's: presenting a blanket grant under a scoped label is the defect, not the missing option. The README-screenshot half of the clause needs a driven risky/benign pair and was not produced here.
 
 ## Recorded history
 
