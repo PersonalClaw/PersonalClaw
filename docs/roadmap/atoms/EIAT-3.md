@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- MEASURED: smtp_client.py + outbound.py ship and their tests pass inside the 82; the provider declares supports_dry_run so it rides the platform's live-writes/dry-run posture rather than inventing a second switch
+- draft-by-default is the shipped default, and the clause records it as owner-gated (Owner task 4) — a default that ships OFF for a send-capable surface is the right direction and matches the fail-closed discriminator this campaign keeps meeting
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Driven in the UI:** Not driven: composing a reply and observing it NOT sent, then enabling sending and observing correct In-Reply-To threading, needs a live SMTP server plus a real received message to thread against.
+
+**Notes:** Partial for the drive only. The threading clause is the half worth flagging for a future validation pass: In-Reply-To correctness is exactly the kind of claim that unit tests can assert structurally while a real mail client still renders the reply as a new thread.
 
 ## Recorded history
 

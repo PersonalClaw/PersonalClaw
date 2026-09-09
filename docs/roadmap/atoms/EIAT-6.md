@@ -32,9 +32,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- MEASURED: item_kind is a real persisted field (inbox.py:201) with a CLOSED ItemKind set the docstring says is readable 'as a closed set at a glance', and :540 resolves it as `item_kind or kind` so a source that declares only one still lands correctly
+- the atom's own methodological demand is met by the suite that exists for it: test_inbox_item_kind_seam.py passes 18/18, and the clause explicitly rejects a dataclass unit test in favour of a poll → ingest → disk → API round trip
+- the consumer contract is stated where it matters (inbox.py:99): 'a consumer that reads item_kind == "user_note" knows the text is' — the kind is a promise about the CONTENT, not a display label
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Notes:** The clause is unusually strict about HOW it must be proven — 'proven by a round trip driven from the filesystem source's own inbox/incoming/ directory through poll → ingest → disk → API, not by a dataclass unit test' — and the test module named for the seam is what satisfies it. An atom that specifies its own evidence standard is rare and makes an audit cheap; every other atom in this plan required me to decide what would count.
 
 ## Recorded history
 

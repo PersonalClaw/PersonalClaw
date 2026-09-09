@@ -4699,5 +4699,86 @@
     ],
     "ui_validated": "Driven as a CLI rather than in a browser, which is the surface this atom IS.",
     "notes": "🪤 A FINDING COLLAPSED HERE TOO, and the process note is worth more than the finding. I first read the json run as exiting 0 with an empty result — an inconsistency with plain's exit 1 that would have been a real defect — because I piped combined output through tail and saw only the JSON tail while the diagnostic went to stderr. Capturing the exit code explicitly showed BOTH formats exit 1 with the same diagnostic. Withdrawn. Seventh collapsed finding of this campaign, and the first caused by my own output handling rather than by a misread of the code."
+  },
+  "EIAT-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "MEASURED: event_triggers.py is the source-agnostic engine the clause asks for — EVENT_SOURCES is a CLOSED set (memory/inbox/app) and every event carries its source",
+      "🔑 THE SCOPING GATE IS STRUCTURAL AND PLACED BEFORE EVERY PATTERN BRANCH (:302-305): `if trigger.source != source: return False`, with the comment naming why it lives there — 'This gate — NOT the pattern table — is what makes cross-source firing impossible even if a caller supplied a mismatched pattern/source pair.' Eighth independent arrival at this campaign's the-gate-not-the-data principle",
+      "🔑 THE EMIT SITE IS AFTER THE ALLOWLIST (inbox_service.py:283-297), which is exactly the clause's 'a rejected sender emits none' — the ordering IS the guarantee, not a filter inside the emitter",
+      "the payload carries a RAW value with structured meta (sender/sender_name/address/source_name) and the comment states the fencing contract from this side: fenced at fire time 'never here, so it is never double-fenced' — the mail app's addresses.py states the identical contract from the other side, so the two modules agree rather than each hoping",
+      "emit is wrapped best-effort so a trigger fault never blocks ingestion",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "notes": "🪤 A SEARCH ERROR OF MINE, worth recording because it nearly read as a missing deliverable: I looked for the engine under triggers/ and found no inbox event at all. It is top-level event_triggers.py. Nothing was wrong with the code; my census was scoped to the wrong package. Same shape as the ChatPage findOpen under-read, and the reason the protocol says to widen before concluding."
+  },
+  "EIAT-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "MEASURED: the app exists as a real bundle (PersonalClawApps/mail-inbox, 1743 lines of runtime across provider/imap/mime/outbound/addresses/settings/smtp) and its own suite passes 82/82",
+      "🔑 THE FAIL-CLOSED ALLOWLIST IS AN UPSTREAM REFUSAL, NOT A PER-MESSAGE FILTER (provider.py:326-329): an empty allow_senders returns before the password is resolved and before any connection — 'This is the structural guarantee (guardrail 1) — not a per-message filter, an upstream refusal.' Stronger than the requirement: no credential is used and no mailbox is touched",
+      "🔑 THE POSTURE IS LOGGED ONCE so 'a silent empty inbox' is explicable — the anti-inertness discipline applied to a DENY state, which is the case that otherwise looks identical to a broken poller",
+      "per-rejection SEL fires with the uid and sender (mail_sender_rejected at :203-211, and a separate bound-address rejection at :218-229)",
+      "the checkpoint is keyed `mailuid:<username>:<folder>` and returned through poll's dict; test_restart_neither_reprocesses_nor_skips and test_duplicate_message_id_is_dropped both pass",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "ui_validated": "Not driven: polling a real IMAP mailbox needs a mailbox and stored credentials. The app is not installed in the validation home.",
+    "notes": "🔑 ARCC's transferable objective for this plan is 'always use an allowlisting approach over a denylisting approach' plus validate length and type. The allowlist half is met in its strongest form (see above). The interesting divergence is on the OTHER guidance ARCC returned — Bedrock prompt-attack FILTERS. This codebase does not classify; it FENCES (EIAT-4). For a self-hosted instance with no managed-guardrail dependency that is the better control, because a filter is a classifier with a false-negative rate while a fence is structural containment whose correctness a test can assert exactly."
+  },
+  "EIAT-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "MEASURED: smtp_client.py + outbound.py ship and their tests pass inside the 82; the provider declares supports_dry_run so it rides the platform's live-writes/dry-run posture rather than inventing a second switch",
+      "draft-by-default is the shipped default, and the clause records it as owner-gated (Owner task 4) — a default that ships OFF for a send-capable surface is the right direction and matches the fail-closed discriminator this campaign keeps meeting",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "ui_validated": "Not driven: composing a reply and observing it NOT sent, then enabling sending and observing correct In-Reply-To threading, needs a live SMTP server plus a real received message to thread against.",
+    "notes": "Partial for the drive only. The threading clause is the half worth flagging for a future validation pass: In-Reply-To correctness is exactly the kind of claim that unit tests can assert structurally while a real mail client still renders the reply as a new thread."
+  },
+  "EIAT-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "🔑 THE FENCE IS APPLIED EXACTLY ONCE AND THE MODULE SAYS WHERE (addresses.py:12-16): 'Fenced exactly ONCE, here, at prompt time — mime.py deliberately extracts RAW so nothing is ever double-fenced, and core's own fire path is idempotent (it re-fences only text that is not already fenced)'. Three modules' contracts stated consistently in one place",
+      "🔑 THE SUBJECT IS INSIDE THE FENCE TOO, with the reason: 'subject included, because a subject line is as attacker-controlled as a body'. One span, not two — 'nesting spans' is named as the thing avoided",
+      "🔑 A PROMPTLESS ROW IS NOT A BINDING (:96-101), and this is the sharpest reasoning in the plan: 'A row with no stored prompt is not a binding — it is a half-filled form. Firing it would spawn an unattended turn whose only instruction is UNTRUSTED MAIL, which is precisely the composition the fence exists to prevent.' The fence's PURPOSE is enforced structurally, upstream of the fence itself",
+      "🔑 THE INJECTION TESTS PROVE CONTAINMENT, NOT JUST ESCAPING. test_in_body_fence_break_attempt_is_neutralised asserts four things: the body's close marker is escaped to entities, EXACTLY ONE real close marker exists, it sits at the very END, and the injected instructions survive VERBATIM but INSIDE the fence (index < rindex(CLOSE)). The fourth is the one most implementations omit — it proves the payload was contained as data rather than stripped, so the attack stays visible to the user instead of being silently swallowed",
+      "test_fence_break_via_the_subject_is_neutralised_too covers the same via the subject; per-address sender lists are fail-closed and 'narrow but never widen' (its own test)",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "notes": "Ten of the 82 app tests are about this atom alone. The prompt-bound address is the highest-risk composition in the whole plan — untrusted mail triggering an unattended agent turn — and it is the best-guarded thing audited in this campaign so far."
+  },
+  "EIAT-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "🔑 DRIVEN: #/triggers → New trigger → the 'Data event' tab exists and defaults to 'Any inbox message' with 'Source: Inbox' shown explicitly, described as 'Every accepted message from a watched inbox source (Slack, Telegram, email, …)'",
+      "🔑 THE UNMATCHED PATTERN SURFACES ITS OWN SCOPE: 'Fires on every accepted inbox message — no matcher to narrow it.' A user learns the breadth of the default before choosing it, rather than after",
+      "URL-backed state confirmed in code AND by driving: `pattern` and `kind` are useQueryParam-backed with replace, and the pattern falls back to InboxMessage when the param is not in EVENT_PATTERN_META",
+      "the web triggers suite passes 194/194 across 24 files, and tsc -b is clean",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "ui_validated": "Drove the page, the create flow, the type tabs and the inbox pattern. Not driven: the draft-by-default surfacing for a send-capable ACTION, which needs a send action selected.",
+    "notes": "🔴 A REAL DEFECT FOUND BY DRIVING, fixed this cycle in PR #2792. The primary 'New trigger' button navigated to `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D` — the handler was passed by reference, so React handed it the CLICK EVENT as the preset id and it was encoded into the query string. It type-checked because HeaderControl's onClick is `() => void` and a `(presetId?: string) => void` is assignable to it, so no type checker could catch it. Nothing downstream corrupted (the preset lookup is deliberately tolerant, and the forced kind is that path's own default) — what broke is precisely what THIS ATOM ships: URL-backed state that is deep-linkable and survives a reload. Re-driven after the fix: the hash is now `#/triggers/new`."
+  },
+  "EIAT-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)",
+    "evidence": [
+      "MEASURED: item_kind is a real persisted field (inbox.py:201) with a CLOSED ItemKind set the docstring says is readable 'as a closed set at a glance', and :540 resolves it as `item_kind or kind` so a source that declares only one still lands correctly",
+      "the atom's own methodological demand is met by the suite that exists for it: test_inbox_item_kind_seam.py passes 18/18, and the clause explicitly rejects a dataclass unit test in favour of a poll → ingest → disk → API round trip",
+      "the consumer contract is stated where it matters (inbox.py:99): 'a consumer that reads item_kind == \"user_note\" knows the text is' — the kind is a promise about the CONTENT, not a display label",
+      "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
+    ],
+    "notes": "The clause is unusually strict about HOW it must be proven — 'proven by a round trip driven from the filesystem source's own inbox/incoming/ directory through poll → ingest → disk → API, not by a dataclass unit test' — and the test module named for the seam is what satisfies it. An atom that specifies its own evidence standard is rare and makes an audit cheap; every other atom in this plan required me to decide what would count."
   }
 }

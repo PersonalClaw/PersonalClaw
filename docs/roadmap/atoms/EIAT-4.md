@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- 🔑 THE FENCE IS APPLIED EXACTLY ONCE AND THE MODULE SAYS WHERE (addresses.py:12-16): 'Fenced exactly ONCE, here, at prompt time — mime.py deliberately extracts RAW so nothing is ever double-fenced, and core's own fire path is idempotent (it re-fences only text that is not already fenced)'. Three modules' contracts stated consistently in one place
+- 🔑 THE SUBJECT IS INSIDE THE FENCE TOO, with the reason: 'subject included, because a subject line is as attacker-controlled as a body'. One span, not two — 'nesting spans' is named as the thing avoided
+- 🔑 A PROMPTLESS ROW IS NOT A BINDING (:96-101), and this is the sharpest reasoning in the plan: 'A row with no stored prompt is not a binding — it is a half-filled form. Firing it would spawn an unattended turn whose only instruction is UNTRUSTED MAIL, which is precisely the composition the fence exists to prevent.' The fence's PURPOSE is enforced structurally, upstream of the fence itself
+- 🔑 THE INJECTION TESTS PROVE CONTAINMENT, NOT JUST ESCAPING. test_in_body_fence_break_attempt_is_neutralised asserts four things: the body's close marker is escaped to entities, EXACTLY ONE real close marker exists, it sits at the very END, and the injected instructions survive VERBATIM but INSIDE the fence (index < rindex(CLOSE)). The fourth is the one most implementations omit — it proves the payload was contained as data rather than stripped, so the attack stays visible to the user instead of being silently swallowed
+- test_fence_break_via_the_subject_is_neutralised_too covers the same via the subject; per-address sender lists are fail-closed and 'narrow but never widen' (its own test)
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Notes:** Ten of the 82 app tests are about this atom alone. The prompt-bound address is the highest-risk composition in the whole plan — untrusted mail triggering an unattended agent turn — and it is the best-guarded thing audited in this campaign so far.
 
 ## Recorded history
 

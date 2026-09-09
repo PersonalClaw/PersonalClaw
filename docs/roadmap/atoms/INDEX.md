@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 227 | `done_when` checked against the code and it holds |
-| `partial` | 162 | some `done_when` clauses hold, others do not |
+| `confirmed` | 232 | `done_when` checked against the code and it holds |
+| `partial` | 163 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 290 | not yet checked |
+| `unaudited` | 284 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -392,12 +392,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`EIAT-1`](EIAT-1.md) | `done` | `unaudited` | Generalize the event-trigger vocabulary to source-agnostic (core, S1) |
-| [`EIAT-2`](EIAT-2.md) | `done` | `unaudited` | mail-inbox provider app: IMAP inbound, checkpointing, fail-closed allowlist, MIME extraction (S2) |
-| [`EIAT-3`](EIAT-3.md) | `done` | `unaudited` | mail-inbox send_reply over SMTP, draft-by-default (S2) |
-| [`EIAT-4`](EIAT-4.md) | `done` | `unaudited` | Prompt-bound receiving addresses + app settings UI (mail-inbox, S3) |
-| [`EIAT-5`](EIAT-5.md) | `done` | `unaudited` | Triggers page inbox-event configuration UI (web/, S3) |
-| [`EIAT-6`](EIAT-6.md) | `done` | `unaudited` | Carry a source-declared item kind through to the inbox row (core) |
+| [`EIAT-1`](EIAT-1.md) | `done` | `confirmed` | Generalize the event-trigger vocabulary to source-agnostic (core, S1) |
+| [`EIAT-2`](EIAT-2.md) | `done` | `confirmed` | mail-inbox provider app: IMAP inbound, checkpointing, fail-closed allowlist, MIME extraction (S2) |
+| [`EIAT-3`](EIAT-3.md) | `done` | `partial` | mail-inbox send_reply over SMTP, draft-by-default (S2) |
+| [`EIAT-4`](EIAT-4.md) | `done` | `confirmed` | Prompt-bound receiving addresses + app settings UI (mail-inbox, S3) |
+| [`EIAT-5`](EIAT-5.md) | `done` | `confirmed` | Triggers page inbox-event configuration UI (web/, S3) |
+| [`EIAT-6`](EIAT-6.md) | `done` | `confirmed` | Carry a source-declared item kind through to the inbox row (core) |
 
 ### `ES` — EVALUATION-SUBSTRATE (17/17 done)
 

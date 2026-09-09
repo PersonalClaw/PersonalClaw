@@ -30,9 +30,24 @@ Polling a real IMAP mailbox surfaces messages as inbox items; a restart neither 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- MEASURED: the app exists as a real bundle (PersonalClawApps/mail-inbox, 1743 lines of runtime across provider/imap/mime/outbound/addresses/settings/smtp) and its own suite passes 82/82
+- 🔑 THE FAIL-CLOSED ALLOWLIST IS AN UPSTREAM REFUSAL, NOT A PER-MESSAGE FILTER (provider.py:326-329): an empty allow_senders returns before the password is resolved and before any connection — 'This is the structural guarantee (guardrail 1) — not a per-message filter, an upstream refusal.' Stronger than the requirement: no credential is used and no mailbox is touched
+- 🔑 THE POSTURE IS LOGGED ONCE so 'a silent empty inbox' is explicable — the anti-inertness discipline applied to a DENY state, which is the case that otherwise looks identical to a broken poller
+- per-rejection SEL fires with the uid and sender (mail_sender_rejected at :203-211, and a separate bound-address rejection at :218-229)
+- the checkpoint is keyed `mailuid:<username>:<folder>` and returned through poll's dict; test_restart_neither_reprocesses_nor_skips and test_duplicate_message_id_is_dropped both pass
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Driven in the UI:** Not driven: polling a real IMAP mailbox needs a mailbox and stored credentials. The app is not installed in the validation home.
+
+**Notes:** 🔑 ARCC's transferable objective for this plan is 'always use an allowlisting approach over a denylisting approach' plus validate length and type. The allowlist half is met in its strongest form (see above). The interesting divergence is on the OTHER guidance ARCC returned — Bedrock prompt-attack FILTERS. This codebase does not classify; it FENCES (EIAT-4). For a self-hosted instance with no managed-guardrail dependency that is the better control, because a filter is a classifier with a false-negative rate while a fence is structural containment whose correctness a test can assert exactly.
 
 ## Recorded history
 

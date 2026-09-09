@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- 🔑 DRIVEN: #/triggers → New trigger → the 'Data event' tab exists and defaults to 'Any inbox message' with 'Source: Inbox' shown explicitly, described as 'Every accepted message from a watched inbox source (Slack, Telegram, email, …)'
+- 🔑 THE UNMATCHED PATTERN SURFACES ITS OWN SCOPE: 'Fires on every accepted inbox message — no matcher to narrow it.' A user learns the breadth of the default before choosing it, rather than after
+- URL-backed state confirmed in code AND by driving: `pattern` and `kind` are useQueryParam-backed with replace, and the pattern falls back to InboxMessage when the param is not in EVENT_PATTERN_META
+- the web triggers suite passes 194/194 across 24 files, and tsc -b is clean
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Driven in the UI:** Drove the page, the create flow, the type tabs and the inbox pattern. Not driven: the draft-by-default surfacing for a send-capable ACTION, which needs a send action selected.
+
+**Notes:** 🔴 A REAL DEFECT FOUND BY DRIVING, fixed this cycle in PR #2792. The primary 'New trigger' button navigated to `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D` — the handler was passed by reference, so React handed it the CLICK EVENT as the preset id and it was encoded into the query string. It type-checked because HeaderControl's onClick is `() => void` and a `(presetId?: string) => void` is assignable to it, so no type checker could catch it. Nothing downstream corrupted (the preset lookup is deliberately tolerant, and the forced kind is that path's own default) — what broke is precisely what THIS ATOM ships: URL-backed state that is deep-linkable and survives a reload. Re-driven after the fix: the hash is now `#/triggers/new`.
 
 ## Recorded history
 

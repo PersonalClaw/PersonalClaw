@@ -30,9 +30,22 @@ An inbox trigger created against the existing filesystem inbox source fires a no
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 41 (EIAT) — Triggers page driven; a URL bug found and fixed (PR #2792)
+
+**Code evidence:**
+
+- MEASURED: event_triggers.py is the source-agnostic engine the clause asks for — EVENT_SOURCES is a CLOSED set (memory/inbox/app) and every event carries its source
+- 🔑 THE SCOPING GATE IS STRUCTURAL AND PLACED BEFORE EVERY PATTERN BRANCH (:302-305): `if trigger.source != source: return False`, with the comment naming why it lives there — 'This gate — NOT the pattern table — is what makes cross-source firing impossible even if a caller supplied a mismatched pattern/source pair.' Eighth independent arrival at this campaign's the-gate-not-the-data principle
+- 🔑 THE EMIT SITE IS AFTER THE ALLOWLIST (inbox_service.py:283-297), which is exactly the clause's 'a rejected sender emits none' — the ordering IS the guarantee, not a filter inside the emitter
+- the payload carries a RAW value with structured meta (sender/sender_name/address/source_name) and the comment states the fencing contract from this side: fenced at fire time 'never here, so it is never double-fenced' — the mail app's addresses.py states the identical contract from the other side, so the two modules agree rather than each hoping
+- emit is wrapped best-effort so a trigger fault never blocks ingestion
+- mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194
+
+**Notes:** 🪤 A SEARCH ERROR OF MINE, worth recording because it nearly read as a missing deliverable: I looked for the engine under triggers/ and found no inbox event at all. It is top-level event_triggers.py. Nothing was wrong with the code; my census was scoped to the wrong package. Same shape as the ChatPage findOpen under-read, and the reason the protocol says to widen before concluding.
 
 ## Recorded history
 
