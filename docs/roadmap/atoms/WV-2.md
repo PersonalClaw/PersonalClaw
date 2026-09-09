@@ -30,9 +30,22 @@ models.py (Node taxonomy incl. infer/branch, outcome model), store.py (SQLite WA
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- bindings.py:5-12 TWO RESOLUTION PATHS, and the distinction is load-bearing: whole-value preserves the SOURCE TYPE ('{{nodes.x.output}}` yields the dict, not "{'a': 1}"' — 'a foreach over {{nodes.x.output.items}} needs a real list'), interpolated stringifies via json.dumps because 'embedding a Python repr into a prompt produces single-quoted pseudo-JSON that models reproduce badly'
+- 🔑 :14-19 THE FAILURE MODES ARE DELIBERATELY ASYMMETRIC. 'The node produced null' flows through as a VALUE; 'this reference does not resolve' raises a typed BindingError — 'a silent empty string here is how a prompt ends up quietly missing its input and the run produces confident nonsense'
+- :21-23 PIPES ARE A CLOSED SET, argued as a security boundary: 'a spec is data the flywheel will later propose diffs to, and an eval-shaped hole in it is a remote-code path with extra steps'
+- store.py:83 PRAGMA journal_mode=WAL and :134 CREATE INDEX idx_runs_root_status ON runs(root_run_id, status) — the exact index the clause names, with :11 stating what it buys ('show me this run tree' as one query)
+- validator.py:1-14 never-throws (a validator that raises on the first problem 'forces an LLM author into one-error-per-turn ping-pong'), stable codes ('WF_UNKNOWN_NODE_KIND is a contract an agent branches on'), and the untrusted-origin lint is an ERROR by design: 'that is the seam that stops trigger payloads flowing unfenced into prompts, and making it advisory would leave it to template-author discipline'
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The validator's last sentence is the same argument PA-3 made one cycle ago and the same one WV-3 and WV-4 make below — a control expressed as guidance is negotiable by the thing it governs. Four modules in this program reach it independently.
 
 ## Recorded history
 

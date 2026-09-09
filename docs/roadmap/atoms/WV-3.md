@@ -30,9 +30,26 @@ tick.py frontier (lanes + declined-edge join gating), controller.py (single-writ
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tick.py:1-8 the frontier is PURE — 'deliberately free of I/O, clocks, and randomness' — and the reason is operational, not stylistic: 'after a rewind mutates state, the scheduler is re-derived from scratch rather than patched, so there is no incremental bookkeeping to get wrong'
+- 🔑 :32-50 ACTIVE-EDGE JOIN GATING, and BOTH failure directions are named before the rule is stated: waiting on 'all predecessors' deadlocks on an untaken branch leg, firing on 'any completed predecessor' fires early on a live fan-out. The rule: 'an ordering edge is satisfied by any TERMINAL predecessor, and unreachable paths are made terminal by marking them SKIPPED'
+- :37-39 declining is RECORDED (`declined_edges`) rather than inferred from 'the source routed elsewhere', because inferring it 'would starve a sibling whose needs names a branch'
+- :43-50 the reachability asymmetry: a SKIPPED predecessor SATISFIES a plain ordering edge but makes a reader that binds its OUTPUT unreachable — 'the output will never exist, so waiting is a hang and running is a guaranteed binding failure'
+- controller.py:4338/:4391/:4463 `_finish` is 'the single terminal writer (WF2-R10)', asserted at all three write sites, and :4536 states the restart contract (re-read from the store via the projection)
+- 🔑 engine.py:71 MAX_WF_DEPTH = 3, enforced at :656 — and :653 carries THE SHARPEST FORM OF THIS PROGRAM'S RECURRING ARGUMENT: 'Depth is enforced in CODE here, which is new: the existing contract is a sentence in a system prompt, and A PROMPT IS NOT AN ENFORCEMENT MECHANISM'
+- journal.py:6-16 the cache key is (instance_path, epoch, inputs_hash, spec_region_hash) and EACH of the four earns its place in one sentence — spec_region_hash's being the sharpest: without it, 'editing a prompt mid-run and resuming would silently serve the pre-edit answer'
+- :18-19 a hit emits step_cached rather than staying invisible, because "'did my edit actually re-run anything?' is the first question a user asks after a mid-flight edit, and the answer has to come from the ledger, not from reading logs"
+- watchdog.py present (635 lines) with its poll/reap/retention duties; tests/test_workflows_frontier_golden.py + test_workflows_replay.py green
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The strongest atom in the plan. Also a live cross-check on Platform-Primitives: tick.py's header now says ordering is DERIVED from validator.dep_ordering_edges (PP-2) and that 'keeping a second, hand-maintained list was the defect PP-1 made visible and this module's gate deletes' — so PP-1 and PP-2 landed and this module absorbed them. journal.py:34 likewise records PP-4: the mechanism moved to personalclaw.ledger and what stays here is the workflow FLAVOUR, which matches the PP-4 merge recorded in the workspace notes.
 
 ## Recorded history
 

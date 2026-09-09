@@ -32,9 +32,21 @@ GET /api/workflows/runs/{id}/nodes/{node_id}/inspect returns the §5 reconstruct
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- handlers.py:916 api_run_node_inspect + :1345 the route registered at exactly the path the clause names; service.py:827 inspect_node
+- handlers.py:922 states its consumer ('WV-10 renders this as an inspector drawer'); :75 handles the node that exists in the spec but has not reached a terminal state
+- api.ts:7194 the client method for that exact URL; :1452 types the response as 'the §5 reconstructability set (WF2-A2)'
+- 🔑 tests/test_workflows_node_inspect.py proves the secrets-absent half THREE ways — prompt, resolved input, and output — and its fixture is deliberately hostile: :107 notes the setup writes through the path that does NOT redact, which 'is what makes the secrets-absent test meaningful'. A fixture that redacted on the way in would have tested itself
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The fixture note is the discipline most audits of this shape miss. Three passing redaction tests prove nothing if the data was never sensitive on disk; this one says so and arranges otherwise.
 
 ## Recorded history
 

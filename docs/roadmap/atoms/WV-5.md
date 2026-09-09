@@ -30,9 +30,29 @@ mutations.py typed ops incl. run_from + binding-dependency cascade preview + rol
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 mutations.py:6-11 THE CASCADE FOLLOWS BINDINGS, NOT THE TREE, and the obvious wrong version is named first: resetting 'the node and its descendants' misses 'a later SIBLING binding the edited node's output', which then 'keeps a stale input: a silently inconsistent run, which is worse than a loud failure because nothing looks wrong'
+- :13-16 a rejected batch writes NOTHING — validation runs on a candidate copy — because 'a half-applied batch would leave a spec no one authored — neither what the user had nor what they asked for'
+- :18-21 the TOCTOU gap is acknowledged rather than assumed away ('nodes complete while a user reads a preview'), so the caller re-verifies immediately before applying, and validate_batch is 'pure and cheap enough to run twice'
+- :23-26 epoch bumps are reserved for FORCE, because bumping unconditionally 'would throw away' the inputs-hash cache tier 'and re-run the expensive half of the graph for nothing'
+- checkpoints.py:8-13 a fork is CHEAP for a structural reason: cache keys contain no run id, so a child copying the parent's journal prefix gets hits up to the fork point 'and re-runs only what diverges'
+- 🔑 checkpoints.py:15-22 WHAT A FORK DOES NOT ISOLATE IS SAID OUT LOUD. Isolated: run state, spec, journal, outputs, effect ledger. NOT isolated: the filesystem workspace, external resources, wall-clock/randomness. So it records fork_axis and isolation_notes — 'the honest move is to name the limit rather than imply a sandbox that does not exist'
+- checkpoints.py:24-27 revert refuses (with the conflict named) when later state depends on the node: 'Refusing loudly beats silently unwinding a value three downstream nodes have already consumed'
+- human_input.py:9-13 a TYPED ask payload {kind, prompt, fields, choices}, one renderer for every human-input node, because free-form asks are 'how a "just add a prompt string" design becomes twelve half-broken UIs'
+- :15-19 the continuation record persists resolved_inputs + epoch + expires_at so a resume re-enters THAT step: 'Without it, answering an approval an hour later silently redoes the work that led up to the question'
+- 🔑 :21-25 ATOMIC SINGLE-USE ANSWERS via one os.rename, 'which decides the winner before anything is read' — and the consequence is stated in six words: 'replayed approvals are how one "yes" becomes two deployments'
+- :27-29 expiry is TYPED, never silent: a stale token yields a resume_expired item, because 'a dead token that simply does nothing is indistinguishable from a bug, and the user is left clicking a button that has no effect'
+- :31-33 mode-dependent gate timeouts, argued from who is present: background gates time out short and surface ('a background run that waits forever on an approval nobody will see is wedged'), chat-mode gates wait long 'because a human is right there'
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The single-use-answer rule is PA-3's budget-before-every-action in a different costume: both refuse to let one authorisation cover a second act. And this is the one place in the campaign where a module enumerates what it does NOT protect — checkpoints.py's non-isolated axes. Every other 'partial isolation' I have audited implied more than it delivered.
 
 ## Recorded history
 

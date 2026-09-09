@@ -28,9 +28,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the two relocations exist: mcp_prompts.py and agents/identity.py
+- 🔑 THE CLEAN BREAK IS ARGUED, NOT ASSERTED. workflows/defs.py:1-11 explains why the old registry could not simply be DELETED and had to be REPLACED in the same commit: the extension registry's `workflow` _TypeHandler 'has to register into *something*' — PROVIDER_TYPES must equal the runtime handler set 'or installing — or even reinstalling — any app declaring a workflow provider is refused with a validation error that names no cause. That is issue #47's bug class, and test_manifest_types_match_handlers guards it'
+- defs.py:16-19 also draws the line the engine depends on: a provider contributes DEFINITIONS, never runs, because 'a provider that could hand back a half-executed run would put two writers on the journal' — the same invariant WV-3's terminal-write ownership rests on
+- MEASURED, not read: the legacy archive actually RAN on a real home — .dev-home/workflows/_legacy_sops exists. archive_legacy_sops is called from gateway.py:775 at start; workflows/legacy.py:26 owns _ARCHIVE_DIRNAME and fs_watch.py:133 knows to not fire on the archive move
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The historical counts in the clause ('8 tests deleted', 'make test green (9698 passed)') are not checkable now — the suite is far larger. Confirmed on what IS observable: both relocations, the replacement-not-deletion of the registry with its parity guard, and an archive whose product I found on disk rather than in a log.
 
 ## Recorded history
 

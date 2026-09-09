@@ -30,9 +30,24 @@ WorkflowProgressCard mirrors SdlcProgressCard; dedup keys + deterministic event 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/chat/WorkflowProgressCard.tsx exists and ChatPage.tsx mounts it — a real mount, found by searching the tree rather than the directory I guessed
+- coalescer.py:1-25 the event pipeline is a THROUGHPUT design with a stated boundary: coalescing-eligible events are per-node lifecycle chatter (last-write-wins per instance, 'since a node's later state supersedes its earlier one'), pass-through is 'everything a human acts on or that reorders the run' — 'Delaying an ask by 25ms to save a frame is a bad trade'
+- 🔑 :20-24 PER-OBSERVER, NOT PER-RUN, keyed by registry key so two browser tabs get their own debounce window: a shared window 'would let one tab's just-flushed timer swallow the other's first update, and the second tab would sit a full window behind for no reason'
+- workflowFold.ts carries the dedup/supersede machinery the clause names — seen (event ids applied), epoch (below it is superseded), nodeSeq (per-node highest seq, so an out-of-order event 'is dropped rather than regressing it'), and `dropped` surfaced 'so a test (and a debug view) can assert the guards actually fired rather than trusting they did'
+- step_cached: journal.py:250 emits it, ledger/kinds.py:21 declares STEP_CACHED
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Driven in the UI:** Not driven: the live widget needs a run producing events, and no run can start in this home (no model bound — the preflight refusal above is the proof, not an assumption).
+
+**Notes:** Partial for the live drive only. But one sub-claim is measurably WRONG and is filed as an issue: the `cached` flag reaches the frontend and stops there. workflowFold.ts:43 declares `cached?: boolean` on the EVENT envelope, WorkflowNodeState (api.ts:1385, the per-node row both the run detail and this card render) has no cached field at all, and no non-test code reads either. The only cached indicator in the product is NodeInspectorDrawer's badge, which reads the separate inspect endpoint's payload. So the flag WV-7 added to answer 'did my edit actually re-run anything?' answers it one node at a time, on demand, and never at a glance.
 
 ## Recorded history
 

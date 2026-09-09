@@ -30,9 +30,21 @@ Slice 9 + Slice 10 + Slice 11
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: 33 bundled template directories under workflows/bundled/ — the clause says 6, so this is growth past the atom, not a shortfall
+- the advanced constructs are their own modules: macros.py, template_lint.py, template_pipeline.py, blocks.py, context.py, context_block.py
+- the regression harnesses the clause names exist and are GREEN in this tree: tests/test_workflows_frontier_golden.py (active-edge), tests/test_workflows_replay.py (journal replay), tests/test_workflows_hardening.py — 82 pass together with the two policy suites below
+- DRIVEN: each bundled template's description reads as product copy rather than a spec restatement — code-project names its four structural gates, deep-research names its loop-until-nothing-new condition, knowledge-synthesis states its cost ('Spends exactly one model call')
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** The clause itself flags the deferral honestly ('offloading+compaction deferred'), and both deferred halves later landed as WV-11 and WV-12 — so the plan tracked its own scope split rather than quietly claiming the whole. The two suite skips in this plan's 5238 are both a template legitimately having no work loop, named in the skip reason.
 
 ## Recorded history
 

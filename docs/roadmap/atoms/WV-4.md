@@ -30,9 +30,29 @@ extended outcome states, verification ladder + required_artifacts + fresh-judge 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- models.py:280-290 the extended outcome set is real and each member carries its reason: DEGRADED ('done, with a degraded_reason'), NO_CHANGE ('inherits prior results; downstream need not re-run'), SCOPE_VIOLATION, DISCARDED, ESCALATED ('circuit breaker tripped'), BLOCKED ('e.g. protocol_violation — never a silent hang'), CANCELLED
+- :293-296 TERMINAL_STATES includes BLOCKED for a stated reason — 'leaving it schedulable would relaunch-and-refuse forever, the silent hang the state exists to prevent' — and names the second-order consequence its absence had ('_ROOT_TO_RUN[BLOCKED] unreachable')
+- 🔑 secrets.py:1-6 states the exposure surface in one sentence before designing against it: a spec 'is persisted as workflow.json, copied into every run's spec.json, journaled, echoed into the Run Ledger the flywheel later reads, and rendered in a UI. A token inline in a spec is a token leaked to all of those at once'
+- secrets.py:12-21 three disciplines, each with its reason: PRESENCE NOT VALUE on read (a boolean _has* flag, so a GET renders 'an API key is set'); re-injection KEYED BY NODE ID, not path, because a mutation that MOVES or COPIES a node 'keeps its credentials, which a path-keyed map would lose the moment the tree changed'; and a save-time lint because 'once a spec is saved the value is already on disk, and every later defence is damage control'
+- 🔑 secrets.py:23-26 TWO SEAMS, STATED AS NOT INTERCHANGEABLE: this module guards the SPEC seam, journal.redact() guards the WRITE seam (a secret arriving via node OUTPUT — 'a fetch response echoing a token'), 'and neither can cover the other'
+- journal.py:29-31 confirms the second seam: 'Everything written here passes through redact() first. A journal is read back by the flywheel, shipped in bug reports, and rendered in a UI; a credential that reaches it is a credential leaked to all three'
+- scope.py:1-25 the write-scope layer, DETECTIVE by design, and it names a REAL PAST INCIDENT rather than a hypothetical: 'this platform has already been bitten by that failure class: the destructive-test-isolation incident deleted the user's real bound model'
+- scope.py:10 the third independent occurrence of the program's core argument, verbatim: the advisory layer is 'the prompt tells the agent its scope … All that exists today, and a prompt is not an enforcement mechanism'
+- scope.py:22-25 a snapshot 'is not free', so 'the default is the run workspace, never the whole home' — walking $HOME per node 'would cost more than the node'
+- controller.py:2784/:2820 the typed scope_violation terminal_reason, 'so the escape cannot pass as a clean success'
+- 'run-workflow' is present in validation.py:857's ALLOWED_HOOK_PROVIDERS
+- ledger/writer.py:138-151 the binary/oversize classification, detected by CONTENT not size — 'a 400-byte PNG is under every threshold and still meaningless inline'
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Notes:** ARCC's transferable objective is the ECS one: a definition must REFERENCE a secret and never EMBED it, because a definition readable by anyone with describe rights shows plaintext. secrets.py is exactly that pattern and goes past it in three directions the guidance does not reach — presence-not-value on read, node-id-keyed re-injection so a tree edit cannot strip credentials, and a save-time lint on the grounds that after the save every defence is damage control. The gap ARCC leaves is the one journal.redact() fills: the ECS guidance stops at 'do not embed' and says nothing about the RESOLVED value arriving back through a response and landing in a log the flywheel reads. This codebase names both seams and says neither covers the other.
 
 ## Recorded history
 

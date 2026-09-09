@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 138 | `done_when` checked against the code and it holds |
-| `partial` | 129 | some `done_when` clauses hold, others do not |
+| `confirmed` | 150 | `done_when` checked against the code and it holds |
+| `partial` | 132 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 413 | not yet checked |
+| `unaudited` | 398 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -1044,19 +1044,19 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WV-1`](WV-1.md) | `done` | `unaudited` | Phase 0+1 clean break: relocate shared code, delete old SOP feature, repoint workflow _TypeHandler, archive legacy SOPs |
-| [`WV-2`](WV-2.md) | `done` | `unaudited` | Slice 0 — data model + store + bindings + validator + config wiring |
-| [`WV-3`](WV-3.md) | `done` | `unaudited` | Slice 1 — pure frontier core + engine + journal + watchdog + resume/crash recovery |
-| [`WV-4`](WV-4.md) | `done` | `unaudited` | Slices 2+3 — outcome model + engine-owned completion + resilience/budgets/timeouts + effect ledger + write-scope + termination + secrets |
-| [`WV-5`](WV-5.md) | `done` | `unaudited` | Slices 4+5 — mid-flight mutation + checkpoints + fork + human-input contract + gates |
-| [`WV-6`](WV-6.md) | `done` | `unaudited` | Slices 6+7 — 19 chat tools + spec ingestion + [ACTIVE WORKFLOWS] injection + HTTP API + FE list/detail pages |
-| [`WV-7`](WV-7.md) | `done` | `unaudited` | Slice 8 — live chat widget + event pipeline (dedup/fold/coalesce) incl. WF2-A1 step_cached emission |
-| [`WV-8`](WV-8.md) | `done` | `unaudited` | Slices 9+10+11 — templates + conventions pack + advanced constructs + context-lifecycle (partial) + validation/hardening |
-| [`WV-9`](WV-9.md) | `done` | `unaudited` | WF2-A2 — node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice |
-| [`WV-10`](WV-10.md) | `done` | `unaudited` | WF2-A3 — FE inspector drawer (run detail + widget node rows) + cached-badge rendering |
-| [`WV-11`](WV-11.md) | `done` | `unaudited` | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider |
-| [`WV-12`](WV-12.md) | `done` | `unaudited` | Two-layer context-compaction ladder for LLM-backed nodes |
-| [`WV-13`](WV-13.md) | `done` | `unaudited` | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over ItemErrorPolicy |
-| [`WV-14`](WV-14.md) | `done` | `unaudited` | Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over OverlapPolicy |
-| [`WV-15`](WV-15.md) | `done` | `unaudited` | Map every status a fire writes, and an AST rail over the three status→outcome tables |
+| [`WV-1`](WV-1.md) | `done` | `confirmed` | Phase 0+1 clean break: relocate shared code, delete old SOP feature, repoint workflow _TypeHandler, archive legacy SOPs |
+| [`WV-2`](WV-2.md) | `done` | `confirmed` | Slice 0 — data model + store + bindings + validator + config wiring |
+| [`WV-3`](WV-3.md) | `done` | `confirmed` | Slice 1 — pure frontier core + engine + journal + watchdog + resume/crash recovery |
+| [`WV-4`](WV-4.md) | `done` | `confirmed` | Slices 2+3 — outcome model + engine-owned completion + resilience/budgets/timeouts + effect ledger + write-scope + termination + secrets |
+| [`WV-5`](WV-5.md) | `done` | `confirmed` | Slices 4+5 — mid-flight mutation + checkpoints + fork + human-input contract + gates |
+| [`WV-6`](WV-6.md) | `done` | `confirmed` | Slices 6+7 — 19 chat tools + spec ingestion + [ACTIVE WORKFLOWS] injection + HTTP API + FE list/detail pages |
+| [`WV-7`](WV-7.md) | `done` | `partial` | Slice 8 — live chat widget + event pipeline (dedup/fold/coalesce) incl. WF2-A1 step_cached emission |
+| [`WV-8`](WV-8.md) | `done` | `confirmed` | Slices 9+10+11 — templates + conventions pack + advanced constructs + context-lifecycle (partial) + validation/hardening |
+| [`WV-9`](WV-9.md) | `done` | `confirmed` | WF2-A2 — node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice |
+| [`WV-10`](WV-10.md) | `done` | `partial` | WF2-A3 — FE inspector drawer (run detail + widget node rows) + cached-badge rendering |
+| [`WV-11`](WV-11.md) | `done` | `confirmed` | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider |
+| [`WV-12`](WV-12.md) | `done` | `partial` | Two-layer context-compaction ladder for LLM-backed nodes |
+| [`WV-13`](WV-13.md) | `done` | `confirmed` | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over ItemErrorPolicy |
+| [`WV-14`](WV-14.md) | `done` | `confirmed` | Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over OverlapPolicy |
+| [`WV-15`](WV-15.md) | `done` | `confirmed` | Map every status a fire writes, and an AST rail over the three status→outcome tables |
 

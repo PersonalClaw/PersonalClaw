@@ -31,9 +31,25 @@ mcp_workflows.py all 19 tools wired into _AGGREGATED_CATEGORY_MODULES + validati
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 27 (WV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: mcp_workflows.py declares exactly 19 distinct workflow_* tool names — audit, author, cancel, delete_def, edit, fork, get_def, list_defs, manifest, observe, output, pause, plan, resume, rewind, run_from, skip, start, status. The clause says 19
+- handlers.py:1345 registers GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect; the REST surface and per-run SSE registry are in the same module
+- DRIVEN: #/workflows renders with a nav entry, a Runs/Definitions segmented control whose selection round-trips as ?tab=defs, a search box, and a 'Start from template' action. Zero console errors across the whole session
+- DRIVEN: the definitions list shows bundled defs with a version chip and a surfacing state whose tooltip explains itself — 'Never surfaces on its own — start it explicitly'
+- DRIVEN: #/workflows/defs/code-project renders Steps/Versions/Run Ledger tabs, a maturity chip ('Maturity L1: 0 clean runs, gate not yet proven'), an A2A publish switch stating its own off-state consequence, the step tree, and an Inputs form whose per-field help names CONSEQUENCES rather than restating the label — cwd: 'Everything is verified here, so a wrong value verifies the wrong tree'; verify_command: 'The gate runs it and does not take the model's word for it'; guard_command: 'Compared against its own baseline, so a failure that was already there is not blamed on this change'
+- 🔑 DRIVEN, THE INGESTION PREFLIGHT: typing 'research vector databases' into the intent dialog resolved to deep-research, and starting it answered 422 with a typed refusal — code preflight_failed, three WF_PRE_MODEL_UNRESOLVED findings each carrying its own remediation, AND a `checked` manifest naming every category inspected (credentials, binaries, models, action_providers). A user learns what WAS verified, not only what failed
+- 5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)
+
+**Driven in the UI:** Drove the whole surface: list, both tabs, a definition detail, the intent→template resolution, and a real refused start. The refusal IS surfaced (a role=alert live region plus a dismissible toast) — my first snapshot missed it only because the toast had already auto-dismissed.
+
+**Notes:** One gap found and FIXED this cycle (PR): the 422's per-finding `remediation` reached no surface, because errText.errEnvelope kept `message` and `code` and dropped `detail`, and ApiError had nowhere to carry it. preflight.Finding:44-47 states why the field exists — 'the message says what is wrong, the remediation says what to do, and collapsing them leaves the user with a diagnosis and no next step' — and that is precisely what the browser showed. The fix is the THIRD instance of one defect at that funnel: errText.ts's own header records dropping `code` (six learning branches unreachable) and dropping the object-shaped envelope (115 sites reading 'HTTP 400'). The envelope now carries three things and kept two.
 
 ## Recorded history
 

@@ -2968,5 +2968,236 @@
     ],
     "ui_validated": "Drove it. The Decisions tab is one of seven on #/knowledge, the URL round-trips as ?view=decisions, and the view renders its own empty state: 'No decisions logged yet — Log a decision in chat — what you decided, what you expect to happen, and how confident you are. IT COMES BACK ON ITS OWN WHEN THE HORIZON ARRIVES.' That last clause teaches the whole feature in eight words, and the sentence names the three inputs so a user knows what to say.",
     "notes": "🪤 TWELFTH NEAR-MISS. My first two searches for the mount looked in App.tsx and KnowledgePage.tsx and found nothing, which is exactly the BA-5 shape — a component with no mount point. The importer is KnowledgeListPage.tsx; one broader search found it. The fix each time has been the same: search for the OUTCOME across the tree rather than for my guess at the location. The pending/resolved/calibration content is unobserved because no decisions exist, but the surface, its route and its empty state are all real."
+  },
+  "WV-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "the two relocations exist: mcp_prompts.py and agents/identity.py",
+      "🔑 THE CLEAN BREAK IS ARGUED, NOT ASSERTED. workflows/defs.py:1-11 explains why the old registry could not simply be DELETED and had to be REPLACED in the same commit: the extension registry's `workflow` _TypeHandler 'has to register into *something*' — PROVIDER_TYPES must equal the runtime handler set 'or installing — or even reinstalling — any app declaring a workflow provider is refused with a validation error that names no cause. That is issue #47's bug class, and test_manifest_types_match_handlers guards it'",
+      "defs.py:16-19 also draws the line the engine depends on: a provider contributes DEFINITIONS, never runs, because 'a provider that could hand back a half-executed run would put two writers on the journal' — the same invariant WV-3's terminal-write ownership rests on",
+      "MEASURED, not read: the legacy archive actually RAN on a real home — .dev-home/workflows/_legacy_sops exists. archive_legacy_sops is called from gateway.py:775 at start; workflows/legacy.py:26 owns _ARCHIVE_DIRNAME and fs_watch.py:133 knows to not fire on the archive move",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The historical counts in the clause ('8 tests deleted', 'make test green (9698 passed)') are not checkable now — the suite is far larger. Confirmed on what IS observable: both relocations, the replacement-not-deletion of the registry with its parity guard, and an archive whose product I found on disk rather than in a log."
+  },
+  "WV-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "bindings.py:5-12 TWO RESOLUTION PATHS, and the distinction is load-bearing: whole-value preserves the SOURCE TYPE ('{{nodes.x.output}}` yields the dict, not \"{'a': 1}\"' — 'a foreach over {{nodes.x.output.items}} needs a real list'), interpolated stringifies via json.dumps because 'embedding a Python repr into a prompt produces single-quoted pseudo-JSON that models reproduce badly'",
+      "🔑 :14-19 THE FAILURE MODES ARE DELIBERATELY ASYMMETRIC. 'The node produced null' flows through as a VALUE; 'this reference does not resolve' raises a typed BindingError — 'a silent empty string here is how a prompt ends up quietly missing its input and the run produces confident nonsense'",
+      ":21-23 PIPES ARE A CLOSED SET, argued as a security boundary: 'a spec is data the flywheel will later propose diffs to, and an eval-shaped hole in it is a remote-code path with extra steps'",
+      "store.py:83 PRAGMA journal_mode=WAL and :134 CREATE INDEX idx_runs_root_status ON runs(root_run_id, status) — the exact index the clause names, with :11 stating what it buys ('show me this run tree' as one query)",
+      "validator.py:1-14 never-throws (a validator that raises on the first problem 'forces an LLM author into one-error-per-turn ping-pong'), stable codes ('WF_UNKNOWN_NODE_KIND is a contract an agent branches on'), and the untrusted-origin lint is an ERROR by design: 'that is the seam that stops trigger payloads flowing unfenced into prompts, and making it advisory would leave it to template-author discipline'",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The validator's last sentence is the same argument PA-3 made one cycle ago and the same one WV-3 and WV-4 make below — a control expressed as guidance is negotiable by the thing it governs. Four modules in this program reach it independently."
+  },
+  "WV-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "tick.py:1-8 the frontier is PURE — 'deliberately free of I/O, clocks, and randomness' — and the reason is operational, not stylistic: 'after a rewind mutates state, the scheduler is re-derived from scratch rather than patched, so there is no incremental bookkeeping to get wrong'",
+      "🔑 :32-50 ACTIVE-EDGE JOIN GATING, and BOTH failure directions are named before the rule is stated: waiting on 'all predecessors' deadlocks on an untaken branch leg, firing on 'any completed predecessor' fires early on a live fan-out. The rule: 'an ordering edge is satisfied by any TERMINAL predecessor, and unreachable paths are made terminal by marking them SKIPPED'",
+      ":37-39 declining is RECORDED (`declined_edges`) rather than inferred from 'the source routed elsewhere', because inferring it 'would starve a sibling whose needs names a branch'",
+      ":43-50 the reachability asymmetry: a SKIPPED predecessor SATISFIES a plain ordering edge but makes a reader that binds its OUTPUT unreachable — 'the output will never exist, so waiting is a hang and running is a guaranteed binding failure'",
+      "controller.py:4338/:4391/:4463 `_finish` is 'the single terminal writer (WF2-R10)', asserted at all three write sites, and :4536 states the restart contract (re-read from the store via the projection)",
+      "🔑 engine.py:71 MAX_WF_DEPTH = 3, enforced at :656 — and :653 carries THE SHARPEST FORM OF THIS PROGRAM'S RECURRING ARGUMENT: 'Depth is enforced in CODE here, which is new: the existing contract is a sentence in a system prompt, and A PROMPT IS NOT AN ENFORCEMENT MECHANISM'",
+      "journal.py:6-16 the cache key is (instance_path, epoch, inputs_hash, spec_region_hash) and EACH of the four earns its place in one sentence — spec_region_hash's being the sharpest: without it, 'editing a prompt mid-run and resuming would silently serve the pre-edit answer'",
+      ":18-19 a hit emits step_cached rather than staying invisible, because \"'did my edit actually re-run anything?' is the first question a user asks after a mid-flight edit, and the answer has to come from the ledger, not from reading logs\"",
+      "watchdog.py present (635 lines) with its poll/reap/retention duties; tests/test_workflows_frontier_golden.py + test_workflows_replay.py green",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The strongest atom in the plan. Also a live cross-check on Platform-Primitives: tick.py's header now says ordering is DERIVED from validator.dep_ordering_edges (PP-2) and that 'keeping a second, hand-maintained list was the defect PP-1 made visible and this module's gate deletes' — so PP-1 and PP-2 landed and this module absorbed them. journal.py:34 likewise records PP-4: the mechanism moved to personalclaw.ledger and what stays here is the workflow FLAVOUR, which matches the PP-4 merge recorded in the workspace notes."
+  },
+  "WV-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "models.py:280-290 the extended outcome set is real and each member carries its reason: DEGRADED ('done, with a degraded_reason'), NO_CHANGE ('inherits prior results; downstream need not re-run'), SCOPE_VIOLATION, DISCARDED, ESCALATED ('circuit breaker tripped'), BLOCKED ('e.g. protocol_violation — never a silent hang'), CANCELLED",
+      ":293-296 TERMINAL_STATES includes BLOCKED for a stated reason — 'leaving it schedulable would relaunch-and-refuse forever, the silent hang the state exists to prevent' — and names the second-order consequence its absence had ('_ROOT_TO_RUN[BLOCKED] unreachable')",
+      "🔑 secrets.py:1-6 states the exposure surface in one sentence before designing against it: a spec 'is persisted as workflow.json, copied into every run's spec.json, journaled, echoed into the Run Ledger the flywheel later reads, and rendered in a UI. A token inline in a spec is a token leaked to all of those at once'",
+      "secrets.py:12-21 three disciplines, each with its reason: PRESENCE NOT VALUE on read (a boolean _has* flag, so a GET renders 'an API key is set'); re-injection KEYED BY NODE ID, not path, because a mutation that MOVES or COPIES a node 'keeps its credentials, which a path-keyed map would lose the moment the tree changed'; and a save-time lint because 'once a spec is saved the value is already on disk, and every later defence is damage control'",
+      "🔑 secrets.py:23-26 TWO SEAMS, STATED AS NOT INTERCHANGEABLE: this module guards the SPEC seam, journal.redact() guards the WRITE seam (a secret arriving via node OUTPUT — 'a fetch response echoing a token'), 'and neither can cover the other'",
+      "journal.py:29-31 confirms the second seam: 'Everything written here passes through redact() first. A journal is read back by the flywheel, shipped in bug reports, and rendered in a UI; a credential that reaches it is a credential leaked to all three'",
+      "scope.py:1-25 the write-scope layer, DETECTIVE by design, and it names a REAL PAST INCIDENT rather than a hypothetical: 'this platform has already been bitten by that failure class: the destructive-test-isolation incident deleted the user's real bound model'",
+      "scope.py:10 the third independent occurrence of the program's core argument, verbatim: the advisory layer is 'the prompt tells the agent its scope … All that exists today, and a prompt is not an enforcement mechanism'",
+      "scope.py:22-25 a snapshot 'is not free', so 'the default is the run workspace, never the whole home' — walking $HOME per node 'would cost more than the node'",
+      "controller.py:2784/:2820 the typed scope_violation terminal_reason, 'so the escape cannot pass as a clean success'",
+      "'run-workflow' is present in validation.py:857's ALLOWED_HOOK_PROVIDERS",
+      "ledger/writer.py:138-151 the binary/oversize classification, detected by CONTENT not size — 'a 400-byte PNG is under every threshold and still meaningless inline'",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "ARCC's transferable objective is the ECS one: a definition must REFERENCE a secret and never EMBED it, because a definition readable by anyone with describe rights shows plaintext. secrets.py is exactly that pattern and goes past it in three directions the guidance does not reach — presence-not-value on read, node-id-keyed re-injection so a tree edit cannot strip credentials, and a save-time lint on the grounds that after the save every defence is damage control. The gap ARCC leaves is the one journal.redact() fills: the ECS guidance stops at 'do not embed' and says nothing about the RESOLVED value arriving back through a response and landing in a log the flywheel reads. This codebase names both seams and says neither covers the other."
+  },
+  "WV-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 mutations.py:6-11 THE CASCADE FOLLOWS BINDINGS, NOT THE TREE, and the obvious wrong version is named first: resetting 'the node and its descendants' misses 'a later SIBLING binding the edited node's output', which then 'keeps a stale input: a silently inconsistent run, which is worse than a loud failure because nothing looks wrong'",
+      ":13-16 a rejected batch writes NOTHING — validation runs on a candidate copy — because 'a half-applied batch would leave a spec no one authored — neither what the user had nor what they asked for'",
+      ":18-21 the TOCTOU gap is acknowledged rather than assumed away ('nodes complete while a user reads a preview'), so the caller re-verifies immediately before applying, and validate_batch is 'pure and cheap enough to run twice'",
+      ":23-26 epoch bumps are reserved for FORCE, because bumping unconditionally 'would throw away' the inputs-hash cache tier 'and re-run the expensive half of the graph for nothing'",
+      "checkpoints.py:8-13 a fork is CHEAP for a structural reason: cache keys contain no run id, so a child copying the parent's journal prefix gets hits up to the fork point 'and re-runs only what diverges'",
+      "🔑 checkpoints.py:15-22 WHAT A FORK DOES NOT ISOLATE IS SAID OUT LOUD. Isolated: run state, spec, journal, outputs, effect ledger. NOT isolated: the filesystem workspace, external resources, wall-clock/randomness. So it records fork_axis and isolation_notes — 'the honest move is to name the limit rather than imply a sandbox that does not exist'",
+      "checkpoints.py:24-27 revert refuses (with the conflict named) when later state depends on the node: 'Refusing loudly beats silently unwinding a value three downstream nodes have already consumed'",
+      "human_input.py:9-13 a TYPED ask payload {kind, prompt, fields, choices}, one renderer for every human-input node, because free-form asks are 'how a \"just add a prompt string\" design becomes twelve half-broken UIs'",
+      ":15-19 the continuation record persists resolved_inputs + epoch + expires_at so a resume re-enters THAT step: 'Without it, answering an approval an hour later silently redoes the work that led up to the question'",
+      "🔑 :21-25 ATOMIC SINGLE-USE ANSWERS via one os.rename, 'which decides the winner before anything is read' — and the consequence is stated in six words: 'replayed approvals are how one \"yes\" becomes two deployments'",
+      ":27-29 expiry is TYPED, never silent: a stale token yields a resume_expired item, because 'a dead token that simply does nothing is indistinguishable from a bug, and the user is left clicking a button that has no effect'",
+      ":31-33 mode-dependent gate timeouts, argued from who is present: background gates time out short and surface ('a background run that waits forever on an approval nobody will see is wedged'), chat-mode gates wait long 'because a human is right there'",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The single-use-answer rule is PA-3's budget-before-every-action in a different costume: both refuse to let one authorisation cover a second act. And this is the one place in the campaign where a module enumerates what it does NOT protect — checkpoints.py's non-isolated axes. Every other 'partial isolation' I have audited implied more than it delivered."
+  },
+  "WV-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: mcp_workflows.py declares exactly 19 distinct workflow_* tool names — audit, author, cancel, delete_def, edit, fork, get_def, list_defs, manifest, observe, output, pause, plan, resume, rewind, run_from, skip, start, status. The clause says 19",
+      "handlers.py:1345 registers GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect; the REST surface and per-run SSE registry are in the same module",
+      "DRIVEN: #/workflows renders with a nav entry, a Runs/Definitions segmented control whose selection round-trips as ?tab=defs, a search box, and a 'Start from template' action. Zero console errors across the whole session",
+      "DRIVEN: the definitions list shows bundled defs with a version chip and a surfacing state whose tooltip explains itself — 'Never surfaces on its own — start it explicitly'",
+      "DRIVEN: #/workflows/defs/code-project renders Steps/Versions/Run Ledger tabs, a maturity chip ('Maturity L1: 0 clean runs, gate not yet proven'), an A2A publish switch stating its own off-state consequence, the step tree, and an Inputs form whose per-field help names CONSEQUENCES rather than restating the label — cwd: 'Everything is verified here, so a wrong value verifies the wrong tree'; verify_command: 'The gate runs it and does not take the model's word for it'; guard_command: 'Compared against its own baseline, so a failure that was already there is not blamed on this change'",
+      "🔑 DRIVEN, THE INGESTION PREFLIGHT: typing 'research vector databases' into the intent dialog resolved to deep-research, and starting it answered 422 with a typed refusal — code preflight_failed, three WF_PRE_MODEL_UNRESOLVED findings each carrying its own remediation, AND a `checked` manifest naming every category inspected (credentials, binaries, models, action_providers). A user learns what WAS verified, not only what failed",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "ui_validated": "Drove the whole surface: list, both tabs, a definition detail, the intent→template resolution, and a real refused start. The refusal IS surfaced (a role=alert live region plus a dismissible toast) — my first snapshot missed it only because the toast had already auto-dismissed.",
+    "notes": "One gap found and FIXED this cycle (PR): the 422's per-finding `remediation` reached no surface, because errText.errEnvelope kept `message` and `code` and dropped `detail`, and ApiError had nowhere to carry it. preflight.Finding:44-47 states why the field exists — 'the message says what is wrong, the remediation says what to do, and collapsing them leaves the user with a diagnosis and no next step' — and that is precisely what the browser showed. The fix is the THIRD instance of one defect at that funnel: errText.ts's own header records dropping `code` (six learning branches unreachable) and dropping the object-shaped envelope (115 sites reading 'HTTP 400'). The envelope now carries three things and kept two."
+  },
+  "WV-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/chat/WorkflowProgressCard.tsx exists and ChatPage.tsx mounts it — a real mount, found by searching the tree rather than the directory I guessed",
+      "coalescer.py:1-25 the event pipeline is a THROUGHPUT design with a stated boundary: coalescing-eligible events are per-node lifecycle chatter (last-write-wins per instance, 'since a node's later state supersedes its earlier one'), pass-through is 'everything a human acts on or that reorders the run' — 'Delaying an ask by 25ms to save a frame is a bad trade'",
+      "🔑 :20-24 PER-OBSERVER, NOT PER-RUN, keyed by registry key so two browser tabs get their own debounce window: a shared window 'would let one tab's just-flushed timer swallow the other's first update, and the second tab would sit a full window behind for no reason'",
+      "workflowFold.ts carries the dedup/supersede machinery the clause names — seen (event ids applied), epoch (below it is superseded), nodeSeq (per-node highest seq, so an out-of-order event 'is dropped rather than regressing it'), and `dropped` surfaced 'so a test (and a debug view) can assert the guards actually fired rather than trusting they did'",
+      "step_cached: journal.py:250 emits it, ledger/kinds.py:21 declares STEP_CACHED",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "ui_validated": "Not driven: the live widget needs a run producing events, and no run can start in this home (no model bound — the preflight refusal above is the proof, not an assumption).",
+    "notes": "Partial for the live drive only. But one sub-claim is measurably WRONG and is filed as an issue: the `cached` flag reaches the frontend and stops there. workflowFold.ts:43 declares `cached?: boolean` on the EVENT envelope, WorkflowNodeState (api.ts:1385, the per-node row both the run detail and this card render) has no cached field at all, and no non-test code reads either. The only cached indicator in the product is NodeInspectorDrawer's badge, which reads the separate inspect endpoint's payload. So the flag WV-7 added to answer 'did my edit actually re-run anything?' answers it one node at a time, on demand, and never at a glance."
+  },
+  "WV-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: 33 bundled template directories under workflows/bundled/ — the clause says 6, so this is growth past the atom, not a shortfall",
+      "the advanced constructs are their own modules: macros.py, template_lint.py, template_pipeline.py, blocks.py, context.py, context_block.py",
+      "the regression harnesses the clause names exist and are GREEN in this tree: tests/test_workflows_frontier_golden.py (active-edge), tests/test_workflows_replay.py (journal replay), tests/test_workflows_hardening.py — 82 pass together with the two policy suites below",
+      "DRIVEN: each bundled template's description reads as product copy rather than a spec restatement — code-project names its four structural gates, deep-research names its loop-until-nothing-new condition, knowledge-synthesis states its cost ('Spends exactly one model call')",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The clause itself flags the deferral honestly ('offloading+compaction deferred'), and both deferred halves later landed as WV-11 and WV-12 — so the plan tracked its own scope split rather than quietly claiming the whole. The two suite skips in this plan's 5238 are both a template legitimately having no work loop, named in the skip reason."
+  },
+  "WV-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "handlers.py:916 api_run_node_inspect + :1345 the route registered at exactly the path the clause names; service.py:827 inspect_node",
+      "handlers.py:922 states its consumer ('WV-10 renders this as an inspector drawer'); :75 handles the node that exists in the spec but has not reached a terminal state",
+      "api.ts:7194 the client method for that exact URL; :1452 types the response as 'the §5 reconstructability set (WF2-A2)'",
+      "🔑 tests/test_workflows_node_inspect.py proves the secrets-absent half THREE ways — prompt, resolved input, and output — and its fixture is deliberately hostile: :107 notes the setup writes through the path that does NOT redact, which 'is what makes the secrets-absent test meaningful'. A fixture that redacted on the way in would have tested itself",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The fixture note is the discipline most audits of this shape miss. Three passing redaction tests prove nothing if the data was never sensitive on disk; this one says so and arranges otherwise."
+  },
+  "WV-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "NodeInspectorDrawer.tsx exists with a test file, and :148-160 renders the badge in BOTH states with a title explaining each — 'cached' / 'Output served from the resume cache' vs 'fresh' / 'Freshly produced this run'. Rendering the negative case is the better choice: a badge only on cached nodes is ambiguous with a badge that failed to render",
+      "the drawer reads `data.cached` from WV-9's inspect payload",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "ui_validated": "Not driven: opening a node needs a run with a terminal node, and no run can start in this home (no model bound).",
+    "notes": "🔴 THE CLAUSE'S PARENTHETICAL IS FALSE AND THAT IS THE FINDING. It claims 'workflowFold.ts cached? finally read'. It is not read: workflowFold.ts:43 declares cached? on the event envelope, nothing carries it into a node, WorkflowNodeState has no cached field, and the badge that does exist reads a DIFFERENT source (the inspect endpoint). So the drawer's badge is real and the fold's flag is inert — one claim of two. Recorded as partial rather than contradicted because the atom's main clause (a badge exists, visually distinct, on the inspect payload) holds; the sub-claim about the fold does not. Filed as an issue: at-a-glance cached-ness in the run detail node list and the chat progress card is the thing WF2-A1 was emitted for."
+  },
+  "WV-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "ledger/writer.py:144-151 the offload path is exactly as described: an inline output stays under outputs/ 'byte-identical to before', an OFFLOADED one goes to runs/<id>/artifacts/ 'so its output_ref does NOT start with outputs/ — the signal every reader uses to treat it as a fetch-on-demand pointer'",
+      "🔑 the oversize stub keeps a HEAD+TAIL preview, 'both ends of the serialized body, not just the head', so 'a truncated view still shows where the value starts AND ends' — and a binary stub omits it, 'because a slice of a PNG is noise'",
+      ":151 'The stub always carries bytes and output_ref, so the full value stays one read away and the stub itself explains why it is a stub'",
+      "bindings.py:63 node_artifacts on the resolution context and :101 the loop that populates {{nodes.x.artifact}}",
+      "action_providers/artifact_inspect_provider.py:1 registered at registry.py:227-232, and its own docstring shows the intended binding — {'provider': 'artifact_inspect', 'with': {'ref': '{{nodes.fetch.artifact}}'}}; :66 the missing-ref error names the fix ('bind it to {{nodes.x.artifact}}')",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "Binary detection by CONTENT rather than size is the same call the document-frontend cycle found in its viewer guard, reached independently: 'a 400-byte PNG is under every threshold and still meaningless inline — it would render as mojibake in the widget, poison a {{nodes.x.output}} binding, and (if it reached a model) burn context on noise'. Three distinct consequences for one classification, and the third is the expensive one."
+  },
+  "WV-12": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "compaction.py exists and :1-10 states the failure it removes concretely: 'Cycle 50 of a loop carries 50 cycles of findings. Before this module the engine sent that prompt as-is and let the provider decide: a node that had done real work died on a context-length error the engine could have measured and avoided one call earlier'",
+      "🔑 :14-20 BOTH LAYERS, AND LAYER 2 IS JUSTIFIED AS A BACKSTOP RATHER THAN A DUPLICATE: proactive compaction at ~80% of the bound model's window, then error-triggered aggressive re-compaction retried ONCE on a LENGTH rejection specifically — 'Layer 2 exists because layer 1's measurement is an APPROXIMATION … it is the backstop for the cases the estimate gets wrong, not a duplicate of it'",
+      ":22-30 REUSE, NOT REIMPLEMENTATION: all actual compaction is personalclaw.context_compaction.compact, 'the same seam the native agent loop uses', and re-deriving it 'would be a second implementation that drifts from the first' — with the stake named: an orphaned tool-result 'breaks the provider', 'so getting it wrong is a live failure, not a style question'",
+      ":111-149 the degrade path is real and narrow: _placeholder_body states what was removed, reached ONLY when a supplied summarizer RAISED, and the wrapper catches broadly on purpose ('any summarizer failure degrades, never propagates')",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "ui_validated": "Not driven: 'driven end to end on a long-horizon template' needs many model calls, and no model is bound in this home.",
+    "notes": "The atom's own dependency line is STALE and worth correcting: it names 'EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)'. The seam exists — personalclaw.context_compaction.compact — and this module consumes it rather than re-deriving it, which is the stronger outcome. Partial only for the end-to-end drive."
+  },
+  "WV-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "models.py:113-120 ItemErrorPolicy documents its own exhaustiveness requirement — tick.foreach_outcome 'is the single place the choice is made and which must branch on every member' — and states the two axes the three members are combinations of ('how much of the fan-out still runs' and 'does the failure count')",
+      "MEASURED: tick.py:1140-1144 the AssertionError tail is real and its message teaches rather than aborts — 'a new member must declare its own behaviour here rather than inherit another policy's'",
+      "🔑 :1132-1138 COLLECT returns container_outcome, and the wrong alternative is named with its consequence: 'Returning DEGRADED here instead would make COLLECT indistinguishable from SKIP at the run level, and the one policy whose entire point is \"the failures matter\" would report success — THE SILENT-DROP SHAPE THIS PROGRAM KEEPS FINDING'",
+      ":1125-1130 SKIP returns DEGRADED, 'tolerated, but never invisible', so the container 'still refuses to claim clean success'; :122-125 HALT ends through the frontier's deadlock path, 'a FAILED run that did the least work it could get away with'",
+      "MEASURED: neither ItemErrorPolicy nor OverlapPolicy appears anywhere in the repo-root inert-surface-baseline.json (433 lines) — the clause's 'leaves inert-surface-baseline.json' is confirmed by ABSENCE, which is the right shape of evidence for it",
+      "tests/test_workflows_item_error_policy.py green (part of the 82 above)",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "Three policies producing three different run-level observables is the whole atom, and the code argues each choice against the specific collapse that would erase the distinction. The phrase 'the silent-drop shape this program keeps finding' is the codebase naming its own recurring defect class in situ — the same class WV-15 closes at the trigger layer and WV-7's cached flag still exhibits."
+  },
+  "WV-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 overlap.py:3-8 THE DEFECT IS STATED WITHOUT EUPHEMISM: 'OverlapPolicy.QUEUE shipped as the exact OPPOSITE of its name'. The provider compared against SKIP and CANCEL_PREVIOUS and let queue fall through to store.create + _launch, 'so the one policy whose name promises ORDERING started a second run beside the still-running first one, silently. A per-minute trigger against a slow workflow stacked runs without bound, which is the precise hazard OverlapPolicy's own docstring says the default exists to prevent'",
+      ":11-14 decide() names every member and its tail RAISES: a fourth member 'would otherwise inherit whichever branch happened to be written last — which is exactly how QUEUE inherited \"start now\"'. The ratchet is derived from the bug's own mechanism",
+      "🔑 :16-25 THE QUEUE IS A MARKED DRAFT, NOT A NEW STATUS, so 'no state-machine member (and no frontend status mapping) has to change' — but DRAFT is also a user's hand-made unstarted draft, so queued-ness is a marker on run.extra (a persisted JSON column, so 'the marker survives a restart exactly as the row does'), and 'A DRAFT with no marker is never touched by the drain — starting work a user never asked to start is the worst available outcome of this atom, so it is the thing a test pins directly'",
+      ":27-33 the drain is single-flight and idempotent by REUSING concurrency.single_flight 'rather than inventing a lock', with three independent guards in cheapest-first order: the flock, the controller registry's per-run-id idempotence, and an is-anything-active re-check INSIDE the lock",
+      ":35 the queue is capped at one and a drop is loud (MAX_QUEUE_DEPTH)",
+      "triggers/history.py:73-76 and :121-124 both status tables map `queued` to DEFERRED with the reason — 'no run directory or journal exists for it yet', and without it a fire 'would fall to the RAN if last_run default and read as \"it ran and did something durable\" — a queued start has run nothing'",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The best-argued fix atom in the plan. The identified failure mode is a name lying about behaviour, and the ratchet added is the one that would have caught it — a raising tail rather than a fall-through default. The worst-outcome sentence ('starting work a user never asked to start') is the right thing to have written down: it explains why a hand-made DRAFT is pinned by a test rather than left to the drain's good judgement."
+  },
+  "WV-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 27 (WV) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED, tests/test_triggers_status_vocabulary.py: 15 pass",
+      "HOOK_STATUS_TO_OUTCOME (history.py:107) names `launched` at :130 and `skipped_incident` at :141 — the two the clause requires. :125-129 records why launched was missing: 'this table — alone among the three — had no key for it, so the one status written to say \"started ≠ succeeded\" landed on the RAN if last_run default and said \"succeeded\"'",
+      ":131-140 skipped_incident maps to SKIPPED_GATE, and the mapping is argued against BOTH near-misses: NOT REFUSED, because 'a denylist refusal is a verdict on THIS action (\"you may not do that\"), while an incident suspends every automated action for a while and lifts on its own'; NOT DEFERRED, because 'deferred work still starts, and this fire is dropped, never retried'",
+      "SCHEDULE_STATUS_TO_OUTCOME (:67) names `blocked_injection` at :82 — before which 'a defended injection attempt fell to the FAILED fallback and appeared in the user's history as a genuine failure'",
+      "🔑 :93 all six INERT_OUTCOMES arrive BY CONSTRUCTION, not by hand: `**{value: value for value in sorted(INERT_OUTCOMES)}`, because 'the writer's own guard is `outcome not in INERT_OUTCOMES: return`, so that set IS the vocabulary, and a seventh inert member must not need a second edit here to stay honest'. MEASURED: models.py:138-147 holds exactly six members",
+      ":83-88 what the gap cost: 'A quiet-hours skip rendered as a red failure in the runs feed … and it also kept the row OUT of partition_inert's suppressed half, so it buried the fires that mattered instead of folding away'",
+      "MEASURED: both fallbacks log and neither returns ran — history.py:316-325, the unknown-status branch logs a warning naming the status and the file to map it in, and records FAILED",
+      ":114-120 the `advisory` mapping is the subtlest row and gets the longest reason: RAN not REFUSED, because 'the script really did run … and nothing was refused — the tool it objected to went ahead. Calling it REFUSED is the original defect one layer up: it would put \"blocked\" in the runs feed for a write that landed'",
+      "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
+    ],
+    "notes": "The identity-by-construction line is the strongest anti-drift move I have seen in this campaign: six hand-copied rows would have been correct today and wrong at the seventh member, and the code says so. Every other row in both tables argues against the specific neighbouring outcome it could be mistaken for, which is what makes a nine-status vocabulary reviewable at all."
   }
 }
