@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 274 | `done_when` checked against the code and it holds |
-| `partial` | 183 | some `done_when` clauses hold, others do not |
-| `contradicted` | 5 | the recorded status disagrees with the code |
+| `confirmed` | 278 | `done_when` checked against the code and it holds |
+| `partial` | 188 | some `done_when` clauses hold, others do not |
+| `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 220 | not yet checked |
+| `unaudited` | 210 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -204,16 +204,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CE-1`](CE-1.md) | `done` | `unaudited` | Sender-trust core seam: channel_trust.py store+API, fence helper, SDK exports, SEL+owner-notification, pair CLI |
-| [`CE-2`](CE-2.md) | `done` | `unaudited` | Migrate the Slack app onto the core trust seam with a one-time loud migrate_to_core_trust() |
-| [`CE-3`](CE-3.md) | `done` | `unaudited` | Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor |
-| [`CE-4`](CE-4.md) | `done` | `unaudited` | Discord channel app (Gateway WS + REST over httpx): gateway client, delivery+buttons, transport+trust, setup/doctor |
-| [`CE-5`](CE-5.md) | `done` | `unaudited` | Email channel app (stdlib IMAP/SMTP in thread executors): poll transport+address-allowlist pairing, SMTP delivery+Message-ID threading, setup/doctor |
-| [`CE-6`](CE-6.md) | `done` | `unaudited` | Channel conformance kit in core, wired into slack/telegram/discord/email test suites |
-| [`CE-7`](CE-7.md) | `done` | `unaudited` | build-a-channel-app.md guide (from Telegram) + vendor-completeness section, and the kit's inbox-source check |
-| [`CE-8`](CE-8.md) | `done` | `unaudited` | Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue |
-| [`CE-9`](CE-9.md) | `blocked` | `unaudited` | Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note |
-| [`CE-10`](CE-10.md) | `done` | `unaudited` | Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation) |
+| [`CE-1`](CE-1.md) | `done` | `confirmed` | Sender-trust core seam: channel_trust.py store+API, fence helper, SDK exports, SEL+owner-notification, pair CLI |
+| [`CE-2`](CE-2.md) | `done` | `contradicted` | Migrate the Slack app onto the core trust seam with a one-time loud migrate_to_core_trust() |
+| [`CE-3`](CE-3.md) | `done` | `partial` | Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor |
+| [`CE-4`](CE-4.md) | `done` | `partial` | Discord channel app (Gateway WS + REST over httpx): gateway client, delivery+buttons, transport+trust, setup/doctor |
+| [`CE-5`](CE-5.md) | `done` | `partial` | Email channel app (stdlib IMAP/SMTP in thread executors): poll transport+address-allowlist pairing, SMTP delivery+Message-ID threading, setup/doctor |
+| [`CE-6`](CE-6.md) | `done` | `partial` | Channel conformance kit in core, wired into slack/telegram/discord/email test suites |
+| [`CE-7`](CE-7.md) | `done` | `confirmed` | build-a-channel-app.md guide (from Telegram) + vendor-completeness section, and the kit's inbox-source check |
+| [`CE-8`](CE-8.md) | `done` | `confirmed` | Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue |
+| [`CE-9`](CE-9.md) | `blocked` | `partial` | Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note |
+| [`CE-10`](CE-10.md) | `done` | `confirmed` | Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation) |
 
 ### `CE2` — CONTEXT-ECONOMY (7/7 done)
 

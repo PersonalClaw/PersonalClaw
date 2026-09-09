@@ -32,9 +32,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- STATUS `blocked` IS CORRECT and the blocker is genuinely an owner decision: the community-bounty issues must carry a risk-policy paragraph the owner has not approved. That is a judgement about what the project is willing to invite, not a missing seam
+- 🔑 THE SECOND CLAUSE IS SATISFIED BY CONSTRUCTION RATHER THAN BY AN EDIT, which is the better outcome and the reason no DISCOVERY note is warranted: the scaffold's type table is DERIVED from the provider registry, so there was never a `channel` template to register
+- 13 coordination rails green, and one of them is a shape this campaign has not seen before: `test_no_FOURTH_atom_has_quietly_taken_ownership_of_adoption` — a rail against OWNERSHIP DRIFT, asserting that no other atom has silently absorbed the obligation this one is holding open
+- the forward-obligation half is pinned in both directions: the coordination block must name the atom that DISCHARGED the core half AND keep the adoption half outstanding, so neither a premature close nor a forgotten opening can pass
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** No user surface: GitHub issues, a scaffold table and a coordination note.
+
+**Notes:** Partial rather than blocked-and-unverifiable, because two of the three clauses are met and checkable in-tree; only the bounty issues wait on the owner. The ownership-drift rail is worth borrowing — most plans leave a forward obligation as prose and discover years later that two atoms both thought the other owned it.
 
 ## Recorded history
 

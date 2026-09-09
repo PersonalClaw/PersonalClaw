@@ -31,9 +31,22 @@ fake-IMAP tests: new-mail detection, UID persistence, code-in-reply pairing; fak
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 346 tests green — the largest of the four suites — and the full conformance kit passes with no xfail
+- the honesty clause is structural rather than documentary: capabilities declare `streaming=false`, so the kit's streaming-throttle clause does not apply to it, which is the right shape for a transport whose medium cannot stream
+- reaches trust through `deliver_channel_inbound` like the other two, so IMAP polling gains pairing, allowlisting and fencing without owning any of them
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven: threading headers, UID persistence and code-in-reply pairing are exercised against fake IMAP/SMTP, and the remaining clause needs a real mailbox and app password (owner task 4).
+
+**Notes:** Partial on the live-mailbox clause. Worth noting the deferral the atom itself anticipated (a digest target if plan 42 S5 is absent) is the kind of forward note that usually rots; here it is written into the atom rather than into a comment.
 
 ## Recorded history
 

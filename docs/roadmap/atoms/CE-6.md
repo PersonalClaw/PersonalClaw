@@ -35,9 +35,23 @@ tests/channel_conformance.py::assert_channel_contract asserts connect/send/recei
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 🔑 THE KIT IS REAL AND ALL FOUR APPS CALL IT — `tests/test_conformance.py` in each of slack/telegram/discord/email — and it carries NINE clauses, the ninth being an explicit ADVISORY that 'WARNS instead of' failing, with the reason for that choice documented at the clause rather than assumed
+- 🔴 BUT THE CLAUSE 'ALL FOUR APPS PASS THE KIT' IS UNMET: Slack's full-kit call is a strict xfail on `[fencing]`, so three of four pass and the fourth is a pinned, self-invalidating exemption
+- 🔑 THE KIT WAS NOT WEAKENED TO ADMIT THE FAILING APP, which is the failure mode a conformance kit usually dies of. Three separate assertions keep the exemption honest: the xfail is `strict=True` so it reds the day Slack starts passing; a second test pins that fencing is the ONLY failing clause; a third asserts the EARLIER clauses are absent from the failure, turning 'the kit got that far' from a stack-trace inference into a green assertion
+- the advisory clause takes a documented exemption argument (`no_inbox_source_reason=`) whose reason 'lives in the app's own test' rather than in a suppression flag with no rationale
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** No user surface: this atom is a test kit. Validated by running it through all four app suites.
+
+**Notes:** 🔑 THE MOST INSTRUCTIVE HALF OF THIS PLAN. A conformance kit that finds one of its own vendors non-compliant has exactly two exits — weaken the clause, or record the failure as strictly as possible — and this took the second. The xfail is not a hole; it is the mechanism by which CE-2's contradiction stayed visible long enough for this audit to find it.
 
 ## Recorded history
 

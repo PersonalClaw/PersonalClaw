@@ -33,9 +33,22 @@ guide maps every ChannelDelivery/ChannelTransport method to a must/should/may ob
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- the guide ships at `docs/guides/build-a-channel-app.md` in CORE, 405 lines, extracted from the Telegram app
+- the vendor-completeness section exists and the kit's advisory clause 9 is its enforcement arm, naming both halves of the seam checklist — a missing `inbox` message source and, since CE-10, a missing `trigger_source`
+- the guide is rail-protected against rotting in a specific way worth keeping: CE-9's suite asserts the guide does not put an ALREADY-SHIPPED seam back in the future tense, that its row is no longer a bare forward obligation, that it names the manifest type and the SDK path, and that it STILL forbids hand-rolled event glue
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** No user surface: a contributor guide plus a kit clause.
+
+**Notes:** 🪤 MY OWN ERROR, RECORDED: I first searched the APPS repo for this guide, found `app-creation-guide.md` instead, and was one step from filing it as missing. It lives in the core repo under docs/guides — where the plan's task table says it does. Withdrawn.
 
 ## Recorded history
 

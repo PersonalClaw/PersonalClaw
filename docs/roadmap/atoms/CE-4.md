@@ -31,9 +31,22 @@ fake-WS tests cover identify/heartbeat/ack/resume/dispatch (guilds, guild_messag
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 237 tests green and the full conformance kit passes with no xfail and no suppression
+- `transport.py:260` awaits `deliver_channel_inbound(PROVIDER, cm, is_dm=is_dm)` — same one-door pattern as Telegram, same absence of any local trust call
+- the manifest declares the `channel` provider plus a `trigger_source` whose capabilities name `direct_message` and `guild`-side traffic
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven: the gateway identify/heartbeat/resume path and the approval-button round-trip are exercised against a fake WS, and the remaining clause is explicitly an owner task (a real Discord app, bot and test server).
+
+**Notes:** Partial for the same reason as CE-3 — a real-service validation clause I cannot satisfy and a recorded walkthrough I may not accept as proof.
 
 ## Recorded history
 

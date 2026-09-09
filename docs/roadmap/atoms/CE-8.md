@@ -31,9 +31,23 @@ slack-channel app.json registers >=2 providers incl. an inbox MessageSourceProvi
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 🔑 THE MANIFEST CENSUS IS THREE PROVIDERS, NOT TWO: slack-channel declares the singular `provider` of type `channel` plus `providers: [inbox, trigger_source]`, so the '>=2 providers incl. an inbox MessageSourceProvider' clause is met with room to spare — and it is the ONLY one of the four with an inbox source, which is exactly what makes it the pattern the other three still owe
+- 🔑 THE RESIDUE SCRUB IS OBSERVED, NOT CLAIMED: zero occurrences of the vendor name anywhere under core's inbox module, so the generic source seam carries no trace of the vendor that first drove it
+- the inbox source is vendor-neutral by test rather than by intention: `test_source_name_is_the_vendor_neutral_key`, alongside checkpoint tests that pin non-redelivery, cursor advance on skipped messages, and checkpoint RETENTION when a channel errors — the failure mode where an error would silently skip messages forward
+- `test_token_falls_back_to_the_shared_credential_store` — the vendor token resolves through the shared credential store rather than the app's own settings file, which is the repo's stated contract for secrets
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven: the inbox source needs a real workspace to poll. Validated at the manifest, the residue sweep and the app's own 566-test suite.
+
+**Notes:** This atom is the one that makes CE-2's contradiction legible: Slack got the FULL vendor-completeness treatment (inbox source, trigger source, UI behind its own block, core residue scrubbed) while the trust-seam migration it depends on never landed. The vendor breadth advanced; the trust depth did not. Filed as issue #2803.
 
 ## Recorded history
 

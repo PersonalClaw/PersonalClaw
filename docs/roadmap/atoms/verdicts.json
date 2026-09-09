@@ -5621,5 +5621,149 @@
     ],
     "ui_validated": "No surface of its own: this atom is the engine-side half of two features whose user surfaces belong to HC-3 and HC-4. Validated by driving the real template node through the engine dispatch seam in its test.",
     "notes": "The dep on HC-3 is discharged in substance and this audit re-confirmed why: HC-3's blocker is an owner live run, not unlanded code, and the code HC-5 calls is present and threaded. Worth keeping as a general rule — a `blocked` dependency whose blocker is a cost rather than a contract does not block a consumer that only needs the contract."
+  },
+  "CE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "🔑 THE PAIRING CORE IS BUILT LIKE A CREDENTIAL PRIMITIVE, and every choice carries its reason: only the SHA-256 hash is stored and 'the code itself is NEVER logged'; one active code per provider; the compare is `hmac.compare_digest` over hashes; the code is CONSUMED BEFORE the sender is allowed (`rec['pairing'] = {}` and the write land before `allow_sender`), so a crash between the two cannot leave a spent code live",
+      "🔑 A WRONG CODE LEAVES THE STILL-VALID CODE IN PLACE while an EXPIRED one is actively cleared on read — a typo must not destroy the owner's code, but a dead record must not linger. Two different failure modes given two different treatments rather than one blanket 'deny'",
+      "🔑 THE SHAPE CHECK IS STRICTER THAN `isdigit()` FOR A STATED REASON: exactly 8 ASCII digits, because `str.isdigit()` accepts Arabic-Indic and fullwidth forms 'which can never match an ASCII code hash', so both would burn a redemption attempt AND an audit row on text that could not possibly be a code",
+      "🔑 THE INERT-CONTROL DEFECT THIS CAMPAIGN KEEPS FINDING WAS FOUND AND CLOSED BY THIS PLAN ITSELF, and the code records it: before the redemption moved into `guard_inbound`, `redeem_pairing_code` 'was reachable only through the platform's inbound door, which no shipping channel crossed, so `personalclaw pair` minted codes that nothing could spend (#950)'",
+      "🔑 A MONOTONICITY ARGUMENT MOST POLICY LADDERS GET WRONG: policy `owner_only` deliberately does NOT honour a pairing code, because 'the owner's Allow is the only door, and honouring a code would make owner_only no stronger than pairing'. A strictly stronger posture must not inherit the weaker one's entrance",
+      "the flood controls are per-side and each is justified: ONE `sender_denied` SEL row plus ONE owner notification per sender per 24 h, deduped on a PERSISTED timestamp map so 'an unknown sender who messaged before you slept does not re-alert when the gateway comes back up'; and `_pairing_code_outstanding` skips redemption entirely when no code was ever minted, so a stranger spamming digits cannot drive unbounded `no_active_code` rows",
+      "the fence is not hand-rolled: `fence_channel_content` delegates to core `security.fence_untrusted` with a `channel:<provider>:<sender>` provenance, 'so transports can't hand-roll a weaker fence and the neutralised chat-template-token / fence-break defences are inherited unchanged'",
+      "the notification is genuinely ACTIONABLE, not informational: it carries `actions=['allow','deny']` plus the provider/sender the button needs, and `apply_trust_action` is the backend those buttons resolve to — the clause's 'whose Allow action persists the sender' has a named function rather than a described intention",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven in a browser: reaching the unknown-sender notification needs real inbound traffic from a bound external channel. The owner-facing projection and the CLI are the surfaces; the flow was read at the seam and exercised by its 106 tests.",
+    "notes": "🪤 ONE OBSERVATION I AM DELIBERATELY NOT CALLING A DEFECT. There is no attempt counter or lockout on wrong-code redemption, so the search space is 10^8 over a 600 s TTL — but exhausting it needs ~167k messages/second through a platform DM, every wrong attempt emits its own `sender_denied wrong_code` audit row, and a test pins that asymmetry as intentional ('Floor: once a code exists, a wrong attempt is audited'). The flood the code DOES suppress is the one that is pure noise; the one it keeps is the one worth seeing. That is a considered split, not an oversight."
+  },
+  "CE-2": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "issue": 2803,
+    "evidence": [
+      "🔴 STATUS IS `done`. `migrate_to_core_trust()` EXISTS NOWHERE — not in `slack-channel/slack_runtime/allowlist.py` where the plan's task table puts it, not anywhere else in the apps repo, and not in core. The done_when's second half ('moves app-local JSON into the core store once (idempotent, logged, second run no-op per fixture)') has no implementation to test",
+      "🔴 THE PLAN'S OWN EXECUTION LOG CONVICTS THE STATUS: 'T1.4 of this plan never landed' — recorded during an earlier session's conformance work, and T1.4 is precisely this atom's declared scope ('Session 1 — T1.4')",
+      "🔴 THE CONFORMANCE KIT STILL REJECTS SLACK ON THE TRUST CLAUSE, TODAY, ON THIS TREE, and it is a **strict** xfail — so if Slack had started passing, the test would FAIL rather than quietly go green. The suite reports `566 passed, 1 xfailed`, so the `[fencing]` clause genuinely still fails, and a sibling test pins that fencing is the ONLY outstanding clause so the xfail cannot swallow a new violation elsewhere",
+      "🔑 WHAT SLACK ACTUALLY HAS IS NARROWER THAN THE ATOM CLAIMS, AND I CHECKED THE CALL SITE RATHER THAN THE IMPORT: `handler.py:1754` does call `deliver_channel_inbound`, but it sits inside the LINKED-THREAD intercept branch and returns immediately after; the ordinary `handle_message` path continues below it and never crosses the door. The code says so itself: 'Slack keeps its own owner gate above'",
+      "the FIRST half of the done_when DID land, though later and in a different shape and by a different plan: `persist_allowed_user`/`persist_tracking_channel` now write THROUGH to core (`apply_trust_action`, `track`/`untrack`), attributed in-comment to EA-7, 'otherwise the two stores drift and the door rules on stale data' — a write-through mirror, not the adapters-over-the-seam the atom describes, and `sync_channel_trust()` is an idempotent boot-time mirror rather than a one-time migration",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven: Slack inbound needs a real workspace. The gap is observable without one — a strict xfail that is still xfailing is a live assertion about this tree.",
+    "notes": "🔑 FOURTH CONTRADICTED VERDICT OF THE CAMPAIGN, AND THE FIRST WHERE THE PLAN'S OWN LOG ALREADY SAID SO. The honest reading is that CE-2 was partly absorbed by a later plan and partly abandoned, and nobody moved the status. Two process notes on my own reasoning. FIRST, I nearly filed the guide as missing: `build-a-channel-app.md` is in the CORE repo under docs/guides, and I searched the apps repo — my error, withdrawn. SECOND, I nearly declared the plan's finding stale, because a search for `guard_inbound` under slack-channel DOES hit `slack_runtime/inbound_tap.py` — until I read the line, which is a DOCSTRING QUOTING THE FINDING ITSELF. That is the exact trap the log warned about ('the only strings are the test file's own prose quoting that fact'), and I walked into it from the other direction. Where the log IS stale is its supporting detail: it says the other three transports each do `text_for_session = verdict.fenced_text or cm.text`, and that pattern is gone — they now hand inbound to `deliver_channel_inbound` and core fences on their behalf. The conclusion survives; the mechanism it cited moved."
+  },
+  "CE-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "150 tests green, and the app passes the FULL conformance kit unconditionally: `assert_channel_contract(TelegramTransport({}), inbound_via='_on_message')` — no xfail, no suppression argument",
+      "🔑 IT REACHES TRUST THROUGH THE ONE DOOR RATHER THAN REMEMBERING TO: `transport.py:269` awaits `self._services.deliver_channel_inbound(PROVIDER, cm, is_dm=is_dm)`, and the module header states what that buys — 'the trust gate, DM pairing, group tracked-only, non-owner-content fencing'. Neither `guard_inbound` nor `fenced_text` appears anywhere in its runtime, and that ABSENCE is the point",
+      "the bot token is declared `sensitive: true` in the manifest's settingsSchema and resolves through the shared credential store, so the vendor secret is not sitting in app settings JSON",
+      "the manifest carries the channel provider as the singular `provider` (type `channel`, implementation `telegram_runtime.transport:create_provider`) plus a `trigger_source` in `providers[]`",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven: every remaining clause needs a real BotFather bot and a phone, which the atom itself assigns to the owner (owner tasks 1+2). Throttled edit-streaming and the inline-keyboard approval round-trip are exercised against MockTransport rather than Telegram.",
+    "notes": "Partial strictly for the recorded owner walkthrough (V2), which is a log entry and therefore not evidence under this audit's governing rule, plus the live-service clauses behind it. Everything checkable in this tree is confirmed, including the kit passing with no exemption argument."
+  },
+  "CE-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "237 tests green and the full conformance kit passes with no xfail and no suppression",
+      "`transport.py:260` awaits `deliver_channel_inbound(PROVIDER, cm, is_dm=is_dm)` — same one-door pattern as Telegram, same absence of any local trust call",
+      "the manifest declares the `channel` provider plus a `trigger_source` whose capabilities name `direct_message` and `guild`-side traffic",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven: the gateway identify/heartbeat/resume path and the approval-button round-trip are exercised against a fake WS, and the remaining clause is explicitly an owner task (a real Discord app, bot and test server).",
+    "notes": "Partial for the same reason as CE-3 — a real-service validation clause I cannot satisfy and a recorded walkthrough I may not accept as proof."
+  },
+  "CE-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "346 tests green — the largest of the four suites — and the full conformance kit passes with no xfail",
+      "the honesty clause is structural rather than documentary: capabilities declare `streaming=false`, so the kit's streaming-throttle clause does not apply to it, which is the right shape for a transport whose medium cannot stream",
+      "reaches trust through `deliver_channel_inbound` like the other two, so IMAP polling gains pairing, allowlisting and fencing without owning any of them",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven: threading headers, UID persistence and code-in-reply pairing are exercised against fake IMAP/SMTP, and the remaining clause needs a real mailbox and app password (owner task 4).",
+    "notes": "Partial on the live-mailbox clause. Worth noting the deferral the atom itself anticipated (a digest target if plan 42 S5 is absent) is the kind of forward note that usually rots; here it is written into the atom rather than into a comment."
+  },
+  "CE-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "🔑 THE KIT IS REAL AND ALL FOUR APPS CALL IT — `tests/test_conformance.py` in each of slack/telegram/discord/email — and it carries NINE clauses, the ninth being an explicit ADVISORY that 'WARNS instead of' failing, with the reason for that choice documented at the clause rather than assumed",
+      "🔴 BUT THE CLAUSE 'ALL FOUR APPS PASS THE KIT' IS UNMET: Slack's full-kit call is a strict xfail on `[fencing]`, so three of four pass and the fourth is a pinned, self-invalidating exemption",
+      "🔑 THE KIT WAS NOT WEAKENED TO ADMIT THE FAILING APP, which is the failure mode a conformance kit usually dies of. Three separate assertions keep the exemption honest: the xfail is `strict=True` so it reds the day Slack starts passing; a second test pins that fencing is the ONLY failing clause; a third asserts the EARLIER clauses are absent from the failure, turning 'the kit got that far' from a stack-trace inference into a green assertion",
+      "the advisory clause takes a documented exemption argument (`no_inbox_source_reason=`) whose reason 'lives in the app's own test' rather than in a suppression flag with no rationale",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "No user surface: this atom is a test kit. Validated by running it through all four app suites.",
+    "notes": "🔑 THE MOST INSTRUCTIVE HALF OF THIS PLAN. A conformance kit that finds one of its own vendors non-compliant has exactly two exits — weaken the clause, or record the failure as strictly as possible — and this took the second. The xfail is not a hole; it is the mechanism by which CE-2's contradiction stayed visible long enough for this audit to find it."
+  },
+  "CE-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "the guide ships at `docs/guides/build-a-channel-app.md` in CORE, 405 lines, extracted from the Telegram app",
+      "the vendor-completeness section exists and the kit's advisory clause 9 is its enforcement arm, naming both halves of the seam checklist — a missing `inbox` message source and, since CE-10, a missing `trigger_source`",
+      "the guide is rail-protected against rotting in a specific way worth keeping: CE-9's suite asserts the guide does not put an ALREADY-SHIPPED seam back in the future tense, that its row is no longer a bare forward obligation, that it names the manifest type and the SDK path, and that it STILL forbids hand-rolled event glue",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "No user surface: a contributor guide plus a kit clause.",
+    "notes": "🪤 MY OWN ERROR, RECORDED: I first searched the APPS repo for this guide, found `app-creation-guide.md` instead, and was one step from filing it as missing. It lives in the core repo under docs/guides — where the plan's task table says it does. Withdrawn."
+  },
+  "CE-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "🔑 THE MANIFEST CENSUS IS THREE PROVIDERS, NOT TWO: slack-channel declares the singular `provider` of type `channel` plus `providers: [inbox, trigger_source]`, so the '>=2 providers incl. an inbox MessageSourceProvider' clause is met with room to spare — and it is the ONLY one of the four with an inbox source, which is exactly what makes it the pattern the other three still owe",
+      "🔑 THE RESIDUE SCRUB IS OBSERVED, NOT CLAIMED: zero occurrences of the vendor name anywhere under core's inbox module, so the generic source seam carries no trace of the vendor that first drove it",
+      "the inbox source is vendor-neutral by test rather than by intention: `test_source_name_is_the_vendor_neutral_key`, alongside checkpoint tests that pin non-redelivery, cursor advance on skipped messages, and checkpoint RETENTION when a channel errors — the failure mode where an error would silently skip messages forward",
+      "`test_token_falls_back_to_the_shared_credential_store` — the vendor token resolves through the shared credential store rather than the app's own settings file, which is the repo's stated contract for secrets",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "Not driven: the inbox source needs a real workspace to poll. Validated at the manifest, the residue sweep and the app's own 566-test suite.",
+    "notes": "This atom is the one that makes CE-2's contradiction legible: Slack got the FULL vendor-completeness treatment (inbox source, trigger source, UI behind its own block, core residue scrubbed) while the trust-seam migration it depends on never landed. The vendor breadth advanced; the trust depth did not. Filed as issue #2803."
+  },
+  "CE-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "STATUS `blocked` IS CORRECT and the blocker is genuinely an owner decision: the community-bounty issues must carry a risk-policy paragraph the owner has not approved. That is a judgement about what the project is willing to invite, not a missing seam",
+      "🔑 THE SECOND CLAUSE IS SATISFIED BY CONSTRUCTION RATHER THAN BY AN EDIT, which is the better outcome and the reason no DISCOVERY note is warranted: the scaffold's type table is DERIVED from the provider registry, so there was never a `channel` template to register",
+      "13 coordination rails green, and one of them is a shape this campaign has not seen before: `test_no_FOURTH_atom_has_quietly_taken_ownership_of_adoption` — a rail against OWNERSHIP DRIFT, asserting that no other atom has silently absorbed the obligation this one is holding open",
+      "the forward-obligation half is pinned in both directions: the coordination block must name the atom that DISCHARGED the core half AND keep the adoption half outstanding, so neither a premature close nor a forgotten opening can pass",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "No user surface: GitHub issues, a scaffold table and a coordination note.",
+    "notes": "Partial rather than blocked-and-unverifiable, because two of the three clauses are met and checkable in-tree; only the bounty issues wait on the owner. The ownership-drift rail is worth borrowing — most plans leave a forward obligation as prose and discover years later that two atoms both thought the other owned it."
+  },
+  "CE-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run",
+    "evidence": [
+      "🔑 I RAN THE ATOM'S OWN DISCOVERY RAIL AND IT REPORTS 4/4: `check_trigger_source_adoption.py` → 'trigger-source adoption: 4/4 channel app(s)', adopted = discord, email, slack, telegram, with `no source`, `empty array`, `declared-dead` and `unreadable` all empty — each failure mode as its OWN state, exactly as the atom demands, rather than collapsing into a lowered ratio",
+      "🔑 FALSIFIED IT: I pointed email-channel's declaration at a factory that does not exist. The rail moved that app into `declared-dead` (NOT into 'no source', NOT into a silent 3/4), named the exact missing symbol — \"implementation module 'email_runtime.trigger_source' defines no top-level 'no_such_factory_audit_probe'\" — reported '1 violation(s)', and exited **1**. Reverted; clean run exits **0**",
+      "🔑 A TRAP I AVOIDED BY CHECKING: my first reading took the exit code from a piped `tail`, which reported 0 for the broken tree. Re-run with the output redirected, the real exit codes are 1 (probe) and 0 (clean) — so the rail genuinely GATES rather than merely printing",
+      "the no-bespoke-glue half is a real sweep, not a spot check: 319 app python files scanned, exactly 4 binding the SDK trigger-source contract, and the forbidden names are asserted over Python NAMES via AST rather than raw text — so a comment mentioning `emit_event` cannot red it and a real call cannot hide behind an alias",
+      "adoption is MEASURED over discovered apps rather than compared to a remembered count, which is what makes a regression red in EITHER direction — a new channel app with no trigger source lowers the ratio without anyone updating a constant",
+      "core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13"
+    ],
+    "ui_validated": "No user surface: a manifest declaration and a CI rail. Validated by running the rail, breaking it, and reading both real exit codes.",
+    "notes": "🔑 THE BEST-SHAPED ADOPTION RAIL IN THE CAMPAIGN. Three properties together: the population is DISCOVERED (so the denominator cannot go stale), every failure mode is its OWN reported state (so a defect cannot masquerade as a slightly lower score), and the forbidden alternatives are stated over AST names (so prose cannot trip it and an alias cannot evade it). This atom exists because WF2AUT-8 shipped a seam with zero adopters and no atom required one — the campaign's inert-control class again — and the fix was not just to adopt it but to make non-adoption impossible to ship quietly."
   }
 }

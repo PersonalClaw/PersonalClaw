@@ -31,9 +31,23 @@ MockTransport tests cover getUpdates/sendMessage/editMessageText/sendDocument/se
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 150 tests green, and the app passes the FULL conformance kit unconditionally: `assert_channel_contract(TelegramTransport({}), inbound_via='_on_message')` — no xfail, no suppression argument
+- 🔑 IT REACHES TRUST THROUGH THE ONE DOOR RATHER THAN REMEMBERING TO: `transport.py:269` awaits `self._services.deliver_channel_inbound(PROVIDER, cm, is_dm=is_dm)`, and the module header states what that buys — 'the trust gate, DM pairing, group tracked-only, non-owner-content fencing'. Neither `guard_inbound` nor `fenced_text` appears anywhere in its runtime, and that ABSENCE is the point
+- the bot token is declared `sensitive: true` in the manifest's settingsSchema and resolves through the shared credential store, so the vendor secret is not sitting in app settings JSON
+- the manifest carries the channel provider as the singular `provider` (type `channel`, implementation `telegram_runtime.transport:create_provider`) plus a `trigger_source` in `providers[]`
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven: every remaining clause needs a real BotFather bot and a phone, which the atom itself assigns to the owner (owner tasks 1+2). Throttled edit-streaming and the inline-keyboard approval round-trip are exercised against MockTransport rather than Telegram.
+
+**Notes:** Partial strictly for the recorded owner walkthrough (V2), which is a log entry and therefore not evidence under this audit's governing rule, plus the live-service clauses behind it. Everything checkable in this tree is confirmed, including the kit passing with no exemption argument.
 
 ## Recorded history
 

@@ -30,9 +30,24 @@ slack-channel persist_allowed_user/persist_tracking_channel delegate to core cha
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 🔴 STATUS IS `done`. `migrate_to_core_trust()` EXISTS NOWHERE — not in `slack-channel/slack_runtime/allowlist.py` where the plan's task table puts it, not anywhere else in the apps repo, and not in core. The done_when's second half ('moves app-local JSON into the core store once (idempotent, logged, second run no-op per fixture)') has no implementation to test
+- 🔴 THE PLAN'S OWN EXECUTION LOG CONVICTS THE STATUS: 'T1.4 of this plan never landed' — recorded during an earlier session's conformance work, and T1.4 is precisely this atom's declared scope ('Session 1 — T1.4')
+- 🔴 THE CONFORMANCE KIT STILL REJECTS SLACK ON THE TRUST CLAUSE, TODAY, ON THIS TREE, and it is a **strict** xfail — so if Slack had started passing, the test would FAIL rather than quietly go green. The suite reports `566 passed, 1 xfailed`, so the `[fencing]` clause genuinely still fails, and a sibling test pins that fencing is the ONLY outstanding clause so the xfail cannot swallow a new violation elsewhere
+- 🔑 WHAT SLACK ACTUALLY HAS IS NARROWER THAN THE ATOM CLAIMS, AND I CHECKED THE CALL SITE RATHER THAN THE IMPORT: `handler.py:1754` does call `deliver_channel_inbound`, but it sits inside the LINKED-THREAD intercept branch and returns immediately after; the ordinary `handle_message` path continues below it and never crosses the door. The code says so itself: 'Slack keeps its own owner gate above'
+- the FIRST half of the done_when DID land, though later and in a different shape and by a different plan: `persist_allowed_user`/`persist_tracking_channel` now write THROUGH to core (`apply_trust_action`, `track`/`untrack`), attributed in-comment to EA-7, 'otherwise the two stores drift and the door rules on stale data' — a write-through mirror, not the adapters-over-the-seam the atom describes, and `sync_channel_trust()` is an idempotent boot-time mirror rather than a one-time migration
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven: Slack inbound needs a real workspace. The gap is observable without one — a strict xfail that is still xfailing is a live assertion about this tree.
+
+**Notes:** 🔑 FOURTH CONTRADICTED VERDICT OF THE CAMPAIGN, AND THE FIRST WHERE THE PLAN'S OWN LOG ALREADY SAID SO. The honest reading is that CE-2 was partly absorbed by a later plan and partly abandoned, and nobody moved the status. Two process notes on my own reasoning. FIRST, I nearly filed the guide as missing: `build-a-channel-app.md` is in the CORE repo under docs/guides, and I searched the apps repo — my error, withdrawn. SECOND, I nearly declared the plan's finding stale, because a search for `guard_inbound` under slack-channel DOES hit `slack_runtime/inbound_tap.py` — until I read the line, which is a DOCSTRING QUOTING THE FINDING ITSELF. That is the exact trap the log warned about ('the only strings are the test file's own prose quoting that fact'), and I walked into it from the other direction. Where the log IS stale is its supporting detail: it says the other three transports each do `text_for_session = verdict.fenced_text or cm.text`, and that pattern is gone — they now hand inbound to `deliver_channel_inbound` and core fences on their behalf. The conclusion survives; the mechanism it cited moved.
 
 ## Recorded history
 

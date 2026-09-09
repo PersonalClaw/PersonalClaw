@@ -29,9 +29,27 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 50 (CE) — trust core read line by line; the adoption rail run and falsified; four app suites run
+
+**Code evidence:**
+
+- 🔑 THE PAIRING CORE IS BUILT LIKE A CREDENTIAL PRIMITIVE, and every choice carries its reason: only the SHA-256 hash is stored and 'the code itself is NEVER logged'; one active code per provider; the compare is `hmac.compare_digest` over hashes; the code is CONSUMED BEFORE the sender is allowed (`rec['pairing'] = {}` and the write land before `allow_sender`), so a crash between the two cannot leave a spent code live
+- 🔑 A WRONG CODE LEAVES THE STILL-VALID CODE IN PLACE while an EXPIRED one is actively cleared on read — a typo must not destroy the owner's code, but a dead record must not linger. Two different failure modes given two different treatments rather than one blanket 'deny'
+- 🔑 THE SHAPE CHECK IS STRICTER THAN `isdigit()` FOR A STATED REASON: exactly 8 ASCII digits, because `str.isdigit()` accepts Arabic-Indic and fullwidth forms 'which can never match an ASCII code hash', so both would burn a redemption attempt AND an audit row on text that could not possibly be a code
+- 🔑 THE INERT-CONTROL DEFECT THIS CAMPAIGN KEEPS FINDING WAS FOUND AND CLOSED BY THIS PLAN ITSELF, and the code records it: before the redemption moved into `guard_inbound`, `redeem_pairing_code` 'was reachable only through the platform's inbound door, which no shipping channel crossed, so `personalclaw pair` minted codes that nothing could spend (#950)'
+- 🔑 A MONOTONICITY ARGUMENT MOST POLICY LADDERS GET WRONG: policy `owner_only` deliberately does NOT honour a pairing code, because 'the owner's Allow is the only door, and honouring a code would make owner_only no stronger than pairing'. A strictly stronger posture must not inherit the weaker one's entrance
+- the flood controls are per-side and each is justified: ONE `sender_denied` SEL row plus ONE owner notification per sender per 24 h, deduped on a PERSISTED timestamp map so 'an unknown sender who messaged before you slept does not re-alert when the gateway comes back up'; and `_pairing_code_outstanding` skips redemption entirely when no code was ever minted, so a stranger spamming digits cannot drive unbounded `no_active_code` rows
+- the fence is not hand-rolled: `fence_channel_content` delegates to core `security.fence_untrusted` with a `channel:<provider>:<sender>` provenance, 'so transports can't hand-roll a weaker fence and the neutralised chat-template-token / fence-break defences are inherited unchanged'
+- the notification is genuinely ACTIONABLE, not informational: it carries `actions=['allow','deny']` plus the provider/sender the button needs, and `apply_trust_action` is the backend those buttons resolve to — the clause's 'whose Allow action persists the sender' has a named function rather than a described intention
+- core trust 106/106 (channel_trust + api + pairing redemption + conformance kit); app suites telegram 150, discord 237, email 346, slack 566+1 xfailed = 1299+1; CE-9 coordination rails 13/13
+
+**Driven in the UI:** Not driven in a browser: reaching the unknown-sender notification needs real inbound traffic from a bound external channel. The owner-facing projection and the CLI are the surfaces; the flow was read at the seam and exercised by its 106 tests.
+
+**Notes:** 🪤 ONE OBSERVATION I AM DELIBERATELY NOT CALLING A DEFECT. There is no attempt counter or lockout on wrong-code redemption, so the search space is 10^8 over a 600 s TTL — but exhausting it needs ~167k messages/second through a platform DM, every wrong attempt emits its own `sender_denied wrong_code` audit row, and a test pins that asymmetry as intentional ('Floor: once a code exists, a wrong attempt is audited'). The flood the code DOES suppress is the one that is pure noise; the one it keeps is the one worth seeing. That is a considered split, not an oversight.
 
 ## Recorded history
 
