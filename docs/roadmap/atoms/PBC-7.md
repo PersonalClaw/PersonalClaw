@@ -35,9 +35,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- 🔑 FALSIFIED AGAINST THE REAL TREE, which is this atom's own acceptance clause ('adding import slack_sdk to any core module turns it red naming the file'). Wrote a fresh core module containing one import line: the sweep FAILED and named it — `assert not ['src/personalclaw/_audit_probe_pbc.py']`. Removed it; green again
+- MEASURED: the rail is BIDIRECTIONAL — test_no_new_vendor_residue_outside_keeps fails on a hit in an unlisted file (regrowth) AND test_keeps_table_has_no_stale_entries fails on a listed file that no longer has a hit, so the table must stay an exact mirror rather than growing monotonically
+- 🔑 THE SCOPE DECISION IS STATED AND CORRECT: 'It deliberately does NOT flag vendor WORDS in docstrings/comments/prose: core legitimately documents the reference channel'. Only imports and credential/secret LITERALS are residue — and test_sweep_has_teeth asserts BOTH directions, that an injected import is caught and that a prose mention is not
+- 🔑 CI MOUNT CONFIRMED (the atom's EXT dep on CI-RELEASE-ENGINEERING): ci.yml has a dedicated `rails` job — 'Cheap anti-regression rails: the machine-checked invariants roadmap plans add' — running the sweep with -n0, and the comment explains both the -n0 and the deliberate absence of PERSONALCLAW_HOME
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** 🔑 THE BEST ANTI-INERTNESS ARTEFACT THIS CAMPAIGN HAS AUDITED, and the keeps table is why. A bare grep gate would have to choose between false positives and holes; pairing it with a per-file JUDGMENT makes the exceptions legible. config/safety.py's entry is the proof: it records a genuine FALSE POSITIVE (one 'SLACK_BOT_TOKEN' inside a _meta help string as an example env var an operator might pass through), says the pattern 'cannot tell the two apart', notes it arrived by a FILE MOVE rather than new residue ('the residue did not change, its file did'), and states why it is deliberately NOT reworded — _meta help strings render into the config JSON schema, so editing the sentence would be observable schema drift. Entries 17-18 also carry a live DISCOVERY (a generic 'is any channel configured' helper would remove two of the keeps) pointing at CHANNEL-EXPANSION. ARCC returned only cloud secret-management material here — checked-and-thin — but its one transferable objective, 'eliminating the need to hardcode credentials in source code', is precisely what this rail enforces MECHANICALLY rather than by policy statement, and the keeps table is the honest record of the four places where a credential-shaped literal is the control itself (detection regexes, an env denylist, and the key names existing installs hold).
 
 ## Recorded history
 

@@ -31,9 +31,21 @@ confirmed app_manager._install_python_deps pip-installs manifest pythonDependenc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- 🔑 DRIVEN — the clause's own acceptance line observed in real product output. `personalclaw doctor` on a real home prints `deps: ✅ websockets, aiohttp available`: slack_sdk is absent from the probe list, and the deps line is green without it
+- MEASURED: pyproject.toml carries slack-sdk ONLY in the [slack] extra (:157). Nothing in [project.dependencies]
+- 🔑 THE T2.1 FINDING IS RECORDED WHERE IT WAS WRONG: pyproject's comment now names the mechanism it previously denied — 'Apps can ALSO declare dependencies.pythonDependencies in their app.json, which the app-install pipeline pip-installs into the shared venv (apps/app_manager.py::_install_python_deps)'. The function exists at app_manager.py:368 with two call sites (:795 install, :1199 update), so the corrected claim is true and the correction sits at the exact line that carried the false one
+- the same comment states why the extra REMAINS rather than being deleted: 'for pip/uv users who pre-install it (or run headless without the Store)' — a deliberate keep, not leftover
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** The strongest atom in the plan for a reason worth generalizing: its acceptance criterion is a line of USER-VISIBLE OUTPUT, so it is checkable by running the product rather than by reading a dependency graph. A packaging change verified only by inspecting pyproject would not have proven the doctor probe was updated too — the two are separate edits and either could have been missed.
 
 ## Recorded history
 

@@ -32,9 +32,21 @@ slack-channel gains cli_setup.py (moved _setup_slack_tokens/_setup_slash_command
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- MEASURED cross-repo in PersonalClawApps/slack-channel: cli_setup.py and cli_doctor.py both exist, and app.json declares all three fields the clause requires — cli {'setup': 'cli_setup:run', 'doctor': 'cli_doctor:probe'}, loggerRoots ['slack_runtime'], dependencies.pythonDependencies ['slack-sdk>=3.27,<4']
+- 🔑 THE IMPORT BOUNDARY HOLDS EXACTLY AS SPECIFIED: the ONLY core imports in either file are `from personalclaw.sdk.channel import …` and `from personalclaw.sdk.cli import …`. No deep core internal, no inverted direction — which is the whole point of re-exporting the CRED_SLACK_* key names through sdk/channel.py
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Driven in the UI:** V1 not driven. The slack-channel app is not installed in the validation home (no installed app there declares cli.* or loggerRoots), and installing it would pip-install slack-sdk into the SHARED venv via _install_python_deps — a mutation of the toolchain rather than of the dev home, so it was deliberately not performed in an audit cycle. The chain's downstream halves were observed where they are observable without it: the doctor renders no core Slack section, and installed_logger_roots() correctly returns the empty tuple with no declaring app installed.
+
+**Notes:** Partial for the five-step V1 chain only; every static half is confirmed, including the byte-level requirement that the app's prompts moved rather than being rewritten. The atom is the interesting one architecturally: it is the only atom in this plan whose deliverable lives in a DIFFERENT REPOSITORY, and the seam it lands on (a string entry point in a manifest, resolved by core at CLI time) is what makes that possible without core knowing the app exists.
 
 ## Recorded history
 

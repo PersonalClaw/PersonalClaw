@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 207 | `done_when` checked against the code and it holds |
-| `partial` | 157 | some `done_when` clauses hold, others do not |
+| `confirmed` | 213 | `done_when` checked against the code and it holds |
+| `partial` | 158 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 315 | not yet checked |
+| `unaudited` | 308 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -659,13 +659,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PBC-1`](PBC-1.md) | `done` | `unaudited` | Manifest seam fields: cli.setup, cli.doctor, loggerRoots (contract C1) |
-| [`PBC-2`](PBC-2.md) | `done` | `unaudited` | SDK cli types + app-contributed setup/doctor runners; delete core slack setup+doctor |
-| [`PBC-3`](PBC-3.md) | `done` | `unaudited` | App-registered logger-root aggregation; delete constants.APP_LOGGER_ROOTS |
-| [`PBC-4`](PBC-4.md) | `done` | `unaudited` | Slack app absorbs its CLI setup+doctor+loggerRoots (PersonalClawApps repo) |
-| [`PBC-5`](PBC-5.md) | `done` | `unaudited` | Packaging: resolve pip-step, drop slack-sdk from core deps + doctor probes |
-| [`PBC-6`](PBC-6.md) | `done` | `unaudited` | --slack-only clean-break removal (mapped to --headless) |
-| [`PBC-7`](PBC-7.md) | `done` | `unaudited` | Anti-regrowth residue rail: sweep test + machine-checked keeps allowlist |
+| [`PBC-1`](PBC-1.md) | `done` | `confirmed` | Manifest seam fields: cli.setup, cli.doctor, loggerRoots (contract C1) |
+| [`PBC-2`](PBC-2.md) | `done` | `confirmed` | SDK cli types + app-contributed setup/doctor runners; delete core slack setup+doctor |
+| [`PBC-3`](PBC-3.md) | `done` | `confirmed` | App-registered logger-root aggregation; delete constants.APP_LOGGER_ROOTS |
+| [`PBC-4`](PBC-4.md) | `done` | `partial` | Slack app absorbs its CLI setup+doctor+loggerRoots (PersonalClawApps repo) |
+| [`PBC-5`](PBC-5.md) | `done` | `confirmed` | Packaging: resolve pip-step, drop slack-sdk from core deps + doctor probes |
+| [`PBC-6`](PBC-6.md) | `done` | `confirmed` | --slack-only clean-break removal (mapped to --headless) |
+| [`PBC-7`](PBC-7.md) | `done` | `confirmed` | Anti-regrowth residue rail: sweep test + machine-checked keeps allowlist |
 
 ### `PCS` — PROMPT-CACHE-SUBSTRATE (8/9 done)
 

@@ -29,9 +29,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- MEASURED: `slack_only` survives NOWHERE in src/, tests/ or docs/reference — the only hits in the tree are inside the roadmap records that describe the removal. A clean break, not a deprecation shim
+- the replacement is present end to end: cli.py:318-319 declares --headless with dest='headless', cli.py:169 consumes it as no_dashboard, and docs/reference/cli.md:26 documents it ('Serve channels only; skip the dashboard web server and SSH tunnel instructions')
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** Two records worth reconciling, neither a defect. (1) The atom accurately records its own E1 premise mismatch — 'plan said cli_server.py, actually cli.py' — and the flag is indeed in cli.py; a deviation log that turns out to be correct on re-audit is the case that makes the others trustworthy. (2) The atom's line numbers (parser :232, consumer :151) have drifted to :318 and :169 as the file grew. Ordinary drift, recorded so a later reader does not read it as a missing deliverable.
 
 ## Recorded history
 

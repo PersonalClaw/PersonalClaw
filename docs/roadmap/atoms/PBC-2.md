@@ -31,9 +31,23 @@ new sdk/cli.py exports SetupContext+DoctorLine(+DoctorStatus); app_cli.py run_ap
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- MEASURED: sdk/cli.py exports SetupContext, DoctorLine and DoctorStatus, and states WHY they live in the SDK — 'so an app imports them from personalclaw.sdk.cli only — never a deep core internal'
+- app_cli.py:83 run_app_setup_steps(only_app) and :172 run_app_doctor_probes, both imported by cli_setup.py and cli_doctor.py
+- 🔑 THE 5s TIMEOUT IS THREAD-BASED AND THE REASON IS STATED (:150-166): 'A thread-based timeout (not signal.alarm) works off the main thread too' — signal.alarm would only work on the main thread, so a probe run from anywhere else would hang forever. The thread is a daemon, so a hung probe cannot hold up exit either
+- a timeout or an exception becomes ONE fail line rather than an abort (:175) — 'never hangs'
+- setup --app NAME exists at cli.py:479-483 ('Run only the named installed app's cli.setup step')
+- 🔑 THE CORE DELETIONS ARE REAL: _setup_slack_tokens and _setup_slash_command have zero definitions left in src/ (the single remaining mention is one word in sdk/cli.py's docstring describing what moved), and cli_doctor.py contains no Slack section at all — CONFIRMED BY DRIVING the doctor, whose output carries no Slack block
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** One honest limit worth recording: Python cannot kill a thread, so a timed-out probe keeps running as a daemon until interpreter exit. The docstring's 'never hangs' is true of DOCTOR (the fail line is already printed and the command returns) rather than of the probe, and a daemon thread is the correct choice given that constraint. DISCOVERY: the app doctor probes are CLI-ONLY — dashboard/handlers/doctor.py never calls run_app_doctor_probes, so an app-contributed probe is invisible in Settings → Doctor. In scope that is correct (the atom says 'wired into cli_setup.py/cli_doctor.py'), but it means a dashboard-only user never sees an installed app's health section. Recorded rather than filed: the parity is a surface this plan never claimed, and it belongs with the app-platform/channel work the keeps table already points at.
 
 ## Recorded history
 

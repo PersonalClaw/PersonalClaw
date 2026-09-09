@@ -31,9 +31,21 @@ catalog.installed_logger_roots() reads installed+enabled manifests without impor
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- MEASURED, catalog.py:1132 installed_logger_roots() — reads list_apps()'s SCANNED MANIFEST DICT, and the docstring says the load-bearing part out loud: 'Manifest-only … no app import/exec'. Enabled apps only, de-duped preserving first-seen order
+- 🔑 THE ABSENT-APPS-DIR PATH IS EXPLICIT, NOT INCIDENTAL: `if not apps_dir().is_dir(): return ()` with 'so callers degrade to just personalclaw' — the fresh-install case the clause names
+- both consumers present: cli.py:1339-1355 log setup and dashboard/handlers/updates.py:854-856 log-level handler, the latter as ('personalclaw', *installed_logger_roots()) exactly as the clause requires
+- test_app_catalog.py green inside the 141
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** 🔑 THE done_when's LITERAL CHECK IS FALSE WHILE ITS INTENT HOLDS, and the distinction matters. It says 'grep for APP_LOGGER_ROOTS in src/ is empty'. It is NOT empty: cli.py:1341-1355 carries a LOCAL variable named _APP_LOGGER_ROOTS. But that local holds the RUNTIME RESULT of installed_logger_roots() — it is the replacement, not the residue; constants.APP_LOGGER_ROOTS itself is gone. A grep-shaped acceptance clause reading as failed while the deliverable is complete is the same near-miss shape this audit hit on ChatPage's findOpen, and it is worth noting that the plan's own rail (PBC-7) does not use a bare grep for exactly this reason — it pairs the sweep with a machine-checked keeps table so a judgment can be recorded where the pattern cannot express one.
 
 ## Recorded history
 

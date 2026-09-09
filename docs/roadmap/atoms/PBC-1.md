@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail
+
+**Code evidence:**
+
+- MEASURED: apps/manifest.py:560 CliConfig carries setup + doctor as 'module:function' entry points, and :1410 loggerRoots is a real field defaulting to an empty list
+- 🔑 FORWARD-COMPAT IS STRUCTURAL, NOT INCIDENTAL: both 'cli' and 'loggerRoots' are listed in the KNOWN-KEYS table at :1319-1320, so they are parsed rather than swept into the unknown-field bucket — which is what makes an older manifest and a newer one both parse cleanly
+- to_dict omits loggerRoots when empty (:1722) and from_dict filters falsy entries (:1846), so a round-trip of a manifest without the fields is byte-stable
+- test_app_manifest.py green inside the 141
+- test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141
+
+**Notes:** The seam is deliberately a STRING entry point ('module:function') rather than an imported callable, which is what lets catalog read the declaration without importing app code — the property PBC-3 then depends on. A manifest that carried a callable would have made logger-root aggregation require executing every installed app.
 
 ## Recorded history
 

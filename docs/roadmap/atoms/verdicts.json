@@ -4372,5 +4372,95 @@
       "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
     ],
     "notes": "🔑 FOURTH VARIANT OF log-and-code-beat-prose IN THIS CAMPAIGN, and the first where the STALE CLAIM IS THE ATOM'S OWN done_when rather than a plan header, a module docstring or a sub-deliverable. Three records still describe this control as inert: the done_when above, the workspace ROADMAP/CLAUDE 'inert shipped controls worth closing' list (which names Feedback-Signal's suppression), and — until it was corrected in the code — suppressed_producers' own docstring, which now states the correction explicitly: 'This docstring used to say \"workflow/skill surfacing\" — no workflow path consults this function, and nothing under workflows/ ever did.' The deletion of workflows.surfacing.eligible_workflows in WF2 Phase 1 is what stranded it, and re-homing it at the SKILL gate rather than rebuilding a workflow one is the cheaper and more honest resolution. One DISCOVERY: feedback.py's _proposal_only_candidates() is a strict SUBSET of suppressed_producers() (same threshold, same cleared/snooze logic, only narrower by kind), so the union at :440 is a no-op and its 'gated producers are covered by suppressed_producers()' comment mis-describes what that function returns. Behaviour is correct either way — every below-threshold producer gets exactly one proposal — so it is redundancy, not a defect."
+  },
+  "PBC-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "MEASURED: apps/manifest.py:560 CliConfig carries setup + doctor as 'module:function' entry points, and :1410 loggerRoots is a real field defaulting to an empty list",
+      "🔑 FORWARD-COMPAT IS STRUCTURAL, NOT INCIDENTAL: both 'cli' and 'loggerRoots' are listed in the KNOWN-KEYS table at :1319-1320, so they are parsed rather than swept into the unknown-field bucket — which is what makes an older manifest and a newer one both parse cleanly",
+      "to_dict omits loggerRoots when empty (:1722) and from_dict filters falsy entries (:1846), so a round-trip of a manifest without the fields is byte-stable",
+      "test_app_manifest.py green inside the 141",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "The seam is deliberately a STRING entry point ('module:function') rather than an imported callable, which is what lets catalog read the declaration without importing app code — the property PBC-3 then depends on. A manifest that carried a callable would have made logger-root aggregation require executing every installed app."
+  },
+  "PBC-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "MEASURED: sdk/cli.py exports SetupContext, DoctorLine and DoctorStatus, and states WHY they live in the SDK — 'so an app imports them from personalclaw.sdk.cli only — never a deep core internal'",
+      "app_cli.py:83 run_app_setup_steps(only_app) and :172 run_app_doctor_probes, both imported by cli_setup.py and cli_doctor.py",
+      "🔑 THE 5s TIMEOUT IS THREAD-BASED AND THE REASON IS STATED (:150-166): 'A thread-based timeout (not signal.alarm) works off the main thread too' — signal.alarm would only work on the main thread, so a probe run from anywhere else would hang forever. The thread is a daemon, so a hung probe cannot hold up exit either",
+      "a timeout or an exception becomes ONE fail line rather than an abort (:175) — 'never hangs'",
+      "setup --app NAME exists at cli.py:479-483 ('Run only the named installed app's cli.setup step')",
+      "🔑 THE CORE DELETIONS ARE REAL: _setup_slack_tokens and _setup_slash_command have zero definitions left in src/ (the single remaining mention is one word in sdk/cli.py's docstring describing what moved), and cli_doctor.py contains no Slack section at all — CONFIRMED BY DRIVING the doctor, whose output carries no Slack block",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "One honest limit worth recording: Python cannot kill a thread, so a timed-out probe keeps running as a daemon until interpreter exit. The docstring's 'never hangs' is true of DOCTOR (the fail line is already printed and the command returns) rather than of the probe, and a daemon thread is the correct choice given that constraint. DISCOVERY: the app doctor probes are CLI-ONLY — dashboard/handlers/doctor.py never calls run_app_doctor_probes, so an app-contributed probe is invisible in Settings → Doctor. In scope that is correct (the atom says 'wired into cli_setup.py/cli_doctor.py'), but it means a dashboard-only user never sees an installed app's health section. Recorded rather than filed: the parity is a surface this plan never claimed, and it belongs with the app-platform/channel work the keeps table already points at."
+  },
+  "PBC-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "MEASURED, catalog.py:1132 installed_logger_roots() — reads list_apps()'s SCANNED MANIFEST DICT, and the docstring says the load-bearing part out loud: 'Manifest-only … no app import/exec'. Enabled apps only, de-duped preserving first-seen order",
+      "🔑 THE ABSENT-APPS-DIR PATH IS EXPLICIT, NOT INCIDENTAL: `if not apps_dir().is_dir(): return ()` with 'so callers degrade to just personalclaw' — the fresh-install case the clause names",
+      "both consumers present: cli.py:1339-1355 log setup and dashboard/handlers/updates.py:854-856 log-level handler, the latter as ('personalclaw', *installed_logger_roots()) exactly as the clause requires",
+      "test_app_catalog.py green inside the 141",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "🔑 THE done_when's LITERAL CHECK IS FALSE WHILE ITS INTENT HOLDS, and the distinction matters. It says 'grep for APP_LOGGER_ROOTS in src/ is empty'. It is NOT empty: cli.py:1341-1355 carries a LOCAL variable named _APP_LOGGER_ROOTS. But that local holds the RUNTIME RESULT of installed_logger_roots() — it is the replacement, not the residue; constants.APP_LOGGER_ROOTS itself is gone. A grep-shaped acceptance clause reading as failed while the deliverable is complete is the same near-miss shape this audit hit on ChatPage's findOpen, and it is worth noting that the plan's own rail (PBC-7) does not use a bare grep for exactly this reason — it pairs the sweep with a machine-checked keeps table so a judgment can be recorded where the pattern cannot express one."
+  },
+  "PBC-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "MEASURED cross-repo in PersonalClawApps/slack-channel: cli_setup.py and cli_doctor.py both exist, and app.json declares all three fields the clause requires — cli {'setup': 'cli_setup:run', 'doctor': 'cli_doctor:probe'}, loggerRoots ['slack_runtime'], dependencies.pythonDependencies ['slack-sdk>=3.27,<4']",
+      "🔑 THE IMPORT BOUNDARY HOLDS EXACTLY AS SPECIFIED: the ONLY core imports in either file are `from personalclaw.sdk.channel import …` and `from personalclaw.sdk.cli import …`. No deep core internal, no inverted direction — which is the whole point of re-exporting the CRED_SLACK_* key names through sdk/channel.py",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "ui_validated": "V1 not driven. The slack-channel app is not installed in the validation home (no installed app there declares cli.* or loggerRoots), and installing it would pip-install slack-sdk into the SHARED venv via _install_python_deps — a mutation of the toolchain rather than of the dev home, so it was deliberately not performed in an audit cycle. The chain's downstream halves were observed where they are observable without it: the doctor renders no core Slack section, and installed_logger_roots() correctly returns the empty tuple with no declaring app installed.",
+    "notes": "Partial for the five-step V1 chain only; every static half is confirmed, including the byte-level requirement that the app's prompts moved rather than being rewritten. The atom is the interesting one architecturally: it is the only atom in this plan whose deliverable lives in a DIFFERENT REPOSITORY, and the seam it lands on (a string entry point in a manifest, resolved by core at CLI time) is what makes that possible without core knowing the app exists."
+  },
+  "PBC-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "🔑 DRIVEN — the clause's own acceptance line observed in real product output. `personalclaw doctor` on a real home prints `deps: ✅ websockets, aiohttp available`: slack_sdk is absent from the probe list, and the deps line is green without it",
+      "MEASURED: pyproject.toml carries slack-sdk ONLY in the [slack] extra (:157). Nothing in [project.dependencies]",
+      "🔑 THE T2.1 FINDING IS RECORDED WHERE IT WAS WRONG: pyproject's comment now names the mechanism it previously denied — 'Apps can ALSO declare dependencies.pythonDependencies in their app.json, which the app-install pipeline pip-installs into the shared venv (apps/app_manager.py::_install_python_deps)'. The function exists at app_manager.py:368 with two call sites (:795 install, :1199 update), so the corrected claim is true and the correction sits at the exact line that carried the false one",
+      "the same comment states why the extra REMAINS rather than being deleted: 'for pip/uv users who pre-install it (or run headless without the Store)' — a deliberate keep, not leftover",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "The strongest atom in the plan for a reason worth generalizing: its acceptance criterion is a line of USER-VISIBLE OUTPUT, so it is checkable by running the product rather than by reading a dependency graph. A packaging change verified only by inspecting pyproject would not have proven the doctor probe was updated too — the two are separate edits and either could have been missed."
+  },
+  "PBC-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "MEASURED: `slack_only` survives NOWHERE in src/, tests/ or docs/reference — the only hits in the tree are inside the roadmap records that describe the removal. A clean break, not a deprecation shim",
+      "the replacement is present end to end: cli.py:318-319 declares --headless with dest='headless', cli.py:169 consumes it as no_dashboard, and docs/reference/cli.md:26 documents it ('Serve channels only; skip the dashboard web server and SSH tunnel instructions')",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "Two records worth reconciling, neither a defect. (1) The atom accurately records its own E1 premise mismatch — 'plan said cli_server.py, actually cli.py' — and the flag is indeed in cli.py; a deviation log that turns out to be correct on re-audit is the case that makes the others trustworthy. (2) The atom's line numbers (parser :232, consumer :151) have drifted to :318 and :169 as the file grew. Ordinary drift, recorded so a later reader does not read it as a missing deliverable."
+  },
+  "PBC-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 38 (PBC) — DRIVEN via the real doctor CLI + a falsified residue rail",
+    "evidence": [
+      "🔑 FALSIFIED AGAINST THE REAL TREE, which is this atom's own acceptance clause ('adding import slack_sdk to any core module turns it red naming the file'). Wrote a fresh core module containing one import line: the sweep FAILED and named it — `assert not ['src/personalclaw/_audit_probe_pbc.py']`. Removed it; green again",
+      "MEASURED: the rail is BIDIRECTIONAL — test_no_new_vendor_residue_outside_keeps fails on a hit in an unlisted file (regrowth) AND test_keeps_table_has_no_stale_entries fails on a listed file that no longer has a hit, so the table must stay an exact mirror rather than growing monotonically",
+      "🔑 THE SCOPE DECISION IS STATED AND CORRECT: 'It deliberately does NOT flag vendor WORDS in docstrings/comments/prose: core legitimately documents the reference channel'. Only imports and credential/secret LITERALS are residue — and test_sweep_has_teeth asserts BOTH directions, that an injected import is caught and that a prose mention is not",
+      "🔑 CI MOUNT CONFIRMED (the atom's EXT dep on CI-RELEASE-ENGINEERING): ci.yml has a dedicated `rails` job — 'Cheap anti-regression rails: the machine-checked invariants roadmap plans add' — running the sweep with -n0, and the comment explains both the -n0 and the deliberate absence of PERSONALCLAW_HOME",
+      "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
+    ],
+    "notes": "🔑 THE BEST ANTI-INERTNESS ARTEFACT THIS CAMPAIGN HAS AUDITED, and the keeps table is why. A bare grep gate would have to choose between false positives and holes; pairing it with a per-file JUDGMENT makes the exceptions legible. config/safety.py's entry is the proof: it records a genuine FALSE POSITIVE (one 'SLACK_BOT_TOKEN' inside a _meta help string as an example env var an operator might pass through), says the pattern 'cannot tell the two apart', notes it arrived by a FILE MOVE rather than new residue ('the residue did not change, its file did'), and states why it is deliberately NOT reworded — _meta help strings render into the config JSON schema, so editing the sentence would be observable schema drift. Entries 17-18 also carry a live DISCOVERY (a generic 'is any channel configured' helper would remove two of the keeps) pointing at CHANNEL-EXPANSION. ARCC returned only cloud secret-management material here — checked-and-thin — but its one transferable objective, 'eliminating the need to hardcode credentials in source code', is precisely what this rail enforces MECHANICALLY rather than by policy statement, and the keeps table is the honest record of the four places where a credential-shaped literal is the control itself (detection regexes, an env denylist, and the key names existing installs hold)."
   }
 }
