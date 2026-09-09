@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 232 | `done_when` checked against the code and it holds |
+| `confirmed` | 240 | `done_when` checked against the code and it holds |
 | `partial` | 163 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 284 | not yet checked |
+| `unaudited` | 276 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -177,14 +177,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CATO-1`](CATO-1.md) | `done` | `unaudited` | Durable usage ledger module + durability/inventory registration |
-| [`CATO-2`](CATO-2.md) | `done` | `unaudited` | Wire the chat turn-completion write site (reference attribution) |
-| [`CATO-3`](CATO-3.md) | `done` | `unaudited` | Subagent attribution — replace the discard, add cost fields to SubagentInfo |
-| [`CATO-4`](CATO-4.md) | `done` | `unaudited` | Wire loop, cron, channel, and cli turn-completion attribution |
-| [`CATO-5`](CATO-5.md) | `done` | `unaudited` | Usage read routes + offline agent-reference regen |
-| [`CATO-6`](CATO-6.md) | `done` | `unaudited` | Turn-level surface — tokens + cost on the 'Turn complete' line |
-| [`CATO-7`](CATO-7.md) | `done` | `unaudited` | Session total on the chat session header/detail |
-| [`CATO-8`](CATO-8.md) | `done` | `unaudited` | Settings → Usage panel with honest-zero / partial-pricing marker |
+| [`CATO-1`](CATO-1.md) | `done` | `confirmed` | Durable usage ledger module + durability/inventory registration |
+| [`CATO-2`](CATO-2.md) | `done` | `confirmed` | Wire the chat turn-completion write site (reference attribution) |
+| [`CATO-3`](CATO-3.md) | `done` | `confirmed` | Subagent attribution — replace the discard, add cost fields to SubagentInfo |
+| [`CATO-4`](CATO-4.md) | `done` | `confirmed` | Wire loop, cron, channel, and cli turn-completion attribution |
+| [`CATO-5`](CATO-5.md) | `done` | `confirmed` | Usage read routes + offline agent-reference regen |
+| [`CATO-6`](CATO-6.md) | `done` | `confirmed` | Turn-level surface — tokens + cost on the 'Turn complete' line |
+| [`CATO-7`](CATO-7.md) | `done` | `confirmed` | Session total on the chat session header/detail |
+| [`CATO-8`](CATO-8.md) | `done` | `confirmed` | Settings → Usage panel with honest-zero / partial-pricing marker |
 
 ### `CC` — CHAT-CRAFT (9/9 done)
 

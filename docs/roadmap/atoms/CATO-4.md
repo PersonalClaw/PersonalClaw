@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED all four write sites the clause enumerates, each through the shared seam: gateway.py:2170 and :3092 (the loop-worker and schedule paths), subagent.py:2235, cli_chat.py:63 — plus cli_run.py:492-495 reading totals back for the headless CLI's own report
+- the source axis is a documented closed set on TurnUsage (:47): 'chat | loop | cron | subagent | channel | cli | background'
+- constants.py:25 records that ledger rows are KEYED consistently with the session-key convention, so the source axis and the session axis cannot disagree about the same turn
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Not driven: each source needs a real turn on that path.
+
+**Notes:** Two write sites live in gateway.py rather than in the loop and schedule modules themselves, which is worth recording for a future reader: the attribution rides the gateway's terminal-event handling, so a new unattended path gets a row by reaching that handler rather than by remembering to call the ledger.
 
 ## Recorded history
 

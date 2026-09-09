@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED, backend composer (chat_runner.py:621-657): 'Honest-unpriced: a model with no price row renders unpriced', :648 `cost_str = f"${cost_usd:.4f}" if priced else "unpriced"` — never $0.00
+- 🔑 THE CACHE FRAGMENT'S ABSENT-VS-ZERO DISTINCTION IS EXPLICIT (:638): 'cache_saved_usd=None (unpriced model) renders saved unpriced, never' a zero — so a savings figure of nothing and a savings figure that is unknowable read differently
+- the FE reader is tested against the literal composed line, including the unpriced case ('an UNPRICED model says "unpriced" and shows no money at all') — 30/30 across the turn-telemetry and usage suites
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Not driven: a Turn complete line needs a completed turn, which needs a bound model. The composer and its reader are pinned by tests that assert on the exact rendered string, which is the right shape for a wire-format claim.
+
+**Notes:** Pinning the FE reader against the literal backend line is what makes this atom safe to change later: the two halves cannot drift without a test failing, and the alternative (each side asserting its own shape) is how a renderer ends up parsing a format nobody emits.
 
 ## Recorded history
 

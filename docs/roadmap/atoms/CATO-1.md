@@ -28,9 +28,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED: usage_ledger.py is the store the clause names — append-only JSONL, atomic_write, _CAP 50_000 trimmed at 2× ('the house convention — mirrors feedback.py', so the cap discipline is shared rather than re-invented), and _GROUP_KEYS is exactly the five the clause lists
+- 🔑 THREE SOUL GUARDRAILS ARE NAMED IN THE MODULE HEADER, and each is the kind that normally drifts. (1) 'Observation only, never enforcement — a ledger records; it can never block, throttle, or refuse a turn. Budget caps live in guardrails (SpendMeter).' (2) Honest zero over invented precision. (3) 'Fail-open … This is a user-facing availability surface, NOT a security control (§2.7)'
+- 🔑 THE priced TAINT PROPAGATES UPWARD: a rollup whose total mixes any unpriced row reports priced=False 'so a partial total can't present as complete'
+- durability/inventory.py:645-652 registers it with a REASONED classification: 'reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not irreplaceable user content, so export/retention treats it as disposable' → derived=True, which keeps it out of backup_entries() while still being claimed
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Notes:** 🔑 THE VOCABULARY HELD ACROSS PLANS, which is rarer than the store itself. `evals/provenance.py` and `ledger/reader.py` both cite this module's meaning of `priced` BY NAME rather than minting their own — reader.py says it outright: 'The word is personalclaw.usage_ledger's, not a new one, and it means exactly what it' does there. That is the one-vocabulary discipline actually working, in a codebase where the roadmap's own notes record four verdict dialects having been minted before anyone noticed. ARCC returned cloud audit-logging material only for this domain — recorded as checked-and-thin — and the nearest transferable idea (log what matters, keep it proportionate) is what the inventory's disposable classification independently implements.
 
 ## Recorded history
 

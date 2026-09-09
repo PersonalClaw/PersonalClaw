@@ -4780,5 +4780,112 @@
       "mail-inbox app suite 82/82; core event_triggers 19/19 + trigger scoping/sources 56/56; item_kind seam 18/18; web triggers 194/194"
     ],
     "notes": "The clause is unusually strict about HOW it must be proven — 'proven by a round trip driven from the filesystem source's own inbox/incoming/ directory through poll → ingest → disk → API, not by a dataclass unit test' — and the test module named for the seam is what satisfies it. An atom that specifies its own evidence standard is rare and makes an audit cheap; every other atom in this plan required me to decide what would count."
+  },
+  "CATO-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED: usage_ledger.py is the store the clause names — append-only JSONL, atomic_write, _CAP 50_000 trimmed at 2× ('the house convention — mirrors feedback.py', so the cap discipline is shared rather than re-invented), and _GROUP_KEYS is exactly the five the clause lists",
+      "🔑 THREE SOUL GUARDRAILS ARE NAMED IN THE MODULE HEADER, and each is the kind that normally drifts. (1) 'Observation only, never enforcement — a ledger records; it can never block, throttle, or refuse a turn. Budget caps live in guardrails (SpendMeter).' (2) Honest zero over invented precision. (3) 'Fail-open … This is a user-facing availability surface, NOT a security control (§2.7)'",
+      "🔑 THE priced TAINT PROPAGATES UPWARD: a rollup whose total mixes any unpriced row reports priced=False 'so a partial total can't present as complete'",
+      "durability/inventory.py:645-652 registers it with a REASONED classification: 'reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not irreplaceable user content, so export/retention treats it as disposable' → derived=True, which keeps it out of backup_entries() while still being claimed",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "notes": "🔑 THE VOCABULARY HELD ACROSS PLANS, which is rarer than the store itself. `evals/provenance.py` and `ledger/reader.py` both cite this module's meaning of `priced` BY NAME rather than minting their own — reader.py says it outright: 'The word is personalclaw.usage_ledger's, not a new one, and it means exactly what it' does there. That is the one-vocabulary discipline actually working, in a codebase where the roadmap's own notes record four verdict dialects having been minted before anyone noticed. ARCC returned cloud audit-logging material only for this domain — recorded as checked-and-thin — and the nearest transferable idea (log what matters, keep it proportionate) is what the inventory's disposable classification independently implements."
+  },
+  "CATO-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED: chat_runner.py:666 defines _record_turn_usage and :4038 calls it on the turn-completion path, beside the existing stats write the clause points at",
+      "🔑 THE PRECEDENCE RULE IS EXPLICIT AND CORRECT (record_from_event's docstring): cost is derived via pricing.estimate_cost ONLY when the provider reported none — 'vendor cost wins when present'. An estimator that overrode a real vendor number would make every priced row a guess",
+      "priced is False only when the model has no price row AND the provider reported no cost, and then cost_usd is 'an honest 0.0 the UI renders unpriced'",
+      "estimate_if_missing=False exists as a caller-side opt-out, so a site that must not guess can say so rather than being silently estimated for",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Not driven: a real chat turn needs a bound model. The write site and its precedence rule are confirmed in code and by the 57 passing ledger/route tests.",
+    "notes": "The interesting choice is that every write site shares ONE seam (record_from_event) rather than each assembling a TurnUsage. That is what makes the vendor-cost-wins rule a single fact instead of five copies that could disagree — the same reasoning EIAT applied to its fence being applied exactly once."
+  },
+  "CATO-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED: SubagentInfo carries input_tokens (subagent.py:337), output_tokens and cost_usd (:339); :2172 populates them from the terminal event and :2232-2235 records through the shared record_from_event seam — the discard the clause names is gone",
+      "the fields ride the EXISTING completion delivery rather than a new channel: :1684-1685 puts cost_usd (rounded to 6dp) and summed tokens onto the payload the parent already receives",
+      "🔑 A SECOND CONSUMER APPEARED FOR THE SAME NUMBERS (:1445): meter.charge(info.input_tokens + info.output_tokens, info.cost_usd, run_key=fkey) — the subagent's own spend meter reads the same fields, so attribution and budgeting agree by construction instead of by coincidence",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Not driven: a 3-way fan-out needs a bound model.",
+    "notes": "Replacing a discard with a record is the smallest kind of atom and the easiest to fake — the deliverable would look identical if the fields were set and never read. What makes this one real is the second consumer at :1445: the numbers are load-bearing for the meter, not just for a log line."
+  },
+  "CATO-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED all four write sites the clause enumerates, each through the shared seam: gateway.py:2170 and :3092 (the loop-worker and schedule paths), subagent.py:2235, cli_chat.py:63 — plus cli_run.py:492-495 reading totals back for the headless CLI's own report",
+      "the source axis is a documented closed set on TurnUsage (:47): 'chat | loop | cron | subagent | channel | cli | background'",
+      "constants.py:25 records that ledger rows are KEYED consistently with the session-key convention, so the source axis and the session axis cannot disagree about the same turn",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Not driven: each source needs a real turn on that path.",
+    "notes": "Two write sites live in gateway.py rather than in the loop and schedule modules themselves, which is worth recording for a future reader: the attribution rides the gateway's terminal-event handling, so a new unattended path gets a row by reaching that handler rather than by remembering to call the ledger."
+  },
+  "CATO-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED: dashboard/handlers/usage.py serves both routes (:129 registers /api/usage/rollup) with the §2.2 envelope, and the rollup accepts group_by/since/until PLUS session — the session filter is what CATO-7 later consumes",
+      "the offline agent reference is regenerated and its drift test is green (test_api_manifest_drift.py 8/8), which is the half of this clause that would otherwise rot silently",
+      "test_usage_routes.py green inside the 57",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "notes": "The `session=` parameter is not in this atom's own done_when but is what makes CATO-7 possible — a case where the route was built one clause wider than its own acceptance criterion, deliberately, because the consumer was already known."
+  },
+  "CATO-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED, backend composer (chat_runner.py:621-657): 'Honest-unpriced: a model with no price row renders unpriced', :648 `cost_str = f\"${cost_usd:.4f}\" if priced else \"unpriced\"` — never $0.00",
+      "🔑 THE CACHE FRAGMENT'S ABSENT-VS-ZERO DISTINCTION IS EXPLICIT (:638): 'cache_saved_usd=None (unpriced model) renders saved unpriced, never' a zero — so a savings figure of nothing and a savings figure that is unknowable read differently",
+      "the FE reader is tested against the literal composed line, including the unpriced case ('an UNPRICED model says \"unpriced\" and shows no money at all') — 30/30 across the turn-telemetry and usage suites",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Not driven: a Turn complete line needs a completed turn, which needs a bound model. The composer and its reader are pinned by tests that assert on the exact rendered string, which is the right shape for a wire-format claim.",
+    "notes": "Pinning the FE reader against the literal backend line is what makes this atom safe to change later: the two halves cannot drift without a test failing, and the alternative (each side asserting its own shape) is how a renderer ends up parsing a format nobody emits."
+  },
+  "CATO-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "MEASURED: ChatPage.tsx:522-531 reads api.usageTotals({session: key}) and holds {cost, tokens, priced} for the header chip",
+      "🔑 THE CHIP RENDERS ONLY ON REAL USAGE (:529): `t.turns > 0 && tokens > 0` — 'Show the chip only once the session has recorded real usage.' The same not-rendering-a-no-op pattern this campaign has now met eight times",
+      "🔑 THE HONEST-PARTIAL RULE REACHES HERE TOO (:521): a session whose total mixes an unpriced model shows a '~' prefix 'rather than a confidently-complete figure'",
+      ":530 a transient read failure leaves the chip as-is rather than clearing it, with the reason stated — a read blip should not look like the cost went away",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Not driven: the chip is conditional on recorded usage, which needs a bound model. Its non-appearance in this home is the specified behaviour.",
+    "notes": "🪤 A PATH-GUESS ERROR OF MINE, the second of this family in the campaign: I searched web/src/pages/chat/ChatPage.tsx and found no session-total consumer, which read as a missing deliverable. The file is web/src/pages/ChatPage.tsx. Recorded because the failure mode is mine, not the code's, and it is the same shape as looking for the event engine inside the triggers package last cycle."
+  },
+  "CATO-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload",
+    "evidence": [
+      "🔑 DRIVEN, and the period control passes the decisive test: clicking '30 days' wrote `?period=30d` to the URL and a FULL PAGE RELOAD came back with `tab \"30 days\" [selected]`",
+      "🔑 DRIVEN — THE PANEL'S INTRO DISCLOSES ITS OWN INCOMPLETENESS, unprompted: 'Unattended model calls are recorded in a SEPARATE log that cannot be merged with these without double-counting; the By day and purpose section states how much is excluded.' A spend surface that names what it is NOT counting",
+      "🔑 DRIVEN — the module's guardrail 1 is surfaced to the user in the same paragraph: 'Observation only: nothing here caps or throttles a turn (that's Guardrails)', plus 'A model with no price row is shown honestly as unpriced, never $0.00'",
+      "DRIVEN: Today/7d/30d control, By model, By source and Cache savings sections all render, each with a SPECIFIC empty state — the cache one explains the CONDITION ('cached tokens appear here once a provider reports them') rather than just the absence",
+      "the partial marker exists and is computed from the rows (`unpricedModels = byModel.filter(r => !r.priced)`, rendered at :166); the daily cap line is read-only with 0 meaning unlimited (:101, 'SpendMeter owns enforcement')",
+      "test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30"
+    ],
+    "ui_validated": "Drove the panel, the period control and the reload. The partial marker and the populated tables need a period mixing priced and unpriced models, which needs a bound model.",
+    "notes": "🔑 THE BEST HONEST-NUMBERS REASONING IN THE CAMPAIGN, and it is a RECORDED FIX of a prior defect (headlineCost, :50-68). Measured with a seeded ledger: four models, three priced, cost_usd 11.3496, priced False — and the headline stat rendered the bare word 'unpriced' while its own table listed $6.02 + $4.59 + $0.7398 directly below. The resolution names the distinction exactly: the backend's taint rule is right, but 'NOT COMPLETE IS NOT NOT KNOWABLE' — the ledger had computed a real floor. So three branches: the exact number when everything is priced, an explicit ≥floor when some of it is, and the bare word only when there is no floor to state, because '≥$0.00 would be true and useless'. It also cites the panel's own existing 'Floor — … Real spend is higher than the figure above' copy 250 lines down as evidence a figure was already presupposed there."
   }
 }

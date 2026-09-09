@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED: ChatPage.tsx:522-531 reads api.usageTotals({session: key}) and holds {cost, tokens, priced} for the header chip
+- 🔑 THE CHIP RENDERS ONLY ON REAL USAGE (:529): `t.turns > 0 && tokens > 0` — 'Show the chip only once the session has recorded real usage.' The same not-rendering-a-no-op pattern this campaign has now met eight times
+- 🔑 THE HONEST-PARTIAL RULE REACHES HERE TOO (:521): a session whose total mixes an unpriced model shows a '~' prefix 'rather than a confidently-complete figure'
+- :530 a transient read failure leaves the chip as-is rather than clearing it, with the reason stated — a read blip should not look like the cost went away
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Not driven: the chip is conditional on recorded usage, which needs a bound model. Its non-appearance in this home is the specified behaviour.
+
+**Notes:** 🪤 A PATH-GUESS ERROR OF MINE, the second of this family in the campaign: I searched web/src/pages/chat/ChatPage.tsx and found no session-total consumer, which read as a missing deliverable. The file is web/src/pages/ChatPage.tsx. Recorded because the failure mode is mine, not the code's, and it is the same shape as looking for the event engine inside the triggers package last cycle.
 
 ## Recorded history
 

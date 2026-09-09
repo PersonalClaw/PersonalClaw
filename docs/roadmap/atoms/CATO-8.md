@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- 🔑 DRIVEN, and the period control passes the decisive test: clicking '30 days' wrote `?period=30d` to the URL and a FULL PAGE RELOAD came back with `tab "30 days" [selected]`
+- 🔑 DRIVEN — THE PANEL'S INTRO DISCLOSES ITS OWN INCOMPLETENESS, unprompted: 'Unattended model calls are recorded in a SEPARATE log that cannot be merged with these without double-counting; the By day and purpose section states how much is excluded.' A spend surface that names what it is NOT counting
+- 🔑 DRIVEN — the module's guardrail 1 is surfaced to the user in the same paragraph: 'Observation only: nothing here caps or throttles a turn (that's Guardrails)', plus 'A model with no price row is shown honestly as unpriced, never $0.00'
+- DRIVEN: Today/7d/30d control, By model, By source and Cache savings sections all render, each with a SPECIFIC empty state — the cache one explains the CONDITION ('cached tokens appear here once a provider reports them') rather than just the absence
+- the partial marker exists and is computed from the rows (`unpricedModels = byModel.filter(r => !r.priced)`, rendered at :166); the daily cap line is read-only with 0 meaning unlimited (:101, 'SpendMeter owns enforcement')
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Drove the panel, the period control and the reload. The partial marker and the populated tables need a period mixing priced and unpriced models, which needs a bound model.
+
+**Notes:** 🔑 THE BEST HONEST-NUMBERS REASONING IN THE CAMPAIGN, and it is a RECORDED FIX of a prior defect (headlineCost, :50-68). Measured with a seeded ledger: four models, three priced, cost_usd 11.3496, priced False — and the headline stat rendered the bare word 'unpriced' while its own table listed $6.02 + $4.59 + $0.7398 directly below. The resolution names the distinction exactly: the backend's taint rule is right, but 'NOT COMPLETE IS NOT NOT KNOWABLE' — the ledger had computed a real floor. So three branches: the exact number when everything is priced, an explicit ≥floor when some of it is, and the bare word only when there is no floor to state, because '≥$0.00 would be true and useless'. It also cites the panel's own existing 'Floor — … Real spend is higher than the figure above' copy 250 lines down as evidence a figure was already presupposed there.
 
 ## Recorded history
 

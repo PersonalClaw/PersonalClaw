@@ -30,9 +30,23 @@ A real chat turn writes exactly one ledger row beside the existing stats.inc_cos
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED: chat_runner.py:666 defines _record_turn_usage and :4038 calls it on the turn-completion path, beside the existing stats write the clause points at
+- 🔑 THE PRECEDENCE RULE IS EXPLICIT AND CORRECT (record_from_event's docstring): cost is derived via pricing.estimate_cost ONLY when the provider reported none — 'vendor cost wins when present'. An estimator that overrode a real vendor number would make every priced row a guess
+- priced is False only when the model has no price row AND the provider reported no cost, and then cost_usd is 'an honest 0.0 the UI renders unpriced'
+- estimate_if_missing=False exists as a caller-side opt-out, so a site that must not guess can say so rather than being silently estimated for
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Not driven: a real chat turn needs a bound model. The write site and its precedence rule are confirmed in code and by the 57 passing ledger/route tests.
+
+**Notes:** The interesting choice is that every write site shares ONE seam (record_from_event) rather than each assembling a TurnUsage. That is what makes the vendor-cost-wins rule a single fact instead of five copies that could disagree — the same reasoning EIAT applied to its fence being applied exactly once.
 
 ## Recorded history
 

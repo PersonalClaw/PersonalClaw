@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED: SubagentInfo carries input_tokens (subagent.py:337), output_tokens and cost_usd (:339); :2172 populates them from the terminal event and :2232-2235 records through the shared record_from_event seam — the discard the clause names is gone
+- the fields ride the EXISTING completion delivery rather than a new channel: :1684-1685 puts cost_usd (rounded to 6dp) and summed tokens onto the payload the parent already receives
+- 🔑 A SECOND CONSUMER APPEARED FOR THE SAME NUMBERS (:1445): meter.charge(info.input_tokens + info.output_tokens, info.cost_usd, run_key=fkey) — the subagent's own spend meter reads the same fields, so attribution and budgeting agree by construction instead of by coincidence
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Driven in the UI:** Not driven: a 3-way fan-out needs a bound model.
+
+**Notes:** Replacing a discard with a record is the smallest kind of atom and the easiest to fake — the deliverable would look identical if the fields were set and never read. What makes this one real is the second consumer at :1445: the numbers are load-bearing for the meter, not just for a log line.
 
 ## Recorded history
 

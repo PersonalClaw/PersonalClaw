@@ -30,9 +30,20 @@ GET /api/usage/rollup?group_by=&since=&until= and GET /api/usage/totals return c
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 42 (CATO) — Usage panel driven, period round-trip survived a reload
+
+**Code evidence:**
+
+- MEASURED: dashboard/handlers/usage.py serves both routes (:129 registers /api/usage/rollup) with the §2.2 envelope, and the rollup accepts group_by/since/until PLUS session — the session filter is what CATO-7 later consumes
+- the offline agent reference is regenerated and its drift test is green (test_api_manifest_drift.py 8/8), which is the half of this clause that would otherwise rot silently
+- test_usage_routes.py green inside the 57
+- test_usage_ledger + test_usage_routes + test_usage_reachable_purposes 57/57; test_anthropic_cache_usage 5/5; test_api_manifest_drift 8/8; web usage + turn-telemetry 30/30
+
+**Notes:** The `session=` parameter is not in this atom's own done_when but is what makes CATO-7 possible — a case where the route was built one clause wider than its own acceptance criterion, deliberately, because the consumer was already known.
 
 ## Recorded history
 
