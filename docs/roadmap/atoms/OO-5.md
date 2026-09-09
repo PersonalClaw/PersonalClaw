@@ -28,9 +28,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- MEASURED: README:252-265 carries the community block routing BY CATEGORY — the apps repo named as 'the community front door', a good-first-issue query link, Discussions for Q&A, and Discussions → Ideas for capability proposals
+- 🔑 roadmap.md:9-19 carries the intake paragraph, and it converts what would read as gatekeeping into a reasoned process: 'maintainer-owned — WHICH IS A STATEMENT ABOUT PROCESS, NOT ABOUT OPENNESS. Plans encode sequencing decisions and cross-plan contracts, so a plan edited in isolation tends to break a seam another plan depends on. One person holding the dependency graph is what keeps that coherent'
+- the ask is concrete and the credit is explicit: 'So: PROPOSE, DON'T PR' … 'The maintainer files or amends the plan, AND YOU ARE CREDITED IN IT'
+- and the refusal states its reason rather than its authority: 'Pull requests against docs/roadmap/ are declined ON PRINCIPLE — not because the idea is unwelcome, but because THE PLAN IS THE WRONG ARTIFACT FOR A NEWCOMER TO WRITE COLD'
+- MEASURED: docs/maintainers/discussions-welcome-draft.md exists — the drafted-awaiting-owner-approval artifact, matching the clause's own note that Discussions categories are web-UI-only per the GraphQL schema and therefore remain owner actions
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** This is the paragraph that governs my own work in this campaign — the loop's standing instruction to propose roadmap changes via issue rather than by editing docs/roadmap/ in a PR is this rule, and reading it at source is the first time I have seen its justification rather than the instruction. The clause is also honest about what an agent cannot finish: two Discussions categories cannot be created through the API at all, so they are named as owner actions instead of being claimed.
 
 ## Recorded history
 

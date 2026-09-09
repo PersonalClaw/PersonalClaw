@@ -28,9 +28,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- MEASURED: docs/reference/skill-format.md exists and tests/test_skill_format_compat.py passes 20/20 — the EXACT case count the clause states, which is the rare clause where the number itself is checkable
+- the compatibility posture the clause requires is the one the campaign verified from the other side in an earlier cycle: a third-party SKILL.md with only name+description imports unmodified, `triggers` genuinely optional
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** The interesting property is the consolidation half — all callers delegating to one parser. A format doc that describes probed behaviour is only durable while a single parser produces that behaviour; two parsers would make the doc true of one caller and false of another, which is worse than no doc because it reads as authoritative.
 
 ## Recorded history
 

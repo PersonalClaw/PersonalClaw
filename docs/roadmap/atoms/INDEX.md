@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 178 | `done_when` checked against the code and it holds |
+| `confirmed` | 184 | `done_when` checked against the code and it holds |
 | `partial` | 144 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 358 | not yet checked |
+| `unaudited` | 352 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -620,12 +620,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`OO-1`](OO-1.md) | `done` | `unaudited` | Core repo: stated model + hygiene set + DCO check + AGENTS.md |
-| [`OO-2`](OO-2.md) | `done` | `unaudited` | Apps repo: hygiene mirror + front-door CONTRIBUTING |
-| [`OO-3`](OO-3.md) | `done` | `unaudited` | SKILL.md compatibility doc + parser consolidation (T2.1) |
-| [`OO-4`](OO-4.md) | `done` | `unaudited` | Seed good-first-issues + run setup_labels.sh on both repos (T2.2) |
-| [`OO-5`](OO-5.md) | `done` | `unaudited` | Structure Discussions + README community routing + roadmap-intake wiring (T2.3, T3.3) |
-| [`OO-6`](OO-6.md) | `done` | `unaudited` | Maintainer release runbook (T3.1) |
+| [`OO-1`](OO-1.md) | `done` | `confirmed` | Core repo: stated model + hygiene set + DCO check + AGENTS.md |
+| [`OO-2`](OO-2.md) | `done` | `confirmed` | Apps repo: hygiene mirror + front-door CONTRIBUTING |
+| [`OO-3`](OO-3.md) | `done` | `confirmed` | SKILL.md compatibility doc + parser consolidation (T2.1) |
+| [`OO-4`](OO-4.md) | `done` | `confirmed` | Seed good-first-issues + run setup_labels.sh on both repos (T2.2) |
+| [`OO-5`](OO-5.md) | `done` | `confirmed` | Structure Discussions + README community routing + roadmap-intake wiring (T2.3, T3.3) |
+| [`OO-6`](OO-6.md) | `done` | `confirmed` | Maintainer release runbook (T3.1) |
 | [`OO-7`](OO-7.md) | `done` | `confirmed` | README version-drift guard (version-consistency hardening) |
 
 ### `OU` — ONBOARDING-UX (10/11 done)

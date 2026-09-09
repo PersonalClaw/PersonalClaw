@@ -31,9 +31,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- MEASURED at docs/maintainers/release-runbook.md — every clause has a line, which is unusual for a documentation atom
+- both protected environments, with the approval gate stated as the operative fact (:18-19, :28): 'environment release — NEEDS YOUR APPROVAL', 'environment release-client — needs your approval', and 'Nothing reaches PyPI until you approve BOTH in the run's UI'
+- the six version surfaces: ':34 Bump the version in all six places' and ':48 All six are enforced by tests/test_version_consistency.py' — and that suite passes 6/6 here
+- 🔑 THE ANNOTATED-TAG DEREFERENCE TRAP APPEARS THREE TIMES, ESCALATING: a callout at :100 ('Annotated tags dereference. git rev-parse v0.1.3 gives you the TAG [object]'), the concrete commands at :202 ('git rev-parse v0.1.3 and v0.1.3^{commit} genuinely differ'), and — the part that makes a runbook usable — the TROUBLESHOOTING table at :191, which maps the symptom back to it: 'Website parity job red | its pins point at the wrong SHA | ALMOST ALWAYS the annotated-tag dereference above'
+- the CHANGELOG heading requirement with its reason (:46, :54): a heading of exactly '## [X.Y.Z]' as the newest entry, because 'the notes job extracts the release body' from it
+- validated against a real release (:204): 'the six version surfaces agree … PyPI carries core AND client at 0.1.3'
+- the troubleshooting table also covers the version-consistency red with the non-obvious remedy — 'fix, PR, then DELETE AND RE-PUSH THE TAG' — which is the step a first-time releaser would miss
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** The clause's bar is 'a person with org access can cut a release from the doc alone', and the thing that actually meets that bar is the symptom→cause table rather than the procedure: a procedure tells a releaser what to do when everything works, and the table is what answers the case where it did not. Cross-check with the CI plan audited last cycle: the runbook's 'needs your approval' on both environments corroborates from the maintainer's side what release.yml shows from the pipeline's — separate environments per publisher tuple, each with a required reviewer.
 
 ## Recorded history
 

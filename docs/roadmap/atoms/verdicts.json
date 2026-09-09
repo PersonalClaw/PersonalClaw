@@ -3790,5 +3790,88 @@
       "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
     ],
     "notes": "🪤 THE DELIVERABLE DOCUMENT IS THE STALE ARTIFACT THIS TIME — a new variant of a pattern this campaign keeps meeting. MI-6-voice-engine-bakeoff.md says in its own words that 'The rest of MI-6 (real inference …, resumable weight download, the LMM-V2 through-clone selftest, and the sidecar-kill typed crash reason) is DEFERRED TO A FOLLOW-UP RUN'. Read alone that contradicts the `done` status. But it was written DURING the bake-off and the follow-ups it predicted then landed: the plan's execution log names them (PersonalClawApps #70 for inference + resumable download, Core #2425 / merge 2ec168d00 for the selftest + crash reason), and I confirmed all four in code rather than in the log. So the atom is done and its bake-off note is a snapshot of an earlier moment. Previous cycles found a stale PLAN HEADER and a stale MODULE DOCSTRING; this is a stale sub-deliverable, and the same rule resolves all three — the code wins, and a document describing a gap that was later closed is not a defect (the flywheel wiring rail's docstring explains at length why linting for exactly this would be wrong)."
+  },
+  "OO-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "MEASURED, every artifact the clause names is present: CONTRIBUTING.md, CODE_OF_CONDUCT.md, AGENTS.md, .github/CODEOWNERS, .github/PULL_REQUEST_TEMPLATE.md, and .github/ISSUE_TEMPLATE/{bug,feature}.yml",
+      "CONTRIBUTING carries the three required sections as real headings: '## The model' (:10), '## Developer Certificate of Origin (DCO)' (:30), and the breaking-changes section (:84) with a named anchor so it can be linked to",
+      "🔑 THE 'NO CONTRADICTION' CLAUSE IS SATISFIED BY NAMING THE ASYMMETRY RATHER THAN HIDING IT (:86-89): 'Two different standards apply depending on who is making the change — THIS IS THE ONE PLACE IN THE DOCTRINE WHERE MAINTAINER AND CONTRIBUTOR EXPECTATIONS DIFFER, so it's worth stating plainly'",
+      "and it states the reason the clean-break tenet exists rather than asserting it: 'This is a decision, not an oversight: CARRYING COMPATIBILITY SHIMS THROUGH A HALF-BUILT ARCHITECTURE IS HOW PROJECTS CALCIFY AROUND DESIGNS THEY MEANT TO REPLACE'",
+      "🔑 IT ALSO PRE-EMPTS A REAL READING ERROR: 'assume no gate/migration machinery exists yet: there is no lifecycle/ package, and A PLAN FILE THAT ASKS FOR ONE IS DESCRIBING THE CONTRIBUTOR METHODOLOGY, NOT A MAINTAINER DEPENDENCY'",
+      "🔑 THE DCO JOB CARRIES TWO POST-MORTEMS AND THE FIRST IS THIS CAMPAIGN'S CLASS. dco.yml:55-58: actions/checkout REFUSES a fork ref under pull_request_target ('Refusing to check out fork pull request code'), 'which SKIPPED THIS STEP and the comment below ON EVERY FORK PR — THE EXACT PRs THIS WORKFLOW EXISTS FOR'. It now reads the commits API instead, which 'carries author identity and the full message, which is all a DCO check needs, and IT KEEPS THE NO-FORK-CODE GUARANTEE ABSOLUTE'",
+      "the second: the dependabot exemption is per-COMMIT and not gated on the run's triggering actor, 'so it still holds after a maintainer pushes a fix onto a dependabot branch (rebase, lockfile regen), which changes github.actor to a human and would otherwise re-fail on dependabot's own unsigned commit'",
+      "dco.yml:10 names the shift-left motive: contributors had 'learned about DCO in review instead of from CI'",
+      "CONTRIBUTING also ships '### What CI will and won't tell you on your first PR' (:325) — the contributor-facing half of the same honesty",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "🎯 THE ARCC OBJECTIVE LANDS SQUARELY ON DCO. ARCC returned the IaC-provenance control, whose argument is that manually deployed resources 'lack provenance and change control … no automated tracking of who deployed resources, what changes were made, or when', and that 'this absence of provenance creates BLIND SPOTS IN SECURITY AUDITING AND INCIDENT RESPONSE'. DCO is the same objective for contributed code: every commit carries an accountable identity and the terms it was offered under, enforced by CI rather than by reviewer memory. And the fork bug is the sharper finding — a provenance check that silently skipped every fork PR had exactly the blind spot the guidance describes, on the only population that needed it. The no-fork-code rule under pull_request_target is a genuine second control living in the same fix."
+  },
+  "OO-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "MEASURED in the apps repo: all THREE issue templates the clause names (bug.yml, feature.yml, app-request.yml), plus CONTRIBUTING.md, CODE_OF_CONDUCT.md, AGENTS.md and .github/CODEOWNERS",
+      "the dco job is mounted on the apps ci.yml (two references), so the provenance gate is not core-only",
+      "MEASURED: 64 app manifests parse-checked by the manifest-validate job, where the clause names 38 — growth past the atom, and the job validates every one through core's own personalclaw.apps.manifest rather than a local schema copy",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "The mirror is genuine rather than nominal: the same DCO gate, the same code-of-conduct, the same agent brief, plus one template core does not need (app-request). Auditing the apps CI in an earlier cycle also showed three jobs added since — quality-declarations, live-writes-posture and prompt-cache-posture — so the hygiene floor this atom set has been built on rather than left at the minimum."
+  },
+  "OO-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "MEASURED: docs/reference/skill-format.md exists and tests/test_skill_format_compat.py passes 20/20 — the EXACT case count the clause states, which is the rare clause where the number itself is checkable",
+      "the compatibility posture the clause requires is the one the campaign verified from the other side in an earlier cycle: a third-party SKILL.md with only name+description imports unmodified, `triggers` genuinely optional",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "The interesting property is the consolidation half — all callers delegating to one parser. A format doc that describes probed behaviour is only durable while a single parser produces that behaviour; two parsers would make the doc true of one caller and false of another, which is worse than no doc because it reads as authoritative."
+  },
+  "OO-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "🔑 MEASURED AGAINST LIVE GITHUB, not a file: 30 issues carry the good-first-issue label (18 still OPEN) against a clause requiring at least 8 — comfortably past it, and the open half means the front door is still stocked rather than historically stocked",
+      "MEASURED: 33 labels exist on the core repo where setup_labels.sh defines 16, so the script ran and the set has grown around it",
+      "idempotency is a property of the implementation, stated at scripts/setup_labels.sh:3 and visible at :9 — 'gh label create --force updates a label if it already exists', so a re-run is an update rather than a duplicate-or-error",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "The clause's most interesting requirement is the negative one: four candidate seeds (croniter DST, video kind, xfail list, --slack-only) were 'verified and closed-with-evidence rather than filed'. Filing a good-first-issue for something already fixed is worse than filing nothing — a newcomer spends their first contribution discovering the issue was stale, which is the opposite of the on-ramp the label promises. Recorded here because that discipline is invisible in the label count and is the part a future reader would otherwise not know was done."
+  },
+  "OO-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "MEASURED: README:252-265 carries the community block routing BY CATEGORY — the apps repo named as 'the community front door', a good-first-issue query link, Discussions for Q&A, and Discussions → Ideas for capability proposals",
+      "🔑 roadmap.md:9-19 carries the intake paragraph, and it converts what would read as gatekeeping into a reasoned process: 'maintainer-owned — WHICH IS A STATEMENT ABOUT PROCESS, NOT ABOUT OPENNESS. Plans encode sequencing decisions and cross-plan contracts, so a plan edited in isolation tends to break a seam another plan depends on. One person holding the dependency graph is what keeps that coherent'",
+      "the ask is concrete and the credit is explicit: 'So: PROPOSE, DON'T PR' … 'The maintainer files or amends the plan, AND YOU ARE CREDITED IN IT'",
+      "and the refusal states its reason rather than its authority: 'Pull requests against docs/roadmap/ are declined ON PRINCIPLE — not because the idea is unwelcome, but because THE PLAN IS THE WRONG ARTIFACT FOR A NEWCOMER TO WRITE COLD'",
+      "MEASURED: docs/maintainers/discussions-welcome-draft.md exists — the drafted-awaiting-owner-approval artifact, matching the clause's own note that Discussions categories are web-UI-only per the GraphQL schema and therefore remain owner actions",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "This is the paragraph that governs my own work in this campaign — the loop's standing instruction to propose roadmap changes via issue rather than by editing docs/roadmap/ in a PR is this rule, and reading it at source is the first time I have seen its justification rather than the instruction. The clause is also honest about what an agent cannot finish: two Discussions categories cannot be created through the API at all, so they are named as owner actions instead of being claimed."
+  },
+  "OO-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 33 (OO) — artifacts on disk + live GitHub state",
+    "evidence": [
+      "MEASURED at docs/maintainers/release-runbook.md — every clause has a line, which is unusual for a documentation atom",
+      "both protected environments, with the approval gate stated as the operative fact (:18-19, :28): 'environment release — NEEDS YOUR APPROVAL', 'environment release-client — needs your approval', and 'Nothing reaches PyPI until you approve BOTH in the run's UI'",
+      "the six version surfaces: ':34 Bump the version in all six places' and ':48 All six are enforced by tests/test_version_consistency.py' — and that suite passes 6/6 here",
+      "🔑 THE ANNOTATED-TAG DEREFERENCE TRAP APPEARS THREE TIMES, ESCALATING: a callout at :100 ('Annotated tags dereference. git rev-parse v0.1.3 gives you the TAG [object]'), the concrete commands at :202 ('git rev-parse v0.1.3 and v0.1.3^{commit} genuinely differ'), and — the part that makes a runbook usable — the TROUBLESHOOTING table at :191, which maps the symptom back to it: 'Website parity job red | its pins point at the wrong SHA | ALMOST ALWAYS the annotated-tag dereference above'",
+      "the CHANGELOG heading requirement with its reason (:46, :54): a heading of exactly '## [X.Y.Z]' as the newest entry, because 'the notes job extracts the release body' from it",
+      "validated against a real release (:204): 'the six version surfaces agree … PyPI carries core AND client at 0.1.3'",
+      "the troubleshooting table also covers the version-consistency red with the non-obvious remedy — 'fix, PR, then DELETE AND RE-PUSH THE TAG' — which is the step a first-time releaser would miss",
+      "test_skill_format_compat 20/20; test_version_consistency 6/6"
+    ],
+    "notes": "The clause's bar is 'a person with org access can cut a release from the doc alone', and the thing that actually meets that bar is the symptom→cause table rather than the procedure: a procedure tells a releaser what to do when everything works, and the table is what answers the case where it did not. Cross-check with the CI plan audited last cycle: the runbook's 'needs your approval' on both environments corroborates from the maintainer's side what release.yml shows from the pipeline's — separate environments per publisher tuple, each with a required reviewer."
   }
 }

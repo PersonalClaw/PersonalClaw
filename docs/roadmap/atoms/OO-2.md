@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- MEASURED in the apps repo: all THREE issue templates the clause names (bug.yml, feature.yml, app-request.yml), plus CONTRIBUTING.md, CODE_OF_CONDUCT.md, AGENTS.md and .github/CODEOWNERS
+- the dco job is mounted on the apps ci.yml (two references), so the provenance gate is not core-only
+- MEASURED: 64 app manifests parse-checked by the manifest-validate job, where the clause names 38 — growth past the atom, and the job validates every one through core's own personalclaw.apps.manifest rather than a local schema copy
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** The mirror is genuine rather than nominal: the same DCO gate, the same code-of-conduct, the same agent brief, plus one template core does not need (app-request). Auditing the apps CI in an earlier cycle also showed three jobs added since — quality-declarations, live-writes-posture and prompt-cache-posture — so the hygiene floor this atom set has been built on rather than left at the minimum.
 
 ## Recorded history
 

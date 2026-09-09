@@ -30,9 +30,26 @@ CONTRIBUTING has model+intake+DCO sections (no contradiction with the CONTRIBUTI
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- MEASURED, every artifact the clause names is present: CONTRIBUTING.md, CODE_OF_CONDUCT.md, AGENTS.md, .github/CODEOWNERS, .github/PULL_REQUEST_TEMPLATE.md, and .github/ISSUE_TEMPLATE/{bug,feature}.yml
+- CONTRIBUTING carries the three required sections as real headings: '## The model' (:10), '## Developer Certificate of Origin (DCO)' (:30), and the breaking-changes section (:84) with a named anchor so it can be linked to
+- 🔑 THE 'NO CONTRADICTION' CLAUSE IS SATISFIED BY NAMING THE ASYMMETRY RATHER THAN HIDING IT (:86-89): 'Two different standards apply depending on who is making the change — THIS IS THE ONE PLACE IN THE DOCTRINE WHERE MAINTAINER AND CONTRIBUTOR EXPECTATIONS DIFFER, so it's worth stating plainly'
+- and it states the reason the clean-break tenet exists rather than asserting it: 'This is a decision, not an oversight: CARRYING COMPATIBILITY SHIMS THROUGH A HALF-BUILT ARCHITECTURE IS HOW PROJECTS CALCIFY AROUND DESIGNS THEY MEANT TO REPLACE'
+- 🔑 IT ALSO PRE-EMPTS A REAL READING ERROR: 'assume no gate/migration machinery exists yet: there is no lifecycle/ package, and A PLAN FILE THAT ASKS FOR ONE IS DESCRIBING THE CONTRIBUTOR METHODOLOGY, NOT A MAINTAINER DEPENDENCY'
+- 🔑 THE DCO JOB CARRIES TWO POST-MORTEMS AND THE FIRST IS THIS CAMPAIGN'S CLASS. dco.yml:55-58: actions/checkout REFUSES a fork ref under pull_request_target ('Refusing to check out fork pull request code'), 'which SKIPPED THIS STEP and the comment below ON EVERY FORK PR — THE EXACT PRs THIS WORKFLOW EXISTS FOR'. It now reads the commits API instead, which 'carries author identity and the full message, which is all a DCO check needs, and IT KEEPS THE NO-FORK-CODE GUARANTEE ABSOLUTE'
+- the second: the dependabot exemption is per-COMMIT and not gated on the run's triggering actor, 'so it still holds after a maintainer pushes a fix onto a dependabot branch (rebase, lockfile regen), which changes github.actor to a human and would otherwise re-fail on dependabot's own unsigned commit'
+- dco.yml:10 names the shift-left motive: contributors had 'learned about DCO in review instead of from CI'
+- CONTRIBUTING also ships '### What CI will and won't tell you on your first PR' (:325) — the contributor-facing half of the same honesty
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** 🎯 THE ARCC OBJECTIVE LANDS SQUARELY ON DCO. ARCC returned the IaC-provenance control, whose argument is that manually deployed resources 'lack provenance and change control … no automated tracking of who deployed resources, what changes were made, or when', and that 'this absence of provenance creates BLIND SPOTS IN SECURITY AUDITING AND INCIDENT RESPONSE'. DCO is the same objective for contributed code: every commit carries an accountable identity and the terms it was offered under, enforced by CI rather than by reviewer memory. And the fork bug is the sharper finding — a provenance check that silently skipped every fork PR had exactly the blind spot the guidance describes, on the only population that needed it. The no-fork-code rule under pull_request_target is a genuine second control living in the same fix.
 
 ## Recorded history
 

@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 33 (OO) — artifacts on disk + live GitHub state
+
+**Code evidence:**
+
+- 🔑 MEASURED AGAINST LIVE GITHUB, not a file: 30 issues carry the good-first-issue label (18 still OPEN) against a clause requiring at least 8 — comfortably past it, and the open half means the front door is still stocked rather than historically stocked
+- MEASURED: 33 labels exist on the core repo where setup_labels.sh defines 16, so the script ran and the set has grown around it
+- idempotency is a property of the implementation, stated at scripts/setup_labels.sh:3 and visible at :9 — 'gh label create --force updates a label if it already exists', so a re-run is an update rather than a duplicate-or-error
+- test_skill_format_compat 20/20; test_version_consistency 6/6
+
+**Notes:** The clause's most interesting requirement is the negative one: four candidate seeds (croniter DST, video kind, xfail list, --slack-only) were 'verified and closed-with-evidence rather than filed'. Filing a good-first-issue for something already fixed is worse than filing nothing — a newcomer spends their first contribution discovering the issue was stale, which is the opposite of the on-ramp the label promises. Recorded here because that discipline is invisible in the label count and is the part a future reader would otherwise not know was done.
 
 ## Recorded history
 
