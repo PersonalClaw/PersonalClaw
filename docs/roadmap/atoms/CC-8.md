@@ -28,9 +28,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 dashboard/chat_plan.py:1-13 'There is deliberately NO SECOND STATE MACHINE here.' The walkthrough state is planning.session's own PlanSession/PlanStep with the same submit→edit→comment/approve transitions the loop planning surface drives; this module does only the two things that model leaves to its owner — persisting for a chat owner, and recording the chat-side attachment, which it labels 'turn bookkeeping, NOT plan state'
+- 🔑 :17-20 ACTIVATION IS MANUAL BY MECHANISM, NOT BY PROMISE: 'Nothing on the send path calls into this module to CREATE a session; activate is reachable only from the composer affordance's endpoint. The turn-end hook (maybe_submit_plan_draft) is a NO-OP for a chat with no session, so a quick task is untouched — NO HEURISTIC, NO AUTO-DETECTION'
+- 🔑 :22-24 THE SIXTH INDEPENDENT ARRIVAL AT THIS CAMPAIGN'S CORE PRINCIPLE: 'The no-execute guarantee is THE TASK-MODE GATE, NOT A PROMPT.' Activation flips the session to task mode `plan`, and the canonical gate in personalclaw.task_modes 'which the native runtime consults in _guard_and_invoke BEFORE approval' is what denies a write
+- MEASURED: :53 imports PlanSession, PlanStep, StepStatus from personalclaw.planning.session — the reuse is an import, not a reimplementation
+- tests/test_chat_plan_mode.py passes inside the 77
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** The composer exposes 'Task mode: Agent' as the mode control; I could not hold its popover open across separate driver invocations to read the Plan entry, so the affordance is confirmed in code rather than clicked.
+
+**Notes:** The no-execute sentence belongs beside the five others this campaign has collected — a prompt is not an enforcement mechanism (twice), making a lint advisory leaves it to author discipline, a bound a prompt asks for is one injected content can ask to skip, a caller that could name itself the user makes the gate decorative, and the hidden button is a convenience while the check is the control. Six modules, six independent arrivals, no shared citation. And the gate's POSITION matters as much as its existence: consulted before approval, so a plan-mode session cannot be talked into a write by an approval prompt.
 
 ## Recorded history
 

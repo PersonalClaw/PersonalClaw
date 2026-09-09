@@ -33,9 +33,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: tests/test_chat_craft_sel_audit.py passes inside the 77 — the clause's 'one event per security-relevant action across all seven mechanics' has a dedicated suite rather than resting on per-mechanic spot checks
+- the accessibility half has its own tests inside the 300: findBarA11y.test.tsx, and FollowupChips exports `followupAnnouncement` so the aria-live text is a tested value rather than inline JSX
+- the clause's snip exemption is honest and matches CC-4's code: 'snip rides existing upload SEL' — the same inheritance the upload controls get, so no eighth SEL site was invented
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Notes:** A wrap-up atom is usually the least checkable in a plan, and this one is the exception because its central claim was made testable: an audit suite that asserts ONE event per action is the only form in which 'SEL covers all seven' can be verified, since both zero events and two events are failures and only a per-mechanic census distinguishes them.
 
 ## Recorded history
 

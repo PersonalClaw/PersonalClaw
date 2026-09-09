@@ -29,9 +29,27 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 DRIVEN: the composer's 'Add to message' menu carries 'Capture screen area — Snip a region → attach', a description that names the whole flow in four words
+- 🔑 displayCapture.ts:1-17 IS THE ONE getDisplayMedia ACQUISITION IN THE APP, and the consolidation is argued from the teardown: the two consumers share 'the part THE CONSENT STORY HANGS OFF: asking the browser for a display stream, reading one frame out of it, and stopping every track. A SECOND COPY OF THAT WOULD BE A SECOND PLACE TO GET THE TEARDOWN WRONG' — pinned by displayCapture.test.ts's CALL-SITE CENSUS
+- the two products are distinguished by what stays live: share holds a stream so 'the browser's capture indicator stays lit for as long as it lives, WHICH IS THE POINT OF IT'; snip 'takes a single frame, stops the capture immediately… NOTHING STAYS LIVE'
+- :18-20 the offscreen <video> is chosen over ImageCapture for a portability reason, not a preference: 'grabFrame is neither in the TS DOM lib nor implemented in Safari, so it would have made both features Chrome-only'
+- :24-26 a snip passes 0 downscale deliberately — its pixels 'are about to be cropped and OCR'd, and softening text before OCR reads it' is counterproductive. The opposite choice from the vision-budget path, for a stated reason
+- 🔑 MEASURED, THE UPLOAD CONTROLS ARE INHERITED RATHER THAN REIMPLEMENTED: ChatPage.tsx:2550-2554 `attachSnip` crops to a PNG via cropToPngFile and calls `attach([file])` — the SAME attach path every other attachment takes
+- the mac/browser choice is one decision function re-invoked, not two policies (:2534-2545): when the native snip fails it 're-run[s] the SAME decision with the native path marked failed rather than writing a second fallback policy here; only dead-end with the error if nothing is left'
+- and a dismissed picker is handled as a decision: ':2524 A dismissed picker is a decision, not a failure — say nothing'
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** Drove the menu and confirmed the entry. Deliberately did not fire the capture: getDisplayMedia in a headless browser opens a picker no test can answer, and the code path plus the shared-uploader inheritance are both confirmed by reading.
+
+**Notes:** 🎯 THE ARCC ANSWER IS INHERITANCE. Secure File Uploads asks for an extension allowlist, content-type verification rather than trusting the header, and enforced size limits. This atom satisfies all three WITHOUT restating any of them, because the cropped PNG goes through `attach()` — the pipeline that already carries them. The correct audit question for a feature like this is not 'does it validate' but 'does it route through the thing that validates', and the answer is one line of code.
 
 ## Recorded history
 

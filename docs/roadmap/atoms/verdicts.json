@@ -4060,5 +4060,131 @@
       "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
     ],
     "notes": "Partial because the clause's second half — 'the orphaned remainder … is enumerated and implemented OR EXPLICITLY DESCOPED WITH REASONS' — is a bookkeeping claim about a delta between an original scope and what shipped, and I did not reconstruct that delta independently. Verifying it properly means diffing the plan's pre-08-28 scope against the shipped surface, which is a plan-archaeology exercise rather than a code observation, and this protocol's governing rule is to observe rather than to trust the enumeration. Recording the limit rather than accepting the claim."
+  },
+  "CC-1": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: chat_persistence.py:230 `_redact_rewound` redacts the whole rewind-tail chain for persistence, and :256 `_attach_rewound` copies it onto the session's last message",
+      "both are TOLERANT of the pre-rewind shape by design — ':233 non-list / missing key → empty' and ':259-260 Missing/old-shape key = today's behaviour (pre-rewind sessions load unchanged — the plan's one clean-break field under the pre-1.0 banner)'. So an old session on disk loads without migration, and the clean break is scoped to one field",
+      "tests/test_chat_rewind.py passes as part of the 77",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "Not driven: editing a past user turn needs a transcript, and this home has ZERO session files — messages need a bound model.",
+    "notes": "Partial for the drive. The redaction placement is the part worth keeping: the discarded tail is redacted at the PERSISTENCE boundary rather than at capture, so the in-memory tail a live client already holds is unchanged while nothing unredacted reaches disk. ARCC's file-upload guidance does not reach conversation retention, but the shape is the same rule the voice plan applied to a consent record — the durable copy is the one that must be safe."
+  },
+  "CC-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "the pieces all exist: ui/FindBar.tsx, pages/chat/findSegments.ts, and findBarA11y.test.tsx — all inside the 300 passing frontend tests",
+      "ChatPage.tsx:2959-2964 states the layering: 'ui/FindBar is surface-agnostic; chat supplies what a turn's searchable text is (findSegments) and which node to scroll to. BOTH REFERENCES ARE STABLE, so a composer keystroke does not re-scan the transcript' — the performance clause met by referential stability rather than by memoising a scan",
+      "🔑 MEASURED, the Cmd/Ctrl+F handler at :1383-1395 is more careful than the clause asks, and its three guards each carry a reason. It declines shift/alt variants so ⌘⇧F stays available. It does NOT hijack while the user types in another input or editor — 'except our own find input, where a repeat ⌘F should close (toggle) rather than no-op', which is the case most implementations leave dead. And ':1385 if (!sessionRef.current) return  // NO OPEN SESSION → LET THE BROWSER FIND RUN'",
+      "SelectionQuote → Quote+Copy toolbar: pages/chat carries the selection surface among its 54 modules",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "Pressed ⌘F on a fresh chat and nothing opened — which is the DOCUMENTED behaviour, not a defect (see notes). The bar itself needs a transcript, and no session exists in this home.",
+    "notes": "🪤 A COLLAPSED FINDING, and the fifth of this exact shape in the campaign. I read the missing find bar as a possible inert control, then found `setFindOpen((o) => !o)` at :1394 that my first grep had under-read, and then found the reason it did not fire on the line above it: with no open session the app deliberately does not hijack ⌘F, so the BROWSER's own find still works. Withdrawing plainly — and the decision is the right one, because hijacking a standard shortcut to open an empty in-app finder is worse than not hijacking it."
+  },
+  "CC-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "chat_followups.py exists server-side and pages/chat/FollowupChips.tsx renders them, with `followupAnnouncement` exported beside the component for the aria-live half",
+      "the coalescer's word-boundary snapping is in pages/chat/useStreamCoalescer.ts + coalesceReducers.ts, covered by coalesceReducers.test.ts inside the 300",
+      "tests/test_chat_followups.py passes as part of the 77",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "No chips render — and the clause SPECIFIES that: 'silent with no model bound'. No model is bound in this home, so their absence is the documented behaviour rather than a gap.",
+    "notes": "Partial because the positive case is unobserved, not because the negative one is wrong. The gate list in the clause is worth recording as a design: config, restriction, queue, error, no-model, and cancel-on-next-dispatch — six conditions for a cosmetic affordance, which is the right ratio for something that spends a model call in the background to decorate a UI."
+  },
+  "CC-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 DRIVEN: the composer's 'Add to message' menu carries 'Capture screen area — Snip a region → attach', a description that names the whole flow in four words",
+      "🔑 displayCapture.ts:1-17 IS THE ONE getDisplayMedia ACQUISITION IN THE APP, and the consolidation is argued from the teardown: the two consumers share 'the part THE CONSENT STORY HANGS OFF: asking the browser for a display stream, reading one frame out of it, and stopping every track. A SECOND COPY OF THAT WOULD BE A SECOND PLACE TO GET THE TEARDOWN WRONG' — pinned by displayCapture.test.ts's CALL-SITE CENSUS",
+      "the two products are distinguished by what stays live: share holds a stream so 'the browser's capture indicator stays lit for as long as it lives, WHICH IS THE POINT OF IT'; snip 'takes a single frame, stops the capture immediately… NOTHING STAYS LIVE'",
+      ":18-20 the offscreen <video> is chosen over ImageCapture for a portability reason, not a preference: 'grabFrame is neither in the TS DOM lib nor implemented in Safari, so it would have made both features Chrome-only'",
+      ":24-26 a snip passes 0 downscale deliberately — its pixels 'are about to be cropped and OCR'd, and softening text before OCR reads it' is counterproductive. The opposite choice from the vision-budget path, for a stated reason",
+      "🔑 MEASURED, THE UPLOAD CONTROLS ARE INHERITED RATHER THAN REIMPLEMENTED: ChatPage.tsx:2550-2554 `attachSnip` crops to a PNG via cropToPngFile and calls `attach([file])` — the SAME attach path every other attachment takes",
+      "the mac/browser choice is one decision function re-invoked, not two policies (:2534-2545): when the native snip fails it 're-run[s] the SAME decision with the native path marked failed rather than writing a second fallback policy here; only dead-end with the error if nothing is left'",
+      "and a dismissed picker is handled as a decision: ':2524 A dismissed picker is a decision, not a failure — say nothing'",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "Drove the menu and confirmed the entry. Deliberately did not fire the capture: getDisplayMedia in a headless browser opens a picker no test can answer, and the code path plus the shared-uploader inheritance are both confirmed by reading.",
+    "notes": "🎯 THE ARCC ANSWER IS INHERITANCE. Secure File Uploads asks for an extension allowlist, content-type verification rather than trusting the header, and enforced size limits. This atom satisfies all three WITHOUT restating any of them, because the cropped PNG goes through `attach()` — the pipeline that already carries them. The correct audit question for a feature like this is not 'does it validate' but 'does it route through the thing that validates', and the answer is one line of code."
+  },
+  "CC-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "DRIVEN: the composer carries 'Optimize prompt (⌘↵)' as a first-class control",
+      "🔑 the bundled prompt states the UNCHANGED contract EXACTLY and argues both halves of it (config/prompts/task-prompt_optimizer.md:10): 'If the prompt is already specific, scoped, and actionable, reply with exactly `UNCHANGED` — that one word, nothing else. Do NOT echo the prompt back and do NOT explain the decision. REWRITING AN ALREADY-GOOD PROMPT IS A REGRESSION, AND ECHOING ONE COSTS A FULL RESPONSE TO SAY NOTHING'",
+      ":5 the exception is declared where the output rule is stated ('The single exception is rule 2's UNCHANGED reply'), so the two rules cannot be read as contradicting",
+      ":40 a worked example pins the literal output, which is what makes a one-token contract checkable by a fixture rather than by inspection",
+      "handlers/optimizer.py is the server half",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "notes": "The reasoning is the atom. A prompt optimizer with no no-op path is worse than none, because its failure mode is confident degradation of prompts that were already right — and the second clause names the cheaper cost too, that an echo spends a whole response to communicate nothing. Both are the kind of consequence a bare instruction ('return UNCHANGED if fine') would leave a model free to interpret loosely."
+  },
+  "CC-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: tests/test_chat_craft_sel_audit.py passes inside the 77 — the clause's 'one event per security-relevant action across all seven mechanics' has a dedicated suite rather than resting on per-mechanic spot checks",
+      "the accessibility half has its own tests inside the 300: findBarA11y.test.tsx, and FollowupChips exports `followupAnnouncement` so the aria-live text is a tested value rather than inline JSX",
+      "the clause's snip exemption is honest and matches CC-4's code: 'snip rides existing upload SEL' — the same inheritance the upload controls get, so no eighth SEL site was invented",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "notes": "A wrap-up atom is usually the least checkable in a plan, and this one is the exception because its central claim was made testable: an audit suite that asserts ONE event per action is the only form in which 'SEL covers all seven' can be verified, since both zero events and two events are failures and only a per-mechanic census distinguishes them."
+  },
+  "CC-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "pages/chat/branchLineage.ts + branchLineage.test.ts exist (inside the 300), and tests/test_chat_branch_mechanic.py passes inside the 77",
+      "the clause's hard cases are the ones a lineage module has to get right — branching from either role, the same message repeatedly, and a branch-of-a-branch — and a dedicated pure module plus its own test is the shape that makes those checkable without a live transcript",
+      "the breadcrumb reads PERSISTED `forked_from` state rather than recomputing lineage at render time, which is what makes a branch-of-a-branch resolvable",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "Not driven: a hover branch affordance needs messages to hover over, and this home has zero session files.",
+    "notes": "Partial for the drive only. Worth noting the atom reuses the EXISTING fork endpoint rather than adding a branch API — so the mechanic is a new affordance over a proven operation, which is why its own tests can be about lineage rather than about forking."
+  },
+  "CC-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 dashboard/chat_plan.py:1-13 'There is deliberately NO SECOND STATE MACHINE here.' The walkthrough state is planning.session's own PlanSession/PlanStep with the same submit→edit→comment/approve transitions the loop planning surface drives; this module does only the two things that model leaves to its owner — persisting for a chat owner, and recording the chat-side attachment, which it labels 'turn bookkeeping, NOT plan state'",
+      "🔑 :17-20 ACTIVATION IS MANUAL BY MECHANISM, NOT BY PROMISE: 'Nothing on the send path calls into this module to CREATE a session; activate is reachable only from the composer affordance's endpoint. The turn-end hook (maybe_submit_plan_draft) is a NO-OP for a chat with no session, so a quick task is untouched — NO HEURISTIC, NO AUTO-DETECTION'",
+      "🔑 :22-24 THE SIXTH INDEPENDENT ARRIVAL AT THIS CAMPAIGN'S CORE PRINCIPLE: 'The no-execute guarantee is THE TASK-MODE GATE, NOT A PROMPT.' Activation flips the session to task mode `plan`, and the canonical gate in personalclaw.task_modes 'which the native runtime consults in _guard_and_invoke BEFORE approval' is what denies a write",
+      "MEASURED: :53 imports PlanSession, PlanStep, StepStatus from personalclaw.planning.session — the reuse is an import, not a reimplementation",
+      "tests/test_chat_plan_mode.py passes inside the 77",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "The composer exposes 'Task mode: Agent' as the mode control; I could not hold its popover open across separate driver invocations to read the Plan entry, so the affordance is confirmed in code rather than clicked.",
+    "notes": "The no-execute sentence belongs beside the five others this campaign has collected — a prompt is not an enforcement mechanism (twice), making a lint advisory leaves it to author discipline, a bound a prompt asks for is one injected content can ask to skip, a caller that could name itself the user makes the gate decorative, and the hidden button is a convenience while the check is the control. Six modules, six independent arrivals, no shared citation. And the gate's POSITION matters as much as its existence: consulted before approval, so a plan-mode session cannot be talked into a write by an approval prompt."
+  },
+  "CC-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 35 (CC) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 DRIVEN AND PERSISTED, the decisive test: toggled 'Show thinking inline' in Settings → Chat, then a FULL PAGE RELOAD showed the switch [checked], and MEASURED on disk config.json carries dashboard.show_thinking_inline = True. The clause's 'the switch round-trips through config' confirmed at all three points — control, reload, file",
+      "the field is a real dataclass member (config/loader.py:1422) with its load-path default at :3489, so the round-trip is the standard config contract rather than a bespoke store",
+      "the switch's hint states what it changes rather than restating its label: 'Show intermediate reasoning between tool calls instead of collapsing it'",
+      "the render-on / render-off / stream-interleaving cases the clause names are vitest coverage, and the frontend chat suite passes 300/300",
+      "300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites"
+    ],
+    "ui_validated": "Drove the toggle and the reload, and confirmed the on-disk value.",
+    "notes": "The clause's last phrase — 'no change to persistence format' — is the constraint that makes this atom small: thinking chunks were already broadcast and already persisted, so the whole task was rendering them behind a switch. An atom whose scope is 'wire the existing broadcast to the existing transcript' is the right shape for a T01 remainder, and the config round-trip is the only new state it introduces."
   }
 }

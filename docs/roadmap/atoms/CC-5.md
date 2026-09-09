@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- DRIVEN: the composer carries 'Optimize prompt (⌘↵)' as a first-class control
+- 🔑 the bundled prompt states the UNCHANGED contract EXACTLY and argues both halves of it (config/prompts/task-prompt_optimizer.md:10): 'If the prompt is already specific, scoped, and actionable, reply with exactly `UNCHANGED` — that one word, nothing else. Do NOT echo the prompt back and do NOT explain the decision. REWRITING AN ALREADY-GOOD PROMPT IS A REGRESSION, AND ECHOING ONE COSTS A FULL RESPONSE TO SAY NOTHING'
+- :5 the exception is declared where the output rule is stated ('The single exception is rule 2's UNCHANGED reply'), so the two rules cannot be read as contradicting
+- :40 a worked example pins the literal output, which is what makes a one-token contract checkable by a fixture rather than by inspection
+- handlers/optimizer.py is the server half
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Notes:** The reasoning is the atom. A prompt optimizer with no no-op path is worse than none, because its failure mode is confident degradation of prompts that were already right — and the second clause names the cheaper cost too, that an echo spends a whole response to communicate nothing. Both are the kind of consequence a bare instruction ('return UNCHANGED if fine') would leave a model free to interpret loosely.
 
 ## Recorded history
 

@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the pieces all exist: ui/FindBar.tsx, pages/chat/findSegments.ts, and findBarA11y.test.tsx — all inside the 300 passing frontend tests
+- ChatPage.tsx:2959-2964 states the layering: 'ui/FindBar is surface-agnostic; chat supplies what a turn's searchable text is (findSegments) and which node to scroll to. BOTH REFERENCES ARE STABLE, so a composer keystroke does not re-scan the transcript' — the performance clause met by referential stability rather than by memoising a scan
+- 🔑 MEASURED, the Cmd/Ctrl+F handler at :1383-1395 is more careful than the clause asks, and its three guards each carry a reason. It declines shift/alt variants so ⌘⇧F stays available. It does NOT hijack while the user types in another input or editor — 'except our own find input, where a repeat ⌘F should close (toggle) rather than no-op', which is the case most implementations leave dead. And ':1385 if (!sessionRef.current) return  // NO OPEN SESSION → LET THE BROWSER FIND RUN'
+- SelectionQuote → Quote+Copy toolbar: pages/chat carries the selection surface among its 54 modules
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** Pressed ⌘F on a fresh chat and nothing opened — which is the DOCUMENTED behaviour, not a defect (see notes). The bar itself needs a transcript, and no session exists in this home.
+
+**Notes:** 🪤 A COLLAPSED FINDING, and the fifth of this exact shape in the campaign. I read the missing find bar as a possible inert control, then found `setFindOpen((o) => !o)` at :1394 that my first grep had under-read, and then found the reason it did not fire on the line above it: with no open session the app deliberately does not hijack ⌘F, so the BROWSER's own find still works. Withdrawing plainly — and the decision is the right one, because hijacking a standard shortcut to open an empty in-app finder is worse than not hijacking it.
 
 ## Recorded history
 

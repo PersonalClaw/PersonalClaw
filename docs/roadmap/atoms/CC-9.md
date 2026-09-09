@@ -28,9 +28,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 DRIVEN AND PERSISTED, the decisive test: toggled 'Show thinking inline' in Settings → Chat, then a FULL PAGE RELOAD showed the switch [checked], and MEASURED on disk config.json carries dashboard.show_thinking_inline = True. The clause's 'the switch round-trips through config' confirmed at all three points — control, reload, file
+- the field is a real dataclass member (config/loader.py:1422) with its load-path default at :3489, so the round-trip is the standard config contract rather than a bespoke store
+- the switch's hint states what it changes rather than restating its label: 'Show intermediate reasoning between tool calls instead of collapsing it'
+- the render-on / render-off / stream-interleaving cases the clause names are vitest coverage, and the frontend chat suite passes 300/300
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** Drove the toggle and the reload, and confirmed the on-disk value.
+
+**Notes:** The clause's last phrase — 'no change to persistence format' — is the constraint that makes this atom small: thinking chunks were already broadcast and already persisted, so the whole task was rendering them behind a switch. An atom whose scope is 'wire the existing broadcast to the existing transcript' is the right shape for a T01 remainder, and the config round-trip is the only new state it introduces.
 
 ## Recorded history
 

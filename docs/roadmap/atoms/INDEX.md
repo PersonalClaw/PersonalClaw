@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 194 | `done_when` checked against the code and it holds |
-| `partial` | 147 | some `done_when` clauses hold, others do not |
+| `confirmed` | 199 | `done_when` checked against the code and it holds |
+| `partial` | 151 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 338 | not yet checked |
+| `unaudited` | 329 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -190,15 +190,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CC-1`](CC-1.md) | `done` | `unaudited` | S1: true rewind (fork-and-swap under same slot) + queue interrupt-now |
-| [`CC-2`](CC-2.md) | `done` | `unaudited` | S2: find-in-conversation bar + attributed quote toolbar |
-| [`CC-3`](CC-3.md) | `done` | `unaudited` | S3: follow-up chips (WS-push) + word-boundary smooth streaming |
-| [`CC-4`](CC-4.md) | `done` | `unaudited` | Screen-snip into chat: getDisplayMedia frame-grab + crop + mac path selection |
-| [`CC-5`](CC-5.md) | `done` | `unaudited` | Optimizer polish: richer role-labeled context + explicit UNCHANGED contract |
-| [`CC-6`](CC-6.md) | `done` | `unaudited` | S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate |
-| [`CC-7`](CC-7.md) | `done` | `unaudited` | Branch mechanic: hover branch affordance on any message + 'Branched from' breadcrumb |
-| [`CC-8`](CC-8.md) | `done` | `unaudited` | Chat plan-mode entry + mid-task re-planning bound to the existing planning gate |
-| [`CC-9`](CC-9.md) | `done` | `unaudited` | Render the thinking stream: wire the broadcast to the transcript (T01) |
+| [`CC-1`](CC-1.md) | `done` | `partial` | S1: true rewind (fork-and-swap under same slot) + queue interrupt-now |
+| [`CC-2`](CC-2.md) | `done` | `partial` | S2: find-in-conversation bar + attributed quote toolbar |
+| [`CC-3`](CC-3.md) | `done` | `partial` | S3: follow-up chips (WS-push) + word-boundary smooth streaming |
+| [`CC-4`](CC-4.md) | `done` | `confirmed` | Screen-snip into chat: getDisplayMedia frame-grab + crop + mac path selection |
+| [`CC-5`](CC-5.md) | `done` | `confirmed` | Optimizer polish: richer role-labeled context + explicit UNCHANGED contract |
+| [`CC-6`](CC-6.md) | `done` | `confirmed` | S4 wrap-up: a11y/SEL/mobile polish + docs + CHANGELOG + full validation gate |
+| [`CC-7`](CC-7.md) | `done` | `partial` | Branch mechanic: hover branch affordance on any message + 'Branched from' breadcrumb |
+| [`CC-8`](CC-8.md) | `done` | `confirmed` | Chat plan-mode entry + mid-task re-planning bound to the existing planning gate |
+| [`CC-9`](CC-9.md) | `done` | `confirmed` | Render the thinking stream: wire the broadcast to the transcript (T01) |
 
 ### `CE` — CHANNEL-EXPANSION (9/10 done)
 

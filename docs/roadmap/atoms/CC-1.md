@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: chat_persistence.py:230 `_redact_rewound` redacts the whole rewind-tail chain for persistence, and :256 `_attach_rewound` copies it onto the session's last message
+- both are TOLERANT of the pre-rewind shape by design — ':233 non-list / missing key → empty' and ':259-260 Missing/old-shape key = today's behaviour (pre-rewind sessions load unchanged — the plan's one clean-break field under the pre-1.0 banner)'. So an old session on disk loads without migration, and the clean break is scoped to one field
+- tests/test_chat_rewind.py passes as part of the 77
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** Not driven: editing a past user turn needs a transcript, and this home has ZERO session files — messages need a bound model.
+
+**Notes:** Partial for the drive. The redaction placement is the part worth keeping: the discarded tail is redacted at the PERSISTENCE boundary rather than at capture, so the in-memory tail a live client already holds is unchanged while nothing unredacted reaches disk. ARCC's file-upload guidance does not reach conversation retention, but the shape is the same rule the voice plan applied to a consent record — the durable copy is the one that must be safe.
 
 ## Recorded history
 

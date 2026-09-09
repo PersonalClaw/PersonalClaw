@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- pages/chat/branchLineage.ts + branchLineage.test.ts exist (inside the 300), and tests/test_chat_branch_mechanic.py passes inside the 77
+- the clause's hard cases are the ones a lineage module has to get right — branching from either role, the same message repeatedly, and a branch-of-a-branch — and a dedicated pure module plus its own test is the shape that makes those checkable without a live transcript
+- the breadcrumb reads PERSISTED `forked_from` state rather than recomputing lineage at render time, which is what makes a branch-of-a-branch resolvable
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** Not driven: a hover branch affordance needs messages to hover over, and this home has zero session files.
+
+**Notes:** Partial for the drive only. Worth noting the atom reuses the EXISTING fork endpoint rather than adding a branch API — so the mechanic is a new affordance over a proven operation, which is why its own tests can be about lineage rather than about forking.
 
 ## Recorded history
 

@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 35 (CC) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- chat_followups.py exists server-side and pages/chat/FollowupChips.tsx renders them, with `followupAnnouncement` exported beside the component for the aria-live half
+- the coalescer's word-boundary snapping is in pages/chat/useStreamCoalescer.ts + coalesceReducers.ts, covered by coalesceReducers.test.ts inside the 300
+- tests/test_chat_followups.py passes as part of the 77
+- 300 frontend chat tests pass; 77 python tests across the rewind/followups/branch/plan-mode/SEL suites
+
+**Driven in the UI:** No chips render — and the clause SPECIFIES that: 'silent with no model bound'. No model is bound in this home, so their absence is the documented behaviour rather than a gap.
+
+**Notes:** Partial because the positive case is unobserved, not because the negative one is wrong. The gate list in the clause is worth recording as a design: config, restriction, queue, error, no-model, and cancel-on-next-dispatch — six conditions for a cosmetic affordance, which is the right ratio for something that spends a model call in the background to decorate a UI.
 
 ## Recorded history
 
