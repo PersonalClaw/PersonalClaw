@@ -19,6 +19,109 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "DSC-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": [
+      "the drift reporter and a11y static scan are real modules with real rails: web/src/design/consistencyAudit.report.ts plus consistencyAudit.test.ts, consistencyAudit.noRepoWrites.test.ts and consistencyAudit.generate.test.ts",
+      "part of 841 passing tests across 65 design-rail files"
+    ],
+    "notes": "The noRepoWrites sibling is the detail worth naming: the audit has a rail asserting it does NOT write to the repo during a plain test run, which is a discipline most audit tooling lacks."
+  },
+  "DSC-2": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["the design-rail corpus passes (841 tests, 65 files)"],
+    "notes": "PARTIAL: the Playwright visual-regression and axe e2e harness runs under Playwright, not vitest, and its snapshots are platform-qualified (Darwin dev vs Linux CI). I ran the vitest rails, not the browser harness, so the visual-regression half is unvalidated this cycle. Naming that rather than letting a green vitest run stand in for it."
+  },
+  "DSC-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — I DROVE THESE RATCHETS EARLIER THIS SESSION",
+    "evidence": [
+      "841 design-rail tests and 1636 ui-rail tests pass (216 files total, zero skips in ui/)",
+      "FIRST-HAND: earlier in this same session I worked inside these ratchets on the silent-toggle campaign — rewrote web/src/ui/rawToggleState.test.ts's census, changed web/src/ui/activeMeansPressed.test.tsx from a spelling assertion to a property assertion, and extended quietToggleState.test.tsx's population",
+      "and I FALSIFIED them: breaking a fix made the ratchet red naming the offending file, and restoring it went green — that is stronger evidence than any pass-only observation"
+    ],
+    "notes": "The strongest evidence class available in this audit: not 'the rail passes' but 'I broke it deliberately and it caught me, by name'. Two things I learned from the inside are worth recording as durable properties of these ratchets. (1) They are ANTI-VACUITY aware — the census carries a deliberate population floor (60 against a measured 67) precisely because a >= floor detects a REMOVAL and never an ADDITION, so its only job is proving the walk still finds the family. (2) They caught a real regression of mine mid-campaign: a stray `checkout --theirs` reverted a disabledReason attribute, and the ratchet named the exact file and line."
+  },
+  "DSC-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": [
+      "the design corpus includes eyebrowWeightRole.baseline.json — a checked-in baseline, which is what makes a weight-canonicalization claim checkable rather than aspirational",
+      "part of the 841-passed design run"
+    ],
+    "notes": "Inline font-weight canonicalization is exactly the kind of sweep that regresses silently, and a committed baseline is the right instrument."
+  },
+  "DSC-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["the ui/ rails pass in full — 1636 tests across 151 files, zero skipped"],
+    "notes": "PARTIAL: the canonical form-field family and its size convergence are confirmed at the rail level, but I did not visually compare the converged fields across surfaces. The forms I DID drive this session (onboarding name, note capture, knowledge note, new task) all behaved consistently — gated submits, labelled inputs, chip-style tag entry — which is corroborating rather than conclusive."
+  },
+  "DSC-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["part of the 1636-passed ui run"],
+    "notes": "PARTIAL, with one live observation: the Knowledge surface I drove for KL rendered a `searchbox \"Search knowledge\"` — an accessible search role with a real name, consistent with a SearchField primitive rather than a raw input. One instance is not the migration; the sweep across every search/query site is unvalidated."
+  },
+  "DSC-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["part of the 841-passed design run"],
+    "notes": "PARTIAL: type-scale normalization is a pixel property. Its rails pass, but confirming an off-ramp sweep landed means comparing rendered type across surfaces, which is the visual-regression harness's job (DSC-2) and I did not run it."
+  },
+  "DSC-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — first-hand, from working inside it",
+    "evidence": [
+      "part of the 1636-passed ui run",
+      "FIRST-HAND: the raw-button consolidation is the family my silent-toggle work sat in. I measured its live population element-scoped — 67 toggles, 58 announcing, 7 name-flips, 2 genuinely silent — and closed the two real ones (ContentSurface's Export menu, and the Nudge disclosures in LoopCockpitPage and DesignCockpitPage)",
+      "the shared-primitive extraction is observable in the same work: HeaderControl, IconButton, SquareIconButton, FilterChip and TileButton all take a state prop and bind it to aria-pressed, with SquareIconButton and HeaderControl deferring to ariaExpanded when present"
+    ],
+    "notes": "Confirmed with a caveat I should state because it cuts against me: the shared primitives are real and the consolidation holds, but the CENSUS that measured it was wrong about 6 of its 7 named entries when I found it — it used a fixed byte-window instead of reading the element, so four announcing call sites scored as silent and both real defects were in files it never named. I fixed the census as part of that work (brace-depth element parsing). So DSC-8's consolidation is confirmed; the measurement that reported on it needed repair, and the repair is in."
+  },
+  "DSC-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["part of the 841 + 1636 passing rails"],
+    "notes": "An owner taste-call convergence batch is by nature adjudicated rather than derived — the G1–G9 rulings and the follow-on raw-button waves are recorded decisions, and their rails pass. This is also one of the two atoms whose scope vocabulary (cy51 cycles, G-batches) taught the consolidation generator a new token family; before that, WF2KNO-era scanning left it with no resolvable record at all."
+  },
+  "DSC-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": [
+      "the design corpus carries the specific rails this atom implies — accentOnCanvas, countChipContrast, dimmedInkContrast, disabledDimLevel, colorScheme, ariaProhibitedAttr, controlNameFloor — and all pass",
+      "part of the 841-passed design run"
+    ],
+    "notes": "PARTIAL: interaction-pattern standardization plus dark/light a11y is half static-checkable and half visual. The contrast and name-floor rails are real and passing; the dark-light comparison itself belongs to the visual harness I did not run. I did drive the theme control ('Theme: dark — switch to light') across many surfaces without a broken render, which is weak corroboration."
+  },
+  "DSC-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": ["part of the passing rails"],
+    "notes": "PARTIAL BY ITS OWN TITLE — 'Deferred tail (environment-blocked): authenticated seeded…'. Like AG-11, an atom that declares itself environment-blocked cannot be validated as unblocked; that is its recorded state, not a gap I found. Worth noting the authenticated half is the same blocker RUA-3 hit: provisioning a credential needs a TTY."
+  },
+  "DSC-12": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 10 (DSC) — observed",
+    "evidence": [
+      "web/src/design/errorTreatments.ts and errorTreatments.test.ts exist and pass, so the error-treatment vocabulary this atom builds on is real"
+    ],
+    "notes": "PARTIAL BY ITS OWN TITLE — 'Deferred tail (owner/design): ErrorState primitive + har…'. An owner/design-gated tail is awaiting a taste call, not an implementation. The supporting errorTreatments module is present, which is what makes the deferred primitive a small step rather than a new design."
+  },
   "AG-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

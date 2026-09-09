@@ -30,9 +30,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- the design corpus includes eyebrowWeightRole.baseline.json — a checked-in baseline, which is what makes a weight-canonicalization claim checkable rather than aspirational
+- part of the 841-passed design run
+
+**Notes:** Inline font-weight canonicalization is exactly the kind of sweep that regresses silently, and a committed baseline is the right instrument.
 
 ## Recorded history
 

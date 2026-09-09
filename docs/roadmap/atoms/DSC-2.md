@@ -28,9 +28,17 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- the design-rail corpus passes (841 tests, 65 files)
+
+**Notes:** PARTIAL: the Playwright visual-regression and axe e2e harness runs under Playwright, not vitest, and its snapshots are platform-qualified (Darwin dev vs Linux CI). I ran the vitest rails, not the browser harness, so the visual-regression half is unvalidated this cycle. Naming that rather than letting a green vitest run stand in for it.
 
 ## Recorded history
 

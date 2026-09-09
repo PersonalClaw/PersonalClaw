@@ -30,9 +30,19 @@ web/src/design/primitiveAdoption.test.ts + baseline.json ratchet rawButton/rawIn
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — I DROVE THESE RATCHETS EARLIER THIS SESSION
+
+**Code evidence:**
+
+- 841 design-rail tests and 1636 ui-rail tests pass (216 files total, zero skips in ui/)
+- FIRST-HAND: earlier in this same session I worked inside these ratchets on the silent-toggle campaign — rewrote web/src/ui/rawToggleState.test.ts's census, changed web/src/ui/activeMeansPressed.test.tsx from a spelling assertion to a property assertion, and extended quietToggleState.test.tsx's population
+- and I FALSIFIED them: breaking a fix made the ratchet red naming the offending file, and restoring it went green — that is stronger evidence than any pass-only observation
+
+**Notes:** The strongest evidence class available in this audit: not 'the rail passes' but 'I broke it deliberately and it caught me, by name'. Two things I learned from the inside are worth recording as durable properties of these ratchets. (1) They are ANTI-VACUITY aware — the census carries a deliberate population floor (60 against a measured 67) precisely because a >= floor detects a REMOVAL and never an ADDITION, so its only job is proving the walk still finds the family. (2) They caught a real regression of mine mid-campaign: a stray `checkout --theirs` reverted a disabledReason attribute, and the ratchet named the exact file and line.
 
 ## Recorded history
 

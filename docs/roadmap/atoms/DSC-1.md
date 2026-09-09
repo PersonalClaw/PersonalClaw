@@ -28,9 +28,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- the drift reporter and a11y static scan are real modules with real rails: web/src/design/consistencyAudit.report.ts plus consistencyAudit.test.ts, consistencyAudit.noRepoWrites.test.ts and consistencyAudit.generate.test.ts
+- part of 841 passing tests across 65 design-rail files
+
+**Notes:** The noRepoWrites sibling is the detail worth naming: the audit has a rail asserting it does NOT write to the repo during a plain test run, which is a discipline most audit tooling lacks.
 
 ## Recorded history
 

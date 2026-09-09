@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 29 | `done_when` checked against the code and it holds |
-| `partial` | 69 | some `done_when` clauses hold, others do not |
+| `confirmed` | 34 | `done_when` checked against the code and it holds |
+| `partial` | 76 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 586 | not yet checked |
+| `unaudited` | 574 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -344,18 +344,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DSC-1`](DSC-1.md) | `done` | `unaudited` | S1 audit: drift reporter + a11y static scan + ranked audit doc (T1.1/T1.2/V1) |
-| [`DSC-2`](DSC-2.md) | `done` | `unaudited` | Playwright visual-regression + axe a11y e2e harness with captured baselines (S2 prerequisite infra) |
-| [`DSC-3`](DSC-3.md) | `done` | `unaudited` | CI consistency rails / ratchets: primitive-adoption + inline-font-weight caps + token-lint-strict (C1/T3.4) |
-| [`DSC-4`](DSC-4.md) | `done` | `unaudited` | Inline font-weight canonicalization: fvs()/withWeight() + .fw-* utilities + 156-site migration (T2.1) |
-| [`DSC-5`](DSC-5.md) | `done` | `unaudited` | Canonical form-field family: ui/forms convergence + size/surface scale + NumberField (T2.3) |
-| [`DSC-6`](DSC-6.md) | `done` | `unaudited` | Raw-input migration: SearchField primitive + search/query/textarea input drawdown (T2.2/S2) |
-| [`DSC-7`](DSC-7.md) | `done` | `unaudited` | Type-scale normalization: off-ramp text-[…] sweep + ramp reconciliation + caption tier (T2.1) |
-| [`DSC-8`](DSC-8.md) | `done` | `unaudited` | Raw-button consolidation + shared-primitive extraction (SquareIconButton, GraphZoomControls, FormFooter, AddItemButton, QuietButton, SelectionPill, InlineError, Centered, VariableRow) + mega-page triage (T2.2/T2.3) |
-| [`DSC-9`](DSC-9.md) | `done` | `unaudited` | Owner taste-call convergence batch G1–G9 + follow-on raw-button waves (owner-authorized pixel moves) |
-| [`DSC-10`](DSC-10.md) | `done` | `unaudited` | S3 interaction-pattern standardization + a11y/dark-light/responsive parity + pattern gallery (T3.1/T3.2/T3.3, C2) |
-| [`DSC-11`](DSC-11.md) | `done` | `unaudited` | Deferred tail (environment-blocked): authenticated seeded per-route axe CI gate (T3.2/T3.4) + V3 full-app walkthrough |
-| [`DSC-12`](DSC-12.md) | `done` | `unaudited` | Deferred tail (owner/design): ErrorState primitive + harness-gated CodeCockpitPage-class raw-button redesign |
+| [`DSC-1`](DSC-1.md) | `done` | `confirmed` | S1 audit: drift reporter + a11y static scan + ranked audit doc (T1.1/T1.2/V1) |
+| [`DSC-2`](DSC-2.md) | `done` | `partial` | Playwright visual-regression + axe a11y e2e harness with captured baselines (S2 prerequisite infra) |
+| [`DSC-3`](DSC-3.md) | `done` | `confirmed` | CI consistency rails / ratchets: primitive-adoption + inline-font-weight caps + token-lint-strict (C1/T3.4) |
+| [`DSC-4`](DSC-4.md) | `done` | `confirmed` | Inline font-weight canonicalization: fvs()/withWeight() + .fw-* utilities + 156-site migration (T2.1) |
+| [`DSC-5`](DSC-5.md) | `done` | `partial` | Canonical form-field family: ui/forms convergence + size/surface scale + NumberField (T2.3) |
+| [`DSC-6`](DSC-6.md) | `done` | `partial` | Raw-input migration: SearchField primitive + search/query/textarea input drawdown (T2.2/S2) |
+| [`DSC-7`](DSC-7.md) | `done` | `partial` | Type-scale normalization: off-ramp text-[…] sweep + ramp reconciliation + caption tier (T2.1) |
+| [`DSC-8`](DSC-8.md) | `done` | `confirmed` | Raw-button consolidation + shared-primitive extraction (SquareIconButton, GraphZoomControls, FormFooter, AddItemButton, QuietButton, SelectionPill, InlineError, Centered, VariableRow) + mega-page triage (T2.2/T2.3) |
+| [`DSC-9`](DSC-9.md) | `done` | `confirmed` | Owner taste-call convergence batch G1–G9 + follow-on raw-button waves (owner-authorized pixel moves) |
+| [`DSC-10`](DSC-10.md) | `done` | `partial` | S3 interaction-pattern standardization + a11y/dark-light/responsive parity + pattern gallery (T3.1/T3.2/T3.3, C2) |
+| [`DSC-11`](DSC-11.md) | `done` | `partial` | Deferred tail (environment-blocked): authenticated seeded per-route axe CI gate (T3.2/T3.4) + V3 full-app walkthrough |
+| [`DSC-12`](DSC-12.md) | `done` | `partial` | Deferred tail (owner/design): ErrorState primitive + harness-gated CodeCockpitPage-class raw-button redesign |
 
 ### `EA` — EXTERNAL-ACCESS (9/9 done)
 

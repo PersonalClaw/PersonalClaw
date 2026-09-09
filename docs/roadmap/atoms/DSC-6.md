@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- part of the 1636-passed ui run
+
+**Notes:** PARTIAL, with one live observation: the Knowledge surface I drove for KL rendered a `searchbox "Search knowledge"` — an accessible search role with a real name, consistent with a SearchField primitive rather than a raw input. One instance is not the migration; the sweep across every search/query site is unvalidated.
 
 ## Recorded history
 

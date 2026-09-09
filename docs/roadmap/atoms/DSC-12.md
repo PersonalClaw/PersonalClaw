@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- web/src/design/errorTreatments.ts and errorTreatments.test.ts exist and pass, so the error-treatment vocabulary this atom builds on is real
+
+**Notes:** PARTIAL BY ITS OWN TITLE — 'Deferred tail (owner/design): ErrorState primitive + har…'. An owner/design-gated tail is awaiting a taste call, not an implementation. The supporting errorTreatments module is present, which is what makes the deferred primitive a small step rather than a new design.
 
 ## Recorded history
 

@@ -31,9 +31,19 @@ raw-button count 420→~314 via byte-identical primitive extraction (SquareIconB
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — first-hand, from working inside it
+
+**Code evidence:**
+
+- part of the 1636-passed ui run
+- FIRST-HAND: the raw-button consolidation is the family my silent-toggle work sat in. I measured its live population element-scoped — 67 toggles, 58 announcing, 7 name-flips, 2 genuinely silent — and closed the two real ones (ContentSurface's Export menu, and the Nudge disclosures in LoopCockpitPage and DesignCockpitPage)
+- the shared-primitive extraction is observable in the same work: HeaderControl, IconButton, SquareIconButton, FilterChip and TileButton all take a state prop and bind it to aria-pressed, with SquareIconButton and HeaderControl deferring to ariaExpanded when present
+
+**Notes:** Confirmed with a caveat I should state because it cuts against me: the shared primitives are real and the consolidation holds, but the CENSUS that measured it was wrong about 6 of its 7 named entries when I found it — it used a fixed byte-window instead of reading the element, so four announcing call sites scored as silent and both real defects were in files it never named. I fixed the census as part of that work (brace-depth element parsing). So DSC-8's consolidation is confirmed; the measurement that reported on it needed repair, and the repair is in.
 
 ## Recorded history
 

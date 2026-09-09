@@ -33,9 +33,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- part of the passing rails
+
+**Notes:** PARTIAL BY ITS OWN TITLE — 'Deferred tail (environment-blocked): authenticated seeded…'. Like AG-11, an atom that declares itself environment-blocked cannot be validated as unblocked; that is its recorded state, not a gap I found. Worth noting the authenticated half is the same blocker RUA-3 hit: provisioning a credential needs a TTY.
 
 ## Recorded history
 

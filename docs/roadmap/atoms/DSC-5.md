@@ -31,9 +31,17 @@ dead ui/TextField removed; the adopted formControls generics relocated to ui/for
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- the ui/ rails pass in full — 1636 tests across 151 files, zero skipped
+
+**Notes:** PARTIAL: the canonical form-field family and its size convergence are confirmed at the rail level, but I did not visually compare the converged fields across surfaces. The forms I DID drive this session (onboarding name, note capture, knowledge note, new task) all behaved consistently — gated submits, labelled inputs, chip-style tag entry — which is corroborating rather than conclusive.
 
 ## Recorded history
 

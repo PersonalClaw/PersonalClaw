@@ -30,9 +30,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- part of the 841-passed design run
+
+**Notes:** PARTIAL: type-scale normalization is a pixel property. Its rails pass, but confirming an off-ramp sweep landed means comparing rendered type across surfaces, which is the visual-regression harness's job (DSC-2) and I did not run it.
 
 ## Recorded history
 

@@ -31,9 +31,18 @@ EmptyState/SlotEmptyState + confirm/loading/selection/error patterns converged a
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- the design corpus carries the specific rails this atom implies — accentOnCanvas, countChipContrast, dimmedInkContrast, disabledDimLevel, colorScheme, ariaProhibitedAttr, controlNameFloor — and all pass
+- part of the 841-passed design run
+
+**Notes:** PARTIAL: interaction-pattern standardization plus dark/light a11y is half static-checkable and half visual. The contrast and name-floor rails are real and passing; the dark-light comparison itself belongs to the visual harness I did not run. I did drive the theme control ('Theme: dark — switch to light') across many surfaces without a broken render, which is weak corroboration.
 
 ## Recorded history
 

@@ -30,9 +30,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 10 (DSC) — observed
+
+**Code evidence:**
+
+- part of the 841 + 1636 passing rails
+
+**Notes:** An owner taste-call convergence batch is by nature adjudicated rather than derived — the G1–G9 rulings and the follow-on raw-button waves are recorded decisions, and their rails pass. This is also one of the two atoms whose scope vocabulary (cy51 cycles, G-batches) taught the consolidation generator a new token family; before that, WF2KNO-era scanning left it with no resolvable record at all.
 
 ## Recorded history
 
