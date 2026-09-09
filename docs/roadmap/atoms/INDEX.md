@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 426 | `done_when` checked against the code and it holds |
-| `partial` | 228 | some `done_when` clauses hold, others do not |
+| `confirmed` | 441 | `done_when` checked against the code and it holds |
+| `partial` | 229 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 16 | not yet checked |
+| `unaudited` | 0 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -742,22 +742,22 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PP-1`](PP-1.md) | `done` | `unaudited` | Refuse a binding whose producer is not ordered before it (WF_UNORDERED_DEP) |
-| [`PP-2`](PP-2.md) | `done` | `unaudited` | Derive `needs` from bindings; lift the sibling-only restriction |
-| [`PP-3`](PP-3.md) | `done` | `unaudited` | Cross-check `output_contract` against the bindings that read it |
-| [`PP-4`](PP-4.md) | `done` | `unaudited` | Extract the ledger as a platform primitive (`ledger/` package) |
-| [`PP-5`](PP-5.md) | `done` | `unaudited` | Loops emit the ledger (closes the flywheel's loop blind spot) |
-| [`PP-6`](PP-6.md) | `done` | `unaudited` | `workflow replay <run_id>`: recorded-response provider + trajectory diff |
-| [`PP-7`](PP-7.md) | `done` | `unaudited` | Trajectory signature as a ledger projection + template regression detection |
-| [`PP-8`](PP-8.md) | `done` | `unaudited` | Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection |
-| [`PP-9`](PP-9.md) | `done` | `unaudited` | Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`) |
-| [`PP-10`](PP-10.md) | `done` | `unaudited` | Consumer-liveness detection: surface a work unit whose output nobody reads |
-| [`PP-11`](PP-11.md) | `done` | `unaudited` | Extract `AdmissionPolicy` behind today's lanes (no behaviour change) |
-| [`PP-12`](PP-12.md) | `done` | `unaudited` | Add `Lease` and `Dwell`/`MetricGate` admission policies |
-| [`PP-13`](PP-13.md) | `done` | `unaudited` | Retire `pool.py`'s private frontier onto the unified core |
-| [`PP-14`](PP-14.md) | `done` | `unaudited` | `SupervisorPolicy`: the declaration, its parser and its validator |
-| [`PP-15`](PP-15.md) | `done` | `unaudited` | Widen the convergence core and wire `SupervisorPolicy` into it |
-| [`PP-16`](PP-16.md) | `todo` | `unaudited` | A Loop becomes a WorkflowRun (retire the second work-unit noun) |
+| [`PP-1`](PP-1.md) | `done` | `confirmed` | Refuse a binding whose producer is not ordered before it (WF_UNORDERED_DEP) |
+| [`PP-2`](PP-2.md) | `done` | `confirmed` | Derive `needs` from bindings; lift the sibling-only restriction |
+| [`PP-3`](PP-3.md) | `done` | `confirmed` | Cross-check `output_contract` against the bindings that read it |
+| [`PP-4`](PP-4.md) | `done` | `confirmed` | Extract the ledger as a platform primitive (`ledger/` package) |
+| [`PP-5`](PP-5.md) | `done` | `confirmed` | Loops emit the ledger (closes the flywheel's loop blind spot) |
+| [`PP-6`](PP-6.md) | `done` | `confirmed` | `workflow replay <run_id>`: recorded-response provider + trajectory diff |
+| [`PP-7`](PP-7.md) | `done` | `confirmed` | Trajectory signature as a ledger projection + template regression detection |
+| [`PP-8`](PP-8.md) | `done` | `confirmed` | Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection |
+| [`PP-9`](PP-9.md) | `done` | `confirmed` | Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`) |
+| [`PP-10`](PP-10.md) | `done` | `confirmed` | Consumer-liveness detection: surface a work unit whose output nobody reads |
+| [`PP-11`](PP-11.md) | `done` | `confirmed` | Extract `AdmissionPolicy` behind today's lanes (no behaviour change) |
+| [`PP-12`](PP-12.md) | `done` | `confirmed` | Add `Lease` and `Dwell`/`MetricGate` admission policies |
+| [`PP-13`](PP-13.md) | `done` | `confirmed` | Retire `pool.py`'s private frontier onto the unified core |
+| [`PP-14`](PP-14.md) | `done` | `confirmed` | `SupervisorPolicy`: the declaration, its parser and its validator |
+| [`PP-15`](PP-15.md) | `done` | `confirmed` | Widen the convergence core and wire `SupervisorPolicy` into it |
+| [`PP-16`](PP-16.md) | `todo` | `partial` | A Loop becomes a WorkflowRun (retire the second work-unit noun) |
 
 ### `PR` — PLATFORM-REACH (8/8 done)
 

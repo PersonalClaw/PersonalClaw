@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- 🔑 I MEASURED THE EXTRACTION: `personalclaw/ledger/` is 1324 lines across seven focused modules — `kinds`, `writer`, `reader`, `redaction`, `hashing`, `outcomes`, `__init__` — and `workflows/journal.py` is now a 746-line facade rather than the owner
+- 🔑 ARCC'S RETENTION REQUIREMENT LANDS HERE, AND ITS SUBSTANCE IS THE PART THAT TRANSFERS: the guidance is that an unset retention 'silently destroys the evidence an investigation depends on' and that the decision must be VISIBLE rather than defaulted. The ledger states one explicitly at the kind level — a `pending_outcome` with no matching `outcome_resolved` is 'the OPEN QUESTION RETENTION MUST NEVER EVICT' — and at the record level the deletion `reason` distinguishes `delete` from `retention`, so an eviction is never mistaken for a user's deletion
+- one owner for kinds, redaction and hashing is what lets PP-6's replay and PP-7's signatures read the same bytes the writer wrote; two definitions of a kind would make a replay of an older run silently mean something else
+- 266 passed across the ledger, outcome, priced-ledger and loop-emit suites
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not a browser surface: a storage primitive. Its consumer surface was driven in the SH cycle, where the audit page verified 350 events' hash chain live.
+
+**Notes:** A facade rather than a deletion is the right clean-break shape for a module this many callers deep — the seam moves without a flag day.
 
 ## Recorded history
 

@@ -32,9 +32,21 @@ Loop cycles emit to the `PP-4` ledger: a cycle becomes `step_started`/`step_comp
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- `tests/test_loop_ledger_emit.py` green inside the 266, and the consumer side was verified in an earlier cycle: `learning/loop_end.py` exists BECAUSE loops now emit, and its own docstring records why it could not before — a loop's findings 'lived in a file store with no event vocabulary', so mining 'derives from the run's own journal, and a loop had none'
+- 🔑 THAT IS THE BLIND SPOT CLOSED RATHER THAN DESCRIBED: the flywheel's producers ran only over workflow runs, so every loop kind was invisible to learning. Emitting to the shared ledger made a loop mineable 'through exactly the reader a workflow run is'
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not driven: needs a completed loop run.
+
+**Notes:** This is the atom that makes PP-4's extraction pay — one ledger with two producers is worth more than one ledger with one, and it is what unblocked the loop-end learner.
 
 ## Recorded history
 

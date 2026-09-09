@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- 🔑 THE CROSS-CHECK HAS ITS OWN VOLUME FLOOR AND I REDDENED IT IN THE SAME MUTATION: `TestOutputContractCensus::test_the_unscoped_warning_volume_is_what_the_scoping_avoids` went red when the derivation returned nothing, so this atom's rule is pinned against the same silent-death shape PP-1 guards
+- 🔴 AND THE FLOOR'S NAME IS THE FINDING: the volume the SCOPING avoids. A contract cross-check applied unscoped would emit warnings on every template, which is how a useful check becomes a wall of noise nobody reads — the same cost PHF-12 names for a false red
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Checking the declared output contract against the bindings that actually read it is the third edge rule, and the one that catches a producer whose declared shape nobody consumes.
 
 ## Recorded history
 

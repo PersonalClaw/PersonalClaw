@@ -31,9 +31,22 @@ A `workflow replay <run_id>` verb re-drives `frontier()` against a provider that
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- the replay suites are green inside the 244 (`test_harness_replay`, `test_harness_wf2_replay`, `test_ea6_replay_harness`)
+- 🔑 A RECORDED-RESPONSE PROVIDER IS THE ONLY HONEST WAY TO REPLAY AN AGENT RUN — replaying against a live model would re-roll every non-determinism the replay exists to hold fixed, so the trajectory diff would show model variance rather than code change
+- 🔑 AND IT IS THE INSTRUMENT SELF-VERIFICATION DEMANDED BEFORE THE ENGINE CALCIFIED: the roadmap's hard rule is that the replay harness lands before the WF2 slices, precisely so the journal format is gated by something that reads it back
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not driven: replay is a CLI verb over a recorded run.
+
+**Notes:** Replay reads PP-4's ledger, which is why the extraction had to come first — a replay against a format two modules disagreed about would be a diff of the disagreement.
 
 ## Recorded history
 

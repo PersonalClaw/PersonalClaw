@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- 🏅 THE BEST VACUITY FLOOR IN THE ENTIRE CAMPAIGN, AND I FALSIFIED IT TO PROVE THE CLAIM ITS DOCSTRING MAKES. Zeroing `dep_edges_for_root` reddened exactly TWO tests — `TestDependencyOrderingCensus::test_the_rule_sees_a_real_dependency_set` and PP-3's own volume floor — while **386 others including `test_it_validates_STRICTLY` stayed GREEN**. Restored: 388/388, tree byte-identical
+- 🔑 THE DOCSTRING PREDICTED EXACTLY THAT: measured before the rule became an error, '111 binding-derived dependencies across 18 of the 19 templates … and NOT ONE TEMPLATE DECLARES `needs` AT ALL. That last fact is why the floor below exists rather than being ceremony: with no `needs` anywhere, an implementation that quietly found no dependencies to check would pass `test_it_validates_STRICTLY` EXACTLY AS an implementation that examined all 111 and approved them. GREEN WOULD MEAN NOTHING'
+- 🔑 AND THE THRESHOLDS ARE ENGINEERED TO BE ROBUST AS WELL AS LOAD-BEARING — 'deliberately below the measured 111/18 so ordinary library edits do not red it, and far above zero so a rule that stops deriving dependencies does'. Most vacuity floors are brittle exact counts; this one has a stated tolerance
+- the census verdict is a separate test from the strict validator for a stated reason: the validator 'would also catch a violator, but as an OPAQUE ISSUE LIST; this names the reader, the producer and the missing edge, WHICH IS WHAT A FIX NEEDS'
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not a browser surface: a template validation rule.
+
+**Notes:** 🏅 This atom is the campaign's own method, arrived at independently and executed better: measure the population before writing the rule, keep the measurement as an assertion, and choose the threshold so that ordinary drift does not red it while a dead rule does.
 
 ## Recorded history
 

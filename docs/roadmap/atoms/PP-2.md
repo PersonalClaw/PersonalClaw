@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- `needs` is derived from bindings rather than hand-declared, which is what makes PP-1's census finding survivable: zero templates declare `needs`, so a rule resting on hand declaration would have had nothing to check
+- 🔑 LIFTING THE SIBLING-ONLY RESTRICTION IS THE REAL CHANGE — a dependency that could only be expressed between siblings forces authors to flatten a tree to say a true thing, and the flattening loses the grouping that made the template readable
+- the bundled-template suite is 388/388 with the derivation live across 18 of 19 templates
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Deriving ordering from the dataflow that already exists is the plan's edges thesis in its cleanest form — the binding is the declaration, so the two cannot disagree.
 
 ## Recorded history
 

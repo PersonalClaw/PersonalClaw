@@ -8416,5 +8416,221 @@
     ],
     "ui_validated": "Not driven: installing companion and exercising it needs a Store source configured plus, for most of these, a bound model.",
     "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving companion in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PP-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🏅 THE BEST VACUITY FLOOR IN THE ENTIRE CAMPAIGN, AND I FALSIFIED IT TO PROVE THE CLAIM ITS DOCSTRING MAKES. Zeroing `dep_edges_for_root` reddened exactly TWO tests — `TestDependencyOrderingCensus::test_the_rule_sees_a_real_dependency_set` and PP-3's own volume floor — while **386 others including `test_it_validates_STRICTLY` stayed GREEN**. Restored: 388/388, tree byte-identical",
+      "🔑 THE DOCSTRING PREDICTED EXACTLY THAT: measured before the rule became an error, '111 binding-derived dependencies across 18 of the 19 templates … and NOT ONE TEMPLATE DECLARES `needs` AT ALL. That last fact is why the floor below exists rather than being ceremony: with no `needs` anywhere, an implementation that quietly found no dependencies to check would pass `test_it_validates_STRICTLY` EXACTLY AS an implementation that examined all 111 and approved them. GREEN WOULD MEAN NOTHING'",
+      "🔑 AND THE THRESHOLDS ARE ENGINEERED TO BE ROBUST AS WELL AS LOAD-BEARING — 'deliberately below the measured 111/18 so ordinary library edits do not red it, and far above zero so a rule that stops deriving dependencies does'. Most vacuity floors are brittle exact counts; this one has a stated tolerance",
+      "the census verdict is a separate test from the strict validator for a stated reason: the validator 'would also catch a violator, but as an OPAQUE ISSUE LIST; this names the reader, the producer and the missing edge, WHICH IS WHAT A FIX NEEDS'",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface: a template validation rule.",
+    "notes": "🏅 This atom is the campaign's own method, arrived at independently and executed better: measure the population before writing the rule, keep the measurement as an assertion, and choose the threshold so that ordinary drift does not red it while a dead rule does."
+  },
+  "PP-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "`needs` is derived from bindings rather than hand-declared, which is what makes PP-1's census finding survivable: zero templates declare `needs`, so a rule resting on hand declaration would have had nothing to check",
+      "🔑 LIFTING THE SIBLING-ONLY RESTRICTION IS THE REAL CHANGE — a dependency that could only be expressed between siblings forces authors to flatten a tree to say a true thing, and the flattening loses the grouping that made the template readable",
+      "the bundled-template suite is 388/388 with the derivation live across 18 of 19 templates",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Deriving ordering from the dataflow that already exists is the plan's edges thesis in its cleanest form — the binding is the declaration, so the two cannot disagree."
+  },
+  "PP-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🔑 THE CROSS-CHECK HAS ITS OWN VOLUME FLOOR AND I REDDENED IT IN THE SAME MUTATION: `TestOutputContractCensus::test_the_unscoped_warning_volume_is_what_the_scoping_avoids` went red when the derivation returned nothing, so this atom's rule is pinned against the same silent-death shape PP-1 guards",
+      "🔴 AND THE FLOOR'S NAME IS THE FINDING: the volume the SCOPING avoids. A contract cross-check applied unscoped would emit warnings on every template, which is how a useful check becomes a wall of noise nobody reads — the same cost PHF-12 names for a false red",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Checking the declared output contract against the bindings that actually read it is the third edge rule, and the one that catches a producer whose declared shape nobody consumes."
+  },
+  "PP-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🔑 I MEASURED THE EXTRACTION: `personalclaw/ledger/` is 1324 lines across seven focused modules — `kinds`, `writer`, `reader`, `redaction`, `hashing`, `outcomes`, `__init__` — and `workflows/journal.py` is now a 746-line facade rather than the owner",
+      "🔑 ARCC'S RETENTION REQUIREMENT LANDS HERE, AND ITS SUBSTANCE IS THE PART THAT TRANSFERS: the guidance is that an unset retention 'silently destroys the evidence an investigation depends on' and that the decision must be VISIBLE rather than defaulted. The ledger states one explicitly at the kind level — a `pending_outcome` with no matching `outcome_resolved` is 'the OPEN QUESTION RETENTION MUST NEVER EVICT' — and at the record level the deletion `reason` distinguishes `delete` from `retention`, so an eviction is never mistaken for a user's deletion",
+      "one owner for kinds, redaction and hashing is what lets PP-6's replay and PP-7's signatures read the same bytes the writer wrote; two definitions of a kind would make a replay of an older run silently mean something else",
+      "266 passed across the ledger, outcome, priced-ledger and loop-emit suites",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface: a storage primitive. Its consumer surface was driven in the SH cycle, where the audit page verified 350 events' hash chain live.",
+    "notes": "A facade rather than a deletion is the right clean-break shape for a module this many callers deep — the seam moves without a flag day."
+  },
+  "PP-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "`tests/test_loop_ledger_emit.py` green inside the 266, and the consumer side was verified in an earlier cycle: `learning/loop_end.py` exists BECAUSE loops now emit, and its own docstring records why it could not before — a loop's findings 'lived in a file store with no event vocabulary', so mining 'derives from the run's own journal, and a loop had none'",
+      "🔑 THAT IS THE BLIND SPOT CLOSED RATHER THAN DESCRIBED: the flywheel's producers ran only over workflow runs, so every loop kind was invisible to learning. Emitting to the shared ledger made a loop mineable 'through exactly the reader a workflow run is'",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: needs a completed loop run.",
+    "notes": "This is the atom that makes PP-4's extraction pay — one ledger with two producers is worth more than one ledger with one, and it is what unblocked the loop-end learner."
+  },
+  "PP-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "the replay suites are green inside the 244 (`test_harness_replay`, `test_harness_wf2_replay`, `test_ea6_replay_harness`)",
+      "🔑 A RECORDED-RESPONSE PROVIDER IS THE ONLY HONEST WAY TO REPLAY AN AGENT RUN — replaying against a live model would re-roll every non-determinism the replay exists to hold fixed, so the trajectory diff would show model variance rather than code change",
+      "🔑 AND IT IS THE INSTRUMENT SELF-VERIFICATION DEMANDED BEFORE THE ENGINE CALCIFIED: the roadmap's hard rule is that the replay harness lands before the WF2 slices, precisely so the journal format is gated by something that reads it back",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: replay is a CLI verb over a recorded run.",
+    "notes": "Replay reads PP-4's ledger, which is why the extraction had to come first — a replay against a format two modules disagreed about would be a diff of the disagreement."
+  },
+  "PP-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "the trajectory suites are green inside the 244",
+      "🔑 'A LEDGER PROJECTION' IS THE LOAD-BEARING PHRASE: the signature is DERIVED from events rather than maintained beside them, so it cannot drift from the run it describes. A stored signature updated by its own writer is the 'compares a value against itself' shape DCU-4 refuses by name",
+      "template regression detection over signatures is what turns a per-run artifact into a fleet signal — one run's trajectory is unreadable without the template's distribution to read it against, the same pairing WF2WOR-7's p50/p95 cards make",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: needs runs to sign.",
+    "notes": "Projection rather than storage is this plan's recurring answer, and it is the same one PP-10 and the ledger rails give: compute from the events, never keep a second copy."
+  },
+  "PP-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "the edge-decision suites are green inside the 244",
+      "🔴 DEAD-CASE DETECTION IS THIS CAMPAIGN'S CLASS IN THE ENGINE'S OWN DOMAIN: a `branch` case or `gate` answer that NEVER fires is a declared path nothing reaches — a template-level inert control, found by distribution rather than by reading",
+      "🔑 AND A DISTRIBUTION IS THE RIGHT INSTRUMENT because the alternative is static reachability, which cannot see that a case is reachable in principle and never taken in practice. Only the run history distinguishes those",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: needs a population of runs.",
+    "notes": "The same measurement PHF-6 applies to code surfaces, applied to template edges — and it needs the ledger PP-4 extracted to have anywhere to read from."
+  },
+  "PP-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🔑 THE GENERALISATION IS THE ATOM: the pending/resolved outcome lifecycle is 'open to ANY producer', where before it belonged to decisions alone. A producer journals `pending_outcome` at BET TIME — 'before the outcome is knowable' — and a resolver writes `outcome_resolved` 'once the horizon has elapsed and ground truth has been read'",
+      "🔑 WRITING THE BET BEFORE THE RESULT IS WHAT MAKES IT EVIDENCE RATHER THAN A STORY: a record created after the fact can always be shaped to the outcome. This is the same pre-registration discipline LV-6's benchmark protocol relies on, implemented as a data structure",
+      "🔴 IDEMPOTENT BY KEY: the two are keyed by `pending_event_id` 'so the resolver is idempotent — a second tick finds the resolution and skips'",
+      "and the retention exemption is stated at the same place: an unresolved bet is 'the open question retention must never evict'",
+      "`tests/test_ledger_outcomes.py` green inside the 266",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven.",
+    "notes": "'What LANDED is the richest refiner signal there is' is the reason this belongs in the ledger rather than in a learning-side table — the signal and the run share one store."
+  },
+  "PP-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🏅 THIS ATOM IS THIS CAMPAIGN'S OWN DEFECT CLASS GENERALISED BEYOND CODE, AND THE DIAGNOSIS IS EXACT: 'Every watchdog in this repo measures PRODUCER health … Nothing asks whether the output was ever READ … WE DETECT A STALLED WORK UNIT AND NEVER A POINTLESS ONE'",
+      "🔑 IT IS DRAWN FROM A REAL POST-MORTEM: 'a fully autonomous pipeline that had been dead for two months with nobody noticing, and its author's diagnosis was STRUCTURAL rather than tooling: NOBODY OWNED ACTING ON THE OUTPUT'. The local equivalent named precisely — 'a monitor-kind run writing a deliverable on a cadence into an artifact nobody opens'",
+      "🏅 AND THE RESTRAINT IS THE BEST PART, ON THE SHARPEST DISTINCTION IN THE PLAN: 'A PROPOSAL, never an automatic stop … because \"nobody looked yet\" and \"nobody will ever look\" ARE DIFFERENT FACTS AND ONLY THE USER KNOWS WHICH. A sweep that paused the work unit itself would be confidently wrong exactly in the case that matters — THE DELIVERABLE SOMEBODY READS QUARTERLY'",
+      "🔴 'Nothing in this module can pause, cancel, retire or otherwise touch a run, a template or a schedule' — the capability is absent rather than gated, which is the DCU-1 shape",
+      "🔑 ONE MEASUREMENT SOURCE: 'It reads PP-9's outcome record; it COUNTS NOTHING OF ITS OWN.' A second counter would be a second thing to disagree",
+      "`tests/test_learning_consumer_liveness.py` green inside the 266",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: needs a published deliverable and an elapsed horizon.",
+    "notes": "🏅 Not-yet-read is not never-read — the absent-versus-declared-false distinction in a TEMPORAL form, and the ninth domain this campaign has met it in. A retirement sweep that could not tell them apart would delete the quarterly report."
+  },
+  "PP-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🏅 THE SHARPEST REFACTOR DISCIPLINE IN THE CAMPAIGN, STATED AS A LOGICAL NECESSITY: `PP-11` introduced 'NOTHING NEW' — the three rules `frontier()` already applied, 'moved behind a named interface and composed explicitly'. And why: 'a refactor that also changed behaviour COULD NOT BE VERIFIED, because there is no oracle for \"did the scheduler still decide the same thing\"'",
+      "🔑 THE ORACLE'S PROVENANCE IS THE WHOLE PROOF: `tests/test_workflows_frontier_golden.py`, 'WHOSE FIXTURES WERE CAPTURED BEFORE A LINE OF THIS EXISTED'. Fixtures captured after the refactor would encode the new behaviour and prove nothing. 5/5 green, and its own guard notes a change that 'would silently shrink the captured decision set'",
+      "🔑 THE DIAGNOSIS IS THE PLAN'S ENTIRE THESIS IN ONE SENTENCE: four schedulers 'answered the same question … and shared ZERO lines … Each held a capability the others structurally could not express, SO EVERY NEW ADMISSION RULE LANDED WHEREVER ITS AUTHOR HAPPENED TO BE STANDING'",
+      "🔴 AND THE UNIFICATION IS SCOPED RATHER THAN TOTAL: `triggers/` 'stays out ON PURPOSE (it answers whether to START, on a wall clock)'. Refusing to merge the thing that is not the same question is what keeps the primitive honest",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "🏅 Capture the oracle first, then move nothing but the shape — the only order in which 'no behaviour change' is a checkable claim rather than an assurance."
+  },
+  "PP-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🔑 CAPABILITY LANDS 'ON THE SEAM ALREADY PROVEN INERT' — the two-step is the point: PP-11 is verifiable precisely because it adds nothing, and PP-12 is safe precisely because it lands on something verified",
+      "the three new policies are the capabilities the four old schedulers each held alone: `Lease` (exclusive occupancy of a named external resource — the pool's), `Dwell` (a bake floor) and `MetricGate` (a metric gate that rolls a step back — the loop's)",
+      "🔴 'Both REUSE the proven implementation rather than' reimplementing it, so the loop's gate semantics do not fork when they move behind the interface",
+      "the admission suites are green inside the 244",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "A lease is the one policy here with a correctness rather than a pacing role — two runs holding one external resource is corruption, not slowness — which is why it belongs in admission rather than in a retry."
+  },
+  "PP-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "`pool.py`'s private frontier is retired onto the unified core, which is the third of the four schedulers folded in — the atom that makes PP-11's seam load-bearing rather than aspirational",
+      "🔑 A SEAM WITH ONE CONSUMER IS A WRAPPER; THIS IS THE ATOM THAT MAKES IT A PRIMITIVE. Extracting an interface and leaving the other implementations in place is how a codebase acquires a fourth way to answer the same question",
+      "the frontier golden oracle still passes 5/5 after the retirement, which is exactly what it was captured for",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "The golden fixtures earn their keep here rather than at PP-11: the refactor that introduced nothing is easy to believe, and this is the one that moved a real scheduler's decisions."
+  },
+  "PP-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "`SupervisorPolicy` has a declaration, a parser and a validator, with live importers in `validator.py`, `store.py`, `service.py` and `controller.py` — four production readers, so it is not a declared-but-unread surface",
+      "🔑 THE ATOM'S SEQUENCING IS RIGHT AND THE ROADMAP SAYS WHY: this was unblocked by the verdict-vocabulary reconciliation, because 'adding a supervisor policy … first would have minted a FIFTH dialect'. A policy that has to name a verdict cannot land before the verdicts are one vocabulary",
+      "declaration plus parser plus validator as one atom is the correct unit — a parser without a validator accepts a policy nobody can honour, and the ninth `test_pp16_supervisor_policy_dispatch` suite is green inside the 266",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "This is the third of the plan's three unnamed nouns. Its value is that the domain intelligence becomes a declaration a reader can inspect, rather than pluggable Python nobody can enumerate."
+  },
+  "PP-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "`tests/test_pp15_convergence_core.py` green inside the 266, and the widening is what gives PP-14's declaration somewhere to be honoured — a policy parsed and validated but never dispatched would be the inert-control class at the top of the engine",
+      "🔑 WIRING IT INTO THE CONVERGENCE CORE RATHER THAN BESIDE IT IS THE DECISION THAT MATTERS: a supervisor consulted on a parallel path would be a second convergence rule, which is the exact duplication this plan exists to end",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: needs a supervised run.",
+    "notes": "PP-14 and PP-15 are one capability split at the right seam — declare and validate, then dispatch — so the declaration is reviewable before anything depends on its behaviour."
+  },
+  "PP-16": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing",
+    "evidence": [
+      "🔴 STATUS IS `todo` AND THE ATOM SAYS SO IN CAPITALS: 'PARTIAL — seam 4's LEDGER-RAILS third is closed by PR #2565; the other two thirds are not, and one of them is held by the owner. DO NOT READ THIS AS SEAM 4 DONE'. Nine `test_pp16_*` suites exist and are green, which is the landed prep rather than the atom",
+      "🔑 WHAT LANDED IS DESCRIBED IN TERMS OF WHAT IT DID **NOT** ADD, which is the honest way to report a partial: 'four pure projections in introspection.py … in the module whose stated doctrine is \"pure functions over event lists\", one service read for both rails, its own route … and a panel behind a toggle. NO STORE, NO NEW EVENT KIND, NO STATE INVENTED OR RETIRED'",
+      "🔑 AND THE CENSUS WAS RE-MEASURED RATHER THAN INHERITED: 'the homeless-column census is UNCHANGED at 33, RE-MEASURED rather than inherited (loops 41, runs 26, shared 8; the count in this atom's previous reason was ONE REVISION STALE)'. Correcting your own previous count is this audit's discipline applied by the plan to itself",
+      "🔑 THE ROUTE PLACEMENT CARRIES ITS REASON: a dedicated `GET …/ledger-rails` 'deliberately NOT a field on introspect, which pays for a cross-run scan this does not need'",
+      "🪤 AND THE ATOM OVERTURNS ITS OWN PLAN TEXT — its reason opens a passage headed that the plan's own clause is WRONG. A plan atom correcting the plan is the same move PHF-13 made against PHF-12's premise",
+      "510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else"
+    ],
+    "ui_validated": "Not driven: the unified path's five kinds need real runs, and the atom is explicitly incomplete.",
+    "notes": "Partial, and the encoding is the familiar limitation: the status vocabulary is done/todo/blocked only, so a multi-seam atom with one third of one seam closed has no accurate value to carry — `todo` plus a reason that refuses to be misread is the closest available. This is the plan's clean-break atom and the roadmap's own guidance says it gets more expensive the longer it waits."
   }
 }

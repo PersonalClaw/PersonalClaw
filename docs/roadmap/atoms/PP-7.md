@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- the trajectory suites are green inside the 244
+- 🔑 'A LEDGER PROJECTION' IS THE LOAD-BEARING PHRASE: the signature is DERIVED from events rather than maintained beside them, so it cannot drift from the run it describes. A stored signature updated by its own writer is the 'compares a value against itself' shape DCU-4 refuses by name
+- template regression detection over signatures is what turns a per-run artifact into a fleet signal — one run's trajectory is unreadable without the template's distribution to read it against, the same pairing WF2WOR-7's p50/p95 cards make
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not driven: needs runs to sign.
+
+**Notes:** Projection rather than storage is this plan's recurring answer, and it is the same one PP-10 and the ledger rails give: compute from the events, never keep a second copy.
 
 ## Recorded history
 

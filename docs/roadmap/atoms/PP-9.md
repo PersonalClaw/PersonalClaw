@@ -31,9 +31,24 @@ The outcome pair becomes a general ledger facility any producer may open: a publ
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- 🔑 THE GENERALISATION IS THE ATOM: the pending/resolved outcome lifecycle is 'open to ANY producer', where before it belonged to decisions alone. A producer journals `pending_outcome` at BET TIME — 'before the outcome is knowable' — and a resolver writes `outcome_resolved` 'once the horizon has elapsed and ground truth has been read'
+- 🔑 WRITING THE BET BEFORE THE RESULT IS WHAT MAKES IT EVIDENCE RATHER THAN A STORY: a record created after the fact can always be shaped to the outcome. This is the same pre-registration discipline LV-6's benchmark protocol relies on, implemented as a data structure
+- 🔴 IDEMPOTENT BY KEY: the two are keyed by `pending_event_id` 'so the resolver is idempotent — a second tick finds the resolution and skips'
+- and the retention exemption is stated at the same place: an unresolved bet is 'the open question retention must never evict'
+- `tests/test_ledger_outcomes.py` green inside the 266
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not driven.
+
+**Notes:** 'What LANDED is the richest refiner signal there is' is the reason this belongs in the ledger rather than in a learning-side table — the signal and the run share one store.
 
 ## Recorded history
 

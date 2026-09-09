@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 70 (PP, final plan) — the dependency-derivation census falsified, which proved its own docstring's claim that a strictness test alone would mean nothing
+
+**Code evidence:**
+
+- the edge-decision suites are green inside the 244
+- 🔴 DEAD-CASE DETECTION IS THIS CAMPAIGN'S CLASS IN THE ENGINE'S OWN DOMAIN: a `branch` case or `gate` answer that NEVER fires is a declared path nothing reaches — a template-level inert control, found by distribution rather than by reading
+- 🔑 AND A DISTRIBUTION IS THE RIGHT INSTRUMENT because the alternative is static reachability, which cannot see that a case is reachable in principle and never taken in practice. Only the run history distinguishes those
+- 510 passed / 2 skipped across the PP15/PP16, ledger, admission, supervisor, trajectory, edge-decision and replay suites; bundled-template suite 388/388; frontier golden 5/5; the dependency derivation zeroed reds exactly the two census floors and nothing else
+
+**Driven in the UI:** Not driven: needs a population of runs.
+
+**Notes:** The same measurement PHF-6 applies to code surfaces, applied to template edges — and it needs the ledger PP-4 extracted to have anywhere to read from.
 
 ## Recorded history
 
