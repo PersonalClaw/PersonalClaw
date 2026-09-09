@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 2 | `done_when` checked against the code and it holds |
-| `partial` | 0 | some `done_when` clauses hold, others do not |
+| `confirmed` | 5 | `done_when` checked against the code and it holds |
+| `partial` | 4 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 682 | not yet checked |
+| `unaudited` | 675 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -730,13 +730,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PL-1`](PL-1.md) | `done` | `unaudited` | /api/manifest self-description endpoint + drift test |
-| [`PL-2`](PL-2.md) | `done` | `unaudited` | Platform-wide WHAT/WHY/FIX AgentError envelope + append-only code registry |
-| [`PL-3`](PL-3.md) | `done` | `unaudited` | pclaw-api first-party skill + offline reference + 5-task eval gate |
-| [`PL-4`](PL-4.md) | `done` | `unaudited` | App legibility — declared skills through the chokepoint + auto-surfaced route tools |
-| [`PL-5`](PL-5.md) | `done` | `unaudited` | UI-primitive doc objects + ui_search/ui_get retrieval tools |
-| [`PL-6`](PL-6.md) | `done` | `unaudited` | PClaw as routed-context provider — context_router, marker-fenced adapters, get_context |
-| [`PL-7`](PL-7.md) | `done` | `unaudited` | Capability discovery — Discover hub (owner-reshaped from §6 tool-usage power-ups) |
+| [`PL-1`](PL-1.md) | `done` | `confirmed` | /api/manifest self-description endpoint + drift test |
+| [`PL-2`](PL-2.md) | `done` | `partial` | Platform-wide WHAT/WHY/FIX AgentError envelope + append-only code registry |
+| [`PL-3`](PL-3.md) | `done` | `partial` | pclaw-api first-party skill + offline reference + 5-task eval gate |
+| [`PL-4`](PL-4.md) | `done` | `partial` | App legibility — declared skills through the chokepoint + auto-surfaced route tools |
+| [`PL-5`](PL-5.md) | `done` | `confirmed` | UI-primitive doc objects + ui_search/ui_get retrieval tools |
+| [`PL-6`](PL-6.md) | `done` | `partial` | PClaw as routed-context provider — context_router, marker-fenced adapters, get_context |
+| [`PL-7`](PL-7.md) | `done` | `confirmed` | Capability discovery — Discover hub (owner-reshaped from §6 tool-usage power-ups) |
 
 ### `PP` — PLATFORM-PRIMITIVES (15/16 done)
 
