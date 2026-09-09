@@ -19,6 +19,145 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "KL-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_knowledge_collections.py passes (part of a 234-passed run across eight KL modules)"
+    ],
+    "ui_validated": "Created a knowledge item as a user would: #/knowledge -> 'Add knowledge' -> 'Note' -> filled title, a tag, and markdown content with two headings -> 'Add note'. The form gated correctly ('Add note' was DISABLED until the fields had content). After a full page reload the item is still served — button 'Audit probe document KL' — so the store, its routes and the frontend round-trip end to end.",
+    "notes": "🪤 THIS NEARLY BECAME A FALSE 'DOES NOT PERSIST' FINDING, and the correction matters more than the verdict. After saving, `grep -rl` over the home found the title in NO file, and `find -newermt '-4 minutes'` reported NOTHING written. That reads exactly like a UI-only write. It was wrong: a page RELOAD re-fetched the item from the server, which is the decisive user-level test. My file probes were not measuring the right thing — the knowledge store is not a plain file under the paths I searched. Two lessons: a reload is a better persistence test than a file-mtime scan, and an absent grep hit is not an absent write."
+  },
+  "KL-2": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: the list surface now exists (one item, created above) but I did not toggle read-state or favorite, so the display and the filters they drive are unexercised. Now cheap for a later cycle — the library is no longer empty."
+  },
+  "KL-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — DRIVEN in a real browser",
+    "evidence": ["covered by the 234-passed KL run"],
+    "ui_validated": "Typed 'audit-probe' into the note form's 'Add a tag, Enter' box and pressed Enter: it became a chip carrying its own 'Remove audit-probe' control (so tag entry AND removal are both reachable). After saving and RELOADING, the tag is still attached to the item and renders as a `button \"audit-probe\"` — a clickable affordance, which is the taxonomy's filter surface rather than a decorative label.",
+    "notes": "Tag entry sits inside the CREATE flow, which is the strongest place for it: an item cannot be filed untagged by accident of a two-step UI."
+  },
+  "KL-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": [
+      "tests/test_knowledge_bulk_api.py passes (part of the 234-passed run)",
+      "the multi-select affordance is live and correctly NAMED: after reload each row carries `checkbox \"Select Audit probe document KL\"` — an accessible per-row selector rather than an unlabelled box"
+    ],
+    "notes": "PARTIAL: the selector exists and is named, but a bulk operation needs two or more items to be a meaningful act. One item in the library, so bulk_apply is unexercised."
+  },
+  "KL-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["tests/test_knowledge_dedup.py passes (part of the 234-passed run)"],
+    "notes": "PARTIAL: find_duplicates and merge_items need NEAR-DUPLICATES. With a single item there is nothing to pair, and authoring two deliberately-similar documents would be measuring my fixture rather than the product's judgement."
+  },
+  "KL-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["the dedup backend rail passes; the frontend depends on it having pairs to surface"],
+    "notes": "PARTIAL for the same reason as KL-5 — a near-duplicate surfacing UI has nothing to surface here."
+  },
+  "KL-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: the reading view is now reachable (an item exists) but I did not open it, so the editorial type scale, progress tracking and in-reader highlighting are unexercised. Cheap next cycle."
+  },
+  "KL-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": [
+      "tests/test_knowledge_library_home.py passes (part of the 234-passed run)",
+      "the Home tab exists in the live `tablist \"Knowledge view\"` alongside Library / Graph / Intents / Tags / Conflicts / Decisions"
+    ],
+    "notes": "PARTIAL: recently-added / continue-reading / favorites are all shelves over user history. One just-created item and no reading history, so the shelves cannot be judged. I stayed on Library and did not open Home."
+  },
+  "KL-9": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["tests/test_knowledge_chunking.py passes (part of the 234-passed run)"],
+    "notes": "PARTIAL: I deliberately wrote the probe document WITH STRUCTURE (an H1, a paragraph, an H2, a second section) so a structural chunker would have shape to work with — but I did not inspect the chunks table, so the chunking itself is observed only through its test."
+  },
+  "KL-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: a vector arm searching chunks needs EMBEDDINGS, which need an embedding provider. None configured — the same model-provider blocker that held RUA-3, INU-4, INU-6 and MGAV-7."
+  },
+  "KL-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: an ANN index with a cached probe and fail-soft behaviour needs vectors to index. Same blocker as KL-10. The fail-soft half is the interesting clause and would be worth driving deliberately once vectors exist."
+  },
+  "KL-12": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: a resumable batched backfill demonstrates itself over a corpus large enough to batch. One item."
+  },
+  "KL-13": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: write-time kNN over chunk vectors needs both vectors and more than one item. Blocked twice over."
+  },
+  "KL-14": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["tests/test_knowledge_maintenance.py passes (part of the 234-passed run)"],
+    "notes": "PARTIAL: the deferred graph-maintenance host is a background behaviour keyed on a dirty flag and a drained queue — not observable from a single UI action."
+  },
+  "KL-15": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["tests/test_knowledge_embed_batching.py passes (part of the 234-passed run)"],
+    "notes": "PARTIAL: provider batching with bounded retry needs a provider to batch against. The bounded-retry-with-backoff clause is exactly the kind of thing a test proves better than a happy-path UI run, and its test passes."
+  },
+  "KL-16": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: the document outline needs the reading view open on a structured document. The probe document has two headings precisely so this is drivable next cycle; I did not open it."
+  },
+  "KL-17": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": [
+      "tests/test_knowledge_graph_payload.py passes (part of the 234-passed run)",
+      "the Graph tab is present in the live tablist, and web/src/pages/knowledge/KnowledgeGraph.tsx + KnowledgeEgoGraph.tsx both consume the shared GraphZoomControls primitive"
+    ],
+    "notes": "PARTIAL: an embedding-projected layout needs embeddings (KL-10's blocker) and server-side edges need more than one item. Expect the same well-behaved empty state MGAV-9's graph showed."
+  },
+  "KL-18": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 5 (KL) — observed",
+    "evidence": ["covered by the 234-passed KL run"],
+    "notes": "PARTIAL: returning the matched PASSAGE rather than the whole item is a retrieval-shape claim, and retrieval needs the vector arm. Same blocker as KL-10."
+  },
   "MGAV-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

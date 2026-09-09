@@ -30,9 +30,17 @@ favorite gets its own star glyph (distinct from pin), a reading badge marks in-p
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- covered by the 234-passed KL run
+
+**Notes:** PARTIAL: the list surface now exists (one item, created above) but I did not toggle read-state or favorite, so the display and the filters they drive are unexercised. Now cheap for a later cycle — the library is no longer empty.
 
 ## Recorded history
 

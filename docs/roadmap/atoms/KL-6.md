@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- the dedup backend rail passes; the frontend depends on it having pairs to surface
+
+**Notes:** PARTIAL for the same reason as KL-5 — a near-duplicate surfacing UI has nothing to surface here.
 
 ## Recorded history
 

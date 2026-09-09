@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 12 | `done_when` checked against the code and it holds |
-| `partial` | 19 | some `done_when` clauses hold, others do not |
+| `confirmed` | 14 | `done_when` checked against the code and it holds |
+| `partial` | 35 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 653 | not yet checked |
+| `unaudited` | 635 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -499,24 +499,24 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`KL-1`](KL-1.md) | `done` | `unaudited` | S1 Collections primitive: schema, store API, routes + Knowledge-page rail |
-| [`KL-2`](KL-2.md) | `done` | `unaudited` | S2 read-state + favorited display and filters |
-| [`KL-3`](KL-3.md) | `done` | `unaudited` | S2 tags taxonomy: authoritative tags + item_tags tables, JSON backfill, hierarchy UI |
-| [`KL-4`](KL-4.md) | `done` | `unaudited` | S2 bulk operations: bulk_apply + /api/knowledge/bulk + multi-select bar |
-| [`KL-5`](KL-5.md) | `done` | `unaudited` | S3 dedup/merge store + API backend (find_duplicates, merge_items, routes) |
-| [`KL-6`](KL-6.md) | `done` | `unaudited` | S3 dedup/merge frontend: near-duplicate surfacing UI with merge action |
-| [`KL-7`](KL-7.md) | `done` | `unaudited` | S3 reading view: editorial type scale, progress, in-reader highlight→note |
-| [`KL-8`](KL-8.md) | `done` | `unaudited` | S3 library home: recently-added / continue-reading / favorites / collection counts |
-| [`KL-9`](KL-9.md) | `done` | `unaudited` | Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up) |
-| [`KL-10`](KL-10.md) | `done` | `unaudited` | Indexing H1.3: vector arm searches chunks and rolls up to items before RRF |
-| [`KL-11`](KL-11.md) | `done` | `unaudited` | Indexing H1.4: sqlite-vec ANN index with cached probe, fail-soft to exact scan, Doctor line |
-| [`KL-12`](KL-12.md) | `done` | `unaudited` | Indexing H1.5: resumable batched chunk backfill + VH validation |
-| [`KL-13`](KL-13.md) | `done` | `unaudited` | Similarity edges: write-time kNN over chunk vectors, item-pair rollup, canonical ordering + chunk-pair provenance |
-| [`KL-14`](KL-14.md) | `done` | `unaudited` | Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot |
-| [`KL-15`](KL-15.md) | `done` | `unaudited` | Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection |
-| [`KL-16`](KL-16.md) | `done` | `unaudited` | S4 reading experience: document outline + one prose measure + persistent context rail + in-article find |
-| [`KL-17`](KL-17.md) | `done` | `unaudited` | S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document |
-| [`KL-18`](KL-18.md) | `done` | `unaudited` | Retrieval passage payload: return the passage that matched, not a neighbor (T02) |
+| [`KL-1`](KL-1.md) | `done` | `confirmed` | S1 Collections primitive: schema, store API, routes + Knowledge-page rail |
+| [`KL-2`](KL-2.md) | `done` | `partial` | S2 read-state + favorited display and filters |
+| [`KL-3`](KL-3.md) | `done` | `confirmed` | S2 tags taxonomy: authoritative tags + item_tags tables, JSON backfill, hierarchy UI |
+| [`KL-4`](KL-4.md) | `done` | `partial` | S2 bulk operations: bulk_apply + /api/knowledge/bulk + multi-select bar |
+| [`KL-5`](KL-5.md) | `done` | `partial` | S3 dedup/merge store + API backend (find_duplicates, merge_items, routes) |
+| [`KL-6`](KL-6.md) | `done` | `partial` | S3 dedup/merge frontend: near-duplicate surfacing UI with merge action |
+| [`KL-7`](KL-7.md) | `done` | `partial` | S3 reading view: editorial type scale, progress, in-reader highlight→note |
+| [`KL-8`](KL-8.md) | `done` | `partial` | S3 library home: recently-added / continue-reading / favorites / collection counts |
+| [`KL-9`](KL-9.md) | `done` | `partial` | Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up) |
+| [`KL-10`](KL-10.md) | `done` | `partial` | Indexing H1.3: vector arm searches chunks and rolls up to items before RRF |
+| [`KL-11`](KL-11.md) | `done` | `partial` | Indexing H1.4: sqlite-vec ANN index with cached probe, fail-soft to exact scan, Doctor line |
+| [`KL-12`](KL-12.md) | `done` | `partial` | Indexing H1.5: resumable batched chunk backfill + VH validation |
+| [`KL-13`](KL-13.md) | `done` | `partial` | Similarity edges: write-time kNN over chunk vectors, item-pair rollup, canonical ordering + chunk-pair provenance |
+| [`KL-14`](KL-14.md) | `done` | `partial` | Deferred graph-maintenance host: dirty flag + queue-drained/staleness trigger + watermark snapshot |
+| [`KL-15`](KL-15.md) | `done` | `partial` | Embedding batch path: provider batching, bounded retry with backoff, adaptive batch bisection |
+| [`KL-16`](KL-16.md) | `done` | `partial` | S4 reading experience: document outline + one prose measure + persistent context rail + in-article find |
+| [`KL-17`](KL-17.md) | `done` | `partial` | S4 knowledge graph: embedding-projected layout, server-side edge sparsification, collision-checked labels, ego view from the document |
+| [`KL-18`](KL-18.md) | `done` | `partial` | Retrieval passage payload: return the passage that matched, not a neighbor (T02) |
 
 ### `LMMV` — LOCAL-MODEL-MANAGER-V2 (7/8 done)
 

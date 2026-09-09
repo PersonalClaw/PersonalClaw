@@ -34,9 +34,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_library_home.py passes (part of the 234-passed run)
+- the Home tab exists in the live `tablist "Knowledge view"` alongside Library / Graph / Intents / Tags / Conflicts / Decisions
+
+**Notes:** PARTIAL: recently-added / continue-reading / favorites are all shelves over user history. One just-created item and no reading history, so the shelves cannot be judged. I stayed on Library and did not open Home.
 
 ## Recorded history
 

@@ -30,9 +30,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_bulk_api.py passes (part of the 234-passed run)
+- the multi-select affordance is live and correctly NAMED: after reload each row carries `checkbox "Select Audit probe document KL"` — an accessible per-row selector rather than an unlabelled box
+
+**Notes:** PARTIAL: the selector exists and is named, but a bulk operation needs two or more items to be a meaningful act. One item in the library, so bulk_apply is unexercised.
 
 ## Recorded history
 
