@@ -31,9 +31,23 @@ Editing three files in a watched dir within the debounce window re-indexes each 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- the three behaviours the clause distinguishes are distinct in the tests: create yields a new item, modify re-enqueues the existing one, and delete ARCHIVES with `source_deleted_at` and never hard-deletes
+- the first pass seeds only, which is the anti-storm rule — a watcher that ingested everything it found on startup would flood the queue on every restart rather than only on real change
+- the deletion path's reasoning is recorded where it matters: an archived mirror whose seen-set entry was dropped 'would be an orphan nothing can revive', so the archive and the seen-set are treated as one decision
+- the create flow describes the kind exactly as the atom specifies: 'A folder on this machine — new and edited files are indexed, deletions are archived'
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** The kind and its description were observed in the create flow. Debounce over three edits inside one window is a timing property its tests establish directly.
+
+**Notes:** Archive-rather-than-delete is the same instinct as the campaign's other retention findings: the destructive interpretation of an upstream change is never the local one.
 
 ## Recorded history
 

@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 THE INJECTION CLAUSE IS ASSERTED ON THE COMPOSED PROMPT, WHICH IS THE ONLY PLACE IT MEANS ANYTHING: `test_an_injection_in_scraped_content_is_fenced_at_the_llm_boundary` puts a real payload in scraped CONTENT and asserts it appears only inside `<untrusted_content>` and that 'the fence cannot be closed early'. A fence tested on its own output rather than on the assembled prompt would prove nothing
+- 🔑 THE MATCHING PATH READS THE STORE ROW, NOT THE FENCED PAYLOAD — `test_matching_reads_the_store_row_not_the_fenced_payload`. That is the distinction that makes a zero-token saved query safe: the query never touches the text the fence exists to contain
+- saved queries match with zero tokens and emit their own event, and a subscribed trigger firing has its own suite (`test_watched_sources_digest_trigger.py`)
+- 47 tests green across streams, queries, digest and digest-trigger
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** Not driven: the digest half of the clause ends in ONE knowledge item and ONE notification produced by a model run, and this home has no model bound. The zero-token half — a saved query matching a new item — needs a live poll cycle to observe end to end.
+
+**Notes:** Partial only for the model-dependent half. The security half, which is the part of this atom that could hurt someone, is the half that is fully asserted — and asserted at the right boundary.
 
 ## Recorded history
 

@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- the three contract types are defined and re-exported through the SDK boundary: `KnowledgeSourceProvider`, `SourceItem`, `SourcePollResult` in `sdk/knowledge.py`'s imports AND its `__all__`, so an app binds them by the public path rather than reaching into core
+- the seam is no longer dormant: `knowledge_providers/registry.py:60` defines a real `create_native_provider`, and the SDK docstring records the intended gradient — a provider 'subclasses KnowledgeSourceProvider and returns SourcePollResult of SourceItem from poll', with the full subclass reserved for sources that genuinely need a client
+- the whole plan is downstream evidence that the seam is real rather than declared: three shipped source kinds and a connector-pack app all register through it, which is a stronger check than any fixture
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** Indirectly, and decisively: the Sources UI lists sources that only exist because this handler resolves a factory. A dead seam would render an empty page.
+
+**Notes:** This is the atom that turns a no-op handler into a type. Worth noting the ordering discipline the plan got right: the contract landed FIRST and everything else in the plan consumes it, so no later atom had to widen a shape another had already shipped against.
 
 ## Recorded history
 

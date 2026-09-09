@@ -33,9 +33,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 THE 'NO SOCKET' CLAUSE IS PROVED BEHAVIOURALLY AGAINST A REAL LISTENER, not by asserting on an exception message. The test stands up an actual loopback listener that RECORDS accepted connections, then runs a pack script whose only way to emit an item at all is to have connected — so, in the file's own words, 'zero items and zero connections are the same claim measured at two ends'. The listener class says why: 'so the assertion is about a socket that did or did not happen rather than about an exception's text'
+- 🔑 AND IT CARRIES ITS OWN VACUITY FLOOR — a companion test that the socket proof is not vacuous. Seventh instance of this pattern in the campaign, and the one where it matters most: a sandbox test that would pass against a script that never tried to connect proves nothing at all
+- the parse-only contract is structural rather than advisory: the script receives an engine-fetched body over stdin and emits SourceItem JSON lines, so it never owns the byte seam — `fetch_fn` is the provider's only route to bytes
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** Not driven: installing a connector-pack app needs a Store source. The containment claim is the atom's substance and it is proved at the socket layer.
+
+**Notes:** 🔑 THIS IS THE SAME PROOF SHAPE AS THE SSRF FIX EARLIER IN THIS CAMPAIGN — a second real listener as the thing that must NOT be reached. A negative about the network is only credible when something was listening and heard nothing.
 
 ## Recorded history
 

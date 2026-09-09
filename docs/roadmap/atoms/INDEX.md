@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 278 | `done_when` checked against the code and it holds |
-| `partial` | 188 | some `done_when` clauses hold, others do not |
+| `confirmed` | 286 | `done_when` checked against the code and it holds |
+| `partial` | 189 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 210 | not yet checked |
+| `unaudited` | 201 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -1030,15 +1030,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WS-1`](WS-1.md) | `done` | `unaudited` | Source-provider contract + make the dormant knowledge seam real |
-| [`WS-2`](WS-2.md) | `done` | `unaudited` | WatchedSource store + SourceEngine poll loop + SourcesConfig + SOURCE egress policy |
-| [`WS-3`](WS-3.md) | `done` | `unaudited` | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow |
-| [`WS-4`](WS-4.md) | `done` | `unaudited` | feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph |
-| [`WS-5`](WS-5.md) | `done` | `unaudited` | dir-source: signature-diff observer, debounce, archive-on-delete |
-| [`WS-6`](WS-6.md) | `done` | `unaudited` | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) |
-| [`WS-7`](WS-7.md) | `done` | `unaudited` | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff |
-| [`WS-8`](WS-8.md) | `done` | `unaudited` | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory |
-| [`WS-9`](WS-9.md) | `done` | `unaudited` | Sources UI in the Knowledge section + as-a-user validation |
+| [`WS-1`](WS-1.md) | `done` | `confirmed` | Source-provider contract + make the dormant knowledge seam real |
+| [`WS-2`](WS-2.md) | `done` | `confirmed` | WatchedSource store + SourceEngine poll loop + SourcesConfig + SOURCE egress policy |
+| [`WS-3`](WS-3.md) | `done` | `confirmed` | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow |
+| [`WS-4`](WS-4.md) | `done` | `confirmed` | feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph |
+| [`WS-5`](WS-5.md) | `done` | `confirmed` | dir-source: signature-diff observer, debounce, archive-on-delete |
+| [`WS-6`](WS-6.md) | `done` | `confirmed` | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) |
+| [`WS-7`](WS-7.md) | `done` | `partial` | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff |
+| [`WS-8`](WS-8.md) | `done` | `confirmed` | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory |
+| [`WS-9`](WS-9.md) | `done` | `confirmed` | Sources UI in the Knowledge section + as-a-user validation |
 
 ### `WV` — WORKFLOWS-V2 (15/15 done)
 

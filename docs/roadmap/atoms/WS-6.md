@@ -31,9 +31,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 THE CACHE CLAUSE IS ASSERTED AS ZERO NETWORK, not as a cache hit: `test_a_re_ingest_is_served_from_the_cache_with_zero_network`, alongside `test_a_fetched_source_is_cached_under_the_knowledge_files_dir`. 'Served from cache' and 'made no request' are different claims and the stronger one is the one pinned
+- the reference cascade is keyed by STRENGTH rather than by first match — `test_the_reference_cascade_keys_each_entry_by_its_strongest_tier` — and `test_a_role_cue_resolves_references_before_a_looser_pattern` pins the precedence, so a loose pattern cannot win over an explicit cue
+- 🔑 A DELIBERATE BOUNDARY WITH ITS OWN TEST: `test_references_are_extracted_but_never_linked`. Extraction and linking are separated on purpose, so a paper's bibliography does not silently become a graph of assertions the user never made
+- identifier normalisation is version-insensitive and total: an arXiv id resolves to ONE url regardless of version suffix, and a non-reference sniffs to None rather than raising
+- 56 slicing tests green, covering section detection, the slice rows on the ONE item (no chunking), and the sniff/normalise cascade
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** No dedicated surface: this is an ingestion primitive other kinds call. Its clause is a set of deterministic properties, which is what its tests establish.
+
+**Notes:** 'Slices on one item, not chunks across many' is the load-bearing shape here — it keeps a paper a single thing a user can find, rather than fragments that each look like a separate document.
 
 ## Recorded history
 

@@ -31,9 +31,26 @@ knowledge.db migration adds sources/source_cursors/source_seen tables + source_i
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 ARCC GUIDANCE ON SSRF MITIGATION APPLIES DIRECTLY HERE, AND THE SOURCE PROFILE SATISFIES ALL FOUR OF ITS REQUIREMENTS. (1) Private/local/metadata destinations disallowed: `SOURCE = EgressPolicy(name='source', ...)` inherits `allow_private=False`, and the guard classifies loopback, RFC-1918, link-local incl. 169.254.0.0/16, ULA, multicast, reserved and unspecified — enforced BEFORE DNS resolution so 'a denied host is never even looked up'. (2) DNS-rebinding protection: `pin_resolved_ip=True`, with two named tests for a rebinding allow-listed host. (3) Redirect control: `max_redirects=5` with per-hop re-evaluation rather than blind following. (4) Logging: the profile exists as a DISTINCT name specifically 'so its egress audits are attributable to the source engine'
+- 🔑 FALSIFIED THE HARD FLOOR: I emptied the metadata/link-local check in `net/guard.py` and exactly two tests reddened — `test_allow_host_rebinding_to_imds_is_refused` and `test_allow_host_rebinding_to_alibaba_metadata_is_refused` (assert True is False), 30 passed. Reverted; 32/32
+- 🔑 THAT FLOOR SURVIVES THE OPERATOR'S OWN ALLOW-LIST, which is stronger than ARCC asks for and the reasoning is written at it: `deny_hosts` refuses the metadata HOSTNAMES before resolution, but 'an allow-listed name that resolves (or DNS-rebinds) to the endpoint arrives here as just another non-public address — and the homelab waiver below would admit it', so a link-local resolution is refused 'unconditionally, for every policy: no legitimate allow-listed service lives on a link-local address, so this cannot break the LAN opt-in'
+- 🔑 THE PROFILE'S OWN LIMIT IS DOCUMENTED RATHER THAN GLOSSED, in a neighbouring profile's comment: 'SOURCE is allow_only=False, so a scheduled GET ALREADY reaches every public host plus every host on that list'. That is the right posture for a URL the OWNER typed into a create flow, and the same comment records why a template-supplied URL gets the exclusive stance instead — the distinction is WHO chooses the URL
+- the three tables and the key exist: `sources`, `source_cursors`, `source_seen` with `PRIMARY KEY (source_id, guid)`, plus the item-side unique index — which is PARTIAL (both columns non-NULL) for a stated reason: 'SQLite treats NULLs as distinct, so a plain UNIQUE would still admit unlimited native rows'
+- the crash-safety clause has its own named test, `test_kill_mid_poll_then_restart_no_dup_no_loss`, and the mechanism is one transaction: the engine folds 'the source_seen novelty-gate INSERT into the item's own transaction, then enqueues it'
+- `last_escalations` is a column, not a log line, because 'an escalation nobody can see is indistinguishable from a cheap poll'
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** 🔑 DRIVEN, AND THIS IS THE DECISIVE OBSERVATION OF THE CYCLE: I pasted the cloud metadata endpoint into the real create form and pressed Preview. The UI returned the guard's own refusal — "fetch failed: host '169.254.169.254' resolves to a cloud metadata / link-local address (169.254.169.254); the instance-credential endpoint is never reachable, even for an allow-listed host". The SSRF rail is not merely present in code; it reaches the user as a legible refusal.
+
+**Notes:** 🪤 MY OWN ERROR, RECORDED: my first check for the three tables opened `.validate-home/knowledge.db` and found none, which looked like an unrun migration. The knowledge store is workspace-scoped — the real database is `.validate-home/workspace/knowledge/knowledge.db`, and all three tables plus one source row are there. Withdrawn. The lesson generalises: a per-entity or per-workspace store makes 'the file is not there' and 'I read the wrong file' look identical.
 
 ## Recorded history
 

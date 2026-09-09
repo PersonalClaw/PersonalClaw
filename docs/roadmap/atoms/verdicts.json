@@ -5765,5 +5765,134 @@
     ],
     "ui_validated": "No user surface: a manifest declaration and a CI rail. Validated by running the rail, breaking it, and reading both real exit codes.",
     "notes": "🔑 THE BEST-SHAPED ADOPTION RAIL IN THE CAMPAIGN. Three properties together: the population is DISCOVERED (so the denominator cannot go stale), every failure mode is its OWN reported state (so a defect cannot masquerade as a slightly lower score), and the forbidden alternatives are stated over AST names (so prose cannot trip it and an alias cannot evade it). This atom exists because WF2AUT-8 shipped a seam with zero adopters and no atom required one — the campaign's inert-control class again — and the fix was not just to adopt it but to make non-adoption impossible to ship quietly."
+  },
+  "WS-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "the three contract types are defined and re-exported through the SDK boundary: `KnowledgeSourceProvider`, `SourceItem`, `SourcePollResult` in `sdk/knowledge.py`'s imports AND its `__all__`, so an app binds them by the public path rather than reaching into core",
+      "the seam is no longer dormant: `knowledge_providers/registry.py:60` defines a real `create_native_provider`, and the SDK docstring records the intended gradient — a provider 'subclasses KnowledgeSourceProvider and returns SourcePollResult of SourceItem from poll', with the full subclass reserved for sources that genuinely need a client",
+      "the whole plan is downstream evidence that the seam is real rather than declared: three shipped source kinds and a connector-pack app all register through it, which is a stronger check than any fixture",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "Indirectly, and decisively: the Sources UI lists sources that only exist because this handler resolves a factory. A dead seam would render an empty page.",
+    "notes": "This is the atom that turns a no-op handler into a type. Worth noting the ordering discipline the plan got right: the contract landed FIRST and everything else in the plan consumes it, so no later atom had to widen a shape another had already shipped against."
+  },
+  "WS-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 ARCC GUIDANCE ON SSRF MITIGATION APPLIES DIRECTLY HERE, AND THE SOURCE PROFILE SATISFIES ALL FOUR OF ITS REQUIREMENTS. (1) Private/local/metadata destinations disallowed: `SOURCE = EgressPolicy(name='source', ...)` inherits `allow_private=False`, and the guard classifies loopback, RFC-1918, link-local incl. 169.254.0.0/16, ULA, multicast, reserved and unspecified — enforced BEFORE DNS resolution so 'a denied host is never even looked up'. (2) DNS-rebinding protection: `pin_resolved_ip=True`, with two named tests for a rebinding allow-listed host. (3) Redirect control: `max_redirects=5` with per-hop re-evaluation rather than blind following. (4) Logging: the profile exists as a DISTINCT name specifically 'so its egress audits are attributable to the source engine'",
+      "🔑 FALSIFIED THE HARD FLOOR: I emptied the metadata/link-local check in `net/guard.py` and exactly two tests reddened — `test_allow_host_rebinding_to_imds_is_refused` and `test_allow_host_rebinding_to_alibaba_metadata_is_refused` (assert True is False), 30 passed. Reverted; 32/32",
+      "🔑 THAT FLOOR SURVIVES THE OPERATOR'S OWN ALLOW-LIST, which is stronger than ARCC asks for and the reasoning is written at it: `deny_hosts` refuses the metadata HOSTNAMES before resolution, but 'an allow-listed name that resolves (or DNS-rebinds) to the endpoint arrives here as just another non-public address — and the homelab waiver below would admit it', so a link-local resolution is refused 'unconditionally, for every policy: no legitimate allow-listed service lives on a link-local address, so this cannot break the LAN opt-in'",
+      "🔑 THE PROFILE'S OWN LIMIT IS DOCUMENTED RATHER THAN GLOSSED, in a neighbouring profile's comment: 'SOURCE is allow_only=False, so a scheduled GET ALREADY reaches every public host plus every host on that list'. That is the right posture for a URL the OWNER typed into a create flow, and the same comment records why a template-supplied URL gets the exclusive stance instead — the distinction is WHO chooses the URL",
+      "the three tables and the key exist: `sources`, `source_cursors`, `source_seen` with `PRIMARY KEY (source_id, guid)`, plus the item-side unique index — which is PARTIAL (both columns non-NULL) for a stated reason: 'SQLite treats NULLs as distinct, so a plain UNIQUE would still admit unlimited native rows'",
+      "the crash-safety clause has its own named test, `test_kill_mid_poll_then_restart_no_dup_no_loss`, and the mechanism is one transaction: the engine folds 'the source_seen novelty-gate INSERT into the item's own transaction, then enqueues it'",
+      "`last_escalations` is a column, not a log line, because 'an escalation nobody can see is indistinguishable from a cheap poll'",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "🔑 DRIVEN, AND THIS IS THE DECISIVE OBSERVATION OF THE CYCLE: I pasted the cloud metadata endpoint into the real create form and pressed Preview. The UI returned the guard's own refusal — \"fetch failed: host '169.254.169.254' resolves to a cloud metadata / link-local address (169.254.169.254); the instance-credential endpoint is never reachable, even for an allow-listed host\". The SSRF rail is not merely present in code; it reaches the user as a legible refusal.",
+    "notes": "🪤 MY OWN ERROR, RECORDED: my first check for the three tables opened `.validate-home/knowledge.db` and found none, which looked like an unrun migration. The knowledge store is workspace-scoped — the real database is `.validate-home/workspace/knowledge/knowledge.db`, and all three tables plus one source row are there. Withdrawn. The lesson generalises: a per-entity or per-workspace store makes 'the file is not there' and 'I read the wrong file' look identical."
+  },
+  "WS-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 DRIVEN AGAINST A REAL LISTING PAGE WITH REAL RESULTS: pasting a live blog index into the create form's dry run returned 'Found 200 items via selector_frequency · 1 request', with correct per-item titles, dates and URLs. ZERO model calls — and unfalsifiably so, because this home has no model bound at all, so an LLM path could not have run even by accident",
+      "🔑 THE DETECTOR IDENTITY AND THE REQUEST COUNT ARE BOTH SURFACED, which is what makes the zero-LLM claim checkable by a user rather than trusted: the reader is told WHICH detector fired and how many requests it cost",
+      "the five detectors are individually visible and individually switchable in the form (wordpress_api, json_ld, semantic_html, json_state, and the frequency detector that actually fired) — so 'five-detector stack' is a UI fact, not a module comment",
+      "the render tier is a switch reading 'Not allowed' by default, with the cost stated in plain language: 'Off by default. A page that builds its content with JavaScript needs it; a plain page never does, and it costs a headless browser per poll' — the `allow_render:false` default and its degrade path made legible",
+      "an escalation is recorded in a column (`last_escalations`) rather than a log, for the reason quoted under WS-2",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "The whole create flow: paste, detector selection, render-tier switch, enrichment choice, poll interval, and the dry run — against a real page (200 items) and against a bad URL (a clean 'page returned HTTP 404'). Cancelled afterwards; nothing was persisted, which is the dry run's own promise.",
+    "notes": "🔑 THE MOST HONEST PIECE OF UI COPY IN THIS AUDIT: 'Runs the detectors once and shows what would be saved. Nothing is stored — but it is a real request to that server.' A preview that hides the fact it causes egress is how a user gets surprised; this one says it in the same breath as the reassurance. Also worth keeping: the recipe lookup rewrote a GitHub releases URL to its `.atom` feed, explaining that 'GitHub already serves this as an Atom feed, so no page scraping is involved and nothing has to be tuned' — preferring the cheap, stable path over the clever one."
+  },
+  "WS-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "both success criteria have named tests rather than described behaviour: `test_same_story_via_hn_and_rss_becomes_one_item_with_both_attributions` is SC#3's cross-feed dedupe with `also_seen_in`, and the raw-mode assertion is STRUCTURAL — the raw graph is asserted to contain no LLM nodes, so 'zero LLM calls' is a property of the pipeline shape rather than a count that could drift",
+      "the dedupe key is the same `(source_id, guid)` pair WS-2 made unique at the storage layer, so 'polling twice produces zero duplicates' is enforced by the schema and not only by the provider's care",
+      "the create flow offers the feed kind with its formats named in plain language — 'RSS, Atom, JSON Feed or a CSV export, including Hacker News and GitHub presets' — matching the presets the atom claims",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "The feed kind and its presets were observed in the create flow; a second poll of a live feed over time is not something a single session can drive, and its determinism is what the dedupe tests establish instead.",
+    "notes": "The structural no-LLM-nodes assertion is the pattern worth borrowing. Counting model calls proves a claim for one run; asserting the graph has no node capable of a model call proves it for every run."
+  },
+  "WS-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "the three behaviours the clause distinguishes are distinct in the tests: create yields a new item, modify re-enqueues the existing one, and delete ARCHIVES with `source_deleted_at` and never hard-deletes",
+      "the first pass seeds only, which is the anti-storm rule — a watcher that ingested everything it found on startup would flood the queue on every restart rather than only on real change",
+      "the deletion path's reasoning is recorded where it matters: an archived mirror whose seen-set entry was dropped 'would be an orphan nothing can revive', so the archive and the seen-set are treated as one decision",
+      "the create flow describes the kind exactly as the atom specifies: 'A folder on this machine — new and edited files are indexed, deletions are archived'",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "The kind and its description were observed in the create flow. Debounce over three edits inside one window is a timing property its tests establish directly.",
+    "notes": "Archive-rather-than-delete is the same instinct as the campaign's other retention findings: the destructive interpretation of an upstream change is never the local one."
+  },
+  "WS-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 THE CACHE CLAUSE IS ASSERTED AS ZERO NETWORK, not as a cache hit: `test_a_re_ingest_is_served_from_the_cache_with_zero_network`, alongside `test_a_fetched_source_is_cached_under_the_knowledge_files_dir`. 'Served from cache' and 'made no request' are different claims and the stronger one is the one pinned",
+      "the reference cascade is keyed by STRENGTH rather than by first match — `test_the_reference_cascade_keys_each_entry_by_its_strongest_tier` — and `test_a_role_cue_resolves_references_before_a_looser_pattern` pins the precedence, so a loose pattern cannot win over an explicit cue",
+      "🔑 A DELIBERATE BOUNDARY WITH ITS OWN TEST: `test_references_are_extracted_but_never_linked`. Extraction and linking are separated on purpose, so a paper's bibliography does not silently become a graph of assertions the user never made",
+      "identifier normalisation is version-insensitive and total: an arXiv id resolves to ONE url regardless of version suffix, and a non-reference sniffs to None rather than raising",
+      "56 slicing tests green, covering section detection, the slice rows on the ONE item (no chunking), and the sniff/normalise cascade",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "No dedicated surface: this is an ingestion primitive other kinds call. Its clause is a set of deterministic properties, which is what its tests establish.",
+    "notes": "'Slices on one item, not chunks across many' is the load-bearing shape here — it keeps a paper a single thing a user can find, rather than fragments that each look like a separate document."
+  },
+  "WS-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 THE INJECTION CLAUSE IS ASSERTED ON THE COMPOSED PROMPT, WHICH IS THE ONLY PLACE IT MEANS ANYTHING: `test_an_injection_in_scraped_content_is_fenced_at_the_llm_boundary` puts a real payload in scraped CONTENT and asserts it appears only inside `<untrusted_content>` and that 'the fence cannot be closed early'. A fence tested on its own output rather than on the assembled prompt would prove nothing",
+      "🔑 THE MATCHING PATH READS THE STORE ROW, NOT THE FENCED PAYLOAD — `test_matching_reads_the_store_row_not_the_fenced_payload`. That is the distinction that makes a zero-token saved query safe: the query never touches the text the fence exists to contain",
+      "saved queries match with zero tokens and emit their own event, and a subscribed trigger firing has its own suite (`test_watched_sources_digest_trigger.py`)",
+      "47 tests green across streams, queries, digest and digest-trigger",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "Not driven: the digest half of the clause ends in ONE knowledge item and ONE notification produced by a model run, and this home has no model bound. The zero-token half — a saved query matching a new item — needs a live poll cycle to observe end to end.",
+    "notes": "Partial only for the model-dependent half. The security half, which is the part of this atom that could hurt someone, is the half that is fully asserted — and asserted at the right boundary."
+  },
+  "WS-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 THE 'NO SOCKET' CLAUSE IS PROVED BEHAVIOURALLY AGAINST A REAL LISTENER, not by asserting on an exception message. The test stands up an actual loopback listener that RECORDS accepted connections, then runs a pack script whose only way to emit an item at all is to have connected — so, in the file's own words, 'zero items and zero connections are the same claim measured at two ends'. The listener class says why: 'so the assertion is about a socket that did or did not happen rather than about an exception's text'",
+      "🔑 AND IT CARRIES ITS OWN VACUITY FLOOR — a companion test that the socket proof is not vacuous. Seventh instance of this pattern in the campaign, and the one where it matters most: a sandbox test that would pass against a script that never tried to connect proves nothing at all",
+      "the parse-only contract is structural rather than advisory: the script receives an engine-fetched body over stdin and emits SourceItem JSON lines, so it never owns the byte seam — `fetch_fn` is the provider's only route to bytes",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "Not driven: installing a connector-pack app needs a Store source. The containment claim is the atom's substance and it is proved at the socket layer.",
+    "notes": "🔑 THIS IS THE SAME PROOF SHAPE AS THE SSRF FIX EARLIER IN THIS CAMPAIGN — a second real listener as the thing that must NOT be reached. A negative about the network is only credible when something was listening and heard nothing."
+  },
+  "WS-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified",
+    "evidence": [
+      "🔑 DRIVEN END TO END FROM THE FRONTEND: Knowledge → Sources opens 'Watched sources', which lists the existing source with a health chip, then 'Watch something' opens a create flow offering the recipe lookup plus all three kinds, and 'Watched Page' completes to a real dry-run preview of 200 items",
+      "🔑 THE 'NO AI' CHIP IS PRESENT AND IT EXPLAINS ITSELF ON HOVER: 'Raw source: items are indexed and embedded locally, and never reach a model.' A chip that only says 'no AI' would be a badge; this one states the property",
+      "health is a first-class chip beside the name, with its own explanation ('Indexed as artifacts change — this source is not polled.'), so a source that is live-but-unpolled is not mistaken for one that is broken",
+      "the remediation affordances the clause names are in the form rather than in an error: the render-tier switch with its cost, the detector checkboxes, an enrichment choice ('Enriched' vs 'Raw · no AI'), and a poll interval — a user who hits a JS-heavy page can fix it where they are",
+      "the recipe lookup rewrites a GitHub releases URL to its Atom feed and says why, and the two matched recipes each explain what they do and when they fail ('if it finds nothing, the page is probably a single post rather than a listing')",
+      "source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)"
+    ],
+    "ui_validated": "The full flow, twice: once against a real blog index (200 items via selector_frequency, 1 request) and once against the cloud metadata endpoint (refused with the guard's reason). Cancelled both times; nothing persisted, and the source list is unchanged.",
+    "notes": "🪤 A PROCESS NOTE, THE SAME MISTAKE AS AN EARLIER CYCLE: I clicked a stale element reference and landed on a text label rather than the button, which read as a dead control until I re-read the snapshot. Reading the snapshot beats reusing a reference from a previous page state — the second time this exact error has cost a step, so it is worth writing down rather than just fixing."
   }
 }

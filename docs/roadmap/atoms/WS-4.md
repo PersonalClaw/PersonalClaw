@@ -31,9 +31,22 @@ Polling the same feed twice produces zero duplicate items and the same story arr
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- both success criteria have named tests rather than described behaviour: `test_same_story_via_hn_and_rss_becomes_one_item_with_both_attributions` is SC#3's cross-feed dedupe with `also_seen_in`, and the raw-mode assertion is STRUCTURAL — the raw graph is asserted to contain no LLM nodes, so 'zero LLM calls' is a property of the pipeline shape rather than a count that could drift
+- the dedupe key is the same `(source_id, guid)` pair WS-2 made unique at the storage layer, so 'polling twice produces zero duplicates' is enforced by the schema and not only by the provider's care
+- the create flow offers the feed kind with its formats named in plain language — 'RSS, Atom, JSON Feed or a CSV export, including Hacker News and GitHub presets' — matching the presets the atom claims
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** The feed kind and its presets were observed in the create flow; a second poll of a live feed over time is not something a single session can drive, and its determinism is what the dedupe tests establish instead.
+
+**Notes:** The structural no-LLM-nodes assertion is the pattern worth borrowing. Counting model calls proves a claim for one run; asserting the graph has no node capable of a model call proves it for every run.
 
 ## Recorded history
 

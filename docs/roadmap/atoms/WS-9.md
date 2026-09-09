@@ -34,9 +34,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 DRIVEN END TO END FROM THE FRONTEND: Knowledge → Sources opens 'Watched sources', which lists the existing source with a health chip, then 'Watch something' opens a create flow offering the recipe lookup plus all three kinds, and 'Watched Page' completes to a real dry-run preview of 200 items
+- 🔑 THE 'NO AI' CHIP IS PRESENT AND IT EXPLAINS ITSELF ON HOVER: 'Raw source: items are indexed and embedded locally, and never reach a model.' A chip that only says 'no AI' would be a badge; this one states the property
+- health is a first-class chip beside the name, with its own explanation ('Indexed as artifacts change — this source is not polled.'), so a source that is live-but-unpolled is not mistaken for one that is broken
+- the remediation affordances the clause names are in the form rather than in an error: the render-tier switch with its cost, the detector checkboxes, an enrichment choice ('Enriched' vs 'Raw · no AI'), and a poll interval — a user who hits a JS-heavy page can fix it where they are
+- the recipe lookup rewrites a GitHub releases URL to its Atom feed and says why, and the two matched recipes each explain what they do and when they fail ('if it finds nothing, the page is probably a single post rather than a listing')
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** The full flow, twice: once against a real blog index (200 items via selector_frequency, 1 request) and once against the cloud metadata endpoint (refused with the guard's reason). Cancelled both times; nothing persisted, and the source list is unchanged.
+
+**Notes:** 🪤 A PROCESS NOTE, THE SAME MISTAKE AS AN EARLIER CYCLE: I clicked a stale element reference and landed on a text label rather than the button, which read as a dead control until I re-read the snapshot. Reading the snapshot beats reusing a reference from a previous page state — the second time this exact error has cost a step, so it is worth writing down rather than just fixing.
 
 ## Recorded history
 

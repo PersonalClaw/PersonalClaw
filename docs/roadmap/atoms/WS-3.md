@@ -31,9 +31,24 @@ Pasting a real changelog/blog URL yields a correct zero-LLM item preview via aut
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 51 (WS) — the create flow driven against a real blog index and against the cloud metadata endpoint; the metadata floor falsified
+
+**Code evidence:**
+
+- 🔑 DRIVEN AGAINST A REAL LISTING PAGE WITH REAL RESULTS: pasting a live blog index into the create form's dry run returned 'Found 200 items via selector_frequency · 1 request', with correct per-item titles, dates and URLs. ZERO model calls — and unfalsifiably so, because this home has no model bound at all, so an LLM path could not have run even by accident
+- 🔑 THE DETECTOR IDENTITY AND THE REQUEST COUNT ARE BOTH SURFACED, which is what makes the zero-LLM claim checkable by a user rather than trusted: the reader is told WHICH detector fired and how many requests it cost
+- the five detectors are individually visible and individually switchable in the form (wordpress_api, json_ld, semantic_html, json_state, and the frequency detector that actually fired) — so 'five-detector stack' is a UI fact, not a module comment
+- the render tier is a switch reading 'Not allowed' by default, with the cost stated in plain language: 'Off by default. A page that builds its content with JavaScript needs it; a plain page never does, and it costs a headless browser per poll' — the `allow_render:false` default and its degrade path made legible
+- an escalation is recorded in a column (`last_escalations`) rather than a log, for the reason quoted under WS-2
+- source engine + web + feed + dir + connector-pack 193/193; watched-sources streams/queries/digest/digest-trigger 47/47; knowledge slicing 56/56; net egress 32/32 (falsified: removing the metadata/link-local floor reds exactly the two DNS-rebinding tests)
+
+**Driven in the UI:** The whole create flow: paste, detector selection, render-tier switch, enrichment choice, poll interval, and the dry run — against a real page (200 items) and against a bad URL (a clean 'page returned HTTP 404'). Cancelled afterwards; nothing was persisted, which is the dry run's own promise.
+
+**Notes:** 🔑 THE MOST HONEST PIECE OF UI COPY IN THIS AUDIT: 'Runs the detectors once and shows what would be saved. Nothing is stored — but it is a real request to that server.' A preview that hides the fact it causes egress is how a user gets surprised; this one says it in the same breath as the reassurance. Also worth keeping: the recipe lookup rewrote a GitHub releases URL to its `.atom` feed, explaining that 'GitHub already serves this as an Atom feed, so no page scraping is involved and nothing has to be tuned' — preferring the cheap, stable path over the clever one.
 
 ## Recorded history
 
