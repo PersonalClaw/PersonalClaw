@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 20 | `done_when` checked against the code and it holds |
-| `partial` | 64 | some `done_when` clauses hold, others do not |
+| `confirmed` | 29 | `done_when` checked against the code and it holds |
+| `partial` | 69 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 600 | not yet checked |
+| `unaudited` | 586 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -60,20 +60,20 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AG-1`](AG-1.md) | `done` | `unaudited` | Model-call chokepoint core (§2): ModelCallGuard, breaker, timeout, audit, output_type |
-| [`AG-2`](AG-2.md) | `done` | `unaudited` | Budgets + outbound scan + GuardrailsConfig (§1.1, §2.2) |
-| [`AG-3`](AG-3.md) | `done` | `unaudited` | Safety floor: denylist + incident kill switch + DISABLE_LIVE_WRITES + guard_flag (§1.2-§1.4, §5) |
-| [`AG-4`](AG-4.md) | `done` | `unaudited` | Safety profiles + egress tiers + provider health view + FE (§3, §4.2, §2.5, §4.4) |
-| [`AG-5`](AG-5.md) | `done` | `unaudited` | Wire SafetyProfile / egress-tier into dispatch seams + spawn (close inert control) |
-| [`AG-6`](AG-6.md) | `done` | `unaudited` | S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py) |
-| [`AG-7`](AG-7.md) | `done` | `unaudited` | S5.2 action-type declarations + manifest autonomy block + rung routing at seams |
-| [`AG-8`](AG-8.md) | `done` | `unaudited` | S6.1 promotion proposals + rung FE chips/ladder panel/undo + validation sweep |
-| [`AG-9`](AG-9.md) | `done` | `unaudited` | Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo) |
-| [`AG-10`](AG-10.md) | `done` | `unaudited` | Run-scope budget enforcement + per-trigger budget fields |
-| [`AG-11`](AG-11.md) | `done` | `unaudited` | Deferred profile/trust enforcement behaviors awaiting engine consumers |
-| [`AG-12`](AG-12.md) | `done` | `unaudited` | Restore the §1.2 denylist at the third dispatch seam (gateway._fire_store_trigger) |
-| [`AG-13`](AG-13.md) | `done` | `unaudited` | Consolidate the fourteen autonomy knobs into one declarative policy (shared with SupervisorPolicy) |
-| [`AG-14`](AG-14.md) | `done` | `unaudited` | Loop ceilings: LoopStopReason enum + wall-clock deadline + max_cost (T05) |
+| [`AG-1`](AG-1.md) | `done` | `confirmed` | Model-call chokepoint core (§2): ModelCallGuard, breaker, timeout, audit, output_type |
+| [`AG-2`](AG-2.md) | `done` | `confirmed` | Budgets + outbound scan + GuardrailsConfig (§1.1, §2.2) |
+| [`AG-3`](AG-3.md) | `done` | `confirmed` | Safety floor: denylist + incident kill switch + DISABLE_LIVE_WRITES + guard_flag (§1.2-§1.4, §5) |
+| [`AG-4`](AG-4.md) | `done` | `partial` | Safety profiles + egress tiers + provider health view + FE (§3, §4.2, §2.5, §4.4) |
+| [`AG-5`](AG-5.md) | `done` | `confirmed` | Wire SafetyProfile / egress-tier into dispatch seams + spawn (close inert control) |
+| [`AG-6`](AG-6.md) | `done` | `confirmed` | S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py) |
+| [`AG-7`](AG-7.md) | `done` | `partial` | S5.2 action-type declarations + manifest autonomy block + rung routing at seams |
+| [`AG-8`](AG-8.md) | `done` | `partial` | S6.1 promotion proposals + rung FE chips/ladder panel/undo + validation sweep |
+| [`AG-9`](AG-9.md) | `done` | `partial` | Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo) |
+| [`AG-10`](AG-10.md) | `done` | `confirmed` | Run-scope budget enforcement + per-trigger budget fields |
+| [`AG-11`](AG-11.md) | `done` | `partial` | Deferred profile/trust enforcement behaviors awaiting engine consumers |
+| [`AG-12`](AG-12.md) | `done` | `confirmed` | Restore the §1.2 denylist at the third dispatch seam (gateway._fire_store_trigger) |
+| [`AG-13`](AG-13.md) | `done` | `confirmed` | Consolidate the fourteen autonomy knobs into one declarative policy (shared with SupervisorPolicy) |
+| [`AG-14`](AG-14.md) | `done` | `confirmed` | Loop ceilings: LoopStopReason enum + wall-clock deadline + max_cost (T05) |
 
 ### `AP` — AGENT-PACKS (7/7 done)
 

@@ -32,9 +32,18 @@ Settings→Guardrails renders breaker state + p50/p90/p99 latency; profile_for_s
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- tests/test_browse_egress_policy.py passes (part of the 333-passed run)
+- doctor exposes a 'Provider Health' section, so that half of the atom has a real surface — it read 'no provider entries configured' in this home
+
+**Notes:** PARTIAL: safety profiles and egress tiers are confirmed at the policy level by AG-3's rails, but the provider-health VIEW needs configured providers to show anything. Observed empty rather than working.
 
 ## Recorded history
 

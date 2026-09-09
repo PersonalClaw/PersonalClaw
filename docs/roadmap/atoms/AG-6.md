@@ -32,9 +32,17 @@ a type with 10 clean approvals over 7 days + 0 rejections is eligible; one rejec
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- tests/test_guardrails_ladder.py and tests/test_guardrails_autonomy.py pass (part of the 333-passed run)
+
+**Notes:** The earned-autonomy rung ladder core is a state machine over accumulated behaviour; its suite is the right instrument and it passes.
 
 ## Recorded history
 

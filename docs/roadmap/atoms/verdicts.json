@@ -19,6 +19,118 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "AG-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_guardrails_model_call.py passes (part of 333 tests passing across eleven AG modules)"],
+    "notes": "The model-call chokepoint and breaker are pre-model-call machinery, so their own suite is the right instrument. Confirmed on that rather than on the plan's log."
+  },
+  "AG-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_guardrails_budgets.py and tests/test_guardrails_flags.py pass (part of the 333-passed run)"],
+    "notes": "Budgets, outbound scan and GuardrailsConfig are enforcement paths with no screen of their own."
+  },
+  "AG-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed, audited against ARCC's default-deny principle",
+    "evidence": [
+      "tests/test_guardrails_floor.py and tests/test_baseline_denylist_integrity.py pass (part of the 333-passed run)",
+      "tests/test_egress_deny_survives_a_config_error.py passes — and its docstring records a REAL past defect with its fix: on a config-read exception the code dropped deny_hosts along with allow_hosts, so a transient error silently un-denied a host the operator had explicitly denied. Fixed by remembering the last successfully-observed deny list, reusing it on a later failure, and logging at WARNING",
+      "the assertions run through guard.evaluate — the call site an egress actually passes through — rather than only checking the policy object carries a tuple"
+    ],
+    "notes": "This is the atom ARCC's guidance actually bears on. I checked ARCC first (per the standing rule) and its returned content was entirely AWS-infrastructure-scoped — VPC no-internet-egress, ENI exposure, Federate allowlists, Kibana dashboards — none of which maps to a self-hosted agent's chokepoint. The ONE transferable principle is default-deny and never-an-empty-allowlist, and the fail-closed rail above is precisely that property, asserted in the dangerous direction. Recording that ARCC was consulted and that its content did not apply, rather than inventing policy it does not contain."
+  },
+  "AG-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": [
+      "tests/test_browse_egress_policy.py passes (part of the 333-passed run)",
+      "doctor exposes a 'Provider Health' section, so that half of the atom has a real surface — it read 'no provider entries configured' in this home"
+    ],
+    "notes": "PARTIAL: safety profiles and egress tiers are confirmed at the policy level by AG-3's rails, but the provider-health VIEW needs configured providers to show anything. Observed empty rather than working."
+  },
+  "AG-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["part of the 333-passed run"],
+    "notes": "Confirmed with a caveat about my own prior knowledge rather than fresh measurement: the workspace roadmap notes record AG-5 as landed with five non-test callers, which is the wiring property that matters (a SafetyProfile threaded into dispatch seams but called nowhere would be inert). I did not re-count the callers this cycle, so that specific number is carried from the roadmap rather than re-observed — flagging it because this audit's whole premise is not trusting recorded claims."
+  },
+  "AG-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_guardrails_ladder.py and tests/test_guardrails_autonomy.py pass (part of the 333-passed run)"],
+    "notes": "The earned-autonomy rung ladder core is a state machine over accumulated behaviour; its suite is the right instrument and it passes."
+  },
+  "AG-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["part of the 333-passed run"],
+    "notes": "PARTIAL: action-type declarations plus a manifest autonomy block need an APP declaring them. No app installed in this home — the same blocker that held INU-7 and INU-8."
+  },
+  "AG-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": [
+      "the FE deliverable exists and is documented: web/src/ui/RungChip.doc.ts sits beside its component, so the chip is part of PL-5's ui-docs corpus rather than an undocumented one-off",
+      "part of the 333-passed run"
+    ],
+    "notes": "PARTIAL: rung chips and the ladder panel only render once a rung has been EARNED, which requires accumulated autonomous behaviour this home has none of. The component is present and documented; its populated state is unvalidated."
+  },
+  "AG-9": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["part of the 333-passed run"],
+    "notes": "PARTIAL, and cross-repo by its own title: the apps-repo guardrails follow-ons live in PersonalClawApps, which this audit has not touched. dag.json also lists AG-9 among the startable atoms in the workspace roadmap's next-up list, so its status is worth the owner's eye independently of my verdict."
+  },
+  "AG-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_guardrails_budgets.py and tests/test_guardrails_ceiling.py pass (part of the 333-passed run)"],
+    "notes": "Run-scope budget enforcement with per-trigger fields is exactly the kind of ceiling a test proves better than a UI run — the interesting cases are the ones that REFUSE."
+  },
+  "AG-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["part of the 333-passed run"],
+    "notes": "PARTIAL by its own title — 'deferred profile/trust enforcement behaviors AWAITING ENGINE CONSUMERS'. An atom that is explicitly waiting for its consumers cannot be validated as consumed; that is its recorded state, not a gap I found."
+  },
+  "AG-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_baseline_denylist_integrity.py passes (part of the 333-passed run)"],
+    "notes": "A RESTORATION claim at a specific seam — the third dispatch seam regaining the denylist. Like WF2TAS-12's retirement, this is the decidable-by-looking class, and its integrity rail passes."
+  },
+  "AG-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed, read from the live module",
+    "evidence": [
+      "supervisor_policy.POLICY_KNOB_MAP imported and read at runtime holds EXACTLY 14 entries, matching the atom's fourteen knobs, each a KnobMapping naming the knob, its HOME module, and the single field_path it now lives on — e.g. RunBudget from workflows.models to autonomy.budget.max_tokens, require_hitl from workflows.autonomy:compile_require_hitl to hitl_posture",
+      "tests/test_ag13_autonomy_policy.py passes (part of the 333-passed run)",
+      "its load-bearing rail is a BEHAVIOUR-PRESERVATION MATRIX: for shipped run profiles x bundled loop kinds x a knob-setting template, each mapped field must carry that knob's CURRENT value, read from the knob's own home so the comparison is non-circular"
+    ],
+    "notes": "The best-engineered atom I have audited. Its own docstring states the invariant precisely — 'this atom changes WHERE autonomy is declared, never WHAT it permits' — and names three falsification targets, including 'tightest wins: a profile cannot widen the ceiling' with widening called out as the dangerous direction, and a `..` pattern test proving normpath cannot widen a write scope. That is the same default-deny/never-widen principle ARCC's guidance carries, arrived at independently. One DOC-DRIFT note for the owner: the workspace roadmap prose still describes the fourteen-knob legibility problem as remaining work owned by AG-13, while dag.json marks it done and the matrix rail passes. The code and the catalog agree; the workspace prose is stale."
+  },
+  "AG-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 9 (AG) — observed",
+    "evidence": ["tests/test_guardrails_ceiling.py passes (part of the 333-passed run)"],
+    "notes": "Loop ceilings — a LoopStopReason enum plus a wall-clock deadline — are refusal behaviours. A passing ceiling suite is stronger evidence than any single happy-path observation could be."
+  },
   "PR2-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

@@ -30,9 +30,19 @@ incident stops every unattended fire within one poll interval (chat untouched, e
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed, audited against ARCC's default-deny principle
+
+**Code evidence:**
+
+- tests/test_guardrails_floor.py and tests/test_baseline_denylist_integrity.py pass (part of the 333-passed run)
+- tests/test_egress_deny_survives_a_config_error.py passes — and its docstring records a REAL past defect with its fix: on a config-read exception the code dropped deny_hosts along with allow_hosts, so a transient error silently un-denied a host the operator had explicitly denied. Fixed by remembering the last successfully-observed deny list, reusing it on a later failure, and logging at WARNING
+- the assertions run through guard.evaluate — the call site an egress actually passes through — rather than only checking the policy object carries a tuple
+
+**Notes:** This is the atom ARCC's guidance actually bears on. I checked ARCC first (per the standing rule) and its returned content was entirely AWS-infrastructure-scoped — VPC no-internet-egress, ENI exposure, Federate allowlists, Kibana dashboards — none of which maps to a self-hosted agent's chokepoint. The ONE transferable principle is default-deny and never-an-empty-allowlist, and the fail-closed rail above is precisely that property, asserted in the dangerous direction. Recording that ARCC was consulted and that its content did not apply, rather than inventing policy it does not contain.
 
 ## Recorded history
 

@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- part of the 333-passed run
+
+**Notes:** PARTIAL, and cross-repo by its own title: the apps-repo guardrails follow-ons live in PersonalClawApps, which this audit has not touched. dag.json also lists AG-9 among the startable atoms in the workspace roadmap's next-up list, so its status is worth the owner's eye independently of my verdict.
 
 ## Recorded history
 

@@ -33,9 +33,17 @@ an app-contributed action inherits its declared floor/ceiling with no dispatch-l
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- part of the 333-passed run
+
+**Notes:** PARTIAL: action-type declarations plus a manifest autonomy block need an APP declaring them. No app installed in this home — the same blocker that held INU-7 and INU-8.
 
 ## Recorded history
 

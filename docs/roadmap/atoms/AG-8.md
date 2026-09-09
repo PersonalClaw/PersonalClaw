@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- the FE deliverable exists and is documented: web/src/ui/RungChip.doc.ts sits beside its component, so the chip is part of PL-5's ui-docs corpus rather than an undocumented one-off
+- part of the 333-passed run
+
+**Notes:** PARTIAL: rung chips and the ladder panel only render once a rung has been EARNED, which requires accumulated autonomous behaviour this home has none of. The component is present and documented; its populated state is unvalidated.
 
 ## Recorded history
 

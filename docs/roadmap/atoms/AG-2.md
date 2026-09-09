@@ -30,9 +30,17 @@ a per-minute trigger hitting its per-day token/dollar ceiling pauses into needs-
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- tests/test_guardrails_budgets.py and tests/test_guardrails_flags.py pass (part of the 333-passed run)
+
+**Notes:** Budgets, outbound scan and GuardrailsConfig are enforcement paths with no screen of their own.
 
 ## Recorded history
 

@@ -28,9 +28,17 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- tests/test_guardrails_model_call.py passes (part of 333 tests passing across eleven AG modules)
+
+**Notes:** The model-call chokepoint and breaker are pre-model-call machinery, so their own suite is the right instrument. Confirmed on that rather than on the plan's log.
 
 ## Recorded history
 

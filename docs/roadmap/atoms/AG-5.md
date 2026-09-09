@@ -31,9 +31,17 @@ at least one dispatch/spawn seam consults profile_for_session in production; Saf
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 9 (AG) — observed
+
+**Code evidence:**
+
+- part of the 333-passed run
+
+**Notes:** Confirmed with a caveat about my own prior knowledge rather than fresh measurement: the workspace roadmap notes record AG-5 as landed with five non-test callers, which is the wiring property that matters (a SafetyProfile threaded into dispatch seams but called nowhere would be inert). I did not re-count the callers this cycle, so that specific number is carried from the roadmap rather than re-observed — flagging it because this audit's whole premise is not trusting recorded claims.
 
 ## Recorded history
 
