@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- src/personalclaw/legibility/context_router.py exists, with src/personalclaw/dashboard/handlers/context.py as its live route consumer — so the module is wired, not orphaned
+- tests/test_context_router.py present and passing (part of the 85-passed run)
+
+**Notes:** PARTIAL: the atom's write path (POST .../context-adapters/regenerate, which writes CLAUDE.md / AGENTS.md / .cursorrules) is gated behind legibility.context_adapters, DEFAULT OFF and 403 when off, so the frontend refresh button on the project hub cannot be driven without turning the gate on. That default is correct — a feature that rewrites a user's rule files should be opt-in — so the unvalidated clause is a consequence of good design, not a gap. I looked for context_router.py at src/personalclaw/ first and it was not there; the atom was right and my path guess was wrong.
 
 ## Recorded history
 
