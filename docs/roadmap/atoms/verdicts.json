@@ -1904,5 +1904,75 @@
     ],
     "ui_validated": "Not drivable: producing a new version from the side panel requires the agent, and no model is bound.",
     "notes": "Partial for the run only. The design choice is worth recording because a previous cycle found its inverse: AE-10 reuses an event that already had consumers, while BA-5 minted three new WS events and built no consumer at all. Same codebase, opposite outcomes, and the difference is whether the frontend was part of the atom."
+  },
+  "TSE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 18 (TSE) — DRIVEN in a real browser",
+    "evidence": [
+      "identity.py:80 current_username() reads the username from SERVER-SIDE config — there is no request field to spoof, which is what makes the attribution un-spoofable by construction rather than by validation",
+      "the same function 'never raises': attribution is a nice-to-have on every write path that calls it, 'so a config problem must degrade to \"no attribution\" rather than failing the write it was decorating'",
+      "identity.py:40-67 slugify_username decomposes accents, lowercases, collapses separators, caps the length and re-trims so a truncated slug never ends on a separator",
+      "web/src/pages/settings/AccountPanel.tsx:38-60 the Username control with its own save + error path; tasks/models.py:234-235 Task.author/assignee",
+      "54 tests pass across test_task_ownership.py + test_memory_contributor.py"
+    ],
+    "ui_validated": "Confirmed end to end by typing. At #/settings/account the Username field explains itself in one sentence — 'A short handle stamped onto things you create (tasks, comments) so contributions stay attributable later… It's a label, not a login. Leave it empty to keep records unattributed.' I typed 'Keyur Golani!' and saved; a FULL page load came back showing 'keyur-golani', and config.json on disk holds 'keyur-golani' — space to hyphen, bang dropped, lowercased. Then the seeded task took author='keyur-golani' from that same value, so config to identity to attribution is proven as one chain rather than three claims.",
+    "notes": "'It's a label, not a login' is the ownership module's 'not a credential' ruling surfaced to the user in one line, and the panel keeps the real credential in a separate section ('Sign in from outside your network'). Code and UI agree on the semantics, which is what stops a future reader mistaking author for an authorization field."
+  },
+  "TSE-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 18 (TSE) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/tasks/TasksListPage.tsx:298-308 pushes the Assigned lens only when 'owner && foreign > 0', with the reason stated: on a single-user install 'the filter would be a control that can only ever be a no-op'",
+      ":70-72 isMine treats an unattributed task as the owner's ('An unattributed task belongs to nobody in particular')",
+      "tasks/models.py:301-311 belongs_to falls back to the author when a task is UNASSIGNED, 'because \"I wrote it\"' is the honest answer for an unassigned row",
+      "part of the 54-passed ownership run"
+    ],
+    "ui_validated": "Seeded one owner task and one alice-authored task through the shipped provider, then drove #/tasks. The foreign row renders with an accessible assignee chip — generic \"Assigned to alice\" — while mine carries its own. Opening 'Filter & sort' revealed the Assigned lens with CORRECT COUNTS: 'Everyone 3' and 'Mine 2' against three tasks of which one is foreign. Clicking 'Mine' and closing the popover dropped alice's task from the list entirely, leaving my own plus an older unattributed probe task (which reads as mine by the documented rule).",
+    "notes": "Two hypotheses collapsed here, both mine. First the lens looked absent — because it is a SECTION of the filter popover, not a page-level control, exactly as the code says; searching the rendered tree with the popover closed cannot see it. Then alice's task looked like it survived the filter — because the snapshot was taken with the popover still overlaying a not-yet-recomputed list. Closing it showed zero alice rows. Neither was worth filing; both were worth recording, because the same mistake shape (reading a surface that is not the one the feature lives on) has now produced three near-misses in three cycles."
+  },
+  "TSE-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 18 (TSE) — DRIVEN in a real browser",
+    "evidence": [
+      "vector_memory.py:505-527 the migration adds contributor to BOTH record tables via ALTER TABLE with a DEFAULT '' and creates idx_semantic_contributor",
+      ":641-660 _owner_rank_bonus is an ORDERING term only, and the no-username case returns the bonus UNIFORMLY so it is 'a no-op on ordering, which is exactly today's behavior' — that uniformity is what keeps owner-preference out of ADMISSION, which is the atom's hardest clause",
+      "the same docstring handles the unattributed case with its consequence named: treating pre-column records as foreign 'would demote a solo user's entire memory below nothing at all on the first run after upgrading'",
+      ":663-670 _contributor_label labels ONLY foreign records, because labeling the owner's own 'would put \"(from keyur-golani)\" on every line of a single-user install — noise that makes the one case the label exists for harder to spot, not easier'",
+      "memory_service.py:1484 applies the bonus in the sort key and :1667 carries the contributor through recall as metadata",
+      "part of the 54-passed run"
+    ],
+    "ui_validated": "Not driven: a labeled foreign recall needs memories from two contributors plus a recall pass, and recall extraction is one of the model-gated paths in this home.",
+    "notes": "'Never raises: a ranking nudge must not be why a recall fails' is the same fail-safe direction identity.py takes for attribution, applied to ordering. Three modules in this plan now state the same rule in their own terms, which is why the plan reads as one decision rather than five."
+  },
+  "TSE-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 18 (TSE) — DRIVEN in a real browser",
+    "evidence": [
+      "triggers/ownership.py:1-30 is the clearest statement of intent in the plan. STRUCTURAL: 'the foreign row is never in the candidate set', so a foreign row 'never reaches due_ids, by_id, a poll loop's output or a chain lookup — there is no code path that could decide to fire it, because nothing downstream ever holds it'",
+      "FOREIGN_AUTHOR is a NAMED constant 'because two spellings of the same refusal read as two different mechanisms to whoever greps for it later'",
+      "tests/test_triggers_ownership.py pairs every deny with its matching allow: a foreign row is absent from the tick candidate set AND 'the owners due row still fires beside a foreign one'; boot does not rearm a foreign row AND boot still rearms the owner's. An over-broad filter that armed nothing would red just as loudly as a leaky one",
+      "test_the_poll_loops_and_chain_lookups_all_drop_foreign_rows covers the PLURAL paths in one assertion, which is the sibling-branch completeness problem stated as a test",
+      "old-shape rows are covered three ways: author survives the store round trip, a row with no author key parses AND arms, and no unknown-field warning fires for author",
+      "64 tests pass across test_triggers_ownership.py + test_trigger_sources.py + test_manifest_types_match_handlers.py"
+    ],
+    "notes": "🪤 MY FAIL-OPEN CONCERN COLLAPSED, and the module had already answered it. current_username() degrades to '' on an unreadable config, and '' reads as the owner's, so a transient config failure widens the arm set — which looks like an isolation control failing open. ownership.py's last paragraph settles it: 'Not a credential… This filter is a scoping decision about whose work this machine performs, not an authorization check — a foreign row is refused because running somebody else's automation on the owner's machine is wrong by intent, not because the string was authenticated.' Treating author as a security boundary would be the actual error, since it is an unauthenticated attribution string. The empty-author case is likewise argued rather than assumed: treating pre-field rows as foreign 'would silently stop every automation on every existing install the moment this lands', and 'a provider that wants its rows treated as foreign must SAY whose they are'. ARCC was queried first and returned only Entra ID / Azure directory detections — cloud-identity controls with no application-level analogue here. Its transferable objective (a guest identity must not exceed its intended scope) is an AUTHORIZATION objective, and this module explicitly declines to be an authorization control, so TSE is neither satisfying nor violating it; the honest record is that the mechanism sits outside ARCC's frame and the code says so in as many words."
+  },
+  "TSE-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 18 (TSE) — DRIVEN in a real browser",
+    "evidence": [
+      "../PersonalClawApps/shared-automations/ ships as a real app: app.json declaring provider {type: 'trigger', implementation: 'provider:create_provider', capabilities: ['rows','write-back']} with a settingsSchema, plus provider.py, test_provider.py, README.md, LICENSE and an example fixture file",
+      "permissions are exactly {'storage': True} — no network, no exec — which is the minimum the atom's install-consent surface should show",
+      "the fixture set matches the clause row for row: 5 owner rows (author '') covering clock-driven workflow/automation/prompt/task kinds plus a run_completed chain, and 2 alice rows for the visible-but-inert proof",
+      "22 tests pass in the app's own test_provider.py",
+      "the seam side is already proven core-side: test_a_registered_providers_rows_join_the_listing_but_not_the_arm_path"
+    ],
+    "ui_validated": "Not driven: the app is not installed in this validation home, and the atom's clause is that each owner trigger AUTONOMOUSLY FIRES a workflow, automation, prompt and action — the prompt kind needs a bound model, and the rest need the app installed and a tick to elapse.",
+    "notes": "Partial for the firing, not for the packaging. Everything checkable without a running install checks out, including the two things most likely to be fudged: the permission set is genuinely minimal, and the alice fixtures exist rather than being described. Worth noting the app clone here is named PersonalClawApps, so the core rail that would cover an app bundle (test_acp_bundles.py) skips in this tree with 'workspace apps/ dir not present' — the same environmental blind spot recorded for BA-8."
   }
 }

@@ -32,9 +32,22 @@ TriggerStore interface extracted from TriggerService (list/get/upsert/delete + c
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 18 (TSE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- triggers/ownership.py:1-30 is the clearest statement of intent in the plan. STRUCTURAL: 'the foreign row is never in the candidate set', so a foreign row 'never reaches due_ids, by_id, a poll loop's output or a chain lookup — there is no code path that could decide to fire it, because nothing downstream ever holds it'
+- FOREIGN_AUTHOR is a NAMED constant 'because two spellings of the same refusal read as two different mechanisms to whoever greps for it later'
+- tests/test_triggers_ownership.py pairs every deny with its matching allow: a foreign row is absent from the tick candidate set AND 'the owners due row still fires beside a foreign one'; boot does not rearm a foreign row AND boot still rearms the owner's. An over-broad filter that armed nothing would red just as loudly as a leaky one
+- test_the_poll_loops_and_chain_lookups_all_drop_foreign_rows covers the PLURAL paths in one assertion, which is the sibling-branch completeness problem stated as a test
+- old-shape rows are covered three ways: author survives the store round trip, a row with no author key parses AND arms, and no unknown-field warning fires for author
+- 64 tests pass across test_triggers_ownership.py + test_trigger_sources.py + test_manifest_types_match_handlers.py
+
+**Notes:** 🪤 MY FAIL-OPEN CONCERN COLLAPSED, and the module had already answered it. current_username() degrades to '' on an unreadable config, and '' reads as the owner's, so a transient config failure widens the arm set — which looks like an isolation control failing open. ownership.py's last paragraph settles it: 'Not a credential… This filter is a scoping decision about whose work this machine performs, not an authorization check — a foreign row is refused because running somebody else's automation on the owner's machine is wrong by intent, not because the string was authenticated.' Treating author as a security boundary would be the actual error, since it is an unauthenticated attribution string. The empty-author case is likewise argued rather than assumed: treating pre-field rows as foreign 'would silently stop every automation on every existing install the moment this lands', and 'a provider that wants its rows treated as foreign must SAY whose they are'. ARCC was queried first and returned only Entra ID / Azure directory detections — cloud-identity controls with no application-level analogue here. Its transferable objective (a guest identity must not exceed its intended scope) is an AUTHORIZATION objective, and this module explicitly declines to be an authorization control, so TSE is neither satisfying nor violating it; the honest record is that the mechanism sits outside ARCC's frame and the code says so in as many words.
 
 ## Recorded history
 

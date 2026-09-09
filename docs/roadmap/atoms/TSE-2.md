@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 18 (TSE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/tasks/TasksListPage.tsx:298-308 pushes the Assigned lens only when 'owner && foreign > 0', with the reason stated: on a single-user install 'the filter would be a control that can only ever be a no-op'
+- :70-72 isMine treats an unattributed task as the owner's ('An unattributed task belongs to nobody in particular')
+- tasks/models.py:301-311 belongs_to falls back to the author when a task is UNASSIGNED, 'because "I wrote it"' is the honest answer for an unassigned row
+- part of the 54-passed ownership run
+
+**Driven in the UI:** Seeded one owner task and one alice-authored task through the shipped provider, then drove #/tasks. The foreign row renders with an accessible assignee chip — generic "Assigned to alice" — while mine carries its own. Opening 'Filter & sort' revealed the Assigned lens with CORRECT COUNTS: 'Everyone 3' and 'Mine 2' against three tasks of which one is foreign. Clicking 'Mine' and closing the popover dropped alice's task from the list entirely, leaving my own plus an older unattributed probe task (which reads as mine by the documented rule).
+
+**Notes:** Two hypotheses collapsed here, both mine. First the lens looked absent — because it is a SECTION of the filter popover, not a page-level control, exactly as the code says; searching the rendered tree with the popover closed cannot see it. Then alice's task looked like it survived the filter — because the snapshot was taken with the popover still overlaying a not-yet-recomputed list. Closing it showed zero alice rows. Neither was worth filing; both were worth recording, because the same mistake shape (reading a surface that is not the one the feature lives on) has now produced three near-misses in three cycles.
 
 ## Recorded history
 

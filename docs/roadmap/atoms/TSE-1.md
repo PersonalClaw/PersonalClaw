@@ -28,9 +28,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 18 (TSE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- identity.py:80 current_username() reads the username from SERVER-SIDE config — there is no request field to spoof, which is what makes the attribution un-spoofable by construction rather than by validation
+- the same function 'never raises': attribution is a nice-to-have on every write path that calls it, 'so a config problem must degrade to "no attribution" rather than failing the write it was decorating'
+- identity.py:40-67 slugify_username decomposes accents, lowercases, collapses separators, caps the length and re-trims so a truncated slug never ends on a separator
+- web/src/pages/settings/AccountPanel.tsx:38-60 the Username control with its own save + error path; tasks/models.py:234-235 Task.author/assignee
+- 54 tests pass across test_task_ownership.py + test_memory_contributor.py
+
+**Driven in the UI:** Confirmed end to end by typing. At #/settings/account the Username field explains itself in one sentence — 'A short handle stamped onto things you create (tasks, comments) so contributions stay attributable later… It's a label, not a login. Leave it empty to keep records unattributed.' I typed 'Keyur Golani!' and saved; a FULL page load came back showing 'keyur-golani', and config.json on disk holds 'keyur-golani' — space to hyphen, bang dropped, lowercased. Then the seeded task took author='keyur-golani' from that same value, so config to identity to attribution is proven as one chain rather than three claims.
+
+**Notes:** 'It's a label, not a login' is the ownership module's 'not a credential' ruling surfaced to the user in one line, and the panel keeps the real credential in a separate section ('Sign in from outside your network'). Code and UI agree on the semantics, which is what stops a future reader mistaking author for an authorization field.
 
 ## Recorded history
 

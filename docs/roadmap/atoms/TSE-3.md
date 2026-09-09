@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 18 (TSE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- vector_memory.py:505-527 the migration adds contributor to BOTH record tables via ALTER TABLE with a DEFAULT '' and creates idx_semantic_contributor
+- :641-660 _owner_rank_bonus is an ORDERING term only, and the no-username case returns the bonus UNIFORMLY so it is 'a no-op on ordering, which is exactly today's behavior' — that uniformity is what keeps owner-preference out of ADMISSION, which is the atom's hardest clause
+- the same docstring handles the unattributed case with its consequence named: treating pre-column records as foreign 'would demote a solo user's entire memory below nothing at all on the first run after upgrading'
+- :663-670 _contributor_label labels ONLY foreign records, because labeling the owner's own 'would put "(from keyur-golani)" on every line of a single-user install — noise that makes the one case the label exists for harder to spot, not easier'
+- memory_service.py:1484 applies the bonus in the sort key and :1667 carries the contributor through recall as metadata
+- part of the 54-passed run
+
+**Driven in the UI:** Not driven: a labeled foreign recall needs memories from two contributors plus a recall pass, and recall extraction is one of the model-gated paths in this home.
+
+**Notes:** 'Never raises: a ranking nudge must not be why a recall fails' is the same fail-safe direction identity.py takes for attribution, applied to ordering. Three modules in this plan now state the same rule in their own terms, which is why the plan reads as one decision rather than five.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 79 | `done_when` checked against the code and it holds |
-| `partial` | 98 | some `done_when` clauses hold, others do not |
+| `confirmed` | 83 | `done_when` checked against the code and it holds |
+| `partial` | 99 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 505 | not yet checked |
+| `unaudited` | 500 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -889,11 +889,11 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`TSE-1`](TSE-1.md) | `done` | `unaudited` | Owner identity: username at first boot + attribution fields + invisible-single-user migration test |
-| [`TSE-2`](TSE-2.md) | `done` | `unaudited` | Task multi-user tolerance: assignee display, mine-vs-everyone filter, MINE-only counters/pickers |
-| [`TSE-3`](TSE-3.md) | `done` | `unaudited` | Memory contributor provenance: labeled+fenced recall, owner-weighted ranking, attributed writes; knowledge label passthrough |
-| [`TSE-4`](TSE-4.md) | `done` | `unaudited` | TriggerStore provider seam: new `trigger` provider type + handler, owner-filter at arm time, foreign-trigger read-only rendering |
-| [`TSE-5`](TSE-5.md) | `done` | `unaudited` | Proof-of-concept trigger-provider app: owner triggers autonomously fire workflow/automation/prompt/action; second-username inert fixtures |
+| [`TSE-1`](TSE-1.md) | `done` | `confirmed` | Owner identity: username at first boot + attribution fields + invisible-single-user migration test |
+| [`TSE-2`](TSE-2.md) | `done` | `confirmed` | Task multi-user tolerance: assignee display, mine-vs-everyone filter, MINE-only counters/pickers |
+| [`TSE-3`](TSE-3.md) | `done` | `confirmed` | Memory contributor provenance: labeled+fenced recall, owner-weighted ranking, attributed writes; knowledge label passthrough |
+| [`TSE-4`](TSE-4.md) | `done` | `confirmed` | TriggerStore provider seam: new `trigger` provider type + handler, owner-filter at arm time, foreign-trigger read-only rendering |
+| [`TSE-5`](TSE-5.md) | `done` | `partial` | Proof-of-concept trigger-provider app: owner triggers autonomously fire workflow/automation/prompt/action; second-username inert fixtures |
 
 ### `WF2AUT` — WORKFLOWS-V2-AUTOMATION-SUBSTRATE (14/14 done)
 

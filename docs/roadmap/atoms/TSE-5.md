@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 18 (TSE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- ../PersonalClawApps/shared-automations/ ships as a real app: app.json declaring provider {type: 'trigger', implementation: 'provider:create_provider', capabilities: ['rows','write-back']} with a settingsSchema, plus provider.py, test_provider.py, README.md, LICENSE and an example fixture file
+- permissions are exactly {'storage': True} — no network, no exec — which is the minimum the atom's install-consent surface should show
+- the fixture set matches the clause row for row: 5 owner rows (author '') covering clock-driven workflow/automation/prompt/task kinds plus a run_completed chain, and 2 alice rows for the visible-but-inert proof
+- 22 tests pass in the app's own test_provider.py
+- the seam side is already proven core-side: test_a_registered_providers_rows_join_the_listing_but_not_the_arm_path
+
+**Driven in the UI:** Not driven: the app is not installed in this validation home, and the atom's clause is that each owner trigger AUTONOMOUSLY FIRES a workflow, automation, prompt and action — the prompt kind needs a bound model, and the rest need the app installed and a tick to elapse.
+
+**Notes:** Partial for the firing, not for the packaging. Everything checkable without a running install checks out, including the two things most likely to be fudged: the permission set is genuinely minimal, and the alice fixtures exist rather than being described. Worth noting the app clone here is named PersonalClawApps, so the core rail that would cover an app bundle (test_acp_bundles.py) skips in this tree with 'workspace apps/ dir not present' — the same environmental blind spot recorded for BA-8.
 
 ## Recorded history
 
