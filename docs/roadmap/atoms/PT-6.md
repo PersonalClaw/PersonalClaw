@@ -33,9 +33,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 THE ZERO-RESIDUE CLAUSE DRIVEN TO ITS DECISIVE POINT: after switching back to the default AND a full reload, title is 'PersonalClaw', favicon is '/claw.svg', data-personality is 'personalclaw', and the count of elements carrying data-shell-element is 0. Every one of the four things the clause names — title, favicon, name, DOM — restored
+- the on-disk end state is clean too: agent.bot_name is empty in the home's config, so the validation home is left as found
+- the design and personality suites pass 251/251, and the a11y suite's own rails were falsified and restored this cycle
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** Drove the switch, the reload, the switch back and the reload — the residue check is the part of this clause that matters most and it passed on all four surfaces. NOT driven: the full tour across chat and error states, sounds on, reduced-motion on, and light mode; and the e2e a11y run, which needs the Playwright suite rather than ad-hoc driving.
+
+**Notes:** Partial for the tour's breadth rather than for its substance. The residue half is the one a user would notice — a theme that leaves a changed tab title or a stuck favicon after being turned off is the failure people actually report — and it is the half that was driven. One process note: I first clicked what I thought was the default personality and nothing happened; I had grabbed the LAST matching element reference, which was the already-active entry. My selection error, corrected by reading the snapshot rather than the match list.
 
 ## Recorded history
 

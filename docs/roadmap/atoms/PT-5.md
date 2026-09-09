@@ -33,9 +33,25 @@ claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 FALSIFIED THE RAIL THIS ATOM SHIPS: replaced one personality's shellElement with an id that resolves nowhere, and personalityA11y went red on EXACTLY ONE rail — 'shellElement — names a shellElement that resolves in its closed map', 1 failed / 52 passed. Reverted; 53/53
+- 🔑 THE SUITE IS BIDIRECTIONAL AND SAYS SO: 'every rail has a falsifying fixture, and every fixture a rail' — no rail without a mutation proving it, no mutation without a rail
+- 🔑 THE VACUITY FLOOR IN ITS CLEAREST FORM ANYWHERE IN THIS CAMPAIGN: 'the base fixture is itself CLEAN — or every mutation below proves nothing'. If the base already violated a rail, every mutation-makes-it-red assertion would be meaningless
+- the closed-map coverage the clause asks for is present: unknown base scheme, dangling shellElement and errorTreatment ids, and cue voices reachable only through a cue point; plus 'an unknown or removed id falls back to the default, never a broken state'
+- 🔑 THE DEFAULT IS PINNED AS THE NULL IDENTITY: 'the default carries no assistant rename' and 'the default declares no cue voice, no dial, no shell element, no treatment' — so today's experience cannot drift by someone adding a behavior to the default entry
+- DRIVEN: claw-arcade is present and switchable in the picker with its own persona ('calls itself CLAW-1'), alongside retro-terminal
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** Both proof personalities present and switchable; the retro-terminal one driven end to end.
+
+**Notes:** Sixth vacuity floor in this campaign and the best-articulated one. The two assertions together — every rail has a falsifying fixture, and the base fixture is clean — are what make a 53-test suite evidence rather than decoration.
 
 ## Recorded history
 

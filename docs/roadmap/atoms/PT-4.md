@@ -31,9 +31,21 @@ ErrorBoundary fallback and IncidentBanner accept an optional visual variant id f
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 THE SKIN-ONLY GUARANTEE IS ENFORCED BY THE TYPE'S SHAPE, and the docstring says so: an errorTreatment is 'an id from the closed ERROR_TREATMENTS map. Presentation only: THE SHAPE OF A TREATMENT HAS NO ROOM FOR COPY, ACTIONS OR ROLES, so a personality CANNOT REWORD OR DISARM A FAILURE. Omitted = today's treatment, unchanged'
+- the a11y suite carries the dangling-id rail for this map as well as for shell elements, so a treatment id that does not resolve fails
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** Not driven: the clause requires a FORCED error under each personality (an ErrorBoundary fallback and an IncidentBanner), which needs a deliberate crash or a real incident.
+
+**Notes:** This is the highest-stakes of the three closed maps and the reasoning is the sharpest. A theme that could restyle an error is harmless; a theme that could reword one could make a failure read as success, and a theme that could change its actions could remove the recovery. Making copy, actions and role UNREPRESENTABLE in the treatment shape is why the skin can be handed to an identity at all.
 
 ## Recorded history
 

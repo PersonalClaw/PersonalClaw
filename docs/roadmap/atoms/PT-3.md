@@ -31,9 +31,22 @@ SHELL_ELEMENTS closed {id -> lazy component} map added to personalities.ts; web/
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 DRIVEN, and the contract measured on the live element: under Retro Terminal the shell slot holds data-shell-element='terminal-scanlines' with aria-hidden='true' and a COMPUTED pointer-events of 'none' — checked as computed style, not as a class name
+- 🔑 THE CLOSED MAP'S DOCSTRING STATES WHAT THE CLOSURE MAKES IMPOSSIBLE: a shellElement is 'an id from the closed SHELL_ELEMENTS map, NEVER A COMPONENT REFERENCE AND NEVER MARKUP', and the map's contract means 'a shell element cannot be reached by a pointer or by assistive tech, so it can add atmosphere but NOT CONTENT, NOT A CONTROL, AND NOT A SECOND READING ORDER'
+- MEASURED: switching back to the default leaves ZERO elements carrying data-shell-element, so the mount is scoped to its personality rather than sticky
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** Mounted under its personality with the aria/pointer contract verified live, and absent under the default.
+
+**Notes:** 🔑 THE CAMPAIGN'S CORE PRINCIPLE, ARRIVED AT A NINTH TIME AND IN ITS MOST STRUCTURAL FORM: the extension point is an ID INTO A CLOSED MAP, so the dangerous capabilities are UNREPRESENTABLE rather than merely disallowed. Every earlier instance was a runtime gate — a task-mode check, a permission clamp, a host authority. This one is the type system: there is no way to express 'mount my own markup', so no gate is needed to refuse it.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 269 | `done_when` checked against the code and it holds |
-| `partial` | 177 | some `done_when` clauses hold, others do not |
+| `confirmed` | 272 | `done_when` checked against the code and it holds |
+| `partial` | 180 | some `done_when` clauses hold, others do not |
 | `contradicted` | 5 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 231 | not yet checked |
+| `unaudited` | 225 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -792,12 +792,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PT-1`](PT-1.md) | `done` | `unaudited` | S1: personality registry + identity behaviors + persona-snippet backend generalization |
-| [`PT-2`](PT-2.md) | `done` | `unaudited` | S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points |
-| [`PT-3`](PT-3.md) | `done` | `unaudited` | S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell |
-| [`PT-4`](PT-4.md) | `done` | `unaudited` | S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only) |
-| [`PT-5`](PT-5.md) | `done` | `unaudited` | S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps |
-| [`PT-6`](PT-6.md) | `done` | `unaudited` | S2: V2 end-to-end user validation + full CI gate across both personalities and all modes |
+| [`PT-1`](PT-1.md) | `done` | `confirmed` | S1: personality registry + identity behaviors + persona-snippet backend generalization |
+| [`PT-2`](PT-2.md) | `done` | `partial` | S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points |
+| [`PT-3`](PT-3.md) | `done` | `confirmed` | S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell |
+| [`PT-4`](PT-4.md) | `done` | `partial` | S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only) |
+| [`PT-5`](PT-5.md) | `done` | `confirmed` | S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps |
+| [`PT-6`](PT-6.md) | `done` | `partial` | S2: V2 end-to-end user validation + full CI gate across both personalities and all modes |
 
 ### `PUBL` — PUBLICATION (9/10 done)
 

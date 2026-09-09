@@ -31,9 +31,22 @@ web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and pl
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 DRIVEN: the master toggle exists in the Personality picker and renders as `switch "Sound cues"` WITHOUT [checked] — default OFF, observed rather than read
+- 🔑 THE GATE'S EXCLUSIVITY IS CENSUSED, not asserted (personalityA11y.test.ts): 'playCue is the ONLY caller of synth — no second, ungated path', 'playCue checks all three suppressors BEFORE it reaches the synth', 'the synthesiser and the recipes-to-sound path are module-private', 'no module outside the cue module can synthesise a tone', and 'the source sweep is real: exactly one module synthesises, and it is the cue module'
+- the registry's own docstring names what the closure forbids: a personality 'can change what a moment sounds like but CANNOT ADD A MOMENT, cannot author a tone, and cannot make sound the master toggle hasn't allowed'
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** The toggle and its default state were driven. Audio itself is not observable through this harness, and the three cue points need a settled turn, an approval request and an error toast — none producible without a bound model.
+
+**Notes:** The five-assertion census around playCue is what makes the toggle trustworthy: a master switch matters only if there is exactly one path to the synthesiser, and 'exactly one module synthesises' is a claim a sweep can check while 'we always call playCue' is not.
 
 ## Recorded history
 

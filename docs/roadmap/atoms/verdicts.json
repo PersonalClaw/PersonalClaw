@@ -5461,5 +5461,87 @@
       "python -m harness validate 15/15 specs; harness replay 4 scenarios within baseline; harness scan 2 advisory warnings"
     ],
     "notes": "🔑 THE MISSING PIECE IS AN ANTI-REGROWTH RAIL, IN THE ONE PLAN THAT BUILDS THOSE FOR A LIVING. The retirement happened — the script is gone, the trigger is rebound, and the migration reasoning is written in both selfqa modules. What is missing is the check that keeps it gone: nothing fails if someone re-adds a commit-watch cron script beside the trigger that replaced it, which is exactly the regrowth the provider-boundary plan's residue sweep exists to prevent for vendor imports. A one-rule spec would close it, and this plan already ships nine of them. Partial rather than confirmed because the clause's precondition is met, so the rule is due rather than deferred."
+  },
+  "PT-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 DRIVEN THROUGH THE WHOLE IDENTITY SWAP AND MEASURED ON THE DOCUMENT, not on the picker. Before: title 'PersonalClaw', favicon '/claw.svg', data-personality 'personalclaw'. After switching to Retro Terminal: title 'TERM://PersonalClaw', favicon '/icons/personality-retro-terminal.svg', data-personality 'retro-terminal'",
+      "🔑 IT SURVIVES A FULL RELOAD: all three readings identical after reload, so the swap is persisted state rather than in-memory decoration",
+      "🔑 THE PROPOSE-DON'T-WRITE CLAUSE IS A REAL CONSENT GATE, driven: clicking a personality opens a dialog that (a) states what changes immediately and that it is reversible — 'The colors, wordmark, tab title, density, and motion dials change right away — pick another personality any time to change them back' — and (b) puts the CONFIG WRITE behind its own switch, NAMING THE KEY: 'Also rename the assistant to TERM … This writes `agent.bot_name`, which the assistant uses to refer to itself. Turn it off to keep the name you have.'",
+      "the picker's own intro makes the same promise the dialog keeps: 'picking one never changes your saved configuration without asking'",
+      "the phosphor scheme passes schemeContrast.test.ts inside the 251, i.e. AA in both modes without the contrast rail being relaxed to admit it",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "Switch, reload, and the on-document readings at each step.",
+    "notes": "🪤 A FINDING COLLAPSED HERE, and the shape is new to this campaign: I clicked Retro Terminal, measured the document, and saw NOTHING had changed — which read as a dead picker. What I had actually hit was the consent dialog I had not yet confirmed. Eleventh collapsed finding, and the first where the apparent missing effect was a GATE I had not passed rather than a defect or a bad probe. Separating the immediate-and-reversible visual change from the persistent config write, with the key named in the sentence that asks, is the strongest form of propose-don't-write I have audited."
+  },
+  "PT-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 DRIVEN: the master toggle exists in the Personality picker and renders as `switch \"Sound cues\"` WITHOUT [checked] — default OFF, observed rather than read",
+      "🔑 THE GATE'S EXCLUSIVITY IS CENSUSED, not asserted (personalityA11y.test.ts): 'playCue is the ONLY caller of synth — no second, ungated path', 'playCue checks all three suppressors BEFORE it reaches the synth', 'the synthesiser and the recipes-to-sound path are module-private', 'no module outside the cue module can synthesise a tone', and 'the source sweep is real: exactly one module synthesises, and it is the cue module'",
+      "the registry's own docstring names what the closure forbids: a personality 'can change what a moment sounds like but CANNOT ADD A MOMENT, cannot author a tone, and cannot make sound the master toggle hasn't allowed'",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "The toggle and its default state were driven. Audio itself is not observable through this harness, and the three cue points need a settled turn, an approval request and an error toast — none producible without a bound model.",
+    "notes": "The five-assertion census around playCue is what makes the toggle trustworthy: a master switch matters only if there is exactly one path to the synthesiser, and 'exactly one module synthesises' is a claim a sweep can check while 'we always call playCue' is not."
+  },
+  "PT-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 DRIVEN, and the contract measured on the live element: under Retro Terminal the shell slot holds data-shell-element='terminal-scanlines' with aria-hidden='true' and a COMPUTED pointer-events of 'none' — checked as computed style, not as a class name",
+      "🔑 THE CLOSED MAP'S DOCSTRING STATES WHAT THE CLOSURE MAKES IMPOSSIBLE: a shellElement is 'an id from the closed SHELL_ELEMENTS map, NEVER A COMPONENT REFERENCE AND NEVER MARKUP', and the map's contract means 'a shell element cannot be reached by a pointer or by assistive tech, so it can add atmosphere but NOT CONTENT, NOT A CONTROL, AND NOT A SECOND READING ORDER'",
+      "MEASURED: switching back to the default leaves ZERO elements carrying data-shell-element, so the mount is scoped to its personality rather than sticky",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "Mounted under its personality with the aria/pointer contract verified live, and absent under the default.",
+    "notes": "🔑 THE CAMPAIGN'S CORE PRINCIPLE, ARRIVED AT A NINTH TIME AND IN ITS MOST STRUCTURAL FORM: the extension point is an ID INTO A CLOSED MAP, so the dangerous capabilities are UNREPRESENTABLE rather than merely disallowed. Every earlier instance was a runtime gate — a task-mode check, a permission clamp, a host authority. This one is the type system: there is no way to express 'mount my own markup', so no gate is needed to refuse it."
+  },
+  "PT-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 THE SKIN-ONLY GUARANTEE IS ENFORCED BY THE TYPE'S SHAPE, and the docstring says so: an errorTreatment is 'an id from the closed ERROR_TREATMENTS map. Presentation only: THE SHAPE OF A TREATMENT HAS NO ROOM FOR COPY, ACTIONS OR ROLES, so a personality CANNOT REWORD OR DISARM A FAILURE. Omitted = today's treatment, unchanged'",
+      "the a11y suite carries the dangling-id rail for this map as well as for shell elements, so a treatment id that does not resolve fails",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "Not driven: the clause requires a FORCED error under each personality (an ErrorBoundary fallback and an IncidentBanner), which needs a deliberate crash or a real incident.",
+    "notes": "This is the highest-stakes of the three closed maps and the reasoning is the sharpest. A theme that could restyle an error is harmless; a theme that could reword one could make a failure read as success, and a theme that could change its actions could remove the recovery. Making copy, actions and role UNREPRESENTABLE in the treatment shape is why the skin can be handed to an identity at all."
+  },
+  "PT-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 FALSIFIED THE RAIL THIS ATOM SHIPS: replaced one personality's shellElement with an id that resolves nowhere, and personalityA11y went red on EXACTLY ONE rail — 'shellElement — names a shellElement that resolves in its closed map', 1 failed / 52 passed. Reverted; 53/53",
+      "🔑 THE SUITE IS BIDIRECTIONAL AND SAYS SO: 'every rail has a falsifying fixture, and every fixture a rail' — no rail without a mutation proving it, no mutation without a rail",
+      "🔑 THE VACUITY FLOOR IN ITS CLEAREST FORM ANYWHERE IN THIS CAMPAIGN: 'the base fixture is itself CLEAN — or every mutation below proves nothing'. If the base already violated a rail, every mutation-makes-it-red assertion would be meaningless",
+      "the closed-map coverage the clause asks for is present: unknown base scheme, dangling shellElement and errorTreatment ids, and cue voices reachable only through a cue point; plus 'an unknown or removed id falls back to the default, never a broken state'",
+      "🔑 THE DEFAULT IS PINNED AS THE NULL IDENTITY: 'the default carries no assistant rename' and 'the default declares no cue voice, no dial, no shell element, no treatment' — so today's experience cannot drift by someone adding a behavior to the default entry",
+      "DRIVEN: claw-arcade is present and switchable in the picker with its own persona ('calls itself CLAW-1'), alongside retro-terminal",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "Both proof personalities present and switchable; the retro-terminal one driven end to end.",
+    "notes": "Sixth vacuity floor in this campaign and the best-articulated one. The two assertions together — every rail has a falsifying fixture, and the base fixture is clean — are what make a 53-test suite evidence rather than decoration."
+  },
+  "PT-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 48 (PT) — both personalities driven through switch, reload and residue check",
+    "evidence": [
+      "🔑 THE ZERO-RESIDUE CLAUSE DRIVEN TO ITS DECISIVE POINT: after switching back to the default AND a full reload, title is 'PersonalClaw', favicon is '/claw.svg', data-personality is 'personalclaw', and the count of elements carrying data-shell-element is 0. Every one of the four things the clause names — title, favicon, name, DOM — restored",
+      "the on-disk end state is clean too: agent.bot_name is empty in the home's config, so the validation home is left as found",
+      "the design and personality suites pass 251/251, and the a11y suite's own rails were falsified and restored this cycle",
+      "personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251"
+    ],
+    "ui_validated": "Drove the switch, the reload, the switch back and the reload — the residue check is the part of this clause that matters most and it passed on all four surfaces. NOT driven: the full tour across chat and error states, sounds on, reduced-motion on, and light mode; and the e2e a11y run, which needs the Playwright suite rather than ad-hoc driving.",
+    "notes": "Partial for the tour's breadth rather than for its substance. The residue half is the one a user would notice — a theme that leaves a changed tab title or a stuck favicon after being turned off is the failure people actually report — and it is the half that was driven. One process note: I first clicked what I thought was the default personality and nothing happened; I had grabbed the LAST matching element reference, which was the already-active entry. My selection error, corrected by reading the snapshot rather than the match list."
   }
 }

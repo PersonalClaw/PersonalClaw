@@ -28,9 +28,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 48 (PT) — both personalities driven through switch, reload and residue check
+
+**Code evidence:**
+
+- 🔑 DRIVEN THROUGH THE WHOLE IDENTITY SWAP AND MEASURED ON THE DOCUMENT, not on the picker. Before: title 'PersonalClaw', favicon '/claw.svg', data-personality 'personalclaw'. After switching to Retro Terminal: title 'TERM://PersonalClaw', favicon '/icons/personality-retro-terminal.svg', data-personality 'retro-terminal'
+- 🔑 IT SURVIVES A FULL RELOAD: all three readings identical after reload, so the swap is persisted state rather than in-memory decoration
+- 🔑 THE PROPOSE-DON'T-WRITE CLAUSE IS A REAL CONSENT GATE, driven: clicking a personality opens a dialog that (a) states what changes immediately and that it is reversible — 'The colors, wordmark, tab title, density, and motion dials change right away — pick another personality any time to change them back' — and (b) puts the CONFIG WRITE behind its own switch, NAMING THE KEY: 'Also rename the assistant to TERM … This writes `agent.bot_name`, which the assistant uses to refer to itself. Turn it off to keep the name you have.'
+- the picker's own intro makes the same promise the dialog keeps: 'picking one never changes your saved configuration without asking'
+- the phosphor scheme passes schemeContrast.test.ts inside the 251, i.e. AA in both modes without the contrast rail being relaxed to admit it
+- personalityA11y 53/53 (falsified: a dangling shellElement id reds exactly one rail); design+personality suites 251/251
+
+**Driven in the UI:** Switch, reload, and the on-document readings at each step.
+
+**Notes:** 🪤 A FINDING COLLAPSED HERE, and the shape is new to this campaign: I clicked Retro Terminal, measured the document, and saw NOTHING had changed — which read as a dead picker. What I had actually hit was the consent dialog I had not yet confirmed. Eleventh collapsed finding, and the first where the apparent missing effect was a GATE I had not passed rather than a defect or a bad probe. Separating the immediate-and-reversible visual change from the persistent config write, with the key named in the sentence that asks, is the strongest form of propose-don't-write I have audited.
 
 ## Recorded history
 
