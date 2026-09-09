@@ -23,6 +23,8 @@ import json
 import sys
 from pathlib import Path
 
+from regen_dag_derived import render_readme
+
 CORE = Path(__file__).resolve().parents[1]
 ATOMIC = CORE / "docs/roadmap/atomic"
 PLANS = CORE / "docs/roadmap/plans"
@@ -94,68 +96,16 @@ def write_plan_files(data: dict) -> int:
 
 
 def write_readme(data: dict) -> None:
-    dag = data.get("dag") or {}
-    plans = data["plans"]
-    atoms = [a for p in plans for a in (p.get("atoms") or [])]
-    done = sum(1 for a in atoms if a.get("status") == "done")
-    ready = dag.get("ready_frontier") or []
-    topo = dag.get("topo_order") or []
+    """Write the catalog front page.
 
-    lines = [
-        "# Atomic plan catalog",
-        "",
-        "The roadmap's plans were too large and too interdependent: parts of a plan would"
-        " finish, then the rest would block on *another* plan, so ten-plus plans sat in"
-        " flight at once and no status read was accurate.",
-        "",
-        "This catalog is the fix. Every plan is decomposed into **atoms**: one coherent"
-        " feature, executable start-to-finish in a single go. The cut line is exactly the"
-        " dependency seam — anything that would force you to pause an atom and go execute"
-        " other work is instead its own atom with an explicit dependency edge.",
-        "",
-        f"**{len(atoms)} atoms** across **{len(plans)} plans** — {done} done,"
-        f" {len(atoms) - done} remaining. {dag.get('edge_count', 0)} dependency edges.",
-        "",
-        "## How to use it",
-        "",
-        "1. `dag.json` is the machine-readable source; the roadmap dashboard renders it"
-        " (tiers, ready frontier, validation).",
-        "2. **Start only from the ready frontier** — atoms whose dependencies are all"
-        " `done`. Those need nothing else in flight.",
-        "3. One atom per branch/PR. Mark it `done` in `dag.json` when its PR lands.",
-        "4. `<CODE>.md` holds the human-readable atoms for one source plan.",
-        "",
-        "## Startable now",
-        "",
-    ]
-    if ready:
-        for r in ready[:20]:
-            lines.append(f"- `{r.get('id')}` **{r.get('title')}** — {r.get('plan', '')}")
-    else:
-        lines.append("- (none — every remaining atom has an unmet dependency)")
-
-    problems = []
-    if dag.get("cycles"):
-        problems.append(f"- **{len(dag['cycles'])} dependency cycle(s)** — must be broken")
-    if dag.get("dangling"):
-        problems.append(f"- {len(dag['dangling'])} dangling dependency edge(s)")
-    if dag.get("unresolved"):
-        problems.append(f"- {len(dag['unresolved'])} unresolved cross-plan reference(s)")
-    if problems:
-        lines += ["", "## Validation problems", ""] + problems
-
-    if topo:
-        lines += [
-            "",
-            "## Execution order (topological)",
-            "",
-            "Remaining atoms, dependency-respecting:",
-            "",
-            "```",
-            " → ".join(topo[:60]) + (" → …" if len(topo) > 60 else ""),
-            "```",
-        ]
-    (ATOMIC / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    The rendering itself lives in ``tools/regen_dag_derived.py``, which owns every DERIVED
+    surface of the catalog and is the tool a roadmap edit actually runs. This entry point
+    needs the original ``workflow-output.json`` decomposition, which is not in the repo, so it
+    can only ever run at authoring time — and that is exactly how the page froze at
+    ``640 atoms · 356 done`` while ``dag.json`` moved on to 684 and 650. One renderer, reachable
+    from the tool that runs on every edit, is the fix; see ``render_readme``'s docstring.
+    """
+    (ATOMIC / "README.md").write_text(render_readme(data), encoding="utf-8")
 
 
 def retire_source_plans(data: dict) -> int:

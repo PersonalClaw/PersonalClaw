@@ -13,14 +13,21 @@
   checked any of it. Every autonomous roadmap tick reads this block to choose its next
   atom, so a stale block picks the wrong work.
 
+* ``README.md`` — the catalog's **derived front page**, every figure on it computed from the
+  two halves above. Its renderer used to live in ``tools/write_atomic_plans.py``, whose entry
+  point needs the original ``workflow-output.json`` decomposition (absent from the repo), so it
+  could not be re-run and froze at ``640 atoms · 356 done`` while the catalog reached 684 and
+  650 — a front page claiming 44% done for a project that was 95% done. It is regenerated here
+  now, under the same ratchet.
+
 Run it after any edit to ``plans[]`` (adding atoms, flipping a status)::
 
-    python3 tools/regen_dag_derived.py            # rewrite the dag block in place
-    python3 tools/regen_dag_derived.py --check    # exit 1 if the committed block is stale
+    python3 tools/regen_dag_derived.py            # rewrite the dag block + README in place
+    python3 tools/regen_dag_derived.py --check    # exit 1 if either committed artifact is stale
 
 It is idempotent: a second run over its own output changes nothing.
-``tests/test_roadmap_dag_derived.py`` is the ratchet — it re-derives the block and reds if
-the committed one differs, so the block can never silently rot again.
+``tests/test_roadmap_dag_derived.py`` is the ratchet — it re-derives the block and the page and
+reds if either committed copy differs, so neither can silently rot again.
 
 Derived-field semantics (each choice is a judgement; they are stated here because the
 field names alone do not pin them down)
@@ -74,10 +81,11 @@ which atom it actually lands on is a judgement, so that mapping is authored, not
 ``topo_order``
     A real topological order over the ordering graph covering **all** atoms — deps strictly
     before dependents — with ties broken by (plan code, atom number) so the output is
-    stable. ``tools/write_atomic_plans.py`` renders it as "Execution order (topological)",
-    which only makes sense if it is a live total order over the whole catalog, not a
-    snapshot of one status. If the ordering graph ever gains a cycle no order exists, and
-    this raises naming the cycle instead of emitting a plausible-looking lie.
+    stable. ``render_readme`` renders it as "Execution order (topological)", which only makes
+    sense if it is a live total order over the whole catalog, not a snapshot of one status —
+    so the page shows the remaining atoms as a SECOND block rather than filtering this one.
+    If the ordering graph ever gains a cycle no order exists, and this raises naming the
+    cycle instead of emitting a plausible-looking lie.
 
 ``cycles``
     Cycles in the **full** graph, each as a node list with the entry node repeated at the
@@ -117,6 +125,9 @@ from pathlib import Path
 
 CORE = Path(__file__).resolve().parents[1]
 DAG_PATH = CORE / "docs/roadmap/atomic/dag.json"
+#: The catalog's front page. Every figure on it is derived from ``plans[]`` + the ``dag`` block,
+#: so it belongs to this tool rather than to the one-shot authoring script that first wrote it.
+README_PATH = CORE / "docs/roadmap/atomic/README.md"
 
 EXT_PREFIX = "EXT:"
 #: Every status an atom may carry. A value outside this set raises — see plan_counts.
@@ -465,6 +476,110 @@ def derive(data: dict) -> dict:
     return derived
 
 
+def render_readme(data: dict) -> str:
+    """Render ``docs/roadmap/atomic/README.md`` from ``plans[]`` + the derived ``dag`` block.
+
+    Every number on the catalog's front page is derived, but the page was written **once**, by
+    ``tools/write_atomic_plans.py``, whose entry point requires the original
+    ``workflow-output.json`` decomposition — a file that is not in the repo. So the README could
+    not be re-run from ``dag.json`` and it froze at authoring time while the catalog moved on.
+    Measured on ``2ec3ae86e``, every headline figure was wrong:
+
+        claimed  640 atoms · 356 done · 284 remaining · 876 edges · 2 cycles · 1 unresolved
+        actual   684 atoms · 650 done ·  34 remaining · 850 edges · 1 cycle  · 0 unresolved
+
+    Read literally it says the project is 44% done when it is 95% done, and it lists ~20 atoms
+    as "startable now" when the real ready frontier is 2. ``test_roadmap_atomic_status_sync.py``
+    rails the per-plan ``<CODE>.md`` tables and ``test_roadmap_dag_derived.py`` rails the ``dag``
+    block, but **nothing read this file** — the one surface a human opens first.
+
+    Moving the renderer here puts it under the ratchet that already exists for derived data.
+    The rendering is unchanged from ``write_atomic_plans.write_readme``; only its owner is.
+    """
+    dag = data.get("dag") or {}
+    plans = data["plans"]
+    atoms = [a for p in plans for a in (p.get("atoms") or [])]
+    done = sum(1 for a in atoms if a.get("status") == "done")
+    ready = dag.get("ready_frontier") or []
+    topo = dag.get("topo_order") or []
+
+    lines = [
+        "# Atomic plan catalog",
+        "",
+        "The roadmap's plans were too large and too interdependent: parts of a plan would"
+        " finish, then the rest would block on *another* plan, so ten-plus plans sat in"
+        " flight at once and no status read was accurate.",
+        "",
+        "This catalog is the fix. Every plan is decomposed into **atoms**: one coherent"
+        " feature, executable start-to-finish in a single go. The cut line is exactly the"
+        " dependency seam — anything that would force you to pause an atom and go execute"
+        " other work is instead its own atom with an explicit dependency edge.",
+        "",
+        f"**{len(atoms)} atoms** across **{len(plans)} plans** — {done} done,"
+        f" {len(atoms) - done} remaining. {dag.get('edge_count', 0)} dependency edges.",
+        "",
+        "## How to use it",
+        "",
+        "1. `dag.json` is the machine-readable source; the roadmap dashboard renders it"
+        " (tiers, ready frontier, validation).",
+        "2. **Start only from the ready frontier** — atoms whose dependencies are all"
+        " `done`. Those need nothing else in flight.",
+        "3. One atom per branch/PR. Mark it `done` in `dag.json` when its PR lands.",
+        "4. `<CODE>.md` holds the human-readable atoms for one source plan.",
+        "",
+        "## Startable now",
+        "",
+    ]
+    if ready:
+        for r in ready[:20]:
+            lines.append(f"- `{r.get('id')}` **{r.get('title')}** — {r.get('plan', '')}")
+    else:
+        lines.append("- (none — every remaining atom has an unmet dependency)")
+
+    problems = []
+    if dag.get("cycles"):
+        problems.append(f"- **{len(dag['cycles'])} dependency cycle(s)** — must be broken")
+    if dag.get("dangling"):
+        problems.append(f"- {len(dag['dangling'])} dangling dependency edge(s)")
+    if dag.get("unresolved"):
+        problems.append(f"- {len(dag['unresolved'])} unresolved cross-plan reference(s)")
+    if problems:
+        lines += ["", "## Validation problems", ""] + problems
+
+    if topo:
+        # 🪤 THIS SECTION USED TO CALL ITSELF "Remaining atoms" AND SHOW ONLY FINISHED ONES.
+        # `topo_order` is a total order over the WHOLE catalog by design (see its field note),
+        # and the render truncates at 60 — so with 650 of 684 atoms done, every entry a reader
+        # actually saw was `done`, under a heading promising the opposite. Two blocks now: the
+        # full order keeps the field's own semantics, and the remaining slice answers the
+        # question the heading was making a promise about.
+        status_of = {
+            a["id"]: a.get("status") for p in plans for a in (p.get("atoms") or []) if a.get("id")
+        }
+        remaining = [i for i in topo if status_of.get(i) != "done"]
+        lines += [
+            "",
+            "## Execution order (topological)",
+            "",
+            f"All {len(topo)} atoms, deps strictly before dependents"
+            + (f" (first 60 of {len(topo)}):" if len(topo) > 60 else ":"),
+            "",
+            "```",
+            " → ".join(topo[:60]) + (" → …" if len(topo) > 60 else ""),
+            "```",
+        ]
+        if remaining:
+            lines += [
+                "",
+                f"The {len(remaining)} not-yet-done atoms, in that same order:",
+                "",
+                "```",
+                " → ".join(remaining),
+                "```",
+            ]
+    return "\n".join(lines) + "\n"
+
+
 def load(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if "plans" not in data:
@@ -488,16 +603,36 @@ def main(argv: list[str] | None = None) -> int:
         help="do not write; exit 1 if the committed derived block is stale",
     )
     parser.add_argument("--path", type=Path, default=DAG_PATH, help="dag.json to operate on")
+    parser.add_argument(
+        "--readme",
+        type=Path,
+        default=None,
+        help="derived catalog front page (default: README.md beside --path)",
+    )
     args = parser.parse_args(argv)
 
     data = load(args.path)
     fresh = derive(data)
     committed = data.get("dag") or {}
-    if fresh == committed:
+    # The README is rendered from the FRESH block, never the committed one: a stale block and a
+    # stale README are one fault, and regenerating them from different inputs in a single run
+    # would leave the page describing a graph the file no longer holds.
+    # 🪤 DEFAULTED BESIDE ``--path``, NEVER TO A FIXED CONSTANT. A caller pointed at a throwaway
+    # catalog (every test here, and `--check` on a candidate file) must not have the REAL front
+    # page rewritten from that file's data — which is exactly what a `README_PATH` default did to
+    # ``test_check_reds_on_a_stale_block``'s tmp_path run.
+    readme_path = args.readme or (args.path.parent / README_PATH.name)
+    fresh_readme = render_readme({**data, "dag": fresh})
+    readme_current = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+    readme_stale = fresh_readme != readme_current
+
+    if fresh == committed and not readme_stale:
         print(f"{args.path.name}: derived block already current ({fresh['edge_count']} edges)")
         return 0
     if args.check:
         drifted = [k for k in DAG_KEY_ORDER if committed.get(k) != fresh[k]]
+        if readme_stale:
+            drifted.append(f"{readme_path.name} (derived front page)")
         print(
             f"{args.path}: derived block is STALE — {', '.join(drifted)} — {REMEDY}",
             file=sys.stderr,
@@ -505,11 +640,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     data["dag"] = fresh
     dump(data, args.path)
+    if readme_stale:
+        readme_path.write_text(fresh_readme, encoding="utf-8")
     print(
         f"{args.path.name}: rewrote dag block — "
         f"{len(fresh['topo_order'])} atoms, {len(fresh['ready_frontier'])} ready, "
         f"{fresh['edge_count']} edges, {len(fresh['cycles'])} cycle(s), "
         f"{len(fresh['dangling'])} dangling, {len(fresh['unresolved'])} unresolved"
+        + (f"; rewrote {readme_path.name}" if readme_stale else "")
     )
     return 0
 
