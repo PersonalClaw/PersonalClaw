@@ -32,9 +32,24 @@
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- proactive/autoexec.py:1-19 names itself 'The sharpest edge in the plan: the point where a model's proposal becomes a write nobody watched' and enumerates four bounds, EACH argued from a concrete failure
+- THE FRAMING SENTENCE IS THE THREAT MODEL: all four are 'enforced HERE rather than requested in a prompt, because A BOUND A PROMPT ASKS FOR IS A BOUND AN INJECTED INBOX ITEM CAN ASK TO SKIP'
+- 1. the switch is off by default AND checked first, because 'a revoked switch must not even spend a store read'
+- 2. the frozen capability set is TWO independent gates: a proposal names an action_type never a provider, PROVIDER_FOR_ACTION is the only mapping, and the mapped provider must ALSO be in the caller's declared capability set — 'so neither an unmapped action nor an undeclared provider can execute'
+- 3. the per-run cap (default 5) with its reason: 'a hundred trivial archives is still a hundred unattended writes'
+- 4. the budget floor is consulted BEFORE EVERY ACTION rather than once per run, because 'a run that starts under its ceiling can cross it mid-flight, and a single check at the top would authorise the whole batch on the strength of the cheapest moment in it'
+- action_providers/inbox_op_provider.py exists and 'inbox-op' is in validation.py:853's ALLOWED_HOOK_PROVIDERS — the provider went through the shipped seam
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Notes:** 🎯 THE STRONGEST SECURITY REASONING IN THE CAMPAIGN SO FAR, and the framing sentence is why. The items being triaged are untrusted inbox content, so ANY bound expressed as prompt instruction is negotiable by the content itself — enforcing in code is the only version that holds. That is prompt injection stated in one line and answered structurally. It also exceeds ARCC's default-deny objective in a way the guidance does not reach: ARCC says set the default to deny; this says AND do not let the thing being evaluated participate in the decision. Bound 4 is the one I would expect most implementations to get wrong — checking a budget once per batch is the intuitive version and it is precisely the exploitable one.
 
 ## Recorded history
 

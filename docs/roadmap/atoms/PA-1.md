@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- proactive/approval.py:1-13 — 'Four pure pieces, no I/O, no clock, no LLM', and match_rules is 'Total and deterministic: same rules + same pattern_key + same now always give the same answer, and "nothing matched" is its own answer, NEVER A FABRICATED APPROVAL'
+- :13-14 THE GRAMMAR IS THE BOUNDARY: 'an unparseable reply gets a help line, never an interpretation'
+- :22-26 DENY WINS AT ANY SPECIFICITY, argued from consequences rather than convention: 'over-generalizing a deny costs the user a proposal they can still ask for; over-generalizing an approve costs them an action they never sanctioned'
+- :28-31 ties break on (pattern, key) ascending because the NAMED rule lands in a ledger row, 'so which one is named must be stable across processes' — the decision is order-independent but the audit trail is not
+- :32-33 'Expired rules never match, and suppression is consulted only when no approve/deny rule matched — an explicit rule always beats a cooldown'
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Notes:** ARCC's transferable objective here is the Azure default-deny rule ('set defaultAction to Deny so that all inbound traffic is denied by default unless explicitly allowed'). This exceeds it in the direction that matters for a learned rule set: default-deny answers the no-rule case, but the hard case is a CONFLICT between a broad deny and a narrow approve, and the asymmetry argument settles it from consequences. The sentence about over-generalizing is the single best line of security reasoning in this plan, and 'nothing matched is its own answer' is the same never-fabricate posture the loops judge took toward verdicts.
 
 ## Recorded history
 

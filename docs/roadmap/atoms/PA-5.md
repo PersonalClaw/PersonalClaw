@@ -32,9 +32,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the digest, tier badges, the auto-done-plus-undo affordance and the rules-manager card are FE surfaces whose backend stages (surface.py, approval.py) are confirmed above
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Driven in the UI:** Not driven: the digest card renders proposals, and there are none without a triage run.
+
+**Notes:** Partial for the drive. The atom pairs auto-done with UNDO in the same card, which is the right shape given PA-3's auto-execution: an action nobody watched needs its reversal within reach of where the user first learns it happened, not in a separate settings page.
 
 ## Recorded history
 

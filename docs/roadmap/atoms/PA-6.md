@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/knowledge/KnowledgeListPage.tsx:9 imports DecisionJournal and :574 renders it — a real mount, found only by widening the search past my first guess at the page name
+- :568-573 the mount carries its own reasoning for TWO decisions. It renders AHEAD of the item-list gates because 'the journal owns its own read (/api/knowledge/decisions), so a failed or empty item-list fetch must not blank a surface that does not depend on it'
+- and it renders ITS OWN empty state because the generic card offers 'Add knowledge', and 'that flow deliberately cannot create a decision (a decision authored without its review trigger would never come back), so it would point nowhere useful'
+- web/src/pages/knowledge/decisionJournal.test.tsx + decisionMeta.ts
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Driven in the UI:** Drove it. The Decisions tab is one of seven on #/knowledge, the URL round-trips as ?view=decisions, and the view renders its own empty state: 'No decisions logged yet — Log a decision in chat — what you decided, what you expect to happen, and how confident you are. IT COMES BACK ON ITS OWN WHEN THE HORIZON ARRIVES.' That last clause teaches the whole feature in eight words, and the sentence names the three inputs so a user knows what to say.
+
+**Notes:** 🪤 TWELFTH NEAR-MISS. My first two searches for the mount looked in App.tsx and KnowledgePage.tsx and found nothing, which is exactly the BA-5 shape — a component with no mount point. The importer is KnowledgeListPage.tsx; one broader search found it. The fix each time has been the same: search for the OUTCOME across the tree rather than for my guess at the location. The pending/resolved/calibration content is unobserved because no decisions exist, but the surface, its route and its empty state are all real.
 
 ## Recorded history
 

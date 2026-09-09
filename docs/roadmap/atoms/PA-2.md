@@ -34,9 +34,21 @@ Firing the bundled "Morning triage" WorkflowDef collects inbox + channel + Run-L
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- proactive/ ships the whole pipeline as separate stages — collect.py, gate.py, proposals.py, rank.py, surface.py, pipeline.py — so the classifier gate is a distinct stage rather than a branch inside the prompt
+- the clause's cost guard is stated as a short-circuit: 'zero-item windows short-circuit before LLM spe[nd]', so an empty triage window costs nothing
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Driven in the UI:** Not driven: firing the bundled Morning-triage definition produces tiered proposals from a model, and no model is bound in this home.
+
+**Notes:** Partial for the run. The stage separation is the checkable part and it matters: a collect step that hands a stable ordinal manifest to a gate that can drop items BEFORE any model call is what makes per-source rules cheap. The strict-JSON tiering and the ranking are unobserved rather than doubted.
 
 ## Recorded history
 

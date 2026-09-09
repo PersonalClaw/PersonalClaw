@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 135 | `done_when` checked against the code and it holds |
-| `partial` | 126 | some `done_when` clauses hold, others do not |
+| `confirmed` | 138 | `done_when` checked against the code and it holds |
+| `partial` | 129 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 419 | not yet checked |
+| `unaudited` | 413 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -648,12 +648,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PA-1`](PA-1.md) | `done` | `unaudited` | Approval memory + ProactiveConfig foundation (Session 1) |
-| [`PA-2`](PA-2.md) | `done` | `unaudited` | Triage pipeline: collect → classifier gate → tiered strict-JSON proposals → rank → deliver + Morning-triage template (Session 2) |
-| [`PA-3`](PA-3.md) | `done` | `unaudited` | Trivial-tier auto-execution + `inbox-op` action provider (Session 3) |
-| [`PA-4`](PA-4.md) | `done` | `unaudited` | Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4) |
-| [`PA-5`](PA-5.md) | `done` | `unaudited` | Triage FE surfaces + as-a-user validation (Session 5a) |
-| [`PA-6`](PA-6.md) | `done` | `unaudited` | Decision Journal view + calibration strip FE + validation (Session 5b) |
+| [`PA-1`](PA-1.md) | `done` | `confirmed` | Approval memory + ProactiveConfig foundation (Session 1) |
+| [`PA-2`](PA-2.md) | `done` | `partial` | Triage pipeline: collect → classifier gate → tiered strict-JSON proposals → rank → deliver + Morning-triage template (Session 2) |
+| [`PA-3`](PA-3.md) | `done` | `confirmed` | Trivial-tier auto-execution + `inbox-op` action provider (Session 3) |
+| [`PA-4`](PA-4.md) | `done` | `partial` | Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4) |
+| [`PA-5`](PA-5.md) | `done` | `partial` | Triage FE surfaces + as-a-user validation (Session 5a) |
+| [`PA-6`](PA-6.md) | `done` | `confirmed` | Decision Journal view + calibration strip FE + validation (Session 5b) |
 
 ### `PBC` — PROVIDER-BOUNDARY-COMPLETION (7/7 done)
 

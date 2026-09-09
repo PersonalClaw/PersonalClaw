@@ -31,9 +31,19 @@
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 26 (PA) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: NATIVE_TYPES holds exactly 13 entries and 'decision' is one of them (knowledge_providers/native/__init__.py:24), created through 'the one true path' — store.create_typed_item(item_type='decision', provider='native') — and riding the Passthrough graph rather than a bespoke store
+- decisions.py is the module; the log/list/resolve tools ship with it
+- 518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)
+
+**Notes:** PRECISION NOTE, not a defect: the atom says 'the 13th NATIVE_TYPES entry', which is true as a COUNT (it brought the total to 13) but 'decision' sits at position 6 in the tuple. Cardinal rather than ordinal — worth stating exactly rather than glossing or calling it wrong. Partial because the clause's decisive behaviour is that log_decision 'mints exactly one one-shot clock trig[ger]' for the review horizon, and observing exactly-one requires logging a decision through the tool, which needs a chat turn.
 
 ## Recorded history
 

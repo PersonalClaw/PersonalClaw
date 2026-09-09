@@ -2890,5 +2890,83 @@
       "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
     ],
     "notes": "The atom's title is the principle and it belongs beside WF2LOO-15's docstring rail and WF2UNI-13's anti-inertness ratchet: availability is a CAPABILITY TO BE PROBED, not an assertion to be trusted. Two design choices make it work. Adding a sibling that returns the reason rather than widening the bool preserves every existing caller — a tuple-returning parser_available would have been a breaking change dressed as an improvement. And the skip policy is exactly right in both directions: a missing GRAMMAR skips 35 tests naming the recorded reason, while an unimportable language PACK still hard-fails 'as the packaging regression it is'. A blanket skip would have hidden the second; a blanket failure would have made a stripped environment unusable."
+  },
+  "PA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "proactive/approval.py:1-13 — 'Four pure pieces, no I/O, no clock, no LLM', and match_rules is 'Total and deterministic: same rules + same pattern_key + same now always give the same answer, and \"nothing matched\" is its own answer, NEVER A FABRICATED APPROVAL'",
+      ":13-14 THE GRAMMAR IS THE BOUNDARY: 'an unparseable reply gets a help line, never an interpretation'",
+      ":22-26 DENY WINS AT ANY SPECIFICITY, argued from consequences rather than convention: 'over-generalizing a deny costs the user a proposal they can still ask for; over-generalizing an approve costs them an action they never sanctioned'",
+      ":28-31 ties break on (pattern, key) ascending because the NAMED rule lands in a ledger row, 'so which one is named must be stable across processes' — the decision is order-independent but the audit trail is not",
+      ":32-33 'Expired rules never match, and suppression is consulted only when no approve/deny rule matched — an explicit rule always beats a cooldown'",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "notes": "ARCC's transferable objective here is the Azure default-deny rule ('set defaultAction to Deny so that all inbound traffic is denied by default unless explicitly allowed'). This exceeds it in the direction that matters for a learned rule set: default-deny answers the no-rule case, but the hard case is a CONFLICT between a broad deny and a narrow approve, and the asymmetry argument settles it from consequences. The sentence about over-generalizing is the single best line of security reasoning in this plan, and 'nothing matched is its own answer' is the same never-fabricate posture the loops judge took toward verdicts."
+  },
+  "PA-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "proactive/ ships the whole pipeline as separate stages — collect.py, gate.py, proposals.py, rank.py, surface.py, pipeline.py — so the classifier gate is a distinct stage rather than a branch inside the prompt",
+      "the clause's cost guard is stated as a short-circuit: 'zero-item windows short-circuit before LLM spe[nd]', so an empty triage window costs nothing",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Not driven: firing the bundled Morning-triage definition produces tiered proposals from a model, and no model is bound in this home.",
+    "notes": "Partial for the run. The stage separation is the checkable part and it matters: a collect step that hands a stable ordinal manifest to a gate that can drop items BEFORE any model call is what makes per-source rules cheap. The strict-JSON tiering and the ranking are unobserved rather than doubted."
+  },
+  "PA-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "proactive/autoexec.py:1-19 names itself 'The sharpest edge in the plan: the point where a model's proposal becomes a write nobody watched' and enumerates four bounds, EACH argued from a concrete failure",
+      "THE FRAMING SENTENCE IS THE THREAT MODEL: all four are 'enforced HERE rather than requested in a prompt, because A BOUND A PROMPT ASKS FOR IS A BOUND AN INJECTED INBOX ITEM CAN ASK TO SKIP'",
+      "1. the switch is off by default AND checked first, because 'a revoked switch must not even spend a store read'",
+      "2. the frozen capability set is TWO independent gates: a proposal names an action_type never a provider, PROVIDER_FOR_ACTION is the only mapping, and the mapped provider must ALSO be in the caller's declared capability set — 'so neither an unmapped action nor an undeclared provider can execute'",
+      "3. the per-run cap (default 5) with its reason: 'a hundred trivial archives is still a hundred unattended writes'",
+      "4. the budget floor is consulted BEFORE EVERY ACTION rather than once per run, because 'a run that starts under its ceiling can cross it mid-flight, and a single check at the top would authorise the whole batch on the strength of the cheapest moment in it'",
+      "action_providers/inbox_op_provider.py exists and 'inbox-op' is in validation.py:853's ALLOWED_HOOK_PROVIDERS — the provider went through the shipped seam",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "notes": "🎯 THE STRONGEST SECURITY REASONING IN THE CAMPAIGN SO FAR, and the framing sentence is why. The items being triaged are untrusted inbox content, so ANY bound expressed as prompt instruction is negotiable by the content itself — enforcing in code is the only version that holds. That is prompt injection stated in one line and answered structurally. It also exceeds ARCC's default-deny objective in a way the guidance does not reach: ARCC says set the default to deny; this says AND do not let the thing being evaluated participate in the decision. Bound 4 is the one I would expect most implementations to get wrong — checking a budget once per batch is the intuitive version and it is precisely the exploitable one."
+  },
+  "PA-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: NATIVE_TYPES holds exactly 13 entries and 'decision' is one of them (knowledge_providers/native/__init__.py:24), created through 'the one true path' — store.create_typed_item(item_type='decision', provider='native') — and riding the Passthrough graph rather than a bespoke store",
+      "decisions.py is the module; the log/list/resolve tools ship with it",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "notes": "PRECISION NOTE, not a defect: the atom says 'the 13th NATIVE_TYPES entry', which is true as a COUNT (it brought the total to 13) but 'decision' sits at position 6 in the tuple. Cardinal rather than ordinal — worth stating exactly rather than glossing or calling it wrong. Partial because the clause's decisive behaviour is that log_decision 'mints exactly one one-shot clock trig[ger]' for the review horizon, and observing exactly-one requires logging a decision through the tool, which needs a chat turn."
+  },
+  "PA-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "the digest, tier badges, the auto-done-plus-undo affordance and the rules-manager card are FE surfaces whose backend stages (surface.py, approval.py) are confirmed above",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Not driven: the digest card renders proposals, and there are none without a triage run.",
+    "notes": "Partial for the drive. The atom pairs auto-done with UNDO in the same card, which is the right shape given PA-3's auto-execution: an action nobody watched needs its reversal within reach of where the user first learns it happened, not in a separate settings page."
+  },
+  "PA-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 26 (PA) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/knowledge/KnowledgeListPage.tsx:9 imports DecisionJournal and :574 renders it — a real mount, found only by widening the search past my first guess at the page name",
+      ":568-573 the mount carries its own reasoning for TWO decisions. It renders AHEAD of the item-list gates because 'the journal owns its own read (/api/knowledge/decisions), so a failed or empty item-list fetch must not blank a surface that does not depend on it'",
+      "and it renders ITS OWN empty state because the generic card offers 'Add knowledge', and 'that flow deliberately cannot create a decision (a decision authored without its review trigger would never come back), so it would point nowhere useful'",
+      "web/src/pages/knowledge/decisionJournal.test.tsx + decisionMeta.ts",
+      "518 tests pass across the approval-memory / triage / proactive / inbox-op / decision modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Drove it. The Decisions tab is one of seven on #/knowledge, the URL round-trips as ?view=decisions, and the view renders its own empty state: 'No decisions logged yet — Log a decision in chat — what you decided, what you expect to happen, and how confident you are. IT COMES BACK ON ITS OWN WHEN THE HORIZON ARRIVES.' That last clause teaches the whole feature in eight words, and the sentence names the three inputs so a user knows what to say.",
+    "notes": "🪤 TWELFTH NEAR-MISS. My first two searches for the mount looked in App.tsx and KnowledgePage.tsx and found nothing, which is exactly the BA-5 shape — a component with no mount point. The importer is KnowledgeListPage.tsx; one broader search found it. The fix each time has been the same: search for the OUTCOME across the tree rather than for my guess at the location. The pending/resolved/calibration content is unobserved because no decisions exist, but the surface, its route and its empty state are all real."
   }
 }
