@@ -30,9 +30,19 @@ tags moved into authoritative tags + item_tags (surrogate id, parent_id self-FK 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- covered by the 234-passed KL run
+
+**Driven in the UI:** Typed 'audit-probe' into the note form's 'Add a tag, Enter' box and pressed Enter: it became a chip carrying its own 'Remove audit-probe' control (so tag entry AND removal are both reachable). After saving and RELOADING, the tag is still attached to the item and renders as a `button "audit-probe"` — a clickable affordance, which is the taxonomy's filter surface rather than a decorative label.
+
+**Notes:** Tag entry sits inside the CREATE flow, which is the strongest place for it: an item cannot be filed untagged by accident of a two-step UI.
 
 ## Recorded history
 

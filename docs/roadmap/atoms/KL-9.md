@@ -28,9 +28,17 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_chunking.py passes (part of the 234-passed run)
+
+**Notes:** PARTIAL: I deliberately wrote the probe document WITH STRUCTURE (an H1, a paragraph, an H2, a second section) so a structural chunker would have shape to work with — but I did not inspect the chunks table, so the chunking itself is observed only through its test.
 
 ## Recorded history
 

@@ -28,9 +28,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_knowledge_collections.py passes (part of a 234-passed run across eight KL modules)
+
+**Driven in the UI:** Created a knowledge item as a user would: #/knowledge -> 'Add knowledge' -> 'Note' -> filled title, a tag, and markdown content with two headings -> 'Add note'. The form gated correctly ('Add note' was DISABLED until the fields had content). After a full page reload the item is still served — button 'Audit probe document KL' — so the store, its routes and the frontend round-trip end to end.
+
+**Notes:** 🪤 THIS NEARLY BECAME A FALSE 'DOES NOT PERSIST' FINDING, and the correction matters more than the verdict. After saving, `grep -rl` over the home found the title in NO file, and `find -newermt '-4 minutes'` reported NOTHING written. That reads exactly like a UI-only write. It was wrong: a page RELOAD re-fetched the item from the server, which is the decisive user-level test. My file probes were not measuring the right thing — the knowledge store is not a plain file under the paths I searched. Two lessons: a reload is a better persistence test than a file-mtime scan, and an absent grep hit is not an absent write.
 
 ## Recorded history
 

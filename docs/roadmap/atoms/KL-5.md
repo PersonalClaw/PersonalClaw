@@ -31,9 +31,17 @@ find_duplicates wraps the existing TIER-2 prefilter + dedup.resolve_duplicate sc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_dedup.py passes (part of the 234-passed run)
+
+**Notes:** PARTIAL: find_duplicates and merge_items need NEAR-DUPLICATES. With a single item there is nothing to pair, and authoring two deliberately-similar documents would be measuring my fixture rather than the product's judgement.
 
 ## Recorded history
 

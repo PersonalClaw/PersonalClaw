@@ -31,9 +31,17 @@ KnowledgeDetailPage gains a reading mode with the editorial-document house-style
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 5 (KL) — observed
+
+**Code evidence:**
+
+- covered by the 234-passed KL run
+
+**Notes:** PARTIAL: the reading view is now reachable (an item exists) but I did not open it, so the editorial type scale, progress tracking and in-reader highlighting are unexercised. Cheap next cycle.
 
 ## Recorded history
 
