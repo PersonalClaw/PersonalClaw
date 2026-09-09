@@ -19,6 +19,81 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "MGAV-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": [
+      "tests/test_memory_graph.py and tests/test_memory_entity_graph.py pass (part of a 246-passed run across five MGAV modules)",
+      "the model reaches the UI: the live MemoryPanel renders an 'Entities 0' counter and a 'Which graph to draw' tablist, so the graph's node/link vocabulary is real on the frontend and not only in the schema"
+    ],
+    "notes": "The zero-LLM write-time linker is the atom's distinguishing claim and is what its tests exercise; I did not generate memory to watch a link form, so that specific behaviour rests on the suite."
+  },
+  "MGAV-2": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["the MGAV suite covering recall passes as part of the 246-passed run"],
+    "notes": "PARTIAL: a graph recall arm with backlink boost and evidence tags only demonstrates itself over a populated store answering a real query. This home has zero facts and no model provider, so the arm cannot be exercised. The Inspect tab DOES expose the right instrument for it — 'Preview the memory context that would be injected into a prompt for a given query' with a query box and Preview button — so a future cycle with data can drive this exactly."
+  },
+  "MGAV-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "notes": "PARTIAL: an ambient push-context reflex fires from runtime activity and records volunteer events. Nothing in a freshly-driven home generates that traffic, so it is unexercised rather than unmet."
+  },
+  "MGAV-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["tests/test_knowledge_vault.py passes (part of the 246-passed run)"],
+    "notes": "PARTIAL: the alias pre-pass sits in the knowledge INGESTION entry path, so exercising it means ingesting a document. Not done this cycle."
+  },
+  "MGAV-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": [
+      "tests/test_memory_formation.py passes (part of the 246-passed run)",
+      "the Health tab exposes the consolidation control and explains it in the user's terms — 'Like sleep consolidates memories, PersonalClaw reviews its episodic memories … and promotes the recurring, cross-context ones into durable semantic facts — scored on frequency, diversity, recency, and richness', with a trigger-a-pass-now affordance",
+      "the hygiene half is live too: 'Duplicate, stale, and contradictory facts. Superseded facts auto-purge on each sweep' with a real verdict rendered — 'No issues flagged — memory is clean'"
+    ],
+    "notes": "PARTIAL by a hair: the surface and its explanation are observed live, but I did not TRIGGER a consolidation pass, because with zero episodic memories a pass would have nothing to promote and a green result would prove nothing. The Extract->Gather->Decide behaviour therefore rests on its suite."
+  },
+  "MGAV-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["tests/test_knowledge_vault.py passes (part of the 246-passed run)"],
+    "notes": "PARTIAL: a two-way readable vault needs its mode configured and a directory to project wikilinks into. Not configured in the validation home, so sync and projection are unexercised."
+  },
+  "MGAV-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "notes": "PARTIAL: memory citations in chat and the admit-ignorance clause are both MODEL behaviours — they appear in an assistant turn. No model provider is configured, the same blocker that held RUA-3, INU-4 and INU-6. This is now the most frequent single cause of a partial verdict in this audit."
+  },
+  "MGAV-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — observed",
+    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "notes": "PARTIAL: bounded always-injected registers are observable through the Inspect tab's context preview, but only once there is something to inject. Zero facts here."
+  },
+  "MGAV-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 4 (MGAV) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_memory_fe_surfaces.py passes (part of the 246-passed run)",
+      "web/src/pages/settings/MemoryPanel.tsx:9 imports { MemoryGraph } from './MemoryGraph' and mounts it — the viz has a real call site, so it is not an inert component",
+      "web/src/ui/GraphZoomControls.tsx is shared by MemoryGraph, KnowledgeGraph and KnowledgeEgoGraph, so the graph primitive has three consumers"
+    ],
+    "ui_validated": "Drove #/settings/memory. The tabs are real and functional: a tablist named 'Memory view' carrying Studio / Health / Recall / Inspect / Audit / Settings, and clicking Health then Inspect moved the [active][selected] state and swapped the panel body each time. Health rendered live consolidation + hygiene content with an actual verdict ('No issues flagged — memory is clean'). Inspect rendered the context-preview instrument with a query textbox and Preview button. Studio rendered the graph region with a 'Which graph to draw' tablist, an 'Entities 0' counter, and the empty state 'No memory graph yet — facts and their links appear here as memory grows.'",
+    "notes": "Recorded because it nearly became a false finding. I grepped Studio, Health and Inspect for 'Graph'/'Export', found only prose, and was on the way to calling the viz missing — then read the code and found MemoryPanel mounts MemoryGraph directly. The graph WAS rendering the whole time; it was showing a well-written empty state because this home has zero facts. Two lessons: I searched the wrong tabs, and an empty state is not an absent component. The atom's 'HTML export' clause remains unexercised — it plausibly only surfaces once a graph exists — so that single clause is unvalidated while the tabs and viz are confirmed."
+  },
   "INU-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

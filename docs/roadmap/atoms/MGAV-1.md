@@ -28,9 +28,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- tests/test_memory_graph.py and tests/test_memory_entity_graph.py pass (part of a 246-passed run across five MGAV modules)
+- the model reaches the UI: the live MemoryPanel renders an 'Entities 0' counter and a 'Which graph to draw' tablist, so the graph's node/link vocabulary is real on the frontend and not only in the schema
+
+**Notes:** The zero-LLM write-time linker is the atom's distinguishing claim and is what its tests exercise; I did not generate memory to watch a link form, so that specific behaviour rests on the suite.
 
 ## Recorded history
 
