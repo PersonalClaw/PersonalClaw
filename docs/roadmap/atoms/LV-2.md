@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- 🔑 THE 'ZERO NEW WS/SSE CHANNELS' CLAUSE IS ASSERTED DIRECTLY, which almost never happens for a negative requirement: `test_no_new_ws_channel_was_introduced` plus `test_a_turn_carrying_skills_used_broadcasts_only_known_events`. The chip rides the SAME persisted meta and is invisible to the WS
+- one label helper for two surfaces — chat (`ChatPage`) and the loop cockpit (`LoopCockpitPage`) both import `skillsUsedLabel`/`skillsUsedTitle`, so 'used N skills' cannot mean two things in two places
+- 🔑 THE HOVER LIST IS IN THE ALLOCATOR'S OWN ADMISSION ORDER, 'never re-sorted here, which would invent a ranking the backend never stated' — and a `reduced` load is marked 'summary only', because 'presenting a summary-only load as a full one is the one thing this chip must not do'. Same no-paraphrase rule ET-8 applies to permissions, applied to a provenance chip
+- 🔴 ABSENT, NOT ZERO, AGAIN: `test_no_skills_omits_the_key_entirely` — the meta key is dropped rather than set to an empty list, so 'no skills loaded' and 'not recorded' stay distinguishable. `test_a_later_turn_does_not_inherit_an_earlier_turns_skills` covers the stale-carry
+- `test_the_three_origins_are_distinct_and_closed` — the learned-chip origin vocabulary is closed, not an open string
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** The chip needs a turn that loaded a skill, which needs a bound model — not drivable in this home. The two surfaces that render it were read, and the shared helpers are unit-covered.
+
+**Notes:** The `title`-is-not-an-accessible-name call is made consistently here and in LV-3's block, with the visible label carrying the same information. A hover-only affordance would have been the easy version.
 
 ## Recorded history
 

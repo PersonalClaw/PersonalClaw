@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- 🔑 THE DOC IS A PRE-REGISTERED PROTOCOL AND SAYS SO IN ITS OWN STATUS LINE: 'PROTOCOL v1 — FROZEN 2026-08-16 … Owner-signed; see §8', with the reviewability rule stated as a rule — 'the protocol is frozen BEFORE any run, so a disappointing result cannot retroactively edit the method'
+- 🔑 THE PUBLISH DECISION IS MADE AT THE ONLY HONEST MOMENT: §8 signs off 'including the commitment to publish a modest or negative result. The publish decision was made here, before the measurement, which is the only point at which it can be made honestly.' And §1: 'A protocol that only ever reports wins is not measuring'
+- 🔑 I RAN THE REGISTER RATHER THAN COUNTING IT: `learning_benchmark.py --preflight` prints 'task set v2 — 10 task(s)' and marks all ten `[ok]` with their skill and fixture, closing with 'all 10 task(s) runnable'. So the frozen ~10-task set is not merely listed — every entry resolves
+- the claim is deliberately narrow — 'a skill the user approved improves the next matching run. Not "learning works", not "the flywheel pays for itself"' — and §6/§7 list what invalidates a result and what must exist before a single number may be published
+- 🔑 IT REFUSES THE OBVIOUS CHEAT BY NAME: the reusable comparison module is arm-name-bound to `fanout`/`single`, and 'Relabelling `skills_on` as `fanout` to get a green run would be a lie in the output file' — so LV-7 must generalise the vocabulary or write a sibling, an owner call rather than a drive-by edit
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Not a browser surface: a protocol document plus a CLI register, which was run.
+
+**Notes:** The doc also records a DISCOVERY against the roadmap itself — LV-7's declared deps understate it, because the arm lever belongs to a LATER EVALUATION-SUBSTRATE session — and leaves the row unedited 'because the roadmap is owner-maintained'. Recording a dependency error without editing the owner's table is the right instinct.
 
 ## Recorded history
 

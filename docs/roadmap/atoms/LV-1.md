@@ -32,9 +32,25 @@ Execution log carries the caller map; a completed multi-step fixture loop enqueu
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- the firing seam is real: `watchdog._complete` calls `_schedule_loop_end_ladder(loop_id)` right after `_capture_loop_end`, and the split is deliberate — one MINES the ledger, the other proposes a skill
+- 🔑 THE GATE IS ANSWERED BEFORE ANYTHING READS THE RUN'S TEXT, AND THE REASON IS THE SHARPEST PRIVACY SENTENCE IN THIS PLAN: `decision.allowed` and the `skill_ladder` flag are checked first 'because a restricted session promised that its content feeds no learning and CLASSIFYING that content is already a read of it'. The read is the violation, not just the enqueue
+- 🔑 AND IT IS ASSERTED, NOT MERELY COMMENTED: `test_a_denied_gate_never_reads_the_run_text`
+- the env-failure exclusion is DELEGATED rather than copied — the loop path feeds the real texts to the shared review so `is_environment_failure_claim` applies unchanged, because 're-implementing that predicate here would be a second copy to drift'. `test_env_failure_in_the_deliverable_enqueues_nothing` + `..._in_the_goal_...`, and `test_a_clean_run_with_the_same_completion_does_enqueue` is their vacuity floor
+- `test_at_most_one_proposal_reaches_the_queue`, `test_a_multi_cycle_run_reviews_once_at_the_end`, and `test_complete_to_complete_is_really_reachable` — a vacuity floor for the once-per-run guard, so the premise it rests on is pinned rather than assumed
+- the T1.1 caller map is in the plan's execution log, recorded before any change and measured on a named commit; T1.3's finding is that the accept→surface→use loop was ALREADY complete
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Not driven end to end: the arc needs a completed loop run, which needs a bound model. `test_lv1_accept_surface_use.py::test_accepted_skill_surfaces_on_the_next_prompt_and_counts_the_use` carries the same arc over a fixture home.
+
+**Notes:** Four of this atom's rails carry an explicit vacuity floor. That is the practice the whole campaign has been asking for, applied here without being asked.
 
 ## Recorded history
 

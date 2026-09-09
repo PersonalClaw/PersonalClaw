@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- every stumble trigger has its own test AND its own negative: correction, failure-retry ('only when the tool was actually retried'), rejection ('only when the denial stood'), plus `test_an_ordinary_successful_turn_never_stumbles` and `test_the_env_failure_fixture_never_triggers`
+- 🔑 `_skills_used`, NOT the ladder's `loaded_skills`, AND THE DISTINCTION IS THE ATOM: the latter is the CANDIDATE index, so 'a refine target picked from it would name a skill that had no part in the turn'. `_skills_used` is LV-2's narrowing to allocations whose content actually reached the prompt — 'the same list the turn-time `record_uses` counter consumes — so "used" cannot mean two things here'
+- 🔑 THE DIFF SHOWN IS THE DIFF APPLIED: `test_diff_is_exactly_what_accept_applies`, so the review surface cannot render one change and commit another. `test_reject_leaves_the_skill_untouched` and `test_two_accepted_refinements_are_distinguishable_by_version` close the other two directions
+- `test_the_arm_never_calls_a_model` — synchronous, a classifier plus a `difflib` diff, so it cannot delay the turn; and `test_the_daily_cap_holds_across_the_accept_that_empties_the_queue`, which is the cap's real edge rather than its easy one
+- 🔑 NO SECOND CONFIG KNOB AND NO SECOND CHANNEL: it rides `skill_ladder` deliberately — 'that flag is the user's answer to "may this system propose skills from my turns?", and a second config knob for the deterministic half of the same queue would let the two answers disagree' — and reuses LV-2's learned-chip emitter with `origin: "proposal"`
+- `test_the_after_turn_seam_calls_the_stumble_arm` + `test_the_call_site_files_a_proposal_and_surfaces_the_existing_learned_chip` — the anti-inertness pair; and `test_v3_arc_flawed_skill_stumble_refine_approve_rerun` carries V3 as a test
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Not driven: a stumble needs a real turn that loaded a skill. The proposal-detail route serving the diff and its target version is route-tested, and `test_the_proposal_detail_route_is_registered` pins the registration.
+
+**Notes:** One measured detail worth keeping: an explicit `if not used: return` guard, because without it 'the only thing stopping `used[0]` below was the `except`' — so a test of that silence would have been pinning an IndexError. 'Measured: it did.' A guard added for the right reason rather than the observed behaviour.
 
 ## Recorded history
 

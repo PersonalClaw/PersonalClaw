@@ -7101,5 +7101,114 @@
     ],
     "ui_validated": "Not applicable.",
     "notes": "Unverifiable is the honest verdict for a secret's existence. The audit can see that something consumes the credential and that the consumer works; it cannot see the credential, and should not be able to."
+  },
+  "LV-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "the firing seam is real: `watchdog._complete` calls `_schedule_loop_end_ladder(loop_id)` right after `_capture_loop_end`, and the split is deliberate — one MINES the ledger, the other proposes a skill",
+      "🔑 THE GATE IS ANSWERED BEFORE ANYTHING READS THE RUN'S TEXT, AND THE REASON IS THE SHARPEST PRIVACY SENTENCE IN THIS PLAN: `decision.allowed` and the `skill_ladder` flag are checked first 'because a restricted session promised that its content feeds no learning and CLASSIFYING that content is already a read of it'. The read is the violation, not just the enqueue",
+      "🔑 AND IT IS ASSERTED, NOT MERELY COMMENTED: `test_a_denied_gate_never_reads_the_run_text`",
+      "the env-failure exclusion is DELEGATED rather than copied — the loop path feeds the real texts to the shared review so `is_environment_failure_claim` applies unchanged, because 're-implementing that predicate here would be a second copy to drift'. `test_env_failure_in_the_deliverable_enqueues_nothing` + `..._in_the_goal_...`, and `test_a_clean_run_with_the_same_completion_does_enqueue` is their vacuity floor",
+      "`test_at_most_one_proposal_reaches_the_queue`, `test_a_multi_cycle_run_reviews_once_at_the_end`, and `test_complete_to_complete_is_really_reachable` — a vacuity floor for the once-per-run guard, so the premise it rests on is pinned rather than assumed",
+      "the T1.1 caller map is in the plan's execution log, recorded before any change and measured on a named commit; T1.3's finding is that the accept→surface→use loop was ALREADY complete",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Not driven end to end: the arc needs a completed loop run, which needs a bound model. `test_lv1_accept_surface_use.py::test_accepted_skill_surfaces_on_the_next_prompt_and_counts_the_use` carries the same arc over a fixture home.",
+    "notes": "Four of this atom's rails carry an explicit vacuity floor. That is the practice the whole campaign has been asking for, applied here without being asked."
+  },
+  "LV-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "🔑 THE 'ZERO NEW WS/SSE CHANNELS' CLAUSE IS ASSERTED DIRECTLY, which almost never happens for a negative requirement: `test_no_new_ws_channel_was_introduced` plus `test_a_turn_carrying_skills_used_broadcasts_only_known_events`. The chip rides the SAME persisted meta and is invisible to the WS",
+      "one label helper for two surfaces — chat (`ChatPage`) and the loop cockpit (`LoopCockpitPage`) both import `skillsUsedLabel`/`skillsUsedTitle`, so 'used N skills' cannot mean two things in two places",
+      "🔑 THE HOVER LIST IS IN THE ALLOCATOR'S OWN ADMISSION ORDER, 'never re-sorted here, which would invent a ranking the backend never stated' — and a `reduced` load is marked 'summary only', because 'presenting a summary-only load as a full one is the one thing this chip must not do'. Same no-paraphrase rule ET-8 applies to permissions, applied to a provenance chip",
+      "🔴 ABSENT, NOT ZERO, AGAIN: `test_no_skills_omits_the_key_entirely` — the meta key is dropped rather than set to an empty list, so 'no skills loaded' and 'not recorded' stay distinguishable. `test_a_later_turn_does_not_inherit_an_earlier_turns_skills` covers the stale-carry",
+      "`test_the_three_origins_are_distinct_and_closed` — the learned-chip origin vocabulary is closed, not an open string",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "The chip needs a turn that loaded a skill, which needs a bound model — not drivable in this home. The two surfaces that render it were read, and the shared helpers are unit-covered.",
+    "notes": "The `title`-is-not-an-accessible-name call is made consistently here and in LV-3's block, with the visible label carrying the same information. A hover-only affordance would have been the easy version."
+  },
+  "LV-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "🔑 I OBSERVED THE ABSENT-NOT-ZERO RULE IN A REAL BROWSER. The block renders nothing on this home, and that is the designed answer: 'Rendering \"0 new, 0 refined\" there would claim nothing was learned when the truthful answer is \"not being tracked\"'. `test_default_summary_is_empty_so_an_empty_home_renders_nothing` pins it",
+      "🔑 AND THE WHOLE LEARNING PAGE HOLDS THE SAME LINE — every panel I drove reads 'unmeasured — no capture pass has run', 'no gate run', 'No judge verdicts in the last 0 runs', and one per-day row says it outright: 'No capture pass ran — this is the gap an aggregate view cannot see (0 passes, 0 produced, 0 errors)'. A zero-valued chart would have been the cheap version",
+      "counts are exact while names are a sample: `count` is never derived from `len(names)`, 'so deriving the count from the list it truncated would under-report the moment a group got busy', and the remainder is stated as '+N more'. `test_counts_are_exact_while_names_are_a_bounded_sample`",
+      "🔑 A MEASURED NEAR-MISS IS RECORDED IN THE SOURCE: reading lessons through `service_for(provider)` instead of `over_vector_store` yields `_vs = None`, so 'every lesson would read as absent and the group would render an HONEST-LOOKING ZERO forever. Measured, not assumed'. Exactly the failure class this audit keeps finding, found by the author first",
+      "🔴 THE DIGEST-BUILDER FALLBACK IS SANCTIONED, NOT A SHORTFALL: plan 42's builder does not exist in the tree, and the atom's own `done_when` names the skills-page header as the alternative. Recorded as a DISCOVERY in the execution log with the measurement behind it. The gather lives server-side in ONE function so a future digest CONSUMES it rather than reimplementing it",
+      "`test_the_summary_route_is_actually_registered_not_merely_defined` — the inert-control class, asserted rather than hoped; and `test_composing_the_block_writes_nothing`",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Skills page and Learning page driven on :10011. The block is absent on an empty home, which is the correct render; 'real counts and names' needs learned artifacts, which need a bound model or embedding provider.",
+    "notes": "`pending` is deliberately unwindowed — 'a proposal from five weeks ago is MORE interesting, not less'. A windowed pending count would have quietly retired the backlog it exists to show."
+  },
+  "LV-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "all five `done_when` clauses have named tests and 52/52 pass across the two files: byte-match counts with a zero-write witness (and `test_the_witness_detects_a_write_so_its_silence_means_something` as its vacuity floor), `test_no_model_still_produces_every_deterministic_section`, the compressed-clock fire, `test_quiet_hours_suppresses_the_ping_but_not_the_artifact`, config round-trip + `test_off_disables_the_row_instead_of_deleting_it` + `TestTheDedupKeyFollowsThePeriod`",
+      "🔑 ARCC'S REQUIREMENT LANDS ALMOST LITERALLY HERE. Its machinery is Bedrock guardrails, which does not apply, but the requirement is that the USER-INPUT PORTION of a prompt be TAGGED so the guard reads it as content rather than as application instructions. This call site does exactly that — `fence_untrusted(..., source=, source_type=, source_id=, transformation_path=)` — for the identical stated reason: 'a facet's text is user prose that itself came from a turn — and a turn can carry an injection'",
+      "🪤 AND THE ASSERTION THAT APPEARED TO PROTECT IT COULD NOT FAIL. The test computed a fence ITSELF, inside the assertion, then checked its own result: `assert \"untrusted_content\" in fence_untrusted(facts, source=\"learning\")` — a property of the HELPER, not of the call site. MEASURED: deleting the fence from `narrate_identity_report` and handing the raw facts straight to the model leaves all 52 passing. FIXED in #2819, which reads the prompt actually handed to `one_shot_completion`; the mutation now reds that test and only that test (1 failed / 26 passed), restored 27/27",
+      "the numbers are never round-tripped through the model — the narrative sits ABOVE sections rendered from the gather verbatim, and `test_the_model_is_never_shown_a_count` proves the group sizes are absent from what it reads. So the worst a compromised narrative can do is be wrong in prose beside numbers it cannot touch",
+      "🔴 THREE-VALUED `narrative_status` CHOSEN UP FRONT — skipped / unavailable / written, 'Three, not a bool, because \"nobody asked for one\"' is a different fact from 'one was attempted and nothing resolved'. The absent-vs-declared-false class, designed in rather than found as a bug",
+      "ordering as a property: the artifact is persisted FIRST, 'so quiet hours suppressing the ping cannot also lose the report' — and it is a VERSIONED artifact, because 'why did last month's report look like that' has to stay answerable",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Not driven: delivery needs the scheduled job to fire and the gather to have content. The Learning page was driven and carries no report on this home, consistent with an empty record.",
+    "notes": "🪤 THE FINDING IS A NEW SHAPE FOR THIS CAMPAIGN AND WORTH NAMING: not an inert control (the fence is live in production) but a SELF-SATISFYING TEST — the assertion constructs the very evidence it then checks, so it passes byte-identically whether or not the code under test does the thing. Its docstring made the claim about the production path while the assertion was about the test's own call. `tests/test_refiner_fencing.py` shows this repo already knows the right pattern; there is no repo-wide sweep asserting every model call site fences its input, which would be the stronger fix."
+  },
+  "LV-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "every stumble trigger has its own test AND its own negative: correction, failure-retry ('only when the tool was actually retried'), rejection ('only when the denial stood'), plus `test_an_ordinary_successful_turn_never_stumbles` and `test_the_env_failure_fixture_never_triggers`",
+      "🔑 `_skills_used`, NOT the ladder's `loaded_skills`, AND THE DISTINCTION IS THE ATOM: the latter is the CANDIDATE index, so 'a refine target picked from it would name a skill that had no part in the turn'. `_skills_used` is LV-2's narrowing to allocations whose content actually reached the prompt — 'the same list the turn-time `record_uses` counter consumes — so \"used\" cannot mean two things here'",
+      "🔑 THE DIFF SHOWN IS THE DIFF APPLIED: `test_diff_is_exactly_what_accept_applies`, so the review surface cannot render one change and commit another. `test_reject_leaves_the_skill_untouched` and `test_two_accepted_refinements_are_distinguishable_by_version` close the other two directions",
+      "`test_the_arm_never_calls_a_model` — synchronous, a classifier plus a `difflib` diff, so it cannot delay the turn; and `test_the_daily_cap_holds_across_the_accept_that_empties_the_queue`, which is the cap's real edge rather than its easy one",
+      "🔑 NO SECOND CONFIG KNOB AND NO SECOND CHANNEL: it rides `skill_ladder` deliberately — 'that flag is the user's answer to \"may this system propose skills from my turns?\", and a second config knob for the deterministic half of the same queue would let the two answers disagree' — and reuses LV-2's learned-chip emitter with `origin: \"proposal\"`",
+      "`test_the_after_turn_seam_calls_the_stumble_arm` + `test_the_call_site_files_a_proposal_and_surfaces_the_existing_learned_chip` — the anti-inertness pair; and `test_v3_arc_flawed_skill_stumble_refine_approve_rerun` carries V3 as a test",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Not driven: a stumble needs a real turn that loaded a skill. The proposal-detail route serving the diff and its target version is route-tested, and `test_the_proposal_detail_route_is_registered` pins the registration.",
+    "notes": "One measured detail worth keeping: an explicit `if not used: return` guard, because without it 'the only thing stopping `used[0]` below was the `except`' — so a test of that silence would have been pinning an IndexError. 'Measured: it did.' A guard added for the right reason rather than the observed behaviour."
+  },
+  "LV-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "🔑 THE DOC IS A PRE-REGISTERED PROTOCOL AND SAYS SO IN ITS OWN STATUS LINE: 'PROTOCOL v1 — FROZEN 2026-08-16 … Owner-signed; see §8', with the reviewability rule stated as a rule — 'the protocol is frozen BEFORE any run, so a disappointing result cannot retroactively edit the method'",
+      "🔑 THE PUBLISH DECISION IS MADE AT THE ONLY HONEST MOMENT: §8 signs off 'including the commitment to publish a modest or negative result. The publish decision was made here, before the measurement, which is the only point at which it can be made honestly.' And §1: 'A protocol that only ever reports wins is not measuring'",
+      "🔑 I RAN THE REGISTER RATHER THAN COUNTING IT: `learning_benchmark.py --preflight` prints 'task set v2 — 10 task(s)' and marks all ten `[ok]` with their skill and fixture, closing with 'all 10 task(s) runnable'. So the frozen ~10-task set is not merely listed — every entry resolves",
+      "the claim is deliberately narrow — 'a skill the user approved improves the next matching run. Not \"learning works\", not \"the flywheel pays for itself\"' — and §6/§7 list what invalidates a result and what must exist before a single number may be published",
+      "🔑 IT REFUSES THE OBVIOUS CHEAT BY NAME: the reusable comparison module is arm-name-bound to `fanout`/`single`, and 'Relabelling `skills_on` as `fanout` to get a green run would be a lie in the output file' — so LV-7 must generalise the vocabulary or write a sibling, an owner call rather than a drive-by edit",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a protocol document plus a CLI register, which was run.",
+    "notes": "The doc also records a DISCOVERY against the roadmap itself — LV-7's declared deps understate it, because the arm lever belongs to a LATER EVALUATION-SUBSTRATE session — and leaves the row unedited 'because the roadmap is owner-maintained'. Recording a dependency error without editing the owner's table is the right instinct."
+  },
+  "LV-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live",
+    "evidence": [
+      "the machinery is real and green: 73/73 across the bench and verdict suites, and the preflight runs the full frozen register",
+      "🔑 THE IN-PRODUCT RESULTS SURFACE EXISTS AND I DROVE IT. The Learning page carries a 'Skill impact benchmark' region whose empty state names the exact command, and beside it a 'Methodology: the benchmark protocol' link — so the `done_when`'s methodology-link requirement is met IN THE PRODUCT even though the website half is blocked",
+      "🔴 AND THE EMPTY STATE IS HONEST: 'No skill-impact benchmark has run yet', not a zero row. Same polarity as LV-3's absent block",
+      "clause 3's site half is structurally blocked, which the atom's own reason states and I did not re-derive: the site pins core at the released version and its doc sync deliberately excludes `docs/roadmap/` ('intent, not released behavior — the projection rule'), so the methodology doc cannot ride the shipped path. That needs an owner decision about which synced tree a results page belongs in",
+      "🔑 V4 IS UNMET AS A RESULT RATHER THAN AS A RAIL, and that distinction is the atom's best sentence: the setup reproduces across two independently seeded homes (same task-set version, scenario hashes, prompt pack, config snapshot) while 'same verdict class per task' is FALSE with 2 of 3 tasks flipping. A benchmark that ran and does not reproduce is a finding; the earlier all-null run was a rail",
+      "the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011"
+    ],
+    "ui_validated": "Learning page driven on :10011: the benchmark region, its empty state and the methodology link were read off the live page. No run has been performed in this home, so no results table was rendered.",
+    "notes": "Partial, and the status is defensible with a caveat. The dag's status vocabulary is only done/todo/blocked, so an atom whose code is complete and whose remaining clause is owner-side has no accurate value to carry — `todo` with an exhaustive `blocked_reason` is the closest available, and the reason does carry the detail. The honest README one-liner is correctly still unwritten: 'a README announcing a benchmark whose verdict flips between runs is the same overclaim in the other direction'."
   }
 }

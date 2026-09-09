@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 339 | `done_when` checked against the code and it holds |
-| `partial` | 220 | some `done_when` clauses hold, others do not |
+| `confirmed` | 345 | `done_when` checked against the code and it holds |
+| `partial` | 221 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 111 | not yet checked |
+| `unaudited` | 104 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -535,13 +535,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`LV-1`](LV-1.md) | `done` | `unaudited` | S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop |
-| [`LV-2`](LV-2.md) | `done` | `unaudited` | S2 legibility: per-run 'used N skills you approved' chip + session learned-chips with tap-through |
-| [`LV-3`](LV-3.md) | `done` | `unaudited` | S2 digest section: learning summary block (new/refined/pending counts + names) |
-| [`LV-4`](LV-4.md) | `done` | `unaudited` | Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment) |
-| [`LV-5`](LV-5.md) | `done` | `unaudited` | S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept |
-| [`LV-6`](LV-6.md) | `done` | `unaudited` | S4 benchmark protocol doc |
-| [`LV-7`](LV-7.md) | `todo` | `unaudited` | S4 benchmark implementation as an eval-substrate study + publish |
+| [`LV-1`](LV-1.md) | `done` | `confirmed` | S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop |
+| [`LV-2`](LV-2.md) | `done` | `confirmed` | S2 legibility: per-run 'used N skills you approved' chip + session learned-chips with tap-through |
+| [`LV-3`](LV-3.md) | `done` | `confirmed` | S2 digest section: learning summary block (new/refined/pending counts + names) |
+| [`LV-4`](LV-4.md) | `done` | `confirmed` | Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment) |
+| [`LV-5`](LV-5.md) | `done` | `confirmed` | S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept |
+| [`LV-6`](LV-6.md) | `done` | `confirmed` | S4 benchmark protocol doc |
+| [`LV-7`](LV-7.md) | `todo` | `partial` | S4 benchmark implementation as an eval-substrate study + publish |
 
 ### `MC` — MOBILE-COMPANION (10/10 done)
 

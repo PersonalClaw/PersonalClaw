@@ -34,9 +34,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- the machinery is real and green: 73/73 across the bench and verdict suites, and the preflight runs the full frozen register
+- 🔑 THE IN-PRODUCT RESULTS SURFACE EXISTS AND I DROVE IT. The Learning page carries a 'Skill impact benchmark' region whose empty state names the exact command, and beside it a 'Methodology: the benchmark protocol' link — so the `done_when`'s methodology-link requirement is met IN THE PRODUCT even though the website half is blocked
+- 🔴 AND THE EMPTY STATE IS HONEST: 'No skill-impact benchmark has run yet', not a zero row. Same polarity as LV-3's absent block
+- clause 3's site half is structurally blocked, which the atom's own reason states and I did not re-derive: the site pins core at the released version and its doc sync deliberately excludes `docs/roadmap/` ('intent, not released behavior — the projection rule'), so the methodology doc cannot ride the shipped path. That needs an owner decision about which synced tree a results page belongs in
+- 🔑 V4 IS UNMET AS A RESULT RATHER THAN AS A RAIL, and that distinction is the atom's best sentence: the setup reproduces across two independently seeded homes (same task-set version, scenario hashes, prompt pack, config snapshot) while 'same verdict class per task' is FALSE with 2 of 3 tasks flipping. A benchmark that ran and does not reproduce is a finding; the earlier all-null run was a rail
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Learning page driven on :10011: the benchmark region, its empty state and the methodology link were read off the live page. No run has been performed in this home, so no results table was rendered.
+
+**Notes:** Partial, and the status is defensible with a caveat. The dag's status vocabulary is only done/todo/blocked, so an atom whose code is complete and whose remaining clause is owner-side has no accurate value to carry — `todo` with an exhaustive `blocked_reason` is the closest available, and the reason does carry the detail. The honest README one-liner is correctly still unwritten: 'a README announcing a benchmark whose verdict flips between runs is the same overclaim in the other direction'.
 
 ## Recorded history
 

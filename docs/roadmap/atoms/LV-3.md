@@ -31,9 +31,25 @@ weekly digest (or fallback skills-page header) shows the learning block with rea
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- 🔑 I OBSERVED THE ABSENT-NOT-ZERO RULE IN A REAL BROWSER. The block renders nothing on this home, and that is the designed answer: 'Rendering "0 new, 0 refined" there would claim nothing was learned when the truthful answer is "not being tracked"'. `test_default_summary_is_empty_so_an_empty_home_renders_nothing` pins it
+- 🔑 AND THE WHOLE LEARNING PAGE HOLDS THE SAME LINE — every panel I drove reads 'unmeasured — no capture pass has run', 'no gate run', 'No judge verdicts in the last 0 runs', and one per-day row says it outright: 'No capture pass ran — this is the gap an aggregate view cannot see (0 passes, 0 produced, 0 errors)'. A zero-valued chart would have been the cheap version
+- counts are exact while names are a sample: `count` is never derived from `len(names)`, 'so deriving the count from the list it truncated would under-report the moment a group got busy', and the remainder is stated as '+N more'. `test_counts_are_exact_while_names_are_a_bounded_sample`
+- 🔑 A MEASURED NEAR-MISS IS RECORDED IN THE SOURCE: reading lessons through `service_for(provider)` instead of `over_vector_store` yields `_vs = None`, so 'every lesson would read as absent and the group would render an HONEST-LOOKING ZERO forever. Measured, not assumed'. Exactly the failure class this audit keeps finding, found by the author first
+- 🔴 THE DIGEST-BUILDER FALLBACK IS SANCTIONED, NOT A SHORTFALL: plan 42's builder does not exist in the tree, and the atom's own `done_when` names the skills-page header as the alternative. Recorded as a DISCOVERY in the execution log with the measurement behind it. The gather lives server-side in ONE function so a future digest CONSUMES it rather than reimplementing it
+- `test_the_summary_route_is_actually_registered_not_merely_defined` — the inert-control class, asserted rather than hoped; and `test_composing_the_block_writes_nothing`
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Skills page and Learning page driven on :10011. The block is absent on an empty home, which is the correct render; 'real counts and names' needs learned artifacts, which need a bound model or embedding provider.
+
+**Notes:** `pending` is deliberately unwindowed — 'a proposal from five weeks ago is MORE interesting, not less'. A windowed pending count would have quietly retired the backlog it exists to show.
 
 ## Recorded history
 

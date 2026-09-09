@@ -30,9 +30,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 62 (LV) — the fence falsified at the call site (a self-satisfying assertion, fixed in #2819); the benchmark preflight run live
+
+**Code evidence:**
+
+- all five `done_when` clauses have named tests and 52/52 pass across the two files: byte-match counts with a zero-write witness (and `test_the_witness_detects_a_write_so_its_silence_means_something` as its vacuity floor), `test_no_model_still_produces_every_deterministic_section`, the compressed-clock fire, `test_quiet_hours_suppresses_the_ping_but_not_the_artifact`, config round-trip + `test_off_disables_the_row_instead_of_deleting_it` + `TestTheDedupKeyFollowsThePeriod`
+- 🔑 ARCC'S REQUIREMENT LANDS ALMOST LITERALLY HERE. Its machinery is Bedrock guardrails, which does not apply, but the requirement is that the USER-INPUT PORTION of a prompt be TAGGED so the guard reads it as content rather than as application instructions. This call site does exactly that — `fence_untrusted(..., source=, source_type=, source_id=, transformation_path=)` — for the identical stated reason: 'a facet's text is user prose that itself came from a turn — and a turn can carry an injection'
+- 🪤 AND THE ASSERTION THAT APPEARED TO PROTECT IT COULD NOT FAIL. The test computed a fence ITSELF, inside the assertion, then checked its own result: `assert "untrusted_content" in fence_untrusted(facts, source="learning")` — a property of the HELPER, not of the call site. MEASURED: deleting the fence from `narrate_identity_report` and handing the raw facts straight to the model leaves all 52 passing. FIXED in #2819, which reads the prompt actually handed to `one_shot_completion`; the mutation now reds that test and only that test (1 failed / 26 passed), restored 27/27
+- the numbers are never round-tripped through the model — the narrative sits ABOVE sections rendered from the gather verbatim, and `test_the_model_is_never_shown_a_count` proves the group sizes are absent from what it reads. So the worst a compromised narrative can do is be wrong in prose beside numbers it cannot touch
+- 🔴 THREE-VALUED `narrative_status` CHOSEN UP FRONT — skipped / unavailable / written, 'Three, not a bool, because "nobody asked for one"' is a different fact from 'one was attempted and nothing resolved'. The absent-vs-declared-false class, designed in rather than found as a bug
+- ordering as a property: the artifact is persisted FIRST, 'so quiet hours suppressing the ping cannot also lose the report' — and it is a VERSIONED artifact, because 'why did last month's report look like that' has to stay answerable
+- the seven LV suites + the ladder suite 140/140; benchmark + verdict suites 73/73; `learning_benchmark.py --preflight` run live: task set v2, all 10 tasks runnable; Skills and Learning pages driven in a real browser on :10011
+
+**Driven in the UI:** Not driven: delivery needs the scheduled job to fire and the gather to have content. The Learning page was driven and carries no report on this home, consistent with an empty record.
+
+**Notes:** 🪤 THE FINDING IS A NEW SHAPE FOR THIS CAMPAIGN AND WORTH NAMING: not an inert control (the fence is live in production) but a SELF-SATISFYING TEST — the assertion constructs the very evidence it then checks, so it passes byte-identically whether or not the code under test does the thing. Its docstring made the claim about the production path while the assertion was about the test's own call. `tests/test_refiner_fencing.py` shows this repo already knows the right pattern; there is no repo-wide sweep asserting every model call site fences its input, which would be the stronger fix.
 
 ## Recorded history
 
