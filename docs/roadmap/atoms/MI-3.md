@@ -29,9 +29,27 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- voice/duplex.py ships the four pure functions the clause names, with no I/O and no model calls, and each carries its reason
+- 🔑 THE CONFIRMATION GATE'S REASON IS ONE SENTENCE: 'a dictated transcript accumulates in the frontend and only becomes a turn once the operator says a confirmation phrase; an exit phrase clears the buffer. A HALF-FINISHED THOUGHT MUST NEVER BECOME AN EXECUTED INSTRUCTION'
+- 🔑 BOTH PHRASE MATCHERS ARE TAIL-ANCHORED, and the bug that requires it is named: 'the confirmation is the last thing the operator says, so SCANNING THE WHOLE BUFFER WOULD LET A "GO AHEAD" UTTERED MID-THOUGHT FIRE THE TURN EARLY'
+- the echo filter is defined by a measurable rule rather than a heuristic — 'Any transcript sharing a run of ECHO_MIN_RUN consecutive words with the last synthesized text is the speaker, not the operator'
+- clean_for_speech is scoped precisely: 'The chat transcript keeps the full text; only the AUDIO drops code, URLs, paths, and flags, which are noise when read aloud' — so cleaning never loses transcript content
+- the FE duplication is DECLARED, not accidental (:22-25): web/src/ui/composer/duplex.ts mirrors the two phrase matchers 'because the frontend owns the mic, so it owns the buffer', with 'Keep the rules in the two files in step' and an explicit note that the echo filter and speech cleaner are backend-only with no mirror
+- DRIVEN: Settings → Voice renders the Hands-free section with the four confirmation phrases (do it / go ahead / send it / execute) as removable chips, and its hint states the backend invariant verbatim — 'Dictation accumulates in the composer until one of these ends what you just said — SO A HALF-FINISHED THOUGHT IS NEVER SENT'
+- tests/test_voice_duplex.py + test_voice_duplex_wiring.py pass as part of the 266
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Driven in the UI:** Drove the settings surface. NOT driven: the live hands-free loop — FE transcript accumulation and the mute-during-playback hook draining mic buffers need a real microphone, which a headless browser does not have. That is an environment limit rather than a doubt; the pure decision functions those hooks call are covered by a passing suite.
+
+**Notes:** The push-to-talk row is worth recording as good practice: it states why it will not work here rather than silently doing nothing — 'A browser tab has no global shortcuts, so this is saved for when you run the desktop app.' A control that explains its own inertness in the place it appears is the opposite of the defect this campaign keeps finding.
 
 ## Recorded history
 

@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 voice/profiles.py:22-27 RULE 1, AND ITS ARGUMENT IS ABOUT FUTURE TRUST: '`verified_own_voice` is RECOMPUTED, never believed. The stored flag is written for readability only; every read recomputes it from the artifacts on disk … Hand-editing "verified_own_voice": true into the JSON does not flip it — A FORGEABLE PROVENANCE FLAG IS WORSE THAN NO FLAG, BECAUSE IT IS THE ONE FIELD A FUTURE OFF-MACHINE EXPORT WOULD TRUST'
+- MEASURED, the recompute is real and reaches the read path: recompute_verified at :306 requires a consent recording of at least MIN_CONSENT_SECS (:82) AND non-empty consent text, and :196 states the load order outright — 'whatever the file claims here is overwritten by the recompute'
+- 🔑 THE EVIDENCE PATH IS ALSO NOT TRUSTED (:286-292): consent_recording GLOBS the profile dir rather than reading the record's own consent_audio field, because 'the whole point of the recompute is that NO STORED STRING decides whether consent exists'. Two levels — neither the flag nor the pointer to its evidence
+- 🔑 RULE 2, ids are symlink-contained, and the containment is POST-resolve: :71 _ID_RE admits no separators/..; :236-241 states 'Path.resolve() follows symlinks, so a planted vp-evil -> /etc resolves…' and asserts the resolved candidate is the root or under it. The docstring names the attack it refuses: 'a planted symlink (voice_profiles/vp-evil -> /etc) cannot be read or written through'
+- :35-36 a naming-discipline note that prevents a real collision: 'this is NOT AgentConfig.voice, which is the agent's persona TEXT. Nothing here adds a bare `voice` config key'
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Notes:** 🎯 THE ARCC CONTRAST IS THE INTERESTING PART. ARCC returned the Entra unrestricted-user-consent control, whose objective is that consent must be constrained and reviewable rather than granted broadly and taken at face value ('Inadvertent user actions: Users may unknowingly grant access'). That guidance is about WHO MAY GRANT consent and it assumes the consent RECORD is trustworthy, because a platform wrote it. This atom answers the question the guidance does not reach: the record lives in a user-editable JSON file on the user's own disk, so the system re-derives the claim from the artifacts instead of believing the field. Same domain, one layer deeper — and the symlink containment is the third independent occurrence of post-realpath containment in this codebase (the skill-resource reader and the uploads store being the others).
 
 ## Recorded history
 

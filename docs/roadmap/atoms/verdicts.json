@@ -3691,5 +3691,104 @@
       "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
     ],
     "notes": "This is the atom that made the whole audit campaign safe to run, and I have been consuming its guarantee for thirty cycles without auditing it. Two properties are worth carrying forward. First, a fixture cannot reach an import-time constant, so a home frozen at import needs a source fix — and the rail's 147-entry measurement is what made that distinction visible rather than theoretical. Second, the guard deliberately does not delegate to the function it guards, because that function has a side effect; a wrapper that consults the original before overriding it would have created the real home on a clean machine."
+  },
+  "MI-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 voice/profiles.py:22-27 RULE 1, AND ITS ARGUMENT IS ABOUT FUTURE TRUST: '`verified_own_voice` is RECOMPUTED, never believed. The stored flag is written for readability only; every read recomputes it from the artifacts on disk … Hand-editing \"verified_own_voice\": true into the JSON does not flip it — A FORGEABLE PROVENANCE FLAG IS WORSE THAN NO FLAG, BECAUSE IT IS THE ONE FIELD A FUTURE OFF-MACHINE EXPORT WOULD TRUST'",
+      "MEASURED, the recompute is real and reaches the read path: recompute_verified at :306 requires a consent recording of at least MIN_CONSENT_SECS (:82) AND non-empty consent text, and :196 states the load order outright — 'whatever the file claims here is overwritten by the recompute'",
+      "🔑 THE EVIDENCE PATH IS ALSO NOT TRUSTED (:286-292): consent_recording GLOBS the profile dir rather than reading the record's own consent_audio field, because 'the whole point of the recompute is that NO STORED STRING decides whether consent exists'. Two levels — neither the flag nor the pointer to its evidence",
+      "🔑 RULE 2, ids are symlink-contained, and the containment is POST-resolve: :71 _ID_RE admits no separators/..; :236-241 states 'Path.resolve() follows symlinks, so a planted vp-evil -> /etc resolves…' and asserts the resolved candidate is the root or under it. The docstring names the attack it refuses: 'a planted symlink (voice_profiles/vp-evil -> /etc) cannot be read or written through'",
+      ":35-36 a naming-discipline note that prevents a real collision: 'this is NOT AgentConfig.voice, which is the agent's persona TEXT. Nothing here adds a bare `voice` config key'",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "notes": "🎯 THE ARCC CONTRAST IS THE INTERESTING PART. ARCC returned the Entra unrestricted-user-consent control, whose objective is that consent must be constrained and reviewable rather than granted broadly and taken at face value ('Inadvertent user actions: Users may unknowingly grant access'). That guidance is about WHO MAY GRANT consent and it assumes the consent RECORD is trustworthy, because a platform wrote it. This atom answers the question the guidance does not reach: the record lives in a user-editable JSON file on the user's own disk, so the system re-derives the claim from the artifacts instead of believing the field. Same domain, one layer deeper — and the symlink containment is the third independent occurrence of post-realpath containment in this codebase (the skill-resource reader and the uploads store being the others)."
+  },
+  "MI-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "the sidecar app ships: PersonalClawApps/voice-clone-tts/ with app.json, catalog.json, provider.py, worker.py, README, LICENSE and two test files",
+      "provider.py:116 'Cloning-capable local TTS provider. Declares supports_cloning' and :14-17 names the consumer — 'so MI-2a's tts.registry.guard_synthesis_capability [gates on it]' — with the runtime and matrix flags 'declared in the bundled catalog.json, the single [source]'",
+      "🔑 THE CAPABILITY FLAGS EXIST TO REPLACE A SILENT FALLBACK, which the plan states as an inherited rule (§2.2 line 112): 'Features gate on the flags instead of silently ignoring params (the OmniVoice rule: CAPABILITY FLAGS, NOT SILENT FALLBACKS) — a clone-kind profile bound to a non-cloning provider is a 409 with a typed reason (cloning_unsupported:<provider>), NEVER A WRONG-VOICE SYNTHESIS'",
+      "the defaulted kwarg surface (ref_audio/ref_text/seed/instruct/design_params) is what keeps piper/OpenAI compiling unchanged — the clause's compile-compatibility requirement",
+      "MEASURED: tests/test_voice_engine_bakeoff.py passes 12/12 in this tree, and tests/test_voice_provider_family_invariant.py is part of the 266",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "notes": "The clause names the app path as `apps/voice-clone-tts`; it actually lives at the apps-repo root as `voice-clone-tts/`. A path drift in the plan text, the third of this shape in three cycles (the CI plan's two script files, the routing plan's settings tab) — recorded rather than filed, because the artifact and its capability are both present. The refusal design is the part worth keeping: a wrong-voice synthesis is the failure mode a capability system exists to prevent, and it is exactly what a silent parameter drop produces."
+  },
+  "MI-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "voice/duplex.py ships the four pure functions the clause names, with no I/O and no model calls, and each carries its reason",
+      "🔑 THE CONFIRMATION GATE'S REASON IS ONE SENTENCE: 'a dictated transcript accumulates in the frontend and only becomes a turn once the operator says a confirmation phrase; an exit phrase clears the buffer. A HALF-FINISHED THOUGHT MUST NEVER BECOME AN EXECUTED INSTRUCTION'",
+      "🔑 BOTH PHRASE MATCHERS ARE TAIL-ANCHORED, and the bug that requires it is named: 'the confirmation is the last thing the operator says, so SCANNING THE WHOLE BUFFER WOULD LET A \"GO AHEAD\" UTTERED MID-THOUGHT FIRE THE TURN EARLY'",
+      "the echo filter is defined by a measurable rule rather than a heuristic — 'Any transcript sharing a run of ECHO_MIN_RUN consecutive words with the last synthesized text is the speaker, not the operator'",
+      "clean_for_speech is scoped precisely: 'The chat transcript keeps the full text; only the AUDIO drops code, URLs, paths, and flags, which are noise when read aloud' — so cleaning never loses transcript content",
+      "the FE duplication is DECLARED, not accidental (:22-25): web/src/ui/composer/duplex.ts mirrors the two phrase matchers 'because the frontend owns the mic, so it owns the buffer', with 'Keep the rules in the two files in step' and an explicit note that the echo filter and speech cleaner are backend-only with no mirror",
+      "DRIVEN: Settings → Voice renders the Hands-free section with the four confirmation phrases (do it / go ahead / send it / execute) as removable chips, and its hint states the backend invariant verbatim — 'Dictation accumulates in the composer until one of these ends what you just said — SO A HALF-FINISHED THOUGHT IS NEVER SENT'",
+      "tests/test_voice_duplex.py + test_voice_duplex_wiring.py pass as part of the 266",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "ui_validated": "Drove the settings surface. NOT driven: the live hands-free loop — FE transcript accumulation and the mute-during-playback hook draining mic buffers need a real microphone, which a headless browser does not have. That is an environment limit rather than a doubt; the pure decision functions those hooks call are covered by a passing suite.",
+    "notes": "The push-to-talk row is worth recording as good practice: it states why it will not work here rather than silently doing nothing — 'A browser tab has no global shortcuts, so this is saved for when you run the desktop app.' A control that explains its own inertness in the place it appears is the opposite of the defect this campaign keeps finding."
+  },
+  "MI-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 dashboard/screen_context.py:1-26 THREE PROPERTIES, EACH ARGUED FROM A FAILURE, and the first is structural rather than procedural: 'NEVER ON DISK. Nothing in this file opens, writes, or names a file … A screenshot of someone's screen is THE MOST INTIMATE PAYLOAD THE PLATFORM HANDLES; the only way to be sure it isn't sitting in ~/.personalclaw after the fact is FOR THE CODE THAT HOLDS IT TO HAVE NO WRITE PATH AT ALL'",
+      "'LATEST-WINS, EXACTLY ONE. stage REPLACES; it never appends … so a drain can never hand the model A STALE VIEW OF A SCREEN THE USER HAS SINCE NAVIGATED AWAY FROM. There is no queue to grow and nothing to flush' — freshness as a privacy property, not only a correctness one",
+      "'ONE-SHOT DRAIN. drain POPS. A second drain on the same session returns None, so a frame captured for \"what's wrong with this diff?\" CANNOT SILENTLY RIDE ALONG ON THE UNRELATED QUESTION THAT FOLLOWS IT' — consent scoped to one turn",
+      "and the closer: 'Slots die with the process. THAT IS THE FEATURE, NOT A LIMITATION: a gateway restart is a hard reset of everything the assistant could see'",
+      "the persistence escape hatch is deliberately a different path: 'Persistence exists only via the user's explicit \"Pin frame\" action, which goes through the ordinary uploads store — a different module, a different verb, and a deliberate one'",
+      "🎯 THE GATE IS SERVER-SIDE AND SAYS SO (chat_handlers.py:1284-1288): 'THE CONFIG GATE IS ENFORCED HERE, NOT ONLY IN THE UI. screen_share_enabled is read per request and a frame is refused with 403 when it is off, so a client that kept a stale bundle, forged the call by hand, or simply had the toggle flipped off underneath it cannot stage anything. THE HIDDEN BUTTON IS A CONVENIENCE; THIS CHECK IS THE CONTROL'",
+      "the fencing is real: chat_runner.py:1480-1486 calls fence_untrusted(source='screen-share') and annotates the turn screen_context:described",
+      "MEASURED: config/loader.py:1482-1483 screen_share_enabled defaults FALSE, and :3501 states why it is bool(...) and NOT _guard_flag — 'a guard flag fails ON, which on upgrade would hand every existing install a lossy re-render path it never asked for'",
+      "DRIVEN: with the master opt-in off, the composer has NO screen-share control at all — matching the setting's own description, 'Off means the control is hidden AND the server refuses any frame'",
+      "the `stop` verb is audited and 'drops the slot immediately rather than waiting for a drain', so ending a share takes effect at once",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "ui_validated": "Drove #/chat with the flag off and confirmed the control is absent, and read the setting's own hint in Settings → Chat. Not driven: an actual shared frame, which needs a browser share dialog and a vision model.",
+    "notes": "The setting's hint is the best privacy copy in the campaign because it states four checkable things at once: one frame, of a surface the user picks in the browser's own dialog; held in memory for a single turn and never written to disk; the BROWSER's own capture indicator runs the whole time (an out-of-band signal the app cannot fake); and off means hidden AND server-refused. And the flag's default is the mirror image of the routing plan's fingerprint flag — that one fails ON because it gates a suggestion, this one fails OFF because it gates screen capture. Two flags, opposite defaults, each stating the discriminator."
+  },
+  "MI-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "DRIVEN: Settings → Voice ships the whole surface — a Voices section, the profile-manager entry points, a 'Where each voice speaks' bindings TABLE with Surface / Voice / Effective / Actions columns, and the Hands-free section",
+      "🔑 THE 4-LEVEL PRECEDENCE IS STATED IN THE USER'S TERMS AND THE COMPUTED COLUMN DECLARES ITS OWN HONESTY: 'An explicit request wins, then this surface's binding, then the default, then the built-in voice. THE EFFECTIVE COLUMN IS THE RESOLVER'S OWN ANSWER, NOT A GUESS'",
+      "the profile definition puts consent on the same footing as the engine: 'A voice profile is what renders speech — which engine, how it is conditioned, and WHOSE CONSENT IS ON RECORD'",
+      "one-click migration is present in the EMPTY STATE, beside a manual path — 'Migrate current voice' and 'Create one manually' — which is where a user with no profiles actually needs it",
+      "🔑 DRIVEN, THE MIGRATION REFUSES CORRECTLY AND ITS REFUSAL CARRIES THE REMEDY: clicking it with no TTS binding answers 'no active TTS voice to migrate — BIND ONE IN SETTINGS → MODELS FIRST' rather than synthesizing a profile from nothing. The clause's 'only on explicit action' is satisfied twice over — it is a button, and it declines when its input is absent",
+      "tests/test_voice_full_matrix_as_a_user.py and test_voice_migration.py pass as part of the 266",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "ui_validated": "Drove the page and the migration button. NOT driven: a successful migration and the full-matrix sweep (profile CRUD × lock × BOTH engines × per-surface bindings × duplex × screen share on vision and non-vision models) — every one of those needs a bound TTS voice, and the cloning engine additionally needs its torch runtime.",
+    "notes": "Partial for the sweep only. The refusal is the part I could observe and it is the right behaviour: a migration that invented a profile from an absent binding would produce a default voice nobody chose, which is worse than declining. Note also that the message names the destination, which is exactly the gap PR #2768 closed on the workflow-start path this campaign — here it was already right."
+  },
+  "MI-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 32 (MI) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: docs/roadmap/plans/MI-6-voice-engine-bakeoff.md exists — the loser's notes ARE committed to the plan dir as the clause requires — and it states the verdict up front: 'Verdict up front: ship k2-fsa OmniVoice. Reject FunAudioLLM CosyVoice. Weighted score 0.875 vs 0.662 over the kept criteria'. The scorecard is reproducible: 'it is pure, offline, and takes no model'",
+      "tests/test_voice_engine_bakeoff.py passes 12/12 in this tree, so the scorecard's own assertions run here rather than resting on the document",
+      "🔑 REAL INFERENCE, NOT A STUB, AND THE ISOLATION IS THE POINT: worker.py:1 'Sidecar worker for Voice Clone TTS — REAL OmniVoice zero-shot inference (MI-6)'; :4 it runs in 'the app's own venv, NEVER by the gateway process: the engine is torch-heavy diffusion'; :109 'import omnivoice  # heavy: torch + the diffusion stack; ONLY ever imported here'. And :125 records that the return shapes were LIVE-VALIDATED ('Live-validated shapes, most specific first') — the mark of a path that has actually run",
+      "RESUMABLE WEIGHTS: provider.py:186 'Two mechanisms compose: huggingface_hub.snapshot_download already resumes', and :210 keeps the evidence for the next attempt — 'partial files stay for the resume; never crashes the app' — with :213 telling the user what to do ('re-run download to resume')",
+      "core treats an interrupted fetch honestly rather than as success: local_models/layouts.py:20 'a bare <name>.part, means an interrupted fetch. REPORTING THAT AS PRESENT IS WORSE THAN…' with PARTIAL_SUFFIXES covering .part/.tmp/.incomplete/.download",
+      "the LMM-V2 through-clone selftest exists with its own suite: dashboard/handlers/doctor.py + tests/test_doctor_clone_selftest.py",
+      "the typed crash reason exists: local_models/sidecar.py:85-97 namespaces it for the wire as sidecar_crashed:<reason> (e.g. sidecar_crashed:signal_11), and :38 states the isolation claim precisely — 'a sidecar is a CRASH AND DEPENDENCY boundary'",
+      "the app's own MI-6 suite passes 16/16",
+      "266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16"
+    ],
+    "notes": "🪤 THE DELIVERABLE DOCUMENT IS THE STALE ARTIFACT THIS TIME — a new variant of a pattern this campaign keeps meeting. MI-6-voice-engine-bakeoff.md says in its own words that 'The rest of MI-6 (real inference …, resumable weight download, the LMM-V2 through-clone selftest, and the sidecar-kill typed crash reason) is DEFERRED TO A FOLLOW-UP RUN'. Read alone that contradicts the `done` status. But it was written DURING the bake-off and the follow-ups it predicted then landed: the plan's execution log names them (PersonalClawApps #70 for inference + resumable download, Core #2425 / merge 2ec168d00 for the selftest + crash reason), and I confirmed all four in code rather than in the log. So the atom is done and its bake-off note is a snapshot of an earlier moment. Previous cycles found a stale PLAN HEADER and a stale MODULE DOCSTRING; this is a stale sub-deliverable, and the same rule resolves all three — the code wins, and a document describing a gap that was later closed is not a defect (the flywheel wiring rail's docstring explains at length why linting for exactly this would be wrong)."
   }
 }

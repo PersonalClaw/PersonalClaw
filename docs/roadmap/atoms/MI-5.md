@@ -33,9 +33,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- DRIVEN: Settings → Voice ships the whole surface — a Voices section, the profile-manager entry points, a 'Where each voice speaks' bindings TABLE with Surface / Voice / Effective / Actions columns, and the Hands-free section
+- 🔑 THE 4-LEVEL PRECEDENCE IS STATED IN THE USER'S TERMS AND THE COMPUTED COLUMN DECLARES ITS OWN HONESTY: 'An explicit request wins, then this surface's binding, then the default, then the built-in voice. THE EFFECTIVE COLUMN IS THE RESOLVER'S OWN ANSWER, NOT A GUESS'
+- the profile definition puts consent on the same footing as the engine: 'A voice profile is what renders speech — which engine, how it is conditioned, and WHOSE CONSENT IS ON RECORD'
+- one-click migration is present in the EMPTY STATE, beside a manual path — 'Migrate current voice' and 'Create one manually' — which is where a user with no profiles actually needs it
+- 🔑 DRIVEN, THE MIGRATION REFUSES CORRECTLY AND ITS REFUSAL CARRIES THE REMEDY: clicking it with no TTS binding answers 'no active TTS voice to migrate — BIND ONE IN SETTINGS → MODELS FIRST' rather than synthesizing a profile from nothing. The clause's 'only on explicit action' is satisfied twice over — it is a button, and it declines when its input is absent
+- tests/test_voice_full_matrix_as_a_user.py and test_voice_migration.py pass as part of the 266
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Driven in the UI:** Drove the page and the migration button. NOT driven: a successful migration and the full-matrix sweep (profile CRUD × lock × BOTH engines × per-surface bindings × duplex × screen share on vision and non-vision models) — every one of those needs a bound TTS voice, and the cloning engine additionally needs its torch runtime.
+
+**Notes:** Partial for the sweep only. The refusal is the part I could observe and it is the right behaviour: a migration that invented a profile from an absent binding would produce a default voice nobody chose, which is worse than declining. Note also that the message names the destination, which is exactly the gap PR #2768 closed on the workflow-start path this campaign — here it was already right.
 
 ## Recorded history
 

@@ -29,9 +29,29 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 dashboard/screen_context.py:1-26 THREE PROPERTIES, EACH ARGUED FROM A FAILURE, and the first is structural rather than procedural: 'NEVER ON DISK. Nothing in this file opens, writes, or names a file … A screenshot of someone's screen is THE MOST INTIMATE PAYLOAD THE PLATFORM HANDLES; the only way to be sure it isn't sitting in ~/.personalclaw after the fact is FOR THE CODE THAT HOLDS IT TO HAVE NO WRITE PATH AT ALL'
+- 'LATEST-WINS, EXACTLY ONE. stage REPLACES; it never appends … so a drain can never hand the model A STALE VIEW OF A SCREEN THE USER HAS SINCE NAVIGATED AWAY FROM. There is no queue to grow and nothing to flush' — freshness as a privacy property, not only a correctness one
+- 'ONE-SHOT DRAIN. drain POPS. A second drain on the same session returns None, so a frame captured for "what's wrong with this diff?" CANNOT SILENTLY RIDE ALONG ON THE UNRELATED QUESTION THAT FOLLOWS IT' — consent scoped to one turn
+- and the closer: 'Slots die with the process. THAT IS THE FEATURE, NOT A LIMITATION: a gateway restart is a hard reset of everything the assistant could see'
+- the persistence escape hatch is deliberately a different path: 'Persistence exists only via the user's explicit "Pin frame" action, which goes through the ordinary uploads store — a different module, a different verb, and a deliberate one'
+- 🎯 THE GATE IS SERVER-SIDE AND SAYS SO (chat_handlers.py:1284-1288): 'THE CONFIG GATE IS ENFORCED HERE, NOT ONLY IN THE UI. screen_share_enabled is read per request and a frame is refused with 403 when it is off, so a client that kept a stale bundle, forged the call by hand, or simply had the toggle flipped off underneath it cannot stage anything. THE HIDDEN BUTTON IS A CONVENIENCE; THIS CHECK IS THE CONTROL'
+- the fencing is real: chat_runner.py:1480-1486 calls fence_untrusted(source='screen-share') and annotates the turn screen_context:described
+- MEASURED: config/loader.py:1482-1483 screen_share_enabled defaults FALSE, and :3501 states why it is bool(...) and NOT _guard_flag — 'a guard flag fails ON, which on upgrade would hand every existing install a lossy re-render path it never asked for'
+- DRIVEN: with the master opt-in off, the composer has NO screen-share control at all — matching the setting's own description, 'Off means the control is hidden AND the server refuses any frame'
+- the `stop` verb is audited and 'drops the slot immediately rather than waiting for a drain', so ending a share takes effect at once
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Driven in the UI:** Drove #/chat with the flag off and confirmed the control is absent, and read the setting's own hint in Settings → Chat. Not driven: an actual shared frame, which needs a browser share dialog and a vision model.
+
+**Notes:** The setting's hint is the best privacy copy in the campaign because it states four checkable things at once: one frame, of a surface the user picks in the browser's own dialog; held in memory for a single turn and never written to disk; the BROWSER's own capture indicator runs the whole time (an out-of-band signal the app cannot fake); and off means hidden AND server-refused. And the flag's default is the mirror image of the routing plan's fingerprint flag — that one fails ON because it gates a suggestion, this one fails OFF because it gates screen capture. Two flags, opposite defaults, each stating the discriminator.
 
 ## Recorded history
 

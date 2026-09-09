@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 174 | `done_when` checked against the code and it holds |
-| `partial` | 142 | some `done_when` clauses hold, others do not |
+| `confirmed` | 178 | `done_when` checked against the code and it holds |
+| `partial` | 144 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 364 | not yet checked |
+| `unaudited` | 358 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -576,12 +576,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MI-1`](MI-1.md) | `done` | `unaudited` | voice_profiles entity store + resolver (CRUD, lock-from-history, consent-as-provenance, per-surface bindings + 4-level precedence) |
-| [`MI-2`](MI-2.md) | `done` | `unaudited` | Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal |
-| [`MI-3`](MI-3.md) | `done` | `unaudited` | Duplex-loop hardening pack (confirmation gating, echo filter + STT mute, pre-TTS cleaning, voice disclaimer, VoiceConfig) |
-| [`MI-4`](MI-4.md) | `done` | `unaudited` | Screen-context observation channel — opt-in ephemeral screen share into interactive chat (§5 live-session remainder only) |
-| [`MI-5`](MI-5.md) | `done` | `unaudited` | Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep |
-| [`MI-6`](MI-6.md) | `done` | `unaudited` | Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest |
+| [`MI-1`](MI-1.md) | `done` | `confirmed` | voice_profiles entity store + resolver (CRUD, lock-from-history, consent-as-provenance, per-surface bindings + 4-level precedence) |
+| [`MI-2`](MI-2.md) | `done` | `confirmed` | Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal |
+| [`MI-3`](MI-3.md) | `done` | `partial` | Duplex-loop hardening pack (confirmation gating, echo filter + STT mute, pre-TTS cleaning, voice disclaimer, VoiceConfig) |
+| [`MI-4`](MI-4.md) | `done` | `confirmed` | Screen-context observation channel — opt-in ephemeral screen share into interactive chat (§5 live-session remainder only) |
+| [`MI-5`](MI-5.md) | `done` | `partial` | Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep |
+| [`MI-6`](MI-6.md) | `done` | `confirmed` | Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest |
 
 ### `MRI` — MCP-READONLY-INBOUND (5/5 done)
 

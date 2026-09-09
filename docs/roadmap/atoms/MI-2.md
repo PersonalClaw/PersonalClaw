@@ -30,9 +30,22 @@ OmniVoice-vs-CosyVoice spike run on fixtures with the loser's notes in the plan 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the sidecar app ships: PersonalClawApps/voice-clone-tts/ with app.json, catalog.json, provider.py, worker.py, README, LICENSE and two test files
+- provider.py:116 'Cloning-capable local TTS provider. Declares supports_cloning' and :14-17 names the consumer — 'so MI-2a's tts.registry.guard_synthesis_capability [gates on it]' — with the runtime and matrix flags 'declared in the bundled catalog.json, the single [source]'
+- 🔑 THE CAPABILITY FLAGS EXIST TO REPLACE A SILENT FALLBACK, which the plan states as an inherited rule (§2.2 line 112): 'Features gate on the flags instead of silently ignoring params (the OmniVoice rule: CAPABILITY FLAGS, NOT SILENT FALLBACKS) — a clone-kind profile bound to a non-cloning provider is a 409 with a typed reason (cloning_unsupported:<provider>), NEVER A WRONG-VOICE SYNTHESIS'
+- the defaulted kwarg surface (ref_audio/ref_text/seed/instruct/design_params) is what keeps piper/OpenAI compiling unchanged — the clause's compile-compatibility requirement
+- MEASURED: tests/test_voice_engine_bakeoff.py passes 12/12 in this tree, and tests/test_voice_provider_family_invariant.py is part of the 266
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Notes:** The clause names the app path as `apps/voice-clone-tts`; it actually lives at the apps-repo root as `voice-clone-tts/`. A path drift in the plan text, the third of this shape in three cycles (the CI plan's two script files, the routing plan's settings tab) — recorded rather than filed, because the artifact and its capability are both present. The refusal design is the part worth keeping: a wrong-voice synthesis is the failure mode a capability system exists to prevent, and it is exactly what a silent parameter drop produces.
 
 ## Recorded history
 

@@ -30,9 +30,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 32 (MI) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: docs/roadmap/plans/MI-6-voice-engine-bakeoff.md exists — the loser's notes ARE committed to the plan dir as the clause requires — and it states the verdict up front: 'Verdict up front: ship k2-fsa OmniVoice. Reject FunAudioLLM CosyVoice. Weighted score 0.875 vs 0.662 over the kept criteria'. The scorecard is reproducible: 'it is pure, offline, and takes no model'
+- tests/test_voice_engine_bakeoff.py passes 12/12 in this tree, so the scorecard's own assertions run here rather than resting on the document
+- 🔑 REAL INFERENCE, NOT A STUB, AND THE ISOLATION IS THE POINT: worker.py:1 'Sidecar worker for Voice Clone TTS — REAL OmniVoice zero-shot inference (MI-6)'; :4 it runs in 'the app's own venv, NEVER by the gateway process: the engine is torch-heavy diffusion'; :109 'import omnivoice  # heavy: torch + the diffusion stack; ONLY ever imported here'. And :125 records that the return shapes were LIVE-VALIDATED ('Live-validated shapes, most specific first') — the mark of a path that has actually run
+- RESUMABLE WEIGHTS: provider.py:186 'Two mechanisms compose: huggingface_hub.snapshot_download already resumes', and :210 keeps the evidence for the next attempt — 'partial files stay for the resume; never crashes the app' — with :213 telling the user what to do ('re-run download to resume')
+- core treats an interrupted fetch honestly rather than as success: local_models/layouts.py:20 'a bare <name>.part, means an interrupted fetch. REPORTING THAT AS PRESENT IS WORSE THAN…' with PARTIAL_SUFFIXES covering .part/.tmp/.incomplete/.download
+- the LMM-V2 through-clone selftest exists with its own suite: dashboard/handlers/doctor.py + tests/test_doctor_clone_selftest.py
+- the typed crash reason exists: local_models/sidecar.py:85-97 namespaces it for the wire as sidecar_crashed:<reason> (e.g. sidecar_crashed:signal_11), and :38 states the isolation claim precisely — 'a sidecar is a CRASH AND DEPENDENCY boundary'
+- the app's own MI-6 suite passes 16/16
+- 266 tests pass across the voice + screen-context suites; test_voice_engine_bakeoff 12/12; the app's MI-6 suite 16/16
+
+**Notes:** 🪤 THE DELIVERABLE DOCUMENT IS THE STALE ARTIFACT THIS TIME — a new variant of a pattern this campaign keeps meeting. MI-6-voice-engine-bakeoff.md says in its own words that 'The rest of MI-6 (real inference …, resumable weight download, the LMM-V2 through-clone selftest, and the sidecar-kill typed crash reason) is DEFERRED TO A FOLLOW-UP RUN'. Read alone that contradicts the `done` status. But it was written DURING the bake-off and the follow-ups it predicted then landed: the plan's execution log names them (PersonalClawApps #70 for inference + resumable download, Core #2425 / merge 2ec168d00 for the selftest + crash reason), and I confirmed all four in code rather than in the log. So the atom is done and its bake-off note is a snapshot of an earlier moment. Previous cycles found a stale PLAN HEADER and a stale MODULE DOCSTRING; this is a stale sub-deliverable, and the same rule resolves all three — the code wins, and a document describing a gap that was later closed is not a defect (the flywheel wiring rail's docstring explains at length why linting for exactly this would be wrong).
 
 ## Recorded history
 
