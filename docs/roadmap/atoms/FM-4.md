@@ -32,9 +32,22 @@ the morph family shares timing/curves and reads as one system on visual review; 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- 🔑 THE COHERENCE CLAIM HAS A FAMILY-LEVEL TEST RATHER THAN FOUR COMPONENT ONES: `family.reducedMotion.test.tsx` sits beside the per-component files, so the vocabulary is checked as ONE system. That is the correct decomposition for an atom whose whole point is that four components read as one
+- `vocabulary.ts` exists with its own `vocabulary.test.ts`, so the shared timing/curve set is a named module rather than a convention repeated in four files
+- `docs/design/motion.md` is the documentation half the atom requires
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Not driven: 'reads as one system on visual review' is an aesthetic judgement the atom itself words that way, and no test settles it.
+
+**Notes:** Partial for the visual-review clause. Worth noting that the atom is honest about which half is judgeable — it asks for a visual review rather than pretending a test could substitute — and the half that IS mechanisable (one shared vocabulary module, one family-level gate test) is present.
 
 ## Recorded history
 

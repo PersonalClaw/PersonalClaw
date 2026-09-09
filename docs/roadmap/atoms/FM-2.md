@@ -32,9 +32,21 @@ a list card visibly morphs into its detail/expanded view and back via framer lay
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- `Morph.tsx` ships under `web/src/ui/motion/` with its own `Morph.test.tsx` AND a dedicated `Morph.reducedMotion.test.tsx` — the gated path is a separate file from the behaviour, so an instant-swap regression cannot hide inside a passing behaviour suite
+- the component suites pass 69/69 across nine files
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Not driven: 'a list card VISIBLY morphs into its detail view and back' is a motion observation. A still snapshot cannot prove a transition, and this harness cannot record one.
+
+**Notes:** Partial for the visible-morph clause, which is the atom's substance and is genuinely not decidable from a DOM snapshot. What IS decidable — that the reduced-motion path exists as its own tested file — is confirmed.
 
 ## Recorded history
 

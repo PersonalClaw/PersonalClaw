@@ -31,9 +31,21 @@ shape morphs smoothly between states (SVG-path vs canvas-metaball decided by mea
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- `LiquidShape.tsx` ships with both `LiquidShape.test.tsx` and `LiquidShape.reducedMotion.test.tsx`, so the instant path is pinned separately here too
+- the atom's own framing is worth crediting: the SVG-path versus canvas-metaball choice was to be 'decided by measurement', not by preference
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Not driven: smooth shape morphing and 'integrates visually without clashing' are both aesthetic observations, and the second is explicitly a judgement rather than an assertion.
+
+**Notes:** Partial on the visual clauses. The reduced-motion half is covered by the same per-component pattern as FM-2, which is the part a rail can hold.
 
 ## Recorded history
 

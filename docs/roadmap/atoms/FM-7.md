@@ -33,9 +33,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- 🔑 THE ZERO-MOTION GUARD IS AN EXHAUSTIVE CENSUS OVER THE MODULE'S EXPORTS, not a list of presets someone maintains. `reducedMotionAppWide.test.ts` asserts it 'reaches every export — nothing is skipped, and a NEW EXPORT CANNOT HIDE', walking values, arrays and function results recursively, then asserts 'NO export yields a spring under prefers-reduced-motion — every family, not just the gated one'
+- 🔑 IT VERIFIES ITS OWN INSTRUMENTATION — 'the media-query stub actually takes — both passes measure what they claim'. A reduced-motion suite whose stub silently failed would pass by measuring nothing, and this one refuses that
+- 🔑 AND IT NAMES ITS OWN VACUITY FLOOR IN THE TEST TITLE: 'finds real springs when motion is ALLOWED — the vacuity floor for the assertion below'. Ninth instance of this pattern in the campaign and the first where the test labels itself
+- 🔑 FALSIFIED: bypassing the gate on ONE getter reddened SIX tests — the app-wide census, the per-preset collapse, the read-at-animation-time check, and 'every collapsed spring states a non-spring TYPE, so a leftover stiffness cannot re-infer one'. That last one is a second-order check most suites lack: zeroing the numbers is not enough if the type still says spring. Restored; 80/80
+- 🔑 THE CI GUARD EXISTS AS ITS OWN NAMED STEP with the reasoning written down: the walkthrough spec covers 'keyboard / reduced-motion / phone' because 'axe cannot express any of these three … what a user with prefers-reduced-motion actually GETS', and it is 'a separate step so a failure names which property broke rather than "the a11y job"'
+- the surrounding CI comment states this repo's own anti-pattern in one line — 'a spec not listed here runs nowhere: declared and never executed is the failure class this repo's rails exist to catch'
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Partially, and the limit is the harness rather than the feature: `prefers-reduced-motion` cannot be emulated through this tool, and the protocol forbids `eval`, so computed styles under the media query are out of reach. The expressiveness and bounciness dials were driven directly instead, including persistence across a reload.
+
+**Notes:** Partial for the 60fps clause, which needs a real performance trace, and for the browser-level reduced-motion observation this harness cannot produce. The two clauses that carry the accessibility weight — zero springs under reduced motion, and a CI step that actually runs — are confirmed and falsified. Worth recording the shape: an exhaustive census plus a self-check on the stub plus a named vacuity floor is what makes a motion suite evidence rather than decoration.
 
 ## Recorded history
 

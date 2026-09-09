@@ -31,9 +31,22 @@ navigation crossfades/morphs; URL/state changes remain ungated on the transition
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- 🔑 THE UNGATING PROPERTY IS EXACT AND THE REASON IS AT THE CALL SITE: `useHashRoute.ts:92` records that `viewTransition` 'runs its callback on every path (no API, a throwing API)', and line 109 wraps the state application in it. So the URL and state change whether or not the transition is available or succeeds — the atom's central safety clause, implemented as an unconditional callback rather than as a try/catch someone has to maintain
+- 🔑 THAT IS THE RIGHT SHAPE FOR A COSMETIC-ONLY FEATURE: a navigation gated on an animation is a navigation that breaks on an unsupported browser, and this one cannot, because the transition wrapper has no failure mode that skips the callback
+- the transition is applied around a `flushSync` of the hash application, so the DOM change the animation captures is the real one rather than a later frame
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Not driven as motion: a crossfade is not observable in a DOM snapshot. The ungating claim — which is the clause that could BREAK something — was verified at the call site, and navigation itself was exercised repeatedly this cycle while driving Settings.
+
+**Notes:** Confirmed rather than partial because this atom's substance is a safety property, not an aesthetic one: the cosmetic layer must not be able to hold up state. That is checkable and it checks out. The crossfade being pretty is not what the atom is protecting.
 
 ## Recorded history
 

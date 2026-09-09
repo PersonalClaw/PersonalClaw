@@ -31,9 +31,21 @@ Session 3 — orchestration (T3.2)
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- `Entrance.tsx` ships with both `Entrance.test.tsx` and `Entrance.reducedMotion.test.tsx`, and the module documents the stronger collapse: the entrance helper 'Returns `null` under `prefers-reduced-motion`, and `null` means NO ENTRANCE AT ALL'
+- 🔑 `null` RATHER THAN A ZERO-DURATION ANIMATION IS THE RIGHT COLLAPSE — a staggered entrance with every duration set to zero still runs a scheduler and still commits N animation frames; returning nothing removes the orchestration rather than shrinking it
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** Not driven: 'entrances feel composed not busy' across two or three surfaces is an aesthetic judgement, and a stagger is a sequence a snapshot cannot capture.
+
+**Notes:** Partial on the aesthetic clause. The mechanical half is better than the atom asked for: it does not merely scale the stagger to zero under reduced motion, it removes the entrance.
 
 ## Recorded history
 

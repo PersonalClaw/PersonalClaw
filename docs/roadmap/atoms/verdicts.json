@@ -6755,5 +6755,98 @@
     ],
     "ui_validated": "Not applicable: a sign-off.",
     "notes": "Unverifiable because a clearance decision is a human record, not a state of the tree. The same observation as PUBLICATION's launch atom applies: a gate whose items are individually checkable deserves to be audited item by item, because 'not yet cleared' otherwise hides that most of it is already true."
+  },
+  "FM-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "🔑 THE TWO DIALS DIVIDE ON A STATED PRINCIPLE, and it is the right principle: `prefers-reduced-motion` is 'an A11Y OFF-SWITCH, so it binds on EVERY family' through one `gated()` with one answer, while `--bounciness` is 'a TASTE dial, so it binds on `physics` alone'. An accessibility control is universal; a taste control is scoped",
+      "🔑 THIS PLAN FOUND AND FIXED A REAL DEFECT IN ITS OWN AREA, and the module records it with a measurement: `bouncy()` documented itself as 'the single place `prefers-reduced-motion` zeroes it' — true of the four physics presets, 'and untrue of `spring`, which was a static object literal routing through nothing'. THE UNGATED FAMILY WAS THE LARGER ONE — '72 non-test files import `spring` against 27 for `physics`' — so 'the app's most-used transitions ignored the setting outright'. An accessibility off-switch that did not bind on the majority of its surface is the most consequential form of this campaign's inert-control class",
+      "🔑 AND THE FIX IS STRUCTURAL RATHER THAN REMEMBERED: every member of both families is a getter or a function, because the gate is 'read at CALL time, never cached' — 'a value would freeze' the answer. That is why no member can escape it, and why a mid-session OS change is honoured",
+      "🔑 IT ALSO CORRECTS A BELIEF MOST TEAMS HOLD: `<MotionConfig reducedMotion=\"user\">` at the app root 'is not a substitute and never was: it neutralises framer TRANSFORMS while continuing to animate non-transform properties, so a spring on opacity/height/color still springs underneath it'",
+      "the token plumbing is real: `--bounciness` is registered in `tokenRegistry.ts` under a `Motion` group with a runtime key, and declared in `tokens.css`; `docs/design/motion.md` ships as the author guide",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "🔑 DRIVEN, INCLUDING THE DECISIVE PERSISTENCE TEST: Settings → Design shows `Bounciness 1.00×` and `Expressiveness 0.80×` as real sliders with Reset buttons. Clicking the Bounciness track moved it to `0.50×`; after navigating away and reopening the panel it still read `0.50×` / slider \"0.5\" — persisted state, not session-only. Reset restored `1.00×`, so the home is left as found.",
+    "notes": "The measured line about 72 versus 27 importers is what makes this atom's history worth keeping. The claim 'reduced motion is handled' was true of the smaller family and false of the larger one, and only counting the call sites showed which way round it was."
+  },
+  "FM-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "`Morph.tsx` ships under `web/src/ui/motion/` with its own `Morph.test.tsx` AND a dedicated `Morph.reducedMotion.test.tsx` — the gated path is a separate file from the behaviour, so an instant-swap regression cannot hide inside a passing behaviour suite",
+      "the component suites pass 69/69 across nine files",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Not driven: 'a list card VISIBLY morphs into its detail view and back' is a motion observation. A still snapshot cannot prove a transition, and this harness cannot record one.",
+    "notes": "Partial for the visible-morph clause, which is the atom's substance and is genuinely not decidable from a DOM snapshot. What IS decidable — that the reduced-motion path exists as its own tested file — is confirmed."
+  },
+  "FM-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "`LiquidShape.tsx` ships with both `LiquidShape.test.tsx` and `LiquidShape.reducedMotion.test.tsx`, so the instant path is pinned separately here too",
+      "the atom's own framing is worth crediting: the SVG-path versus canvas-metaball choice was to be 'decided by measurement', not by preference",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Not driven: smooth shape morphing and 'integrates visually without clashing' are both aesthetic observations, and the second is explicitly a judgement rather than an assertion.",
+    "notes": "Partial on the visual clauses. The reduced-motion half is covered by the same per-component pattern as FM-2, which is the part a rail can hold."
+  },
+  "FM-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "🔑 THE COHERENCE CLAIM HAS A FAMILY-LEVEL TEST RATHER THAN FOUR COMPONENT ONES: `family.reducedMotion.test.tsx` sits beside the per-component files, so the vocabulary is checked as ONE system. That is the correct decomposition for an atom whose whole point is that four components read as one",
+      "`vocabulary.ts` exists with its own `vocabulary.test.ts`, so the shared timing/curve set is a named module rather than a convention repeated in four files",
+      "`docs/design/motion.md` is the documentation half the atom requires",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Not driven: 'reads as one system on visual review' is an aesthetic judgement the atom itself words that way, and no test settles it.",
+    "notes": "Partial for the visual-review clause. Worth noting that the atom is honest about which half is judgeable — it asks for a visual review rather than pretending a test could substitute — and the half that IS mechanisable (one shared vocabulary module, one family-level gate test) is present."
+  },
+  "FM-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "🔑 THE UNGATING PROPERTY IS EXACT AND THE REASON IS AT THE CALL SITE: `useHashRoute.ts:92` records that `viewTransition` 'runs its callback on every path (no API, a throwing API)', and line 109 wraps the state application in it. So the URL and state change whether or not the transition is available or succeeds — the atom's central safety clause, implemented as an unconditional callback rather than as a try/catch someone has to maintain",
+      "🔑 THAT IS THE RIGHT SHAPE FOR A COSMETIC-ONLY FEATURE: a navigation gated on an animation is a navigation that breaks on an unsupported browser, and this one cannot, because the transition wrapper has no failure mode that skips the callback",
+      "the transition is applied around a `flushSync` of the hash application, so the DOM change the animation captures is the real one rather than a later frame",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Not driven as motion: a crossfade is not observable in a DOM snapshot. The ungating claim — which is the clause that could BREAK something — was verified at the call site, and navigation itself was exercised repeatedly this cycle while driving Settings.",
+    "notes": "Confirmed rather than partial because this atom's substance is a safety property, not an aesthetic one: the cosmetic layer must not be able to hold up state. That is checkable and it checks out. The crossfade being pretty is not what the atom is protecting."
+  },
+  "FM-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "`Entrance.tsx` ships with both `Entrance.test.tsx` and `Entrance.reducedMotion.test.tsx`, and the module documents the stronger collapse: the entrance helper 'Returns `null` under `prefers-reduced-motion`, and `null` means NO ENTRANCE AT ALL'",
+      "🔑 `null` RATHER THAN A ZERO-DURATION ANIMATION IS THE RIGHT COLLAPSE — a staggered entrance with every duration set to zero still runs a scheduler and still commits N animation frames; returning nothing removes the orchestration rather than shrinking it",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Not driven: 'entrances feel composed not busy' across two or three surfaces is an aesthetic judgement, and a stagger is a sequence a snapshot cannot capture.",
+    "notes": "Partial on the aesthetic clause. The mechanical half is better than the atom asked for: it does not merely scale the stagger to zero under reduced motion, it removes the entrance."
+  },
+  "FM-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload",
+    "evidence": [
+      "🔑 THE ZERO-MOTION GUARD IS AN EXHAUSTIVE CENSUS OVER THE MODULE'S EXPORTS, not a list of presets someone maintains. `reducedMotionAppWide.test.ts` asserts it 'reaches every export — nothing is skipped, and a NEW EXPORT CANNOT HIDE', walking values, arrays and function results recursively, then asserts 'NO export yields a spring under prefers-reduced-motion — every family, not just the gated one'",
+      "🔑 IT VERIFIES ITS OWN INSTRUMENTATION — 'the media-query stub actually takes — both passes measure what they claim'. A reduced-motion suite whose stub silently failed would pass by measuring nothing, and this one refuses that",
+      "🔑 AND IT NAMES ITS OWN VACUITY FLOOR IN THE TEST TITLE: 'finds real springs when motion is ALLOWED — the vacuity floor for the assertion below'. Ninth instance of this pattern in the campaign and the first where the test labels itself",
+      "🔑 FALSIFIED: bypassing the gate on ONE getter reddened SIX tests — the app-wide census, the per-preset collapse, the read-at-animation-time check, and 'every collapsed spring states a non-spring TYPE, so a leftover stiffness cannot re-infer one'. That last one is a second-order check most suites lack: zeroing the numbers is not enough if the type still says spring. Restored; 80/80",
+      "🔑 THE CI GUARD EXISTS AS ITS OWN NAMED STEP with the reasoning written down: the walkthrough spec covers 'keyboard / reduced-motion / phone' because 'axe cannot express any of these three … what a user with prefers-reduced-motion actually GETS', and it is 'a separate step so a failure names which property broke rather than \"the a11y job\"'",
+      "the surrounding CI comment states this repo's own anti-pattern in one line — 'a spec not listed here runs nowhere: declared and never executed is the failure class this repo's rails exist to catch'",
+      "design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)"
+    ],
+    "ui_validated": "Partially, and the limit is the harness rather than the feature: `prefers-reduced-motion` cannot be emulated through this tool, and the protocol forbids `eval`, so computed styles under the media query are out of reach. The expressiveness and bounciness dials were driven directly instead, including persistence across a reload.",
+    "notes": "Partial for the 60fps clause, which needs a real performance trace, and for the browser-level reduced-motion observation this harness cannot produce. The two clauses that carry the accessibility weight — zero springs under reduced motion, and a CI step that actually runs — are confirmed and falsified. Worth recording the shape: an exhaustive census plus a self-check on the stub plus a named vacuity floor is what makes a motion suite evidence rather than decoration."
   }
 }

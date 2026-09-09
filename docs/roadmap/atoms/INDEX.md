@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 323 | `done_when` checked against the code and it holds |
-| `partial` | 211 | some `done_when` clauses hold, others do not |
+| `confirmed` | 325 | `done_when` checked against the code and it holds |
+| `partial` | 216 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 7 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 137 | not yet checked |
+| `unaudited` | 130 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -440,13 +440,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`FM-1`](FM-1.md) | `done` | `unaudited` | Physics preset system: named springs, gesture helpers, Motion tokens + author guide |
-| [`FM-2`](FM-2.md) | `done` | `unaudited` | Morph.tsx shared-element wrapper + wire one real card→detail morph |
-| [`FM-3`](FM-3.md) | `done` | `unaudited` | LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled) |
-| [`FM-4`](FM-4.md) | `done` | `unaudited` | Coherence pass: unify Morph/LiquidShape/Disintegrate/Bud into one motion vocabulary |
-| [`FM-5`](FM-5.md) | `done` | `unaudited` | Wire viewTransition() into hash-route changes (cosmetic-only) |
-| [`FM-6`](FM-6.md) | `done` | `unaudited` | Orchestrated staggered entrances for 2-3 key surfaces |
-| [`FM-7`](FM-7.md) | `done` | `unaudited` | Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard |
+| [`FM-1`](FM-1.md) | `done` | `confirmed` | Physics preset system: named springs, gesture helpers, Motion tokens + author guide |
+| [`FM-2`](FM-2.md) | `done` | `partial` | Morph.tsx shared-element wrapper + wire one real card→detail morph |
+| [`FM-3`](FM-3.md) | `done` | `partial` | LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled) |
+| [`FM-4`](FM-4.md) | `done` | `partial` | Coherence pass: unify Morph/LiquidShape/Disintegrate/Bud into one motion vocabulary |
+| [`FM-5`](FM-5.md) | `done` | `confirmed` | Wire viewTransition() into hash-route changes (cosmetic-only) |
+| [`FM-6`](FM-6.md) | `done` | `partial` | Orchestrated staggered entrances for 2-3 key surfaces |
+| [`FM-7`](FM-7.md) | `done` | `partial` | Motion budget proof: 60fps pass + reduced-motion/expressiveness=0 zero-motion CI guard |
 
 ### `FS` — FEEDBACK-SIGNAL (6/6 done)
 

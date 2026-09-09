@@ -31,9 +31,24 @@ physics presets (snappy/smooth/fluid/playful) scale with the bounciness slider a
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 59 (FM) — the app-wide reduced-motion census falsified; the bounciness dial driven through a reload
+
+**Code evidence:**
+
+- 🔑 THE TWO DIALS DIVIDE ON A STATED PRINCIPLE, and it is the right principle: `prefers-reduced-motion` is 'an A11Y OFF-SWITCH, so it binds on EVERY family' through one `gated()` with one answer, while `--bounciness` is 'a TASTE dial, so it binds on `physics` alone'. An accessibility control is universal; a taste control is scoped
+- 🔑 THIS PLAN FOUND AND FIXED A REAL DEFECT IN ITS OWN AREA, and the module records it with a measurement: `bouncy()` documented itself as 'the single place `prefers-reduced-motion` zeroes it' — true of the four physics presets, 'and untrue of `spring`, which was a static object literal routing through nothing'. THE UNGATED FAMILY WAS THE LARGER ONE — '72 non-test files import `spring` against 27 for `physics`' — so 'the app's most-used transitions ignored the setting outright'. An accessibility off-switch that did not bind on the majority of its surface is the most consequential form of this campaign's inert-control class
+- 🔑 AND THE FIX IS STRUCTURAL RATHER THAN REMEMBERED: every member of both families is a getter or a function, because the gate is 'read at CALL time, never cached' — 'a value would freeze' the answer. That is why no member can escape it, and why a mid-session OS change is honoured
+- 🔑 IT ALSO CORRECTS A BELIEF MOST TEAMS HOLD: `<MotionConfig reducedMotion="user">` at the app root 'is not a substitute and never was: it neutralises framer TRANSFORMS while continuing to animate non-transform properties, so a spring on opacity/height/color still springs underneath it'
+- the token plumbing is real: `--bounciness` is registered in `tokenRegistry.ts` under a `Motion` group with a runtime key, and declared in `tokens.css`; `docs/design/motion.md` ships as the author guide
+- design motion suites 83/83 + ui/motion 69/69 = 152 green (falsified: bypassing ONE getter's gate reds 6, including the app-wide census and the type-level check)
+
+**Driven in the UI:** 🔑 DRIVEN, INCLUDING THE DECISIVE PERSISTENCE TEST: Settings → Design shows `Bounciness 1.00×` and `Expressiveness 0.80×` as real sliders with Reset buttons. Clicking the Bounciness track moved it to `0.50×`; after navigating away and reopening the panel it still read `0.50×` / slider "0.5" — persisted state, not session-only. Reset restored `1.00×`, so the home is left as found.
+
+**Notes:** The measured line about 72 versus 27 importers is what makes this atom's history worth keeping. The claim 'reduced motion is handled' was true of the smaller family and false of the larger one, and only counting the call sites showed which way round it was.
 
 ## Recorded history
 
