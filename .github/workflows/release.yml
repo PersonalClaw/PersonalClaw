@@ -188,7 +188,7 @@ jobs:
   desktop-linux:
     # Linux desktop shell — UNSIGNED AppImage + .deb (DC-6, owner ruling 2026-08-27:
     # ship the Linux target now; Windows stays deferred — the native port is a no-go
-    # per docs/roadmap/research/windows-native-audit.md:302 and no Windows signing
+    # per docs/research/windows-native-audit.md:302 and no Windows signing
     # secrets exist). Unlike the macOS dmg (DC-1, blocked on Apple Developer secrets)
     # this target needs no credentials at all: Linux has no OS-level signing gate, so
     # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says

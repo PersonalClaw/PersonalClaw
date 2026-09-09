@@ -59,6 +59,24 @@ def _committed_inventory() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _fresh_inventory() -> dict:
+    """What the renderer measures right now, independent of what is committed."""
+    return build_inventory()
+
+
+def _scanned_doc_count() -> int:
+    """How many documents the renderer actually read.
+
+    The corpus size is NOT derivable from the baseline: ``per_file`` records only files that
+    HAVE findings, so a clean corpus and an empty corpus both render as ``{}``. Counting the
+    scanned set is what distinguishes "we looked at 120 docs and found nothing" from "we
+    looked at nothing".
+    """
+    from scripts.generate_docs_lint_baseline import _docs_md, _tracked_files
+
+    return len(_docs_md(_tracked_files()))
+
+
 def test_no_per_file_counter_rose_vs_committed_baseline():
     """The ratchet: no file's docs-lint finding count may exceed its committed count.
 
@@ -146,16 +164,30 @@ def test_baseline_is_well_shaped_and_sorted():
     assert inv["totals"]["total"] == sum(inv["totals"]["by_kind"].values())
 
 
-def test_baseline_ships_at_a_nonzero_measured_population():
-    """The census must ship at the MEASURED population, not zero.
+def test_baseline_ships_at_the_measured_population_whatever_it_is():
+    """The census must ship at the MEASURED population — which may legitimately be zero.
 
-    A zeroed baseline would mean the ratchet was given teeth before the existing docs drift
-    was fixed — the outage this atom explicitly avoids. A nonzero total is the evidence we
-    measured first and committed the real number (a separate cleanup owns driving it down)."""
+    The original form of this test asserted ``total > 0``, because at introduction a zeroed
+    baseline would have meant the ratchet was given teeth before the existing drift was
+    fixed. That premise was about the gate's FIRST day and it is now spent: the drift has
+    been driven down, and a rule that forbids reaching zero forbids ever finishing the
+    cleanup it exists to drive.
+
+    What must never happen is a baseline that is zero because it stopped LOOKING. So the
+    invariant asserted here is the honest one: the committed number equals what a fresh
+    render measures right now, and the renderer really did scan a corpus. Zero findings over
+    a real corpus is success; zero findings over an empty corpus is the vacuous shape, and
+    the corpus assertion is what tells them apart.
+    """
     inv = _committed_inventory()
-    assert inv["totals"]["total"] > 0, (
-        "docs-lint-baseline.json reports zero findings — ship at the MEASURED population, "
-        "not zero (a never-run gate given teeth at zero is an outage)."
+    fresh = _fresh_inventory()
+    assert inv["totals"] == fresh["totals"], (
+        "docs-lint-baseline.json disagrees with a fresh render — regenerate it in the same "
+        "commit as the fix that changed the count."
+    )
+    assert _scanned_doc_count() > 0, (
+        "the docs-lint renderer scanned ZERO documents — a baseline of zero findings then "
+        "proves nothing about the docs, only that the scanner found nothing to read."
     )
 
 
@@ -166,17 +198,18 @@ def test_a_new_finding_reds_the_ratchet():
     relies on against a synthetic ``current`` that carries one extra finding for a real file,
     and assert the comparison flags it (naming file + finding). This proves the gate would red
     on a genuine new dead link or stale citation without perturbing the actual census."""
-    committed = _committed_inventory()
-    per_file = committed["per_file"]
-    assert per_file, "baseline is empty; cannot exercise the ratchet"
-
-    victim = sorted(per_file)[0]
+    # A synthetic PAIR, so the ratchet is exercised whether or not the real corpus currently
+    # carries any drift. Seeding the victim from the committed baseline made this test
+    # delete itself the day the last real finding was fixed — a rail that only works while
+    # the repo is broken.
+    victim = "docs/vision.md"
+    per_file = {victim: {"total": 1, "findings": ["dead_link:docs/already-known.md"]}}
     synthetic = {
-        rel: {"total": bucket["total"], "findings": list(bucket["findings"])}
-        for rel, bucket in per_file.items()
+        victim: {
+            "total": 2,
+            "findings": ["dead_link:docs/already-known.md", "dead_link:docs/does-not-exist.md"],
+        }
     }
-    synthetic[victim]["findings"].append("dead_link:docs/does-not-exist.md")
-    synthetic[victim]["total"] += 1
 
     rose = regressions(per_file, synthetic)
     assert any(victim in line and "does-not-exist" in line for line in rose), rose
@@ -201,16 +234,11 @@ def test_a_new_file_with_a_finding_reds_the_ratchet():
 def test_a_fix_that_shrinks_a_counter_does_not_red_the_ratchet():
     """The other side of the contract: driving a counter DOWN (a real doc fix) is welcome —
     the rise-only comparison must return no regression for a shrink."""
-    committed = _committed_inventory()
-    per_file = committed["per_file"]
-    victim = next((rel for rel, b in per_file.items() if b["total"] > 0), None)
-    assert victim is not None, "expected at least one file with findings"
-    shrunk = {
-        rel: {"total": bucket["total"], "findings": list(bucket["findings"])}
-        for rel, bucket in per_file.items()
-    }
-    shrunk[victim]["findings"].pop()
-    shrunk[victim]["total"] -= 1
+    # Synthetic for the same reason as the rise case above: a shrink cannot be demonstrated
+    # from a corpus that has nothing left to shrink.
+    victim = "docs/vision.md"
+    per_file = {victim: {"total": 2, "findings": ["dead_link:a.md", "dead_link:b.md"]}}
+    shrunk = {victim: {"total": 1, "findings": ["dead_link:a.md"]}}
     assert regressions(per_file, shrunk) == []
 
 

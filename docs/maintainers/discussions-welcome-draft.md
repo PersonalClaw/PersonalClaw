@@ -22,7 +22,7 @@ verified against the GraphQL schema), so that step was necessarily manual.
 
 The defaults GitHub created (Announcements, General, Ideas, Polls, Q&A, Show and tell)
 cover the rest of the plan's list. **Roadmap Input is still optional:** `README.md` and
-`docs/roadmap/roadmap.md` currently route roadmap proposals to **Ideas**, which works.
+the owner's roadmap (not published) currently route roadmap proposals to **Ideas**, which works.
 Say the word and both links get repointed if a dedicated category is added.
 
 ---

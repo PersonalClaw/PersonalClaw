@@ -299,7 +299,7 @@ finding, not the latency.
 baseline.** The only pre-existing number is **9.3 s of scripted-browser interaction**
 from an automated drive with the provider step skipped entirely, recorded in the OU-4
 entry of 2026-08-16 in
-[the ONBOARDING-UX plan](../roadmap/plans/ONBOARDING-UX.md). That is a machine floor for
+the ONBOARDING-UX plan. That is a machine floor for
 the click path — it is not a person, it does not include reading, deciding, or setting
 up a provider, and a stranger's time will be one to two orders of magnitude larger with
 no defect implied. So:

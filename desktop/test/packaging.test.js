@@ -83,7 +83,7 @@ describe("electron-builder Linux target (DC-6)", () => {
   it("declares exactly the AppImage + deb targets the ruling shipped", () => {
     // Exact-match on purpose: a target added here silently changes what the
     // release attaches, and Windows (nsis/portable) is DEFERRED — see
-    // docs/roadmap/atomic/DC.md `DC-6`. Widening this list is a ruling, not a tweak.
+    // the DC plan (internal, not in this repo) `DC-6`. Widening this list is a ruling, not a tweak.
     assert.deepStrictEqual(linux.target, ["AppImage", "deb"]);
   });
 

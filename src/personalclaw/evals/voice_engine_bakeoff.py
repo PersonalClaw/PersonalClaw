@@ -181,7 +181,8 @@ class BakeoffReport:
 # ── the criteria matrix (MI-6 names latency, quality, footprint, license, platform, ─────
 # install; language coverage is added because a 600-vs-9 gap is decision-grade for a
 # general assistant). Weights encode PersonalClaw's use case — LOCAL, macOS-first,
-# cloning-first — and are documented in docs/roadmap/plans/MI-6-voice-engine-bakeoff.md.
+# cloning-first — and are documented in the MI-6 voice-engine-bakeoff design note, which is
+# internal and not published in this repository.
 
 CRITERIA: list[Criterion] = [
     Criterion(

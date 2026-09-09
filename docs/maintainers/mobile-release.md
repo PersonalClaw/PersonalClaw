@@ -9,7 +9,7 @@ run where this page was written and are marked **(not exercised)** — walk them
 with the page open and fix the page where reality disagrees.
 
 Steps marked **OWNER** need the owner's store accounts and are owner tasks 3-4
-in [MOBILE-COMPANION](../roadmap/plans/MOBILE-COMPANION.md): the enrollments,
+in MOBILE-COMPANION: the enrollments,
 the console clicking, and the review answers. Everything else any maintainer
 can do.
 

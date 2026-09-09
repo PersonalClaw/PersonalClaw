@@ -99,7 +99,7 @@ Two documents, two mechanisms:
 
 The native keys are read by native code, so no test in this repo can prove they *render*. A real
 device is the only proof, and that is recorded as a PARTIAL in
-`docs/roadmap/plans/MOBILE-COMPANION.md` rather than claimed.
+the MOBILE-COMPANION plan (internal) rather than claimed.
 
 The bootstrap screen uses CSS system colors (`Canvas`, `CanvasText`, `AccentColor`, `Field`) and
 invents no design token. PersonalClaw's design system lives in `web/` and is served; hand-copying a

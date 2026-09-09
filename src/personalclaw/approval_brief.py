@@ -1,5 +1,5 @@
 """OU-9 — the approval brief carried over the core↔channel seam (Contract C2,
-``docs/roadmap/plans/ONBOARDING-UX.md``).
+`the ONBOARDING-UX plan (internal, not in this repo)`).
 
 A channel (Slack, …) prompts the owner to approve a tool call through
 :meth:`~personalclaw.channel_delivery.ChannelDelivery.request_approval`. Until this

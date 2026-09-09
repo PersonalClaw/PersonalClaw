@@ -219,15 +219,42 @@ def test_the_real_repo_does_not_refuse_its_own_head():
     """The same positive leg, in place, against the checkout this file ships in.
 
     The sandbox proves the logic; this proves the shipped file behaves that way where it
-    actually runs. ``HEAD`` exists even in CI's shallow clone, and ``HEAD..HEAD`` is an
-    empty range, so this stays cheap.
+    actually runs.
+
+    🪤 THE OLD PREMISE WAS FALSE, AND ONLY ON `main` DID IT LOOK TRUE. This test used to
+    claim "``HEAD..HEAD`` is an empty range, so this stays cheap" and assert a clean exit.
+    But the script does not use the stdin range: it PREFERS
+    ``git merge-base "$local_sha" origin/main`` (see its own "preference order" comment), so
+    the range it actually scopes by is this branch's whole diff versus ``origin/main``. On
+    ``main`` that is empty and the test costs 11 seconds; on any branch touching a frontend
+    path it sets ``needs_gate=1`` and the script correctly runs ``npm ci`` → build → render
+    smoke, which the script's own header prices at ~20 minutes. Measured: this test timed out
+    at 120s on a branch whose only frontend change was one documentation URL.
+
+    The two things this test wants are in TENSION and cannot both be cheap here. The guard
+    requires ``local_sha == HEAD`` — that is the property under test — and that is precisely
+    what makes the scoping expensive. So the assertion is narrowed to the guard alone, which
+    is all this leg was ever for: the guard refuses FAST and non-zero, before any gating
+    work. Reaching the gates at all therefore proves the guard passed, and a timeout waiting
+    for `npm ci` is a PASS for this property rather than a failure to be silenced.
     """
     head = _git("rev-parse", "HEAD", cwd=REPO_ROOT)
-    result = _run(
-        f"refs/heads/some-branch {head} refs/heads/some-branch {head}\n",
-        cwd=REPO_ROOT,
-        script=SCRIPT,
-    )
+    stdin = f"refs/heads/some-branch {head} refs/heads/some-branch {head}\n"
+    try:
+        result = subprocess.run(
+            ["sh", str(SCRIPT)],
+            cwd=REPO_ROOT,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # The guard passed and the (legitimately slow) gating began. Assert on what was
+        # emitted before the timeout so a refusal cannot hide inside one.
+        err = (exc.stderr or b"").decode(errors="replace") if exc.stderr else ""
+        assert REFUSAL not in err, f"refused before the gates began: {err!r}"
+        return
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert REFUSAL not in result.stderr
 

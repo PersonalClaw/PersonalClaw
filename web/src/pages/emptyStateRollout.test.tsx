@@ -195,7 +195,7 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 //
 // 🚧 THE TRIGGERS FENCE, NARROWED 2026-08-28 — its original reason has EXPIRED. It read:
 // "`pages/triggers/*` and the Automations surface were being changed concurrently by TSE-4, so this
-// atom did not touch them." TSE-4 is ✅ done (`docs/roadmap/atomic/TSE.md`) and no open PR touches
+// atom did not touch them." TSE-4 is ✅ done (the TSE plan (internal, not in this repo)) and no open PR touches
 // `pages/triggers/*`, so concurrency is no longer a reason to leave two files unclassified — and an
 // `offLimits` entry whose stated cause is gone is indistinguishable from an unexamined surface.
 //

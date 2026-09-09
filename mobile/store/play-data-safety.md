@@ -2,7 +2,7 @@
 
 The answers to paste into **Play Console → App content → Data safety** for
 `dev.personalclaw.companion`. The owner transcribes these when submitting
-(owner task 4 in [MOBILE-COMPANION](../../docs/roadmap/plans/MOBILE-COMPANION.md));
+(owner task 4 in [MOBILE-COMPANION](../../the MOBILE-COMPANION plan (internal, not in this repo)));
 this file exists so the answers are written down once, with the evidence, instead
 of being re-derived under a console form's time pressure.
 

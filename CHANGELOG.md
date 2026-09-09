@@ -3948,7 +3948,7 @@ navigates code by symbol instead of grepping blind, backups run and verify thems
   it. See [CONTRIBUTING.md](CONTRIBUTING.md#breaking-changes); the PR template's change
   class now spells out both paths.
 
-Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
+Forward-looking work is tracked in the maintainer's roadmap, which is not published in this repository.
 
 ## [0.1.2] — 2026-07-26
 

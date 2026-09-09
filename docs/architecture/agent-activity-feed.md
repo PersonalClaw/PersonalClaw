@@ -11,7 +11,7 @@ about loops, sessions or subagents beyond what is written here.
 - Contract + hook: `web/src/lib/useAgentActivity.ts`
 - First-party world: `web/src/pages/dashboard/world/` (`AgentWorld.tsx` paints,
   `worldScene.ts` is the pure scene model)
-- Plan: `docs/roadmap/plans/AMBIENT-SURFACES.md` §"Amendment (2026-07-26)" (b), task `A2-3`
+- Plan: the AMBIENT-SURFACES plan (internal) §"Amendment (2026-07-26)" (b), task `A2-3`
 
 ## The shape
 
@@ -146,7 +146,7 @@ depends on seeing the animation to know what is running.
 
 **This is a doc note, not code.** Nothing in this repository loads a third-party world
 today, and this section is the forward hook `A2-3` owes
-[APP-PLATFORM-EVOLUTION](../roadmap/plans/APP-PLATFORM-EVOLUTION.md).
+APP-PLATFORM-EVOLUTION.
 
 When app-contributed worlds land there, the contract above is the seam and needs no
 change. What that plan has to add:

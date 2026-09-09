@@ -197,14 +197,14 @@ product names into this draft.
 - **Pre-1.0 name-scrub ruling.** No peer/competitor product names on public surfaces. This is why the
   awesome-self-hosted `(alternative to …)` suffix and the AlternativeTo "alternative to" association
   are deferred to the owner rather than filled in here. See the `DL-7` entries in
-  [the source plan](../roadmap/plans/DISCOVERABILITY-LAUNCH.md).
+  the source plan.
 - **Consistency.** Reuse the canonical description so all listings agree, and keep the privacy
   phrasing identical to the launch post and README — never "zero telemetry" (see
   [limitations.md](../security/limitations.md) and the checklist's honesty rails).
 
 ## Status
 
-`DL-8` stays `todo` in [`DL.md`](../roadmap/atomic/DL.md) / `dag.json`: these are the drafts the
+`DL-8` stays `todo` in DL.md / `dag.json`: these are the drafts the
 `done_when` names, but the atom also requires the PRs/entries to actually be open and the gate to be
 green before any owner posting — external, owner-only steps. Flip the atom only when the submissions
 are live.

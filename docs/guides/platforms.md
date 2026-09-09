@@ -24,7 +24,7 @@ one, and the token points at something you can go read or re-run:
 | macOS Intel | best-effort | `community` — no Intel runner in CI; the x86-64 Python/wheel path is the same as Linux x86-64 |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` (this page) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |
-| Windows native | not supported | — see [windows-native-audit](../roadmap/research/windows-native-audit.md) |
+| Windows native | not supported | — see [windows-native-audit](../research/windows-native-audit.md) |
 
 The arm64 rows became CI-backed in PLATFORM-REACH A1.3 (arm jobs in `full.yml`) and
 A2.1 (per-arch release smoke); before that they were aspirational.

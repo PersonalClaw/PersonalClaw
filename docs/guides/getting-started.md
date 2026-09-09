@@ -187,7 +187,7 @@ The gateway comes up on `http://127.0.0.1:10000` with a persistent
   its default, and where to set it.
 - [CLI reference](../reference/cli.md) — every command and flag.
 - [API overview](../reference/api-overview.md) — the full REST/WS surface.
-- [Roadmap](../roadmap/roadmap.md) — where the project is heading.
+- Roadmap — where the project is heading.
 
 ## Troubleshooting
 

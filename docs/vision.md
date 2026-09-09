@@ -4,7 +4,7 @@ The north star. When code and this document disagree, reconcile — either the c
 drifted, or the vision needs a deliberate update.
 
 For the as-built architecture see `docs/architecture/`; for the plan index see
-`docs/roadmap/roadmap.md`.
+the owner's roadmap (not published).
 
 ---
 

@@ -1,6 +1,6 @@
 """WF2AUT-14 ratification ratchet: the resume-target contract SHAPE is pinned.
 
-See ``docs/roadmap/design-notes/wf2aut14-resume-target-contract.md``. Behavioural pins (a
+See `the wf2aut14-resume-target-contract plan (internal, not in this repo)`. Behavioural pins (a
 real run driven to a real gate and resumed, the missing-target dispositions, idempotence)
 live in ``test_triggers_resume_target.py``; this file is the cement the atom adds — it pins
 the *shape* of the contract WF2LOO-9 and every future consumer read against:

@@ -23,7 +23,7 @@ draft:
 - **Trigger sources**: remote events (a message arriving on a bridged channel)
   ride the app-registered `trigger_source` seam WF2AUT-8 shipped — see the
   coordination note in
-  `docs/roadmap/plans/WORKFLOWS-V2-AUTOMATION-SUBSTRATE.md` ("app-contributed
+  the WORKFLOWS-V2-AUTOMATION-SUBSTRATE plan (internal) ("app-contributed
   trigger SOURCES are a real seam, not a maybe"). Channel apps ship **no
   bespoke event glue**.
 
