@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED, every clause in the done_when: feedback.py round-trips the JSONL store; _load_index() supersedes by (target_kind, target_id) with last-write-wins; a corrupt line is skipped with a warning (fail OPEN); _maybe_trim rewrites atomically past 2× _CAP; and 0600 is not just set at :215 but PINNED by tests/test_feedback.py:95 test_file_mode_0600
+- routes: handlers/feedback.py carries all five endpoints with §2.2 error envelopes, and the feedback.enabled kill-switch 404s every one of them (:45/:109/:125/:175/:193)
+- 🔑 SERVER-SIDE STAMPING IS REAL AND THE COMMENT NAMES WHY: :80 reads source_app from request['app'] (never the body) and :82-83 forces producer_id to '<app>:<producer>' with producer_kind='app' — 'an app can never impersonate a core producer'
+- sdk/feedback.py re-exports record_feedback/current_verdict/FeedbackRecord/the two vocabularies; FeedbackConfig round-trips (test_config_roundtrip 17/17) with all four fields in the PATCH allowlist (core.py:798-801) under per-field bounds
+- producer meta on payloads MEASURED at both producers: inbox.py:450-472 attaches feedback_producers for classification/draft/digest keyed to active_prompt_ref(...), and loop/store.py:632/:717 attaches ('loop_judge', loop.kind)
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Notes:** The attribution key is the design decision worth keeping: producer_id is the ACTIVE PROMPT REF, not the item — so accuracy accrues to the artifact that produced the judgment and 'history restarts when you rebind a prompt' is a consequence of the key rather than a rule someone has to remember. Two DISCOVERIES recorded rather than counted against this atom, because neither is in its clause. (1) handlers/feedback.py:84 `target_kind = 'app_judgment' if target_kind not in fb.TARGET_KINDS else target_kind` can never fire — :61 already 400s an unknown kind — so the app→app_judgment half of the namespace forcing is INERT, and an app declaring /api/feedback can land a record under a core target_kind and supersede the user's own verdict on that target (the supersede key is (target_kind, target_id), and current_verdict is what the FE hydrates from). Filed; the fix is a one-line force but choosing force-vs-delete is an owner call about whether an app may claim a core target kind. (2) the SDK docstring says in-process callers 'SHOULD' namespace themselves — convention, not a gate, which is the right line since an in-process app already has core imports; the ROUTE is the crossable boundary and it is enforced.
 
 ## Recorded history
 

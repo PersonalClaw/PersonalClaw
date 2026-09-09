@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED, both halves of the double-write: web/src/pages/chat/RoutingChip.tsx:42-46 records verdict 'up' on accept and :63-67 records 'down' on dismiss, both with producer ('routing_pair', '<from>-><to>') exactly as the clause's from->to shape requires, and both with a snapshot carrying method + score
+- 🔑 THE ORDERING IS RIGHT ON BOTH SIDES AND FOR DIFFERENT REASONS: the accept write sits AFTER `await api.setSessionAgent` inside the try, so a routing that failed never books positive feedback; the dismiss write fires regardless of whether api.routingDismiss lands, because the user's judgment is real even if the mute counter did not persist
+- the plan's 'with zero extra UI' claim holds literally — routing accuracy reaches Settings → AI feedback through the producers API with no routing-specific surface anywhere
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Driven in the UI:** Not driven: the chip renders on a routing_suggestion broadcast, which needs a send matching an installed specialist, which needs a bound model. Same blocker as AR2-5 on the same tree.
+
+**Notes:** Partial for the drive. Shipped inside AGENT-ROUTING rather than here, exactly as both plans' notes say — a rare case of a cross-plan coordination note that turned out to be accurate on both ends. :55-58 carries a guardrail worth keeping: a dismissal BUMPS A COUNTER that mutes the agent at a threshold, so a swallowed rejection would mean the suggestion keeps coming and never mutes — 'the user's repeated dismissals quietly amount to nothing'. The chip still hides on dismiss (a dismissal is a request to get something out of the way) but the write is reported.
 
 ## Recorded history
 

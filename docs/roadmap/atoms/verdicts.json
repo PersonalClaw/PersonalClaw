@@ -4292,5 +4292,85 @@
     ],
     "ui_validated": "Not driven: a muted state requires three dismissals, which require suggestions, which require a bound model. No agent in this home is muted, so the row correctly does not render.",
     "notes": "Partial for the drive. The refused optimistic update is the detail worth keeping and it is the same rule three other surfaces in this campaign stated independently — the routing bindings table's 'the resolver's own answer, not a guess', the approval matcher's 'never a fabricated approval', and the preflight refusal that names where to fix it. A UI that reports a state the backend rejected is worse than one that reports the failure, because the user stops looking."
+  },
+  "FS-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED, every clause in the done_when: feedback.py round-trips the JSONL store; _load_index() supersedes by (target_kind, target_id) with last-write-wins; a corrupt line is skipped with a warning (fail OPEN); _maybe_trim rewrites atomically past 2× _CAP; and 0600 is not just set at :215 but PINNED by tests/test_feedback.py:95 test_file_mode_0600",
+      "routes: handlers/feedback.py carries all five endpoints with §2.2 error envelopes, and the feedback.enabled kill-switch 404s every one of them (:45/:109/:125/:175/:193)",
+      "🔑 SERVER-SIDE STAMPING IS REAL AND THE COMMENT NAMES WHY: :80 reads source_app from request['app'] (never the body) and :82-83 forces producer_id to '<app>:<producer>' with producer_kind='app' — 'an app can never impersonate a core producer'",
+      "sdk/feedback.py re-exports record_feedback/current_verdict/FeedbackRecord/the two vocabularies; FeedbackConfig round-trips (test_config_roundtrip 17/17) with all four fields in the PATCH allowlist (core.py:798-801) under per-field bounds",
+      "producer meta on payloads MEASURED at both producers: inbox.py:450-472 attaches feedback_producers for classification/draft/digest keyed to active_prompt_ref(...), and loop/store.py:632/:717 attaches ('loop_judge', loop.kind)",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "notes": "The attribution key is the design decision worth keeping: producer_id is the ACTIVE PROMPT REF, not the item — so accuracy accrues to the artifact that produced the judgment and 'history restarts when you rebind a prompt' is a consequence of the key rather than a rule someone has to remember. Two DISCOVERIES recorded rather than counted against this atom, because neither is in its clause. (1) handlers/feedback.py:84 `target_kind = 'app_judgment' if target_kind not in fb.TARGET_KINDS else target_kind` can never fire — :61 already 400s an unknown kind — so the app→app_judgment half of the namespace forcing is INERT, and an app declaring /api/feedback can land a record under a core target_kind and supersede the user's own verdict on that target (the supersede key is (target_kind, target_id), and current_verdict is what the FE hydrates from). Filed; the fix is a one-line force but choosing force-vs-delete is an owner call about whether an app may claim a core target kind. (2) the SDK docstring says in-process callers 'SHOULD' namespace themselves — convention, not a gate, which is the right line since an in-process app already has core imports; the ROUTE is the crossable boundary and it is enforced."
+  },
+  "FS-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: web/src/ui/FeedbackThumbs.tsx is the primitive the clause names — aria-pressed on both buttons (:59/:65), aria-labels naming the action rather than the glyph, a skippable one-line 'why' popover (Enter records, click-away records WITHOUT a reason), 500-char cap matching the backend clip, and hydration on mount via GET /api/feedback/target (:33) so a reopened card shows the existing verdict",
+      "mounted where the clause requires: InboxDetail.tsx:86/:90 (digest vs classification) and :195 (draft), LoopsListPage.tsx:422 (loop finding) — the digest-folded-into-detail shape matches the S2 deviation",
+      "🔑 DRIVEN, and the drive confirmed a GATE rather than the thumbs: opened the one inbox item in the validation home (a user-captured note) and the verdict block correctly rendered NO thumbs. InboxDetail.tsx:76 gates the whole triage-verdict row on channelBacked, and :80-84 gates it again on item.confidence !== 'user' — 'a thumbs-down here would file feedback against a classification the model never produced. Hidden rather than shown inert, LIKE EVERY OTHER GATED CONTROL ON THIS PAGE'",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "ui_validated": "Drove the inbox detail and observed the correct non-render for a non-channel-backed item. A real thumb could not be driven: the home's only inbox item is a user note (no machine judgment on screen) and the loops store holds zero loops, so neither mount has a target. The click→POST→filled→re-thumb-supersedes chain is pinned by the 48 python + 871 FE tests.",
+    "notes": "Partial for the thumb drive only. The clause's 'reduced-motion honored' is satisfied vacuously and honestly: the only transition in the component is transition-colors, so there is no motion to suppress — recorded that way rather than claiming a mechanism that is not there. The interesting find is the second gate: this is the SEVENTH instance in this campaign of not rendering a control that could only be a no-op, and the most specific variant — the control is withheld because the THING IT WOULD RATE is not on screen, not because the control itself would fail. One DISCOVERY: :44/:52 keep the thumb optimistic even when the POST fails ('never break the host surface'), which is the one surface in this campaign that DOES claim a state the backend refused. Defensible — the cost is one lost verdict in a local accuracy denominator, and a reload re-hydrates the truth — but unlike AgentDetail's refusal it argues only that it must not throw, never that claiming is safe."
+  },
+  "FS-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: suppressed_producers() fail-opens on any error and on a corrupt settings file ('suppressing nothing'), reads entity_settings/feedback.json through the shared _load_entity_settings, and honours snoozed/cleared before returning",
+      "check_retire_candidates rides the EXISTING cadence exactly as the clause requires — inbox_service.py:340-348, inside a try, 'maintenance must never fail on feedback' — with dedup via retire_proposed and a snooze that RESETS the dedup entry so the proposal can recur after the snooze lapses (feedback.py:398-402)",
+      "🔑 DRIVEN: Settings → 'Open AI feedback settings' exists in the bento (registration confirmed by clicking through, not by reading SUBPAGES), the panel renders, and its empty state is specific rather than generic — 'No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop findings'",
+      "🔑 the honest-counts rule is enforced at BOTH ends: the route sets collecting:true below min_n and omits accuracy entirely (handlers/feedback.py:157-158), and the panel renders 'collecting · N of few' instead of a number. A percentage computed from 2 verdicts is the failure mode this prevents",
+      "🔑 THE SUPPRESSED BADGE IS SPLIT IN TWO, WITH THE REASON: 'suppressed' (titled 'Stopped surfacing') only for a kind in ENFORCED_SUPPRESSION_KINDS, 'retire proposed' for the other five, each with a title saying which. feedbackSuppressionHonesty.test.tsx pins both directions, and I FALSIFIED one of its cases this cycle (reverting the copy reds exactly that case, 5 others green)",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "ui_validated": "Drove Settings → bento → AI feedback and its empty state. A populated table needs verdicts, which need a judgment on screen (FS-2's blocker); the rows are pinned by 6 vitest cases covering both pill directions, one of which was falsified this cycle.",
+    "notes": "🔑 THE ANTI-INERTNESS DEFECT AND ITS FIX ARE BOTH IN THIS ATOM, WHICH IS WHY IT IS THE MOST INSTRUCTIVE ONE AUDITED. GET /api/feedback/producers used to report suppressed:true for ANY below-threshold producer, and the panel rendered that as a red pill titled 'Stopped surfacing' — untrue for five of six kinds, whose output kept being injected verbatim. The correction is not a reworded pill: it introduces ENFORCED_SUPPRESSION_KINDS as a named constant, makes callers consult it before claiming an effect, and pins it with a CENSUS test that greps for consumers of suppressed_producers() and reds if a gating one appears outside the constant. The test file even records that an earlier draft of itself 're-implemented the handler's branch locally and asserted on the copy. It passed.' TWO COPY SITES SURVIVED that fix — the panel's own header hint (the only thing an empty panel says on the subject) and the retire_threshold config hint — both fixed in PR #2783 this cycle with a test on the empty render."
+  },
+  "FS-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED — the fixture is real, not deferred: tests/test_feedback_app_path.py installs a fixture app declaring /api/feedback in permissions.api and drives all three legs the clause names — the route path with source_app stamped server-side and the producer forced to app:<name>:<producer>, the in-process sdk.feedback path landing an equivalent record, and an UNDECLARED app path rejected 403 by the enforcement middleware before the handler runs",
+      "the denial is asserted through the real seam (apps.permissions.app_request_denial + APP_SCOPED_PREFIXES), not a local re-implementation of it",
+      "48/48 across the four feedback suites, this file included",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "notes": "🔑 ADJUDICATES A DOCUMENTED DRIFT the plan explicitly declined to settle. The dag summary says 'FS-4 (app-path validation fixture) is deferred-by-design; its dag flag and FS.md table disagree (a pre-existing drift, not adjudicated here)'. The flag is right and the summary is stale: the fixture exists, exercises both write paths, and proves the 403. ARCC returned only IAM/cloud material for this domain — recorded as checked-and-thin — but its one transferable objective, least privilege, is exactly what this atom tests: an app gets the route it declared and nothing else, and the identity it is stamped with is the server's, not its own claim."
+  },
+  "FS-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED, both halves of the double-write: web/src/pages/chat/RoutingChip.tsx:42-46 records verdict 'up' on accept and :63-67 records 'down' on dismiss, both with producer ('routing_pair', '<from>-><to>') exactly as the clause's from->to shape requires, and both with a snapshot carrying method + score",
+      "🔑 THE ORDERING IS RIGHT ON BOTH SIDES AND FOR DIFFERENT REASONS: the accept write sits AFTER `await api.setSessionAgent` inside the try, so a routing that failed never books positive feedback; the dismiss write fires regardless of whether api.routingDismiss lands, because the user's judgment is real even if the mute counter did not persist",
+      "the plan's 'with zero extra UI' claim holds literally — routing accuracy reaches Settings → AI feedback through the producers API with no routing-specific surface anywhere",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "ui_validated": "Not driven: the chip renders on a routing_suggestion broadcast, which needs a send matching an installed specialist, which needs a bound model. Same blocker as AR2-5 on the same tree.",
+    "notes": "Partial for the drive. Shipped inside AGENT-ROUTING rather than here, exactly as both plans' notes say — a rare case of a cross-plan coordination note that turned out to be accurate on both ends. :55-58 carries a guardrail worth keeping: a dismissal BUMPS A COUNTER that mutes the agent at a threshold, so a swallowed rejection would mean the suggestion keeps coming and never mutes — 'the user's repeated dismissals quietly amount to nothing'. The chip still hides on dismiss (a dismissal is a request to get something out of the way) but the write is reported."
+  },
+  "FS-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 37 (FS) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 THE LIVE GATED CONSUMER EXISTS AND THE ATOM'S OWN done_when SAYS IT DOES NOT. skills/loader.py:1028 passes suppressed=_suppressed_producers() into surface_skills on the real turn path, and surfacing.py:304 is the gate: `withheld = matched and ('skill_synthesis', key) in suppressed`. The done_when's 'Today (verified 2026-08-04) no runtime path enforces it' is STALE — code wins",
+      "MEASURED behaviourally, not structurally: tests/test_skill_surfacing.py 19/19 including test_suppressed_skill_is_withheld (two matching skills, only the suppressed one withheld), test_default_suppresses_nothing, test_suppression_only_bites_matches (a suppressed producer that did NOT match is unaffected), and test_explain_shows_suppression_withheld",
+      "🔑 THE EXPLAIN PATH REFUSES TO DROP SILENTLY: a withheld skill is returned WITH a suppression reason ('this skill's judgments keep drawing 👎 — edit it to restore surfacing'), never omitted — so the Doctor simulator can answer 'why did this skill stop appearing' instead of leaving a hole",
+      "loader.py:221-233 fetches the set fail-open, so a feedback fault degrades to normal surfacing rather than to silence",
+      "test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871"
+    ],
+    "notes": "🔑 FOURTH VARIANT OF log-and-code-beat-prose IN THIS CAMPAIGN, and the first where the STALE CLAIM IS THE ATOM'S OWN done_when rather than a plan header, a module docstring or a sub-deliverable. Three records still describe this control as inert: the done_when above, the workspace ROADMAP/CLAUDE 'inert shipped controls worth closing' list (which names Feedback-Signal's suppression), and — until it was corrected in the code — suppressed_producers' own docstring, which now states the correction explicitly: 'This docstring used to say \"workflow/skill surfacing\" — no workflow path consults this function, and nothing under workflows/ ever did.' The deletion of workflows.surfacing.eligible_workflows in WF2 Phase 1 is what stranded it, and re-homing it at the SKILL gate rather than rebuilding a workflow one is the cheaper and more honest resolution. One DISCOVERY: feedback.py's _proposal_only_candidates() is a strict SUBSET of suppressed_producers() (same threshold, same cleared/snooze logic, only narrower by kind), so the union at :440 is a no-op and its 'gated producers are covered by suppressed_producers()' comment mis-describes what that function returns. Behaviour is correct either way — every below-threshold producer gets exactly one proposal — so it is redundancy, not a defect."
   }
 }

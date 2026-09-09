@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED — the fixture is real, not deferred: tests/test_feedback_app_path.py installs a fixture app declaring /api/feedback in permissions.api and drives all three legs the clause names — the route path with source_app stamped server-side and the producer forced to app:<name>:<producer>, the in-process sdk.feedback path landing an equivalent record, and an UNDECLARED app path rejected 403 by the enforcement middleware before the handler runs
+- the denial is asserted through the real seam (apps.permissions.app_request_denial + APP_SCOPED_PREFIXES), not a local re-implementation of it
+- 48/48 across the four feedback suites, this file included
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Notes:** 🔑 ADJUDICATES A DOCUMENTED DRIFT the plan explicitly declined to settle. The dag summary says 'FS-4 (app-path validation fixture) is deferred-by-design; its dag flag and FS.md table disagree (a pre-existing drift, not adjudicated here)'. The flag is right and the summary is stale: the fixture exists, exercises both write paths, and proves the 403. ARCC returned only IAM/cloud material for this domain — recorded as checked-and-thin — but its one transferable objective, least privilege, is exactly what this atom tests: an app gets the route it declared and nothing else, and the identity it is stamped with is the server's, not its own claim.
 
 ## Recorded history
 

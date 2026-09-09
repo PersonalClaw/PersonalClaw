@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 203 | `done_when` checked against the code and it holds |
-| `partial` | 155 | some `done_when` clauses hold, others do not |
+| `confirmed` | 207 | `done_when` checked against the code and it holds |
+| `partial` | 157 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 321 | not yet checked |
+| `unaudited` | 315 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -452,12 +452,12 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`FS-1`](FS-1.md) | `done` | `unaudited` | Capture + attribution backend: feedback.py store, routes, SDK re-export, FeedbackConfig, producer meta on payloads (S1 / T1.1-T1.5) |
-| [`FS-2`](FS-2.md) | `done` | `unaudited` | FE affordance: FeedbackThumbs primitive + mounts on inbox judgment blocks and loop finding rows (S2 / T2.1-T2.3) |
-| [`FS-3`](FS-3.md) | `done` | `unaudited` | Deterministic thresholds + retire proposals + Settings->AI accuracy table (S3 / T3.1-T3.3) |
-| [`FS-4`](FS-4.md) | `done` | `unaudited` | App-path validation fixture: declared /api/feedback app records via sdk/feedback and route; undeclared app 403s (T2.4) |
-| [`FS-5`](FS-5.md) | `done` | `unaudited` | Routing suggestion double-write into feedback (routing chip Route->up / dismiss->down) (T3.4) |
-| [`FS-6`](FS-6.md) | `done` | `unaudited` | Re-add a live gated consumer of suppressed_producers() so suppression is enforced again |
+| [`FS-1`](FS-1.md) | `done` | `confirmed` | Capture + attribution backend: feedback.py store, routes, SDK re-export, FeedbackConfig, producer meta on payloads (S1 / T1.1-T1.5) |
+| [`FS-2`](FS-2.md) | `done` | `partial` | FE affordance: FeedbackThumbs primitive + mounts on inbox judgment blocks and loop finding rows (S2 / T2.1-T2.3) |
+| [`FS-3`](FS-3.md) | `done` | `confirmed` | Deterministic thresholds + retire proposals + Settings->AI accuracy table (S3 / T3.1-T3.3) |
+| [`FS-4`](FS-4.md) | `done` | `confirmed` | App-path validation fixture: declared /api/feedback app records via sdk/feedback and route; undeclared app 403s (T2.4) |
+| [`FS-5`](FS-5.md) | `done` | `partial` | Routing suggestion double-write into feedback (routing chip Route->up / dismiss->down) (T3.4) |
+| [`FS-6`](FS-6.md) | `done` | `confirmed` | Re-add a live gated consumer of suppressed_producers() so suppression is enforced again |
 
 ### `HC` — HARNESS-CRAFT (4/5 done)
 

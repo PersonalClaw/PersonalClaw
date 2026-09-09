@@ -30,9 +30,24 @@ suppressed_producers() fail-open + entity_settings/feedback.json (snoozed/cleare
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: suppressed_producers() fail-opens on any error and on a corrupt settings file ('suppressing nothing'), reads entity_settings/feedback.json through the shared _load_entity_settings, and honours snoozed/cleared before returning
+- check_retire_candidates rides the EXISTING cadence exactly as the clause requires — inbox_service.py:340-348, inside a try, 'maintenance must never fail on feedback' — with dedup via retire_proposed and a snooze that RESETS the dedup entry so the proposal can recur after the snooze lapses (feedback.py:398-402)
+- 🔑 DRIVEN: Settings → 'Open AI feedback settings' exists in the bento (registration confirmed by clicking through, not by reading SUBPAGES), the panel renders, and its empty state is specific rather than generic — 'No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop findings'
+- 🔑 the honest-counts rule is enforced at BOTH ends: the route sets collecting:true below min_n and omits accuracy entirely (handlers/feedback.py:157-158), and the panel renders 'collecting · N of few' instead of a number. A percentage computed from 2 verdicts is the failure mode this prevents
+- 🔑 THE SUPPRESSED BADGE IS SPLIT IN TWO, WITH THE REASON: 'suppressed' (titled 'Stopped surfacing') only for a kind in ENFORCED_SUPPRESSION_KINDS, 'retire proposed' for the other five, each with a title saying which. feedbackSuppressionHonesty.test.tsx pins both directions, and I FALSIFIED one of its cases this cycle (reverting the copy reds exactly that case, 5 others green)
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Driven in the UI:** Drove Settings → bento → AI feedback and its empty state. A populated table needs verdicts, which need a judgment on screen (FS-2's blocker); the rows are pinned by 6 vitest cases covering both pill directions, one of which was falsified this cycle.
+
+**Notes:** 🔑 THE ANTI-INERTNESS DEFECT AND ITS FIX ARE BOTH IN THIS ATOM, WHICH IS WHY IT IS THE MOST INSTRUCTIVE ONE AUDITED. GET /api/feedback/producers used to report suppressed:true for ANY below-threshold producer, and the panel rendered that as a red pill titled 'Stopped surfacing' — untrue for five of six kinds, whose output kept being injected verbatim. The correction is not a reworded pill: it introduces ENFORCED_SUPPRESSION_KINDS as a named constant, makes callers consult it before claiming an effect, and pins it with a CENSUS test that greps for consumers of suppressed_producers() and reds if a gating one appears outside the constant. The test file even records that an earlier draft of itself 're-implemented the handler's branch locally and asserted on the copy. It passed.' TWO COPY SITES SURVIVED that fix — the panel's own header hint (the only thing an empty panel says on the subject) and the retire_threshold config hint — both fixed in PR #2783 this cycle with a test on the empty render.
 
 ## Recorded history
 

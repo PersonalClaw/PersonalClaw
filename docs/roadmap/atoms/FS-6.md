@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 THE LIVE GATED CONSUMER EXISTS AND THE ATOM'S OWN done_when SAYS IT DOES NOT. skills/loader.py:1028 passes suppressed=_suppressed_producers() into surface_skills on the real turn path, and surfacing.py:304 is the gate: `withheld = matched and ('skill_synthesis', key) in suppressed`. The done_when's 'Today (verified 2026-08-04) no runtime path enforces it' is STALE — code wins
+- MEASURED behaviourally, not structurally: tests/test_skill_surfacing.py 19/19 including test_suppressed_skill_is_withheld (two matching skills, only the suppressed one withheld), test_default_suppresses_nothing, test_suppression_only_bites_matches (a suppressed producer that did NOT match is unaffected), and test_explain_shows_suppression_withheld
+- 🔑 THE EXPLAIN PATH REFUSES TO DROP SILENTLY: a withheld skill is returned WITH a suppression reason ('this skill's judgments keep drawing 👎 — edit it to restore surfacing'), never omitted — so the Doctor simulator can answer 'why did this skill stop appearing' instead of leaving a hole
+- loader.py:221-233 fetches the set fail-open, so a feedback fault degrades to normal surfacing rather than to silence
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Notes:** 🔑 FOURTH VARIANT OF log-and-code-beat-prose IN THIS CAMPAIGN, and the first where the STALE CLAIM IS THE ATOM'S OWN done_when rather than a plan header, a module docstring or a sub-deliverable. Three records still describe this control as inert: the done_when above, the workspace ROADMAP/CLAUDE 'inert shipped controls worth closing' list (which names Feedback-Signal's suppression), and — until it was corrected in the code — suppressed_producers' own docstring, which now states the correction explicitly: 'This docstring used to say "workflow/skill surfacing" — no workflow path consults this function, and nothing under workflows/ ever did.' The deletion of workflows.surfacing.eligible_workflows in WF2 Phase 1 is what stranded it, and re-homing it at the SKILL gate rather than rebuilding a workflow one is the cheaper and more honest resolution. One DISCOVERY: feedback.py's _proposal_only_candidates() is a strict SUBSET of suppressed_producers() (same threshold, same cleared/snooze logic, only narrower by kind), so the union at :440 is a no-op and its 'gated producers are covered by suppressed_producers()' comment mis-describes what that function returns. Behaviour is correct either way — every below-threshold producer gets exactly one proposal — so it is redundancy, not a defect.
 
 ## Recorded history
 

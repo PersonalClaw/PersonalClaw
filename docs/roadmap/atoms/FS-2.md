@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 37 (FS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: web/src/ui/FeedbackThumbs.tsx is the primitive the clause names — aria-pressed on both buttons (:59/:65), aria-labels naming the action rather than the glyph, a skippable one-line 'why' popover (Enter records, click-away records WITHOUT a reason), 500-char cap matching the backend clip, and hydration on mount via GET /api/feedback/target (:33) so a reopened card shows the existing verdict
+- mounted where the clause requires: InboxDetail.tsx:86/:90 (digest vs classification) and :195 (draft), LoopsListPage.tsx:422 (loop finding) — the digest-folded-into-detail shape matches the S2 deviation
+- 🔑 DRIVEN, and the drive confirmed a GATE rather than the thumbs: opened the one inbox item in the validation home (a user-captured note) and the verdict block correctly rendered NO thumbs. InboxDetail.tsx:76 gates the whole triage-verdict row on channelBacked, and :80-84 gates it again on item.confidence !== 'user' — 'a thumbs-down here would file feedback against a classification the model never produced. Hidden rather than shown inert, LIKE EVERY OTHER GATED CONTROL ON THIS PAGE'
+- test_feedback + test_feedback_routes + test_feedback_suppression_enforcement + test_feedback_app_path 48/48; test_skill_surfacing 19/19; test_config_roundtrip 17/17; web settings suite 871/871
+
+**Driven in the UI:** Drove the inbox detail and observed the correct non-render for a non-channel-backed item. A real thumb could not be driven: the home's only inbox item is a user note (no machine judgment on screen) and the loops store holds zero loops, so neither mount has a target. The click→POST→filled→re-thumb-supersedes chain is pinned by the 48 python + 871 FE tests.
+
+**Notes:** Partial for the thumb drive only. The clause's 'reduced-motion honored' is satisfied vacuously and honestly: the only transition in the component is transition-colors, so there is no motion to suppress — recorded that way rather than claiming a mechanism that is not there. The interesting find is the second gate: this is the SEVENTH instance in this campaign of not rendering a control that could only be a no-op, and the most specific variant — the control is withheld because the THING IT WOULD RATE is not on screen, not because the control itself would fail. One DISCOVERY: :44/:52 keep the thumb optimistic even when the POST fails ('never break the host surface'), which is the one surface in this campaign that DOES claim a state the backend refused. Defensible — the cost is one lost verdict in a local accuracy denominator, and a reload re-hydrates the truth — but unlike AgentDetail's refusal it argues only that it must not throw, never that claiming is safe.
 
 ## Recorded history
 
