@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- all four exemplars exist as public repositories in the org — `channel-null`, `inbox-github-notifications`, `watched-source-github`, `action-home-assistant` — verified from the live org listing in an earlier cycle
+- each is registry-listed with a populated scan verdict, maintainer and validation timestamp
+- 🔑 THE FOUR TYPES CHOSEN ARE THE FOUR SEAMS A THIRD PARTY WOULD ACTUALLY EXTEND — a channel, an inbox source, a watched source and an action — rather than four variations on one contract, so the exemplars demonstrate the breadth of the boundary rather than its easiest corner
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not driven: installing an exemplar from its git URL through the Store, and the fork-simulate walkthrough, both write into a home and need a Store source configured.
+
+**Notes:** Partial on the install-and-fork-simulate clauses. The `≤300 LOC, README-led` constraint per exemplar is the right one: an exemplar that needs a tour is not an exemplar.
 
 ## Recorded history
 

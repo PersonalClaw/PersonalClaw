@@ -30,9 +30,21 @@ the scaffold's `--type tool` output plus apps-repo CI config and a clone-to-inst
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- the scaffold output, apps-repo CI config and clone-to-installed README are prepared in-tree under `scratch/`, which is what the atom asks for — the owner pushes them to the org repo
+- the apps-repo creation guide is the documented home for the quickstart
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not applicable: template-repo content.
+
+**Notes:** Partial on the owner push. The in-tree staging pattern is the right one for content whose destination is a repo the audit cannot create: it makes the work reviewable before it is published.
 
 ## Recorded history
 

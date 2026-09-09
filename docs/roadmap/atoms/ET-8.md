@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔑 THE PAGES ARE BUILT AND THEY ARE THE BEST PRE-INSTALL CONSENT SURFACE IN THIS CATALOGUE — 411 lines for the index and 303 for the per-app page, reading one normalizer, with a per-app README fetch and a verdict legend
+- 🔑 PERMISSIONS ARE RENDERED VERBATIM, AND THE REASON IS THE SHARPEST SENTENCE HERE: they 'are never summarised, grouped, scored, or translated into a friendlier word. The reader is deciding whether to trust an app; A PARAPHRASE IS A CLAIM THE REGISTRY DID NOT MAKE'
+- 🔑 AN ABSENT VERDICT IS NOT A PASSING ONE, and the rule is fail-closed: 'no scan on record' must be 'visibly distinct from "clean", never merely quieter', and 'ONLY the exact value "clean" is presented as passing; anything unrecognised is presented as blocking'. That is ARCC's graded-verdict requirement with the same polarity — anything not affirmatively safe is not treated as safe
+- 🔑 NO TRUST SIGNAL IS INVENTED — 'Every field on the page is a registry field' — and an unreadable row is NOT rendered while the page states how many it dropped, so a parse failure is disclosed rather than silently shrinking the catalogue
+- 🔑 ONE NORMALIZER, WITH THE REASON: the pages, the route-set contract and the render validator all read the same module, because 'a second parser would be a second place for a pre-install consent surface to disagree with itself'
+- 🔴 BUT THE SURFACE RENDERS ZERO LISTINGS TODAY, DELIBERATELY. I ran the sync: `registry absent-at-pin, 0 listing(s) from PersonalClaw/PersonalClaw@bc185c02, 0 README(s) fetched`. The site pins core at the released version, and the registry file POSTDATES that release, so it 404s at the pin — and reading core `main` instead 'would publish unreleased core'
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not driven: the rendered pages are on the deployed site. The data path was exercised directly by running the sync script, which is what produced the finding below.
+
+**Notes:** 🪤 A CONTRADICTION I WAS ONE STEP FROM FILING, AND THE SAVE IS THE POINT. Having read 700 lines of real pages, I had this atom as built-but-marked-todo — an understating status, which would have been the campaign's first contradiction in that direction. Then I ran the sync and found the surface renders nothing at the pinned release, by design, because the registry data postdates it. So `todo` is DEFENSIBLE: the pages exist, the catalogue they would show does not exist at the version the site publishes. The lesson is the campaign's recurring one in a new place — I read the RENDERER and concluded 'built', when the decisive fact was the DATA FLOW at the pin.
 
 ## Recorded history
 

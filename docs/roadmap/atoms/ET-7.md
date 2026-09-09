@@ -33,9 +33,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔴 STATUS-ONLY VERDICT: the atom is `blocked` and that is accurate — there are ZERO open issues labelled `bounty`, and checked one level deeper, the `bounty` LABEL does not exist in the repository at all
+- the block is genuine and shared with CHANNEL-EXPANSION's coordination atom: the bounty text needs an owner-approved risk-policy paragraph before community work is invited
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Nothing to drive.
+
+**Notes:** Checking for the label rather than only for issues is what makes this a real observation: zero matching issues is ambiguous between 'none filed' and 'label misspelled', and the label's absence settles it.
 
 ## Recorded history
 

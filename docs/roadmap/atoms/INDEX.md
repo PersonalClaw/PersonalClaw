@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 333 | `done_when` checked against the code and it holds |
-| `partial` | 217 | some `done_when` clauses hold, others do not |
+| `confirmed` | 339 | `done_when` checked against the code and it holds |
+| `partial` | 220 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
-| `unverifiable` | 7 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 121 | not yet checked |
+| `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
+| `unaudited` | 111 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -425,16 +425,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`ET-1`](ET-1.md) | `done` | `unaudited` | `personalclaw app new` scaffold: provider-registry-derived type table + per-type generators + conformance test |
-| [`ET-2`](ET-2.md) | `done` | `unaudited` | Template repo content (`personalclaw/app-template`) + app-creation-guide scaffold quickstart |
-| [`ET-3`](ET-3.md) | `done` | `unaudited` | Registry data tier: `registry.json` schema + PR-validation workflow in the `personalclaw/registry` repo |
-| [`ET-4`](ET-4.md) | `todo` | `unaudited` | Default-source seeding: ship the registry URL as a removable default git source |
-| [`ET-5`](ET-5.md) | `todo` | `unaudited` | Store-card provenance line for registry-sourced apps + end-to-end install validation |
-| [`ET-6`](ET-6.md) | `done` | `unaudited` | Build the four scaffold-generated exemplar apps and list them in the registry |
-| [`ET-7`](ET-7.md) | `blocked` | `unaudited` | Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance |
-| [`ET-8`](ET-8.md) | `todo` | `unaudited` | Registry surface on personalclaw.dev generated from `registry.json` |
-| [`ET-9`](ET-9.md) | `todo` | `unaudited` | Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4 default-source seeding) |
-| [`ET-10`](ET-10.md) | `done` | `unaudited` | Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication) |
+| [`ET-1`](ET-1.md) | `done` | `confirmed` | `personalclaw app new` scaffold: provider-registry-derived type table + per-type generators + conformance test |
+| [`ET-2`](ET-2.md) | `done` | `partial` | Template repo content (`personalclaw/app-template`) + app-creation-guide scaffold quickstart |
+| [`ET-3`](ET-3.md) | `done` | `confirmed` | Registry data tier: `registry.json` schema + PR-validation workflow in the `personalclaw/registry` repo |
+| [`ET-4`](ET-4.md) | `todo` | `confirmed` | Default-source seeding: ship the registry URL as a removable default git source |
+| [`ET-5`](ET-5.md) | `todo` | `confirmed` | Store-card provenance line for registry-sourced apps + end-to-end install validation |
+| [`ET-6`](ET-6.md) | `done` | `partial` | Build the four scaffold-generated exemplar apps and list them in the registry |
+| [`ET-7`](ET-7.md) | `blocked` | `confirmed` | Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance |
+| [`ET-8`](ET-8.md) | `todo` | `partial` | Registry surface on personalclaw.dev generated from `registry.json` |
+| [`ET-9`](ET-9.md) | `todo` | `confirmed` | Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4 default-source seeding) |
+| [`ET-10`](ET-10.md) | `done` | `unverifiable` | Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication) |
 
 ### `FM` — FLUID-MOTION (7/7 done)
 

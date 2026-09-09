@@ -6971,5 +6971,135 @@
     ],
     "ui_validated": "Not driven: running a council needs a bound model and spends N calls. The template's structure, its independence and ordering rails, and its shipping location were all verified directly, and the independence rail was falsified.",
     "notes": "🔑 THE BEST-REASONED TEMPLATE IN THE CATALOGUE, and the reason is that every rule in it answers a specific way the genre fails: anonymous consensus, split-the-difference averaging, vote-counting, agreement that is weaker than it looks, and a dissent that gets softened out. It also carries its own anti-use case. Worth noting the atom's role in the plan: it exists to make an expensive decision answerable cheaply, and it did — the un-deferral question now rests on one owner judgement rather than on speculation."
+  },
+  "ET-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔑 I RAN IT: `personalclaw app new --list-types` prints `Provider types (19) — derived at runtime from the provider registry`, with each type's SDK contract beside it and duck-typed stubs marked as such rather than silently listed",
+      "🔑 THE ANTI-DRIFT PROPERTY IS THE WHOLE POINT AND IT IS STRUCTURAL: the table is derived from the registry, so 'adding an upstream capability type appears without editing the generator'. A hand-maintained type list is the standard way a scaffold falls one capability behind the platform",
+      "the table also reports how many providers of each type are REGISTERED, so a reader can tell an available type from a used one — zero across the board on a bare core, which is the correct answer here",
+      "174 tests green across the scaffold and registry-validation suites",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not a browser surface: a CLI table, which was run rather than read.",
+    "notes": "This is the atom the CHANNEL-EXPANSION audit already leaned on — its `channel` template needed no registration because the type table is derived. Two plans' worth of correctness comes from one design decision."
+  },
+  "ET-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "the scaffold output, apps-repo CI config and clone-to-installed README are prepared in-tree under `scratch/`, which is what the atom asks for — the owner pushes them to the org repo",
+      "the apps-repo creation guide is the documented home for the quickstart",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not applicable: template-repo content.",
+    "notes": "Partial on the owner push. The in-tree staging pattern is the right one for content whose destination is a repo the audit cannot create: it makes the work reviewable before it is published."
+  },
+  "ET-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔑 ARCC'S SUPPLY-CHAIN REQUIREMENT MAPS ALMOST EXACTLY ONTO THIS PLAN, and the mapping is worth stating: the guidance is to scan third-party components BEFORE importing them and to act on a GRADED verdict — Safe / Caution / Avoid, where Avoid means do not use. This project's scanner is the same shape (`clean` / `warning` / `dangerous`, with `dangerous` terminal and unconsentable), and ET-3 puts the scan in PR CI at LISTING time, which is the guidance's timing requirement",
+      "the registry content is real and more complete than the atom asks: `app-registry.json`, `app-registry.schema.json`, `CONTRIBUTING.md` for listings, fixtures — plus `DELISTING.md`, which the atom never required. A listing process that can only ADD is a process with no way to correct itself",
+      "the four shipped listings each carry `last_scan_verdict: clean`, a maintainer and a `last_validated` timestamp — the payload ET-5 needs, populated rather than declared",
+      "🔑 THOSE VERDICTS WERE ONCE ABSENT, and the changelog records it: all four listings had no `last_scan_verdict`, so the pre-install trust surface 'rendered four \"No scan on record\" cards and had never once been exercised against a verdict' — the stamper existed and nothing called it. The campaign's inert-control class, now closed and observable",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not applicable: registry-repo content and a CI workflow.",
+    "notes": "The scan-at-listing-time placement is the part that matters. A scanner that only runs at install has already let the listing advertise itself; running it when the listing lands is what makes the catalogue's verdict mean something before anyone clicks."
+  },
+  "ET-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when: the atom is `todo`, nothing is built, and that is accurate — so there is nothing to contradict. No `REGISTRY_SOURCE_URL`, `seed_registry` or `default_source` exists anywhere in core, and no default source seeds into the sources file",
+      "🔑 AND THE STATUS IS CORRECT FOR A GOOD REASON RATHER THAN BY ACCIDENT: this atom seeds a REMOTE INSTALL SOURCE by default, and the repository it would point at does not exist yet (see ET-9). Shipping a default source whose URL resolves to nothing would be worse than shipping none",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "Worth recording what the atom already gets right on paper: the source is REMOVABLE and shown as a removable default, removal persists across restart, and the scanner gate still applies at install. A default source that could not be removed would be a vendor channel rather than a convenience."
+  },
+  "ET-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔴 STATUS-ONLY VERDICT, as for ET-4: no `last_validated` or `last_scan_verdict` appears anywhere in the frontend, so the Store-card provenance line is unbuilt and `todo` is accurate",
+      "the upstream payload it would render already exists and is populated (ET-3), so this atom is blocked on presentation rather than on data",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Nothing to drive: the Store shows no registry-sourced cards, because no registry source can be added yet.",
+    "notes": "🔑 THE CLAUSE MOST WORTH PRESERVING INTO IMPLEMENTATION IS THE COPY REQUIREMENT: the card must read as 'community-listed, not endorsed'. A provenance line that shows a maintainer and a clean verdict without that framing reads as a vouch, which is precisely the trust the registry does not have to give."
+  },
+  "ET-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "all four exemplars exist as public repositories in the org — `channel-null`, `inbox-github-notifications`, `watched-source-github`, `action-home-assistant` — verified from the live org listing in an earlier cycle",
+      "each is registry-listed with a populated scan verdict, maintainer and validation timestamp",
+      "🔑 THE FOUR TYPES CHOSEN ARE THE FOUR SEAMS A THIRD PARTY WOULD ACTUALLY EXTEND — a channel, an inbox source, a watched source and an action — rather than four variations on one contract, so the exemplars demonstrate the breadth of the boundary rather than its easiest corner",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not driven: installing an exemplar from its git URL through the Store, and the fork-simulate walkthrough, both write into a home and need a Store source configured.",
+    "notes": "Partial on the install-and-fork-simulate clauses. The `≤300 LOC, README-led` constraint per exemplar is the right one: an exemplar that needs a tour is not an exemplar."
+  },
+  "ET-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔴 STATUS-ONLY VERDICT: the atom is `blocked` and that is accurate — there are ZERO open issues labelled `bounty`, and checked one level deeper, the `bounty` LABEL does not exist in the repository at all",
+      "the block is genuine and shared with CHANNEL-EXPANSION's coordination atom: the bounty text needs an owner-approved risk-policy paragraph before community work is invited",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "Checking for the label rather than only for issues is what makes this a real observation: zero matching issues is ambiguous between 'none filed' and 'label misspelled', and the label's absence settles it."
+  },
+  "ET-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔑 THE PAGES ARE BUILT AND THEY ARE THE BEST PRE-INSTALL CONSENT SURFACE IN THIS CATALOGUE — 411 lines for the index and 303 for the per-app page, reading one normalizer, with a per-app README fetch and a verdict legend",
+      "🔑 PERMISSIONS ARE RENDERED VERBATIM, AND THE REASON IS THE SHARPEST SENTENCE HERE: they 'are never summarised, grouped, scored, or translated into a friendlier word. The reader is deciding whether to trust an app; A PARAPHRASE IS A CLAIM THE REGISTRY DID NOT MAKE'",
+      "🔑 AN ABSENT VERDICT IS NOT A PASSING ONE, and the rule is fail-closed: 'no scan on record' must be 'visibly distinct from \"clean\", never merely quieter', and 'ONLY the exact value \"clean\" is presented as passing; anything unrecognised is presented as blocking'. That is ARCC's graded-verdict requirement with the same polarity — anything not affirmatively safe is not treated as safe",
+      "🔑 NO TRUST SIGNAL IS INVENTED — 'Every field on the page is a registry field' — and an unreadable row is NOT rendered while the page states how many it dropped, so a parse failure is disclosed rather than silently shrinking the catalogue",
+      "🔑 ONE NORMALIZER, WITH THE REASON: the pages, the route-set contract and the render validator all read the same module, because 'a second parser would be a second place for a pre-install consent surface to disagree with itself'",
+      "🔴 BUT THE SURFACE RENDERS ZERO LISTINGS TODAY, DELIBERATELY. I ran the sync: `registry absent-at-pin, 0 listing(s) from PersonalClaw/PersonalClaw@bc185c02, 0 README(s) fetched`. The site pins core at the released version, and the registry file POSTDATES that release, so it 404s at the pin — and reading core `main` instead 'would publish unreleased core'",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not driven: the rendered pages are on the deployed site. The data path was exercised directly by running the sync script, which is what produced the finding below.",
+    "notes": "🪤 A CONTRADICTION I WAS ONE STEP FROM FILING, AND THE SAVE IS THE POINT. Having read 700 lines of real pages, I had this atom as built-but-marked-todo — an understating status, which would have been the campaign's first contradiction in that direction. Then I ran the sync and found the surface renders nothing at the pinned release, by design, because the registry data postdates it. So `todo` is DEFENSIBLE: the pages exist, the catalogue they would show does not exist at the version the site publishes. The lesson is the campaign's recurring one in a new place — I read the RENDERER and concluded 'built', when the decisive fact was the DATA FLOW at the pin."
+  },
+  "ET-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "🔴 STATUS-ONLY VERDICT, and read from the live API rather than inferred: `repos/PersonalClaw/registry` returns 404. The repository does not exist, so `todo` is accurate",
+      "🔑 AND THIS IS THE REAL BOTTLENECK OF THE PLAN, which the dependency ordering already says: ET-4's default source has nothing to point at, and ET-8's surface has no standalone catalogue to sync from. One owner action unblocks the two atoms that would make the ecosystem visible to a user",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not applicable: an owner action creating a repository.",
+    "notes": "Recording the 404 rather than 'presumably not yet' is the difference the audit exists for. It also localises the plan's remaining work to one act rather than leaving three atoms looking independently stuck."
+  },
+  "ET-10": {
+    "verdict": "unverifiable",
+    "date": "2026-09-09",
+    "by": "audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding",
+    "evidence": [
+      "the deliverable is publish credentials provisioned in a CI environment, which is by construction not observable from a working tree — and correctly so, since a credential readable from here would be the defect",
+      "the consuming side exists: the release workflow's image publication is real and was verified in the PUBLICATION cycle (a per-architecture smoke gate whose failure blocks the release)",
+      "🪤 THE OBVIOUS PROXY DOES NOT WORK EITHER, and the reason is worth recording rather than glossing: listing the org's container packages needs a token scope this one lacks, so the 403 is a limit of my credentials and NOT evidence about theirs",
+      "app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`"
+    ],
+    "ui_validated": "Not applicable.",
+    "notes": "Unverifiable is the honest verdict for a secret's existence. The audit can see that something consumes the credential and that the consumer works; it cannot see the credential, and should not be able to."
   }
 }

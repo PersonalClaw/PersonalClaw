@@ -32,9 +32,21 @@ registry URL seeds into app-sources.json on first run behind a config flag; Sett
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when: the atom is `todo`, nothing is built, and that is accurate — so there is nothing to contradict. No `REGISTRY_SOURCE_URL`, `seed_registry` or `default_source` exists anywhere in core, and no default source seeds into the sources file
+- 🔑 AND THE STATUS IS CORRECT FOR A GOOD REASON RATHER THAN BY ACCIDENT: this atom seeds a REMOTE INSTALL SOURCE by default, and the repository it would point at does not exist yet (see ET-9). Shipping a default source whose URL resolves to nothing would be worse than shipping none
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Nothing to drive.
+
+**Notes:** Worth recording what the atom already gets right on paper: the source is REMOVABLE and shown as a removable default, removal persists across restart, and the scanner gate still applies at install. A default source that could not be removed would be a vendor channel rather than a convenience.
 
 ## Recorded history
 

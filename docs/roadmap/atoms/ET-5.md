@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔴 STATUS-ONLY VERDICT, as for ET-4: no `last_validated` or `last_scan_verdict` appears anywhere in the frontend, so the Store-card provenance line is unbuilt and `todo` is accurate
+- the upstream payload it would render already exists and is populated (ET-3), so this atom is blocked on presentation rather than on data
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Nothing to drive: the Store shows no registry-sourced cards, because no registry source can be added yet.
+
+**Notes:** 🔑 THE CLAUSE MOST WORTH PRESERVING INTO IMPLEMENTATION IS THE COPY REQUIREMENT: the card must read as 'community-listed, not endorsed'. A provenance line that shows a maintainer and a clean verdict without that framing reads as a vouch, which is precisely the trust the registry does not have to give.
 
 ## Recorded history
 

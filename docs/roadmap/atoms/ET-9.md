@@ -31,9 +31,21 @@ github.com/PersonalClaw/registry exists as a public repo seeded from scratch/reg
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔴 STATUS-ONLY VERDICT, and read from the live API rather than inferred: `repos/PersonalClaw/registry` returns 404. The repository does not exist, so `todo` is accurate
+- 🔑 AND THIS IS THE REAL BOTTLENECK OF THE PLAN, which the dependency ordering already says: ET-4's default source has nothing to point at, and ET-8's surface has no standalone catalogue to sync from. One owner action unblocks the two atoms that would make the ecosystem visible to a user
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not applicable: an owner action creating a repository.
+
+**Notes:** Recording the 404 rather than 'presumably not yet' is the difference the audit exists for. It also localises the plan's remaining work to one act rather than leaving three atoms looking independently stuck.
 
 ## Recorded history
 

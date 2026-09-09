@@ -31,9 +31,23 @@ registry.json schema + validation script (manifest fetch/parse via core apps/man
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔑 ARCC'S SUPPLY-CHAIN REQUIREMENT MAPS ALMOST EXACTLY ONTO THIS PLAN, and the mapping is worth stating: the guidance is to scan third-party components BEFORE importing them and to act on a GRADED verdict — Safe / Caution / Avoid, where Avoid means do not use. This project's scanner is the same shape (`clean` / `warning` / `dangerous`, with `dangerous` terminal and unconsentable), and ET-3 puts the scan in PR CI at LISTING time, which is the guidance's timing requirement
+- the registry content is real and more complete than the atom asks: `app-registry.json`, `app-registry.schema.json`, `CONTRIBUTING.md` for listings, fixtures — plus `DELISTING.md`, which the atom never required. A listing process that can only ADD is a process with no way to correct itself
+- the four shipped listings each carry `last_scan_verdict: clean`, a maintainer and a `last_validated` timestamp — the payload ET-5 needs, populated rather than declared
+- 🔑 THOSE VERDICTS WERE ONCE ABSENT, and the changelog records it: all four listings had no `last_scan_verdict`, so the pre-install trust surface 'rendered four "No scan on record" cards and had never once been exercised against a verdict' — the stamper existed and nothing called it. The campaign's inert-control class, now closed and observable
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not applicable: registry-repo content and a CI workflow.
+
+**Notes:** The scan-at-listing-time placement is the part that matters. A scanner that only runs at install has already let the listing advertise itself; running it when the listing lands is what makes the catalogue's verdict mean something before anyone clicks.
 
 ## Recorded history
 

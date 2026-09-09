@@ -33,9 +33,23 @@ Session 1 (T1.1, T1.2, T1.3, V1); C1 — Scaffold (src/personalclaw/cli_app_new.
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 61 (ET) — the scaffold type table run live; the registry sync run live, which reversed a finding
+
+**Code evidence:**
+
+- 🔑 I RAN IT: `personalclaw app new --list-types` prints `Provider types (19) — derived at runtime from the provider registry`, with each type's SDK contract beside it and duck-typed stubs marked as such rather than silently listed
+- 🔑 THE ANTI-DRIFT PROPERTY IS THE WHOLE POINT AND IT IS STRUCTURAL: the table is derived from the registry, so 'adding an upstream capability type appears without editing the generator'. A hand-maintained type list is the standard way a scaffold falls one capability behind the platform
+- the table also reports how many providers of each type are REGISTERED, so a reader can tell an available type from a used one — zero across the board on a bare core, which is the correct answer here
+- 174 tests green across the scaffold and registry-validation suites
+- app-scaffold + registry-validation suites 174/174; `app new --list-types` prints 19 provider types live; the site's registry sync run live returns `registry absent-at-pin, 0 listing(s)`
+
+**Driven in the UI:** Not a browser surface: a CLI table, which was run rather than read.
+
+**Notes:** This is the atom the CHANNEL-EXPANSION audit already leaned on — its `channel` template needed no registration because the type table is derived. Two plans' worth of correctness comes from one design decision.
 
 ## Recorded history
 
