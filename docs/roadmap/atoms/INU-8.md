@@ -28,9 +28,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_app_sources.py and tests/test_inbox_native_source.py pass (part of the 86-passed run)
+- the header's 'Restart sources' control is present in the live DOM, so the source-management surface this atom feeds is real rather than planned
+
+**Notes:** PARTIAL: resolving app-contributed sources through the app registry needs an installed app contributing one. Same blocker as INU-7.
 
 ## Recorded history
 

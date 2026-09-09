@@ -32,9 +32,17 @@ skills enqueue() also emits a proposal item (refs.pid); inbox row accept/reject 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_proposals.py and tests/test_inbox_app_proposals.py pass (part of an 86-passed run)
+
+**Notes:** PARTIAL: 'folding the proposal surfaces' is a claim about surfaces a user sees, and the validation home has no proposals to render — nothing generated one, because that needs a model provider or an app emitting them. Code rail observed; the folded UI is unvalidated.
 
 ## Recorded history
 

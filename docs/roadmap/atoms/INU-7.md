@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_app_proposals.py passes — the app-emission contract's own rail
+
+**Notes:** PARTIAL: the emission path's other end is an APP, and no app is installed in this home. Worth recording that the workspace's apps clone is named PersonalClawApps, so the gateway only discovers it when PERSONALCLAW_FIRST_PARTY_APPS_DIR points there — the first gateway I started this session had that set, the validation home's does not.
 
 ## Recorded history
 

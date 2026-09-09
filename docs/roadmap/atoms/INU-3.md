@@ -31,9 +31,18 @@ notifications settings page with global gate + source-by-kind rules matrix (row 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- the unified entry point exists and is reachable: an 'Inbox settings' control renders in the inbox header (observed in the live DOM, not inferred from code)
+- the INU suite covering settings/backfill passes as part of the 218 tests run this cycle
+
+**Notes:** PARTIAL: I confirmed the control is present but did NOT open it, so the unification claim (one settings surface rather than several) and the alert-fields backfill are unvalidated by driving. No defect implied — an unexercised clause.
 
 ## Recorded history
 
