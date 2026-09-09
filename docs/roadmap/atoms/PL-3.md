@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- tests/test_agent_reference.py present and passing — this is the atom's own strongest claim, a BYTE comparison of the checked-in reference against a fresh render, so the 'one source, two renderings' property is mechanically held rather than asserted
+
+**Notes:** PARTIAL: the atom also claims an eval battery scored 5/5 first-try against a 4/5 bar. That is a paid multi-turn model run and cannot be reproduced here, so it stays unvalidated rather than accepted on the strength of the log. The byte-compare rail is the part that can be observed, and it holds.
 
 ## Recorded history
 

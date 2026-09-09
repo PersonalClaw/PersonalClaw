@@ -30,9 +30,18 @@ GET /api/manifest returns {apiVersion,tools,routes,app_surfaces,providers} gener
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- tests/test_api_manifest_drift.py present and passing (part of a 40-passed run with the other three PL test modules)
+- the drift rail is the load-bearing half of this atom: it reds when a tool or route ships without a TOOL_META or exclusion entry, so it is what keeps /api/manifest honest rather than merely present
+
+**Notes:** No UI surface of its own — the atom's frontend clause is a typed api.manifest() client, not a screen, so there is nothing a user drives here. Recorded as confirmed on code + passing rail rather than on the plan's log. Deliberately NOT probed with curl: an endpoint answering 200 to me is not user-facing validation, and the protocol reserves that for real interaction.
 
 ## Recorded history
 

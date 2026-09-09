@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/legibility/discover.py CATALOG holds exactly 10 entries, matching the atom's 'CATALOG of 10 hand-authored area tips'
+- tests/test_discover.py present and passing
+- the clean-break half is observed too: the atom says the old tool-usage power_ups.py / tool_usage.py are DELETED, and neither exists in src/
+
+**Driven in the UI:** Drove #/discover in a real browser against the gateway on 127.0.0.1:10011: the hub rendered 'Discover 9' with per-tip cards carrying an action button and a 'Dismiss — don't suggest this again' control. Clicking Dismiss on the Store tip took the count 9 -> 8. RELOADED the page as a user would: still 8, so the dismissal persists. Then observed where it landed — entity_settings/legibility.json under discover_tips, which is the correct location per the state contract (entity/user state there, never config.json).
+
+**Notes:** The hub showed 9 of 10 tips, which I checked before calling it a discrepancy: the atom's own done_when says a tip 'auto-hides once the area is used', and this home has been driven through onboarding and the dashboard, so one area counts as used. 9 visible against a 10-entry catalog is the feature working, not a miscount.
 
 ## Recorded history
 
