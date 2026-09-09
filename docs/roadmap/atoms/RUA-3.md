@@ -31,9 +31,19 @@ POST /api/auth/login verifies argon2 then mints via the same generate_token/pc_t
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 2 (RUA) — observed
+
+**Code evidence:**
+
+- tests/test_auth_login.py passes (part of the 132-passed run) — the module the atom names for its 45 cases
+- src/personalclaw/dashboard/handlers/auth.py:230-249 mints the session cookie through the SAME resolver the middleware uses, which is the atom's central claim ('one validation path, indistinguishable to middleware'); the docstring states that intent and the code matches it
+- the legacy non-port-scoped `pc_token` cookie is actively cleared on login (max_age=0), so the two cookie generations cannot coexist
+
+**Notes:** PARTIAL because the browser half is NOT reachable from this session, for a reason that is itself a working control. The /login redirect, the 429 lockout with Retry-After, and the Settings > Account panel only activate when login_enabled is on AND a credential exists. Provisioning one needs `personalclaw auth set-password`, which refuses a non-TTY by design, and the documented alternative is seeding PERSONALCLAW_LOGIN_USER/PASSWORD — i.e. minting a credential from an automated session, which I declined to do rather than work around a deliberate boundary. So the login flow is unvalidated by driving; no defect is implied.
 
 ## Recorded history
 

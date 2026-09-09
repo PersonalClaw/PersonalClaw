@@ -28,9 +28,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 2 (RUA) — observed
+
+**Code evidence:**
+
+- tests/test_session_store.py passes as part of a 132-passed run with the other two RUA modules — this is the module the atom names for its 34 cases
+- the durable-store claim is asserted BY that suite (persisted signing key, nonce/binding registry in auth/sessions.json, corrupt-file forces re-auth and never falls open)
+
+**Notes:** Stated precisely so the evidence is not overread: the atom's done_when says 'Verified across 3 boots', and I did NOT perform a three-boot token-survival run myself. My evidence is the passing test module that encodes that behaviour, which is code-level observation rather than a reading of the plan's log. Recorded confirmed on that basis; a reader wanting the boot-level proof should re-drive it.
 
 ## Recorded history
 

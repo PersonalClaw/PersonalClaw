@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 2 (RUA) — observed, against ARCC governance
+
+**Code evidence:**
+
+- cookie attributes observed at dashboard/handlers/auth.py:239-247 — httponly=True, samesite='Lax', path='/', max_age=ttl, secure=secure_cookies(), and NO Domain attribute. That satisfies every clause of ARCC's Secure Cookie Handling guidance (Secure, HttpOnly, SameSite Lax/Strict, Path=/, no wildcard Domain, bounded Max-Age)
+- token_auth.py:669-685 secure_cookies() returns True only for a declared https public URL and fails to False, with the reasoning written out: Secure on plain http makes the cookie undeliverable, which is how essentially every local install runs
+- the wss CSP clause holds: server.py:1880 emits connect-src with _ws_csp_sources(), documented as returning '' for a normal local install so the policy stays byte-identical there
+- tests/test_auth_exposure.py passes (part of the 132-passed run)
+
+**Notes:** PARTIAL, and it produced the cycle's one real finding — issue #2735. The dashboard middleware that sets Cache-Control/Pragma/Expires and a detailed CSP sets NO frame-ancestors directive and NO X-Frame-Options anywhere in src/. frame-ancestors does not fall back to default-src, and frame-src is the opposite control, so nothing restricts who may frame the authenticated dashboard — in exactly the public-exposure scenario this atom hardens. The finding is strong because the project already holds the standard elsewhere: artifacts/deploy.py:109 sets frame-ancestors 'self' with a test asserting it at test_artifact_deploy_serve.py:344. Severity is genuinely reduced by SameSite=Lax (a cross-site frame carries no session cookie), and the issue says so rather than overstating; what remains is login-page UI redressing and the deliberate ?token= path, which SameSite does not cover. FILED rather than fixed because the change would break any legitimate cross-origin embedder (Electron shell, preview panes) and that compatibility check is the part that makes it not a ten-minute job. ARCC's Secure HTTP Headers guidance also asks for Referrer-Policy and X-Content-Type-Options on ALL responses; both exist only on specific artifact/file responses here, and #2735 covers promoting them. I did NOT verify the TOTP or enrollment-code clauses — both need a provisioned credential, same blocker as RUA-3.
 
 ## Recorded history
 
