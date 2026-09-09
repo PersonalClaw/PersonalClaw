@@ -31,9 +31,20 @@ InboxItem gains item_kind/refs/SEEN + non-channel id helper {kind}_{uuid8}_{ts} 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_inbox.py, test_inbox_attention.py and test_inbox_service.py pass (132 together with the kind-seam module)
+- the store is the surface: .validate-home/inbox.json holds an {items:[…]} document that the running gateway both wrote and re-read
+
+**Driven in the UI:** Drove #/inbox on 127.0.0.1:10011. The heading is a live attention count ('Inbox 0 pending · 0 total' before my action, '1 pending · 1 total' after), the list groups under a named lane ('Morning triage'), and the header carries Restart sources / Capture a note / Inbox settings plus Filter & sort. The count moved in response to a real user action rather than a reload.
+
+**Notes:** Confirmed on the attention-store behaviour I could actually exercise. I did not drive demotion or the dismiss-all signal; those belong to INU-5 and are recorded there.
 
 ## Recorded history
 
