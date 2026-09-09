@@ -31,9 +31,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** The most completely driven atom of the cycle, in BOTH directions. Typing 'revenue' into the search box put ?q=revenue in the URL and narrowed the grid to two matches; clicking the Widget chip appended &kind=widget and narrowed to one. Then the decisive direction: loading '#/artifacts?q=revenue&kind=widget' as a FRESH PAGE came back with the search box pre-filled 'revenue', the Widget tab [selected], and exactly one card — so the URL DRIVES the state rather than merely reflecting it. Separately, 'Set collection' opened a dialog, saved 'Q3 review', the control relabelled itself immediately, and a full page load still showed 'Q3 review'.
+
+**Notes:** Worth recording the contrast with issue #2753 from the previous cycle: this PATCH both refreshes its own control AND persists, while the document-save path bumps the version on disk and leaves its counter reading v1 until a reload. Same app, two save paths, one of them right — which is useful evidence that #2753 is a local defect rather than a house pattern.
 
 ## Recorded history
 

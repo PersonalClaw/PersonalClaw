@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 73 | `done_when` checked against the code and it holds |
-| `partial` | 94 | some `done_when` clauses hold, others do not |
+| `confirmed` | 79 | `done_when` checked against the code and it holds |
+| `partial` | 98 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 515 | not yet checked |
+| `unaudited` | 505 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -45,16 +45,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AE-1`](AE-1.md) | `done` | `unaudited` | collection field wired through model/provider/handlers/tools/api.ts (tolerant reads) |
-| [`AE-2`](AE-2.md) | `done` | `unaudited` | Server-backed list-before-save dedup: find_similar + refusal-with-hint + REST 409 |
-| [`AE-3`](AE-3.md) | `done` | `unaudited` | Artifacts get their own top-level #/artifacts route; Files artifacts tab deleted; legacy #/files/<slug> redirect |
-| [`AE-4`](AE-4.md) | `done` | `unaudited` | ArtifactCard live sandboxed preview grid (lazy IntersectionObserver + LRU-12 iframe cap) + 200-artifact perf proof |
-| [`AE-5`](AE-5.md) | `done` | `unaudited` | Grid toolbar: search + kind/source chips + collection picker/assign + sort, URL-query-backed |
-| [`AE-6`](AE-6.md) | `done` | `unaudited` | Full-page detail view: always-visible version picker/events, ?v=N historical deep-link, live_dirty drift badge |
-| [`AE-7`](AE-7.md) | `done` | `unaudited` | artifact investigate resolver (agent task mode, fenced current content, slug-naming opening prompt) |
-| [`AE-8`](AE-8.md) | `done` | `unaudited` | Chat @-artifact references: composer menu + meta.artifacts + _inject_artifact_content + referenced event |
-| [`AE-9`](AE-9.md) | `done` | `unaudited` | Version Compare mode: Monaco text diff (text/visual kinds) + side-by-side (binary), content-type-registry driven |
-| [`AE-10`](AE-10.md) | `done` | `unaudited` | Split-view iterate panel: ChatEmbed beside the detail view; preview refreshes when artifact_update lands a new version |
+| [`AE-1`](AE-1.md) | `done` | `confirmed` | collection field wired through model/provider/handlers/tools/api.ts (tolerant reads) |
+| [`AE-2`](AE-2.md) | `done` | `partial` | Server-backed list-before-save dedup: find_similar + refusal-with-hint + REST 409 |
+| [`AE-3`](AE-3.md) | `done` | `confirmed` | Artifacts get their own top-level #/artifacts route; Files artifacts tab deleted; legacy #/files/<slug> redirect |
+| [`AE-4`](AE-4.md) | `done` | `confirmed` | ArtifactCard live sandboxed preview grid (lazy IntersectionObserver + LRU-12 iframe cap) + 200-artifact perf proof |
+| [`AE-5`](AE-5.md) | `done` | `confirmed` | Grid toolbar: search + kind/source chips + collection picker/assign + sort, URL-query-backed |
+| [`AE-6`](AE-6.md) | `done` | `confirmed` | Full-page detail view: always-visible version picker/events, ?v=N historical deep-link, live_dirty drift badge |
+| [`AE-7`](AE-7.md) | `done` | `partial` | artifact investigate resolver (agent task mode, fenced current content, slug-naming opening prompt) |
+| [`AE-8`](AE-8.md) | `done` | `partial` | Chat @-artifact references: composer menu + meta.artifacts + _inject_artifact_content + referenced event |
+| [`AE-9`](AE-9.md) | `done` | `confirmed` | Version Compare mode: Monaco text diff (text/visual kinds) + side-by-side (binary), content-type-registry driven |
+| [`AE-10`](AE-10.md) | `done` | `partial` | Split-view iterate panel: ChatEmbed beside the detail view; preview refreshes when artifact_update lands a new version |
 
 ### `AG` — AUTONOMY-GUARDRAILS (14/14 done)
 

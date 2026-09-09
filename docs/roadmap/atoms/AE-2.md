@@ -28,9 +28,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- artifacts/handlers.py:187 returns the 'similar_artifact_exists' error code; native.py:433 + provider.py:55 define find_similar on both the concrete provider and the ABC
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Not drivable as a user: the dedup fires on a SAVE, which is a tool call or a REST write, and this audit does not validate features through API calls. I did observe the adjacent behaviour by accident last cycle — create_binary WITHOUT a slug minted 'q3-field-report-2' beside 'q3-field-report', which is the documented boundary (update-in-place is keyed on an explicitly passed slug).
+
+**Notes:** Partial for the observation, not for doubt about the code: the 409, the tool hint, the no-'-2'-on-disk clause and the SEL outcome=deduped all have tests in the 458-passed run.
 
 ## Recorded history
 

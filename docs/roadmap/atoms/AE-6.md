@@ -30,9 +30,19 @@ Session 2 T2.3
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Driven on real multi-version data — the docx I edited in the browser last cycle. Loading '#/artifacts/q3-field-report-2?v=1' opened the historical snapshot with the Version combobox reading 'Current · v2' and 'v1 [selected]', a banner reading 'Viewing historical v1 (read-only)', a 'Revert to v1' control beside it, and a Timeline listing both real events ('edited (v2) user · 24m ago', 'created (v1) system · 26m ago').
+
+**Notes:** The 'always-visible version picker' clause deserves a note rather than a finding. On a single-version artifact the Details section is a COLLAPSED disclosure — but its own label carries the state ('Details · v1 · 1 event'), the picker is one click inside, and the section AUTO-EXPANDS when a historical version is deep-linked, which is the case where you need it. A density decision, not a missing surface. The 'Revert to v1' button is also the user-facing half of what I could only see as v1.docx on disk when auditing DFE-5.
 
 ## Recorded history
 

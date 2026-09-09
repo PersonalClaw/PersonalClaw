@@ -28,9 +28,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- collection is carried through model/provider/handlers/tools and web/src/lib/api.ts; tolerant reads keep a pre-collection meta.json loading with collection=''
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Confirmed end to end on data I created through the UI: assigned 'Q3 review' to an artifact from its detail menu, then loaded #/artifacts?col=Q3%20review as a fresh page — the grid narrowed to exactly that one artifact out of eight. The round trip is UI write → persisted → URL-driven read.
 
 ## Recorded history
 

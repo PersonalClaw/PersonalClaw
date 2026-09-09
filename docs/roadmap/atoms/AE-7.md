@@ -30,9 +30,19 @@ POST /api/investigate {kind:artifact} produces a session whose first turn carrie
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Not drivable: POST /api/investigate produces a chat SESSION whose first turn carries the fenced content, and a first turn needs a bound model.
+
+**Notes:** Partial for the run. The clause most worth observing live is 'v-current, not stale' — a resolver that captured content at session-creation time and then went stale would still pass a shape test.
 
 ## Recorded history
 

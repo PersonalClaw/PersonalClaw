@@ -30,9 +30,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Driven in both the positive and the negative direction. On the two-version docx, 'Compare versions' opened two version pickers ('Compare v1 … with v2') and rendered figure 'Before · v1' beside figure 'After · v2' — the SIDE-BY-SIDE path, correct for a binary kind rather than a text diff. On the single-version markdown artifact no compare control is offered at all, which is the atom's 'offered only when >=2 versions exist' clause proven by its absence.
+
+**Notes:** Confirming a gating clause by finding the control MISSING where it should be missing is the half that usually goes unchecked. The Monaco text-diff branch for text kinds was not driven — that needs a text artifact with two versions, which I did not create.
 
 ## Recorded history
 

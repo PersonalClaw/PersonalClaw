@@ -30,9 +30,22 @@ mixed-kind library renders live theme-correct previews; off-screen cards hold pl
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/artifacts/ArtifactCard.tsx:13-14 states the soul guardrail: previews are sandboxed EXACTLY like chat widgets, the same sandbox="allow-scripts" srcdoc contract (widgetSrcdoc) — one contract, not a second one for cards
+- :56-60 isPreviewKind limits live iframes to the registry-sandboxed types (widget/html/react/infographic); :109 the iframe is 'sandboxed + inert + scaled'
+- ArtifactCard.tsx:150-158 splits the thumbnail path from the kind-tile path (the DFE-1 fix), so binary kinds never point an img at /raw
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Drove a mixed-kind library of eight artifacts and read the per-kind preview strategy off the accessibility tree: the HTML and Widget cards each render a live iframe node, the Markdown card renders a text excerpt, and the docx/xlsx/pdf cards render kind tiles. Three strategies, correct per kind, in one grid.
+
+**Notes:** ARCC's restrictive-CSP guidance is about rendering untrusted output, and this answers it with something stronger than a header: sandbox="allow-scripts" WITHOUT allow-same-origin makes each preview a unique opaque origin, so agent-authored HTML cannot reach the dashboard's DOM or storage at all. Reusing the chat-widget contract rather than minting a card-specific one is what keeps that property from drifting. The LRU-12 cap and the 200-artifact scroll proof are test-side; I drove eight artifacts, not two hundred.
 
 ## Recorded history
 

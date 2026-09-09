@@ -1795,5 +1795,114 @@
       "tests/test_evals_cell_provider.py green in the 628-passed run"
     ],
     "notes": "This atom is the deliberate answer to the blocker that has produced most of this campaign's partials — 'no model bound, so nothing measures'. Its resolution is notable for what it REFUSES: it will not pass the operator's environment through, so a study cannot silently borrow a credential it never declared. The consequence is that my partials above are the designed behaviour, not a gap: a cell with no expressed binding is SUPPOSED to report VERIFIER_ABSENT rather than quietly measure something with my key."
+  },
+  "AE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "collection is carried through model/provider/handlers/tools and web/src/lib/api.ts; tolerant reads keep a pre-collection meta.json loading with collection=''",
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Confirmed end to end on data I created through the UI: assigned 'Q3 review' to an artifact from its detail menu, then loaded #/artifacts?col=Q3%20review as a fresh page — the grid narrowed to exactly that one artifact out of eight. The round trip is UI write → persisted → URL-driven read."
+  },
+  "AE-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "artifacts/handlers.py:187 returns the 'similar_artifact_exists' error code; native.py:433 + provider.py:55 define find_similar on both the concrete provider and the ABC",
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Not drivable as a user: the dedup fires on a SAVE, which is a tool call or a REST write, and this audit does not validate features through API calls. I did observe the adjacent behaviour by accident last cycle — create_binary WITHOUT a slug minted 'q3-field-report-2' beside 'q3-field-report', which is the documented boundary (update-in-place is keyed on an explicitly passed slug).",
+    "notes": "Partial for the observation, not for doubt about the code: the 409, the tool hint, the no-'-2'-on-disk clause and the SEL outcome=deduped all have tests in the 458-passed run."
+  },
+  "AE-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Drove the legacy redirect: loading #/files/field-notes landed on #/artifacts/field-notes. And the Files page carries only file-root tabs — Workspace, Home, Outbox, Uploads — with no artifacts tab, which is the deletion half of the same atom.",
+    "notes": "Both halves of this atom are the kind of thing that rots silently (a redirect nobody exercises, a tab that comes back), and both are observably right."
+  },
+  "AE-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/artifacts/ArtifactCard.tsx:13-14 states the soul guardrail: previews are sandboxed EXACTLY like chat widgets, the same sandbox=\"allow-scripts\" srcdoc contract (widgetSrcdoc) — one contract, not a second one for cards",
+      ":56-60 isPreviewKind limits live iframes to the registry-sandboxed types (widget/html/react/infographic); :109 the iframe is 'sandboxed + inert + scaled'",
+      "ArtifactCard.tsx:150-158 splits the thumbnail path from the kind-tile path (the DFE-1 fix), so binary kinds never point an img at /raw",
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Drove a mixed-kind library of eight artifacts and read the per-kind preview strategy off the accessibility tree: the HTML and Widget cards each render a live iframe node, the Markdown card renders a text excerpt, and the docx/xlsx/pdf cards render kind tiles. Three strategies, correct per kind, in one grid.",
+    "notes": "ARCC's restrictive-CSP guidance is about rendering untrusted output, and this answers it with something stronger than a header: sandbox=\"allow-scripts\" WITHOUT allow-same-origin makes each preview a unique opaque origin, so agent-authored HTML cannot reach the dashboard's DOM or storage at all. Reusing the chat-widget contract rather than minting a card-specific one is what keeps that property from drifting. The LRU-12 cap and the 200-artifact scroll proof are test-side; I drove eight artifacts, not two hundred."
+  },
+  "AE-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "The most completely driven atom of the cycle, in BOTH directions. Typing 'revenue' into the search box put ?q=revenue in the URL and narrowed the grid to two matches; clicking the Widget chip appended &kind=widget and narrowed to one. Then the decisive direction: loading '#/artifacts?q=revenue&kind=widget' as a FRESH PAGE came back with the search box pre-filled 'revenue', the Widget tab [selected], and exactly one card — so the URL DRIVES the state rather than merely reflecting it. Separately, 'Set collection' opened a dialog, saved 'Q3 review', the control relabelled itself immediately, and a full page load still showed 'Q3 review'.",
+    "notes": "Worth recording the contrast with issue #2753 from the previous cycle: this PATCH both refreshes its own control AND persists, while the document-save path bumps the version on disk and leaves its counter reading v1 until a reload. Same app, two save paths, one of them right — which is useful evidence that #2753 is a local defect rather than a house pattern."
+  },
+  "AE-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Driven on real multi-version data — the docx I edited in the browser last cycle. Loading '#/artifacts/q3-field-report-2?v=1' opened the historical snapshot with the Version combobox reading 'Current · v2' and 'v1 [selected]', a banner reading 'Viewing historical v1 (read-only)', a 'Revert to v1' control beside it, and a Timeline listing both real events ('edited (v2) user · 24m ago', 'created (v1) system · 26m ago').",
+    "notes": "The 'always-visible version picker' clause deserves a note rather than a finding. On a single-version artifact the Details section is a COLLAPSED disclosure — but its own label carries the state ('Details · v1 · 1 event'), the picker is one click inside, and the section AUTO-EXPANDS when a historical version is deep-linked, which is the case where you need it. A density decision, not a missing surface. The 'Revert to v1' button is also the user-facing half of what I could only see as v1.docx on disk when auditing DFE-5."
+  },
+  "AE-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Not drivable: POST /api/investigate produces a chat SESSION whose first turn carries the fenced content, and a first turn needs a bound model.",
+    "notes": "Partial for the run. The clause most worth observing live is 'v-current, not stale' — a resolver that captured content at session-creation time and then went stale would still pass a shape test."
+  },
+  "AE-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "dashboard/chat_runner.py:1228 _inject_artifact_content, called at :1850, states the grounding contract: slugs arrive on the most-recent user message's meta.artifacts and 'The CURRENT version's body is what gets grounded — referencing an artifact means \"what it is now\", not a pinned snapshot'",
+      "the same docstring makes the referenced event 'idempotent per session, so a long conversation about one artifact leaves one impression rather than a turn-by-turn flood'",
+      "web/src/pages/ChatPage.tsx:3240 ArtifactContextPicker — a 'Reference an artifact' modal with search, an attached list, add/remove and a 40-row cap — mounted at :2675 with artifactPickerOpen state and a mentionedArtifacts list feeding meta.artifacts",
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "The picker is wired but a GROUNDED REPLY needs a model, so the atom's own clause ('grounds the reply in the current version') is unobserved.",
+    "notes": "🪤 THE TENTH FINDING TO COLLAPSE ON INSPECTION, and I was two steps from filing it. The atom says 'composer menu', so I looked for an artifact mention callback beside onMentionFile/onMentionKnowledge — and MarkdownInput.tsx gates the whole mention path on 'if (!onMentionFile && !onMentionKnowledge) return', with zero artifact references anywhere in it. That reads exactly like a missing frontend. It is not: the shipped shape is a dedicated 'Reference an artifact' MODAL in ChatPage, fully wired to the meta.artifacts the backend reads, whose empty state even carries the reasoning from a past incident ('a 500 told a user with artifacts to go make their first one'). Fourth shape drift of the campaign, same direction as the others — the atom's wording is older than the implementation, and searching for the atom's MECHANISM instead of its OUTCOME is what nearly produced a false report."
+  },
+  "AE-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Driven in both the positive and the negative direction. On the two-version docx, 'Compare versions' opened two version pickers ('Compare v1 … with v2') and rendered figure 'Before · v1' beside figure 'After · v2' — the SIDE-BY-SIDE path, correct for a binary kind rather than a text diff. On the single-version markdown artifact no compare control is offered at all, which is the atom's 'offered only when >=2 versions exist' clause proven by its absence.",
+    "notes": "Confirming a gating clause by finding the control MISSING where it should be missing is the half that usually goes unchecked. The Monaco text-diff branch for text kinds was not driven — that needs a text artifact with two versions, which I did not create."
+  },
+  "AE-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 17 (AE) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/artifacts/ArtifactIteratePanel.tsx exists with two dedicated tests — artifactSplitView.test.tsx and artifactLiveRefresh.test.tsx",
+      "the refresh rides the EXISTING tool_call WS event filtered on tool==='artifact_update' (the atom's own stated mechanism: 'no new WS event'), which is the opposite of BA-5's failure — here the consumer exists and the event is shared rather than minted",
+      "part of the 458-passed artifact run + 79 web tests across 9 artifact test files"
+    ],
+    "ui_validated": "Not drivable: producing a new version from the side panel requires the agent, and no model is bound.",
+    "notes": "Partial for the run only. The design choice is worth recording because a previous cycle found its inverse: AE-10 reuses an event that already had consumers, while BA-5 minted three new WS events and built no consumer at all. Same codebase, opposite outcomes, and the difference is whether the frontend was part of the atom."
   }
 }

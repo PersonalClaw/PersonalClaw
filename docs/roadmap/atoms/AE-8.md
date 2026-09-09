@@ -28,9 +28,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- dashboard/chat_runner.py:1228 _inject_artifact_content, called at :1850, states the grounding contract: slugs arrive on the most-recent user message's meta.artifacts and 'The CURRENT version's body is what gets grounded — referencing an artifact means "what it is now", not a pinned snapshot'
+- the same docstring makes the referenced event 'idempotent per session, so a long conversation about one artifact leaves one impression rather than a turn-by-turn flood'
+- web/src/pages/ChatPage.tsx:3240 ArtifactContextPicker — a 'Reference an artifact' modal with search, an attached list, add/remove and a 40-row cap — mounted at :2675 with artifactPickerOpen state and a mentionedArtifacts list feeding meta.artifacts
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** The picker is wired but a GROUNDED REPLY needs a model, so the atom's own clause ('grounds the reply in the current version') is unobserved.
+
+**Notes:** 🪤 THE TENTH FINDING TO COLLAPSE ON INSPECTION, and I was two steps from filing it. The atom says 'composer menu', so I looked for an artifact mention callback beside onMentionFile/onMentionKnowledge — and MarkdownInput.tsx gates the whole mention path on 'if (!onMentionFile && !onMentionKnowledge) return', with zero artifact references anywhere in it. That reads exactly like a missing frontend. It is not: the shipped shape is a dedicated 'Reference an artifact' MODAL in ChatPage, fully wired to the meta.artifacts the backend reads, whose empty state even carries the reasoning from a past incident ('a 500 told a user with artifacts to go make their first one'). Fourth shape drift of the campaign, same direction as the others — the atom's wording is older than the implementation, and searching for the atom's MECHANISM instead of its OUTCOME is what nearly produced a false report.
 
 ## Recorded history
 

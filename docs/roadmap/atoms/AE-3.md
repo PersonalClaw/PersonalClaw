@@ -28,9 +28,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 17 (AE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 458-passed artifact run + 79 web tests across 9 artifact test files
+
+**Driven in the UI:** Drove the legacy redirect: loading #/files/field-notes landed on #/artifacts/field-notes. And the Files page carries only file-root tabs — Workspace, Home, Outbox, Uploads — with no artifacts tab, which is the deletion half of the same atom.
+
+**Notes:** Both halves of this atom are the kind of thing that rots silently (a redirect nobody exercises, a tab that comes back), and both are observably right.
 
 ## Recorded history
 
