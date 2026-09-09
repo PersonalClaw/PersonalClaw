@@ -30,9 +30,24 @@ threat-model.md carries five trust boundaries each with a resolvable module cita
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- 🔑 I RE-RESOLVED EVERY CITATION IN THE TABLE AND THE LIMITATIONS DOC — 23 OF 23 RESOLVE against the current tree. Modules and symbols both: `security.py::fence_untrusted`, `BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`, `dashboard/handlers/apps.py::api_app_proxy`, `dashboard/server.py::_dev_user_middleware`, `apps/app_manager.py::install`, `supply_chain.py::SkillScanner`/`Verdict`, `sel.py::SecurityEventLog`, `apps/permissions.py::can_use_network`, and the rest
+- five trust boundaries, each with a resolvable module citation, and the ten ASI rows carry the status legend the atom specifies — the two non-enforced rows are marked `in progress` with the owning plan named rather than left blank or quietly claimed
+- 🔑 I CHECKED TWO ENFORCED CLAIMS FOR SUBSTANCE, NOT JUST FOR SYMBOL EXISTENCE, because a resolvable citation is not the same as a real control. ASI03's parenthetical — the permission middleware 'holds even in `none` mode' — is true AND carries its own incident history at the code: skipping the app-token adoption there 'silently DISABLED the entire app permission sandbox in none-mode (an app-scoped request reached ANY /api path)'. The claim is a fix with the bug recorded beside it, not an aspiration
+- 🔑 ASI10's 'tamper-evident' is the strongest word in the table and it is earned: an HMAC-SHA256 chain where each entry signs over the previous hash, append-only. And there is a subtle second-order defence — the redactor's `_UNREDACTED_FIELDS` deliberately exempts `prev_hash`/`entry_hash`, because redacting them 'makes an [otherwise valid chain fail]'. One security control was stopped from destroying another, on purpose
+- 🔑 THE 'DON'T DEFEND AGAINST' SECTION SCOPES ITS INTEGRITY CLAIM INSTEAD OF OVERSTATING IT: the baseline denylist digest 'proves the patterns in force are the ones that shipped WITH THIS PROCESS; it cannot prove which patterns were shipped'. Anti-drift and anti-LLM-tamper, explicitly not anti-owner
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface. Validated by resolving every citation and by reading two enforced controls at their call sites.
+
+**Notes:** 🪤 ONE CITATION APPEARED TO FAIL AND THE FAILURE WAS MINE: `trust_mode.py (on_disable)` did not match my symbol pattern, which only looked for a top-level `def`/`class`/assignment. `on_disable` is a callback list plus a module-level `register_on_disable` registrar — a mechanism citation, and the mechanism is there. Withdrawn; 23 of 23. Worth recording because the temptation was to report a stale citation in the one document whose whole value is that its citations are not stale.
 
 ## Recorded history
 

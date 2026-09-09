@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 288 | `done_when` checked against the code and it holds |
+| `confirmed` | 295 | `done_when` checked against the code and it holds |
 | `partial` | 193 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 195 | not yet checked |
+| `unaudited` | 188 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -844,13 +844,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`SL-1`](SL-1.md) | `done` | `unaudited` | Core repo SECURITY.md (disclosure channel, versions, response expectations, scope in/out) |
-| [`SL-2`](SL-2.md) | `done` | `unaudited` | Apps-repo SECURITY.md (app-bundle-scoped, routes platform issues to core) |
-| [`SL-3`](SL-3.md) | `done` | `unaudited` | docs/security/limitations.md — honest limitations in the architecture's own voice |
-| [`SL-4`](SL-4.md) | `done` | `unaudited` | V1 validation + enable GitHub Private Vulnerability Reporting on both repos |
-| [`SL-5`](SL-5.md) | `done` | `unaudited` | docs/security/threat-model.md — five trust boundaries + 10-row ASI mapping table + 'don't defend against' section |
-| [`SL-6`](SL-6.md) | `done` | `unaudited` | README Security section + bidirectional cross-links across both repos |
-| [`SL-7`](SL-7.md) | `done` | `unaudited` | V2 skeptical-outsider read-through + DISCOVERY ledger to SECURITY-HARDENING |
+| [`SL-1`](SL-1.md) | `done` | `confirmed` | Core repo SECURITY.md (disclosure channel, versions, response expectations, scope in/out) |
+| [`SL-2`](SL-2.md) | `done` | `confirmed` | Apps-repo SECURITY.md (app-bundle-scoped, routes platform issues to core) |
+| [`SL-3`](SL-3.md) | `done` | `confirmed` | docs/security/limitations.md — honest limitations in the architecture's own voice |
+| [`SL-4`](SL-4.md) | `done` | `confirmed` | V1 validation + enable GitHub Private Vulnerability Reporting on both repos |
+| [`SL-5`](SL-5.md) | `done` | `confirmed` | docs/security/threat-model.md — five trust boundaries + 10-row ASI mapping table + 'don't defend against' section |
+| [`SL-6`](SL-6.md) | `done` | `confirmed` | README Security section + bidirectional cross-links across both repos |
+| [`SL-7`](SL-7.md) | `done` | `confirmed` | V2 skeptical-outsider read-through + DISCOVERY ledger to SECURITY-HARDENING |
 
 ### `SM` — SESSION-MANAGEMENT (12/12 done)
 

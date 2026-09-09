@@ -5985,5 +5985,100 @@
     ],
     "ui_validated": "No user surface: a release job and a deferral note. The artifact itself needs the Linux runner; what is checkable here is that the job exists, is self-contained, and verifies its own output.",
     "notes": "🔑 THE RULING IS THE BEST SCOPE DECISION THIS AUDIT HAS READ, and its reasoning generalises: 'a whole platform should not wait behind an audit it does not depend on'. Splitting one blocked atom into a shippable half and an honestly-parked half beats parking both — and the honesty is load-bearing, because a dated note citing a specific line is auditable while 'later' is not. Worth noting the atom's own follow-up audit was harder on the ruling than the ruling was on itself: it recorded that the ruling 'was right about the half it addressed and SILENT about the half that mattered', because Linux did need one platform-neutral piece of the mac atom — the install kind. That is the self-correction that produced DC-1's fix."
+  },
+  "SL-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "all four sections present in `SECURITY.md`: the private-advisory channel ('Report a vulnerability' → a private advisory 'visible only to you'), a supported-versions table, response expectations, and explicit in-scope / out-of-scope lists",
+      "🔑 THE EXPECTATIONS ARE STATED AS EXPECTATIONS, WHICH IS THE CLAUSE MOST POLICIES QUIETLY BREAK: 'PersonalClaw is maintained by a single person, so these are honest expectations' — not an SLA, and the doc then tells a reporter what to do if a report stalls ('a polite nudge on the advisory thread'). A disclosure policy that over-promises is worse than one that promises less",
+      "the out-of-scope list routes rather than refuses — findings that are not vulnerabilities are 'welcome, but file them as a normal issue, not a private advisory', so a reporter is not left guessing where their finding goes",
+      "the zero-invented-capability clause holds: every claim I checked against the code resolved (see SL-5's citation sweep, 23 of 23)",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface. The published policy is the artifact, and the channel behind it was verified from the live GitHub API under SL-4.",
+    "notes": "The four sections are easy; the honest-expectations framing is the part worth keeping. A solo-maintained project that published a 24-hour SLA would have shipped a promise it cannot keep, and the first missed window would cost more credibility than the whole document buys."
+  },
+  "SL-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "the apps-repo `SECURITY.md` mirrors the core process and links back to the core policy and threat model",
+      "🔑 THE SCOPE SPLIT IS EXACTLY THE ONE THE ATOM SPECIFIES, AND IT IS THE INTERESTING PART: a bundle that SHOULD earn a `warning` or `dangerous` verdict but scans `clean` is IN scope — that is a scanner-evasion report, i.e. a real vulnerability in the gate. The owner installing a `warning`-rated app after explicit consent is OUT — 'an owner choice, not a vulnerability'",
+      "and the asymmetry is stated rather than implied: a `dangerous` verdict cannot be consented past, so the consent carve-out applies only to the middle tier. An out-of-scope line that quietly covered the terminal verdict would have excused the one case that must never be excusable",
+      "the expectations are carried over with the same honesty as core ('not contractual SLAs')",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface.",
+    "notes": "The scope boundary here is the whole value of the document: it tells a researcher that attacking the SCANNER is welcome and attacking the OWNER'S CHOICE is not. That is a boundary a researcher can act on, unlike 'security issues in apps'."
+  },
+  "SL-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "🔑 BOTH DISCLOSED LIMITATIONS ARE STILL TRUE, RE-CHECKED AGAINST THE TREE RATHER THAN TAKEN FROM THE DOC. The network one is exact: `apps/permissions.py::can_use_network` is `return self.permissions.network` — a pure declaration read — and its ONLY consumer passes it onward as a `can_network` FLAG into the app backend runtime. Nothing gates egress on it, which is precisely what 'declaration-only, not a gateway-enforced boundary' claims",
+      "🔑 AND THE REASON GIVEN IS THE RIGHT ARCHITECTURAL ONE, not a shrug: 'an app backend is its own OS process with its own network stack'. That explains why the gap is structural rather than unfinished, and it names what IS enforced instead — the supply-chain gate on what you install and the app's gateway-mediated reach",
+      "the ACP-under-YOLO limitation cites `task_modes.py`, which resolves, and the threat model repeats the same claim in the same words ('where gating rides system-prompt framing, not rails'), so the two documents cannot drift apart on it silently",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface: the deliverable is a document, and its truth condition is the code it cites.",
+    "notes": "🔑 THE HARDEST THING TO SHIP IN A SECURITY DOCUMENT IS A LIMITATION THAT SOUNDS BAD AND IS TRUE. Both of these do, and both survived re-verification. The network one in particular is the kind of claim a project is tempted to soften into 'defence in depth'; it is written here as declaration-only, in those words, at install-consent time."
+  },
+  "SL-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "🔑 PRIVATE VULNERABILITY REPORTING IS LIVE ON BOTH REPOS, READ FROM THE DEDICATED ENDPOINT: `/repos/{owner}/{repo}/private-vulnerability-reporting` returns `{\"enabled\":true}` for PersonalClaw AND for PersonalClawApps. This is the atom's one externally-observable state and it observes as claimed",
+      "the three Session-1 files exist at the paths the plan names, and the cross-document links between them resolve (checked in both directions under SL-6)",
+      "nav-link resolution passes 21 of 21",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not the gateway: the 'Report a vulnerability' channel is a GitHub surface. Verified at the API level rather than by filing a live advisory, which would be noise in a real security inbox.",
+    "notes": "🪤 A FALSE NEGATIVE OF MY OWN, AND THE THIRD CONSECUTIVE CYCLE WITH THIS SHAPE. My first probe read `security_and_analysis.private_vulnerability_reporting.status` off the repository object and got `null` on both repos, which looked exactly like the feature being off. That field is simply not populated for my token on that response shape; the dedicated endpoint answers `enabled: true`. Withdrawn. The pattern across three cycles is identical — 'the value is absent' and 'I queried the wrong source' are indistinguishable until you check a second source, so on any absence that would be a finding, check twice before writing it down."
+  },
+  "SL-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "🔑 I RE-RESOLVED EVERY CITATION IN THE TABLE AND THE LIMITATIONS DOC — 23 OF 23 RESOLVE against the current tree. Modules and symbols both: `security.py::fence_untrusted`, `BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`, `dashboard/handlers/apps.py::api_app_proxy`, `dashboard/server.py::_dev_user_middleware`, `apps/app_manager.py::install`, `supply_chain.py::SkillScanner`/`Verdict`, `sel.py::SecurityEventLog`, `apps/permissions.py::can_use_network`, and the rest",
+      "five trust boundaries, each with a resolvable module citation, and the ten ASI rows carry the status legend the atom specifies — the two non-enforced rows are marked `in progress` with the owning plan named rather than left blank or quietly claimed",
+      "🔑 I CHECKED TWO ENFORCED CLAIMS FOR SUBSTANCE, NOT JUST FOR SYMBOL EXISTENCE, because a resolvable citation is not the same as a real control. ASI03's parenthetical — the permission middleware 'holds even in `none` mode' — is true AND carries its own incident history at the code: skipping the app-token adoption there 'silently DISABLED the entire app permission sandbox in none-mode (an app-scoped request reached ANY /api path)'. The claim is a fix with the bug recorded beside it, not an aspiration",
+      "🔑 ASI10's 'tamper-evident' is the strongest word in the table and it is earned: an HMAC-SHA256 chain where each entry signs over the previous hash, append-only. And there is a subtle second-order defence — the redactor's `_UNREDACTED_FIELDS` deliberately exempts `prev_hash`/`entry_hash`, because redacting them 'makes an [otherwise valid chain fail]'. One security control was stopped from destroying another, on purpose",
+      "🔑 THE 'DON'T DEFEND AGAINST' SECTION SCOPES ITS INTEGRITY CLAIM INSTEAD OF OVERSTATING IT: the baseline denylist digest 'proves the patterns in force are the ones that shipped WITH THIS PROCESS; it cannot prove which patterns were shipped'. Anti-drift and anti-LLM-tamper, explicitly not anti-owner",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface. Validated by resolving every citation and by reading two enforced controls at their call sites.",
+    "notes": "🪤 ONE CITATION APPEARED TO FAIL AND THE FAILURE WAS MINE: `trust_mode.py (on_disable)` did not match my symbol pattern, which only looked for a top-level `def`/`class`/assignment. `on_disable` is a callback list plus a module-level `register_on_disable` registrar — a mechanism citation, and the mechanism is there. Withdrawn; 23 of 23. Worth recording because the temptation was to report a stale citation in the one document whose whole value is that its citations are not stale."
+  },
+  "SL-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "all three link directions resolve, checked individually: the README Security section links the threat model; `docs/architecture/security.md`'s header links out to the public threat model AND to `SECURITY.md`; and the apps repo's `docs/third-party-install.md` links to the core threat model and to the apps `SECURITY.md`",
+      "the cross-repo link is a full URL rather than a relative path, which is the only form that works from the other repository — the kind of detail a bidirectional-links clause usually gets half right",
+      "nav-link resolution 21/21",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface.",
+    "notes": "Bidirectionality is the substance of this atom and it is the half that rots: a link INTO a security document is easy to add and a link back OUT is the one nobody re-checks. Both directions are present here."
+  },
+  "SL-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API",
+    "evidence": [
+      "🔑 THE DISCOVERY LEDGER IS NOT INERT — the entries became task rows in the receiving plan, which is what separates a ledger from a note. SECURITY-HARDENING's S3 names `install_guarded` directly and lists `integrity-race` as one of five adversarial corpus classes, phrased as 'the scanned-bytes==installed-bytes integrity invariant UNDER CONCURRENT INSTALL RACES' — that is this atom's TOCTOU discovery, restated as a test to write",
+      "the zero-inline-fixes discipline is not only claimed in the atom, it is written into the shipped document as a standing rule: 'Gaps discovered while maintaining this document are routed to the security-hardening track as candidates, never patched inline in a docs change'. The next maintainer inherits the discipline rather than having to be told",
+      "the two unlanded ASI rows are plan-marked in the table rather than dropped, so the discovery about them is visible in the artifact a reader sees, not only in a ledger",
+      "23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)"
+    ],
+    "ui_validated": "Not a gateway surface.",
+    "notes": "🔴 THE `make lint green` CLAUSE CANNOT BE OBSERVED FROM THIS BRANCH, AND THE REASON IS THIS AUDIT'S OWN DOING — recorded rather than glossed. The docs-lint baseline test fails, and every failing file is a GENERATED ATOM RECORD: 11 dead links and 12 unresolvable citations, because `gen_atom_records.py` copies plan prose into a different directory without re-anchoring relative links. One of the failing records is my own CE-2 verdict quoting `handler.py`. Nothing to do with this plan; filed as issue #2807 with the fix belonging in the generator rather than in the baseline, since regenerating the baseline would retire a rule that is currently catching a real defect."
   }
 }

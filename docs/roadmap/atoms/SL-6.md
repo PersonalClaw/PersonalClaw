@@ -32,9 +32,22 @@ README 'Security' section (posture + threat-model link + private-disclosure link
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- all three link directions resolve, checked individually: the README Security section links the threat model; `docs/architecture/security.md`'s header links out to the public threat model AND to `SECURITY.md`; and the apps repo's `docs/third-party-install.md` links to the core threat model and to the apps `SECURITY.md`
+- the cross-repo link is a full URL rather than a relative path, which is the only form that works from the other repository — the kind of detail a bidirectional-links clause usually gets half right
+- nav-link resolution 21/21
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface.
+
+**Notes:** Bidirectionality is the substance of this atom and it is the half that rots: a link INTO a security document is easy to add and a link back OUT is the one nobody re-checks. Both directions are present here.
 
 ## Recorded history
 

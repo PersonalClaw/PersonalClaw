@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- 🔑 BOTH DISCLOSED LIMITATIONS ARE STILL TRUE, RE-CHECKED AGAINST THE TREE RATHER THAN TAKEN FROM THE DOC. The network one is exact: `apps/permissions.py::can_use_network` is `return self.permissions.network` — a pure declaration read — and its ONLY consumer passes it onward as a `can_network` FLAG into the app backend runtime. Nothing gates egress on it, which is precisely what 'declaration-only, not a gateway-enforced boundary' claims
+- 🔑 AND THE REASON GIVEN IS THE RIGHT ARCHITECTURAL ONE, not a shrug: 'an app backend is its own OS process with its own network stack'. That explains why the gap is structural rather than unfinished, and it names what IS enforced instead — the supply-chain gate on what you install and the app's gateway-mediated reach
+- the ACP-under-YOLO limitation cites `task_modes.py`, which resolves, and the threat model repeats the same claim in the same words ('where gating rides system-prompt framing, not rails'), so the two documents cannot drift apart on it silently
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface: the deliverable is a document, and its truth condition is the code it cites.
+
+**Notes:** 🔑 THE HARDEST THING TO SHIP IN A SECURITY DOCUMENT IS A LIMITATION THAT SOUNDS BAD AND IS TRUE. Both of these do, and both survived re-verification. The network one in particular is the kind of claim a project is tempted to soften into 'defence in depth'; it is written here as declaration-only, in those words, at install-consent time.
 
 ## Recorded history
 

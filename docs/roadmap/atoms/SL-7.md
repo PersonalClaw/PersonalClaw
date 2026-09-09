@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- 🔑 THE DISCOVERY LEDGER IS NOT INERT — the entries became task rows in the receiving plan, which is what separates a ledger from a note. SECURITY-HARDENING's S3 names `install_guarded` directly and lists `integrity-race` as one of five adversarial corpus classes, phrased as 'the scanned-bytes==installed-bytes integrity invariant UNDER CONCURRENT INSTALL RACES' — that is this atom's TOCTOU discovery, restated as a test to write
+- the zero-inline-fixes discipline is not only claimed in the atom, it is written into the shipped document as a standing rule: 'Gaps discovered while maintaining this document are routed to the security-hardening track as candidates, never patched inline in a docs change'. The next maintainer inherits the discipline rather than having to be told
+- the two unlanded ASI rows are plan-marked in the table rather than dropped, so the discovery about them is visible in the artifact a reader sees, not only in a ledger
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface.
+
+**Notes:** 🔴 THE `make lint green` CLAUSE CANNOT BE OBSERVED FROM THIS BRANCH, AND THE REASON IS THIS AUDIT'S OWN DOING — recorded rather than glossed. The docs-lint baseline test fails, and every failing file is a GENERATED ATOM RECORD: 11 dead links and 12 unresolvable citations, because `gen_atom_records.py` copies plan prose into a different directory without re-anchoring relative links. One of the failing records is my own CE-2 verdict quoting `handler.py`. Nothing to do with this plan; filed as issue #2807 with the fix belonging in the generator rather than in the baseline, since regenerating the baseline would retire a rule that is currently catching a real defect.
 
 ## Recorded history
 

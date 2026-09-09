@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- 🔑 PRIVATE VULNERABILITY REPORTING IS LIVE ON BOTH REPOS, READ FROM THE DEDICATED ENDPOINT: `/repos/{owner}/{repo}/private-vulnerability-reporting` returns `{"enabled":true}` for PersonalClaw AND for PersonalClawApps. This is the atom's one externally-observable state and it observes as claimed
+- the three Session-1 files exist at the paths the plan names, and the cross-document links between them resolve (checked in both directions under SL-6)
+- nav-link resolution passes 21 of 21
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not the gateway: the 'Report a vulnerability' channel is a GitHub surface. Verified at the API level rather than by filing a live advisory, which would be noise in a real security inbox.
+
+**Notes:** 🪤 A FALSE NEGATIVE OF MY OWN, AND THE THIRD CONSECUTIVE CYCLE WITH THIS SHAPE. My first probe read `security_and_analysis.private_vulnerability_reporting.status` off the repository object and got `null` on both repos, which looked exactly like the feature being off. That field is simply not populated for my token on that response shape; the dedicated endpoint answers `enabled: true`. Withdrawn. The pattern across three cycles is identical — 'the value is absent' and 'I queried the wrong source' are indistinguishable until you check a second source, so on any absence that would be a finding, check twice before writing it down.
 
 ## Recorded history
 

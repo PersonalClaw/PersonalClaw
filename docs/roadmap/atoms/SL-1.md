@@ -28,9 +28,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- all four sections present in `SECURITY.md`: the private-advisory channel ('Report a vulnerability' → a private advisory 'visible only to you'), a supported-versions table, response expectations, and explicit in-scope / out-of-scope lists
+- 🔑 THE EXPECTATIONS ARE STATED AS EXPECTATIONS, WHICH IS THE CLAUSE MOST POLICIES QUIETLY BREAK: 'PersonalClaw is maintained by a single person, so these are honest expectations' — not an SLA, and the doc then tells a reporter what to do if a report stalls ('a polite nudge on the advisory thread'). A disclosure policy that over-promises is worse than one that promises less
+- the out-of-scope list routes rather than refuses — findings that are not vulnerabilities are 'welcome, but file them as a normal issue, not a private advisory', so a reporter is not left guessing where their finding goes
+- the zero-invented-capability clause holds: every claim I checked against the code resolved (see SL-5's citation sweep, 23 of 23)
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface. The published policy is the artifact, and the channel behind it was verified from the live GitHub API under SL-4.
+
+**Notes:** The four sections are easy; the honest-expectations framing is the part worth keeping. A solo-maintained project that published a 24-hour SLA would have shipped a promise it cannot keep, and the first missed window would cost more credibility than the whole document buys.
 
 ## Recorded history
 

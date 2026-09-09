@@ -30,9 +30,23 @@ Apps-repo SECURITY.md mirrors the core disclosure process with app-specific scop
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 53 (SL) — all 23 code citations re-resolved against the tree; private vulnerability reporting read from the live API
+
+**Code evidence:**
+
+- the apps-repo `SECURITY.md` mirrors the core process and links back to the core policy and threat model
+- 🔑 THE SCOPE SPLIT IS EXACTLY THE ONE THE ATOM SPECIFIES, AND IT IS THE INTERESTING PART: a bundle that SHOULD earn a `warning` or `dangerous` verdict but scans `clean` is IN scope — that is a scanner-evasion report, i.e. a real vulnerability in the gate. The owner installing a `warning`-rated app after explicit consent is OUT — 'an owner choice, not a vulnerability'
+- and the asymmetry is stated rather than implied: a `dangerous` verdict cannot be consented past, so the consent carve-out applies only to the middle tier. An out-of-scope line that quietly covered the terminal verdict would have excused the one case that must never be excusable
+- the expectations are carried over with the same honesty as core ('not contractual SLAs')
+- 23 of 23 threat-model + limitations citations resolve; private-vulnerability-reporting endpoint returns enabled:true on BOTH repos; nav-link resolution 21/21 (docs-lint baseline red for an unrelated, self-inflicted reason — issue #2807)
+
+**Driven in the UI:** Not a gateway surface.
+
+**Notes:** The scope boundary here is the whole value of the document: it tells a researcher that attacking the SCANNER is welcome and attacking the OWNER'S CHOICE is not. That is a boundary a researcher can act on, unlike 'security issues in apps'.
 
 ## Recorded history
 
