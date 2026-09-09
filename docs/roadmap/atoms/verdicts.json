@@ -1,0 +1,34 @@
+{
+  "_schema": {
+    "purpose": "Audit verdicts for atoms in docs/roadmap/atomic/dag.json. THIS is where a verdict is recorded — never by editing a generated <ID>.md, which the next generator run discards.",
+    "keys": "one per atom id; keys beginning with _ are documentation and are ignored",
+    "verdict": {
+      "confirmed": "every done_when clause was checked against the code and holds",
+      "partial": "some done_when clauses hold and others do not — say which in notes",
+      "contradicted": "the status recorded in dag.json disagrees with the code",
+      "unverifiable": "cannot be settled in this repo (needs hardware, a paid key, or an owner action)",
+      "unaudited": "the default for an atom nobody has checked; normally absent rather than written"
+    },
+    "fields": {
+      "date": "YYYY-MM-DD the check was made",
+      "by": "who or what made it",
+      "evidence": "list of concrete artifacts checked — paths, symbols, test names, measured counts",
+      "ui_validated": "what was DRIVEN in the running product through real user interaction, or absent if nothing was",
+      "notes": "the reasoning, especially any clause that did NOT hold",
+      "follow_ups": "list of PRs or issues opened as a result"
+    },
+    "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
+  },
+  "OO-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "consolidation pass 1",
+    "evidence": [
+      "tests/test_version_consistency.py exists and holds exactly 6 test functions, matching the execution log's claim that it grew 4 -> 6 surfaces",
+      "the README pre-1.0 banner guard is present (asserts the banner version equals the core version, naming the file to fix on failure)",
+      "the acp/client.py CLIENT_VERSION guard is present — the second surface the log says was found hardcoded at 0.1.2 during the 0.1.3 release",
+      "all 6 pass: `pytest tests/test_version_consistency.py` -> 6 passed"
+    ],
+    "notes": "Audited because it was the ONLY `done` atom in the whole catalog carrying zero recorded evidence — no commit names it, no prose names it by id, and its scope cites a bracketed log tag ([2026-07-31][README version]) rather than a task number, so no token pattern resolved it. The record turned out to be real and precise; the atom's status is accurate. This is the useful negative result: absence of an id mention is not absence of work."
+  }
+}
