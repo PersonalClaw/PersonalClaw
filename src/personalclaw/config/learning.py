@@ -502,8 +502,9 @@ class FeedbackConfig:
         default=0.4,
         metadata=_meta(
             "Retire Threshold",
-            "A judgment source whose accuracy falls below this (with enough verdicts) "
-            "stops surfacing and gets a 'retire this rule?' proposal.",
+            "A judgment source whose accuracy falls below this (with enough verdicts) gets a "
+            "'retire this rule?' proposal — and stops surfacing if that kind of source has a "
+            "surfacing gate (today, skills; see feedback.ENFORCED_SUPPRESSION_KINDS).",
         ),
     )
     min_n: int = field(
