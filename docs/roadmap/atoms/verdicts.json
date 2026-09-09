@@ -2811,5 +2811,84 @@
       "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
     ],
     "notes": "A property test over the whole registered set rather than a handful of examples is the right shape for a name-mangling bug: the failures live in the names nobody thought to write a case for. Documenting the transform chain alongside it means the next person adding a transform can see what they are joining."
+  },
+  "CE2-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "agents/native/read_gate.py:110 keeps the raw_ref map as '(resolved path, digest the read observed)', which is the content-addressing the atom's r_<sha> ids describe",
+      "the freshness property is STRONGER than the atom claims: :19-20 requires 'the sha256 of the file's *full* bytes at read time equals its sha256 now. This is stronger than any turn window: a read taken one tool call ago is' stale if the file changed",
+      "raw_ref has live consumers across eight modules including bg_compress.py, context_compaction.py and agents/native/builtin_tools.py — the reference survives into the compression path, which is what makes CE2-3's tool-row dropping safe",
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "notes": "Confirmed on the retrieval half. The digest-now-equals-digest-then check is the detail worth recording: content-hash dedupe alone would happily serve a slice of a file that has since changed, and a turn-window heuristic would only narrow the race. Comparing the live digest closes it outright. The per-model savings accounting and the subagent projection clause were not driven — both need real turns."
+  },
+  "CE2-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_tool_output_projection.py covers the type routing by SHAPE rather than by name: infer_diff, infer_json_must_parse, infer_test_output, infer_csv, infer_generic_for_prose",
+      "the projections are asserted on what they PRESERVE, which is the only thing that matters for a compressor: log projection 'keeps error lines from the middle', diff projection 'has a stat summary', json projection 'shows shape not midcut', test projection 'keeps failures'",
+      "a small result passes through untouched and an uncapped one passes through — the two no-op paths are pinned so compression cannot creep into cases that do not need it",
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "notes": "Partial: the atom's headline measurement (829K of JSON crushing to about 379 characters with a raw_ref) is a specific number I did not reproduce, and the three-layer rule overlay's precedence — a project file beating the user layer beating the sniffer — needs a real overlay to exercise. What IS confirmed is the shape of the tests, and 'shows shape not midcut' is the right assertion: a mid-cut of 829K of JSON is unparseable, so preserving structure rather than a prefix is the whole trick."
+  },
+  "CE2-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "bg_compress.py:188 skips with the comment 'incognito/temporary never touched', and the docstring at :14 states it as an eligibility rule: 'Incognito/temporary sessions are SKIPPED (the durable mark)'",
+      "the cadence is explicit about cost: it 'rides the existing maintenance cadence… one budgeted pass per invocation (max_sessions oldest-first), NEVER ON THE REQUEST PATH'",
+      "compression is attention-weighted rather than uniform: 'the most-recent segment is kept verbatim; middle segments reduce to their request/response pairs (tool rows dropped — THEY CARRY RAW_REFS); the oldest' compresses hardest",
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "notes": "'(the durable mark)' is the phrase that makes the privacy clause sound. A background service runs long after a session ended, so an in-memory flag would be gone by then — the skip has to consult something persisted, which is the same reclassification hazard SM-1 closed with a read-time recheck one plan over. And dropping tool rows is only lossless BECAUSE CE2-1's raw_refs survive: the compression leans on the retrieval atom rather than discarding."
+  },
+  "CE2-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Drove #/tools. The header reads 'Tool groups · 11 groups, 110 tools' with a switch, and the explanation states the economics exactly: 'Every tool schema an agent carries costs context on every turn. Groups let a session load only the groups it needs and pick up the rest on demand — the agent activates them itself mid-task.' Beneath it, the atom's SC#8 guarantee is surfaced to the user verbatim: 'Nothing is ever unavailable — a tool stays callable by name even when its group is not loaded, and the agent can search across all of them.'",
+    "notes": "That second sentence is the load-bearing one. A grouping mechanism that could make a tool UNREACHABLE would be a capability regression dressed as an optimisation; saying plainly that a tool stays callable by name is what makes the whole feature safe to turn on. It is also the claim most likely to rot, and it is stated where a user can hold the product to it."
+  },
+  "CE2-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Two clauses driven. THE UNBOUND-CAPABILITY CLAUSE: the page shows 'Not available in this install: Subagents — the capability these tools need isn't configured, so they're hidden rather than offered in a state where they'd fail' — the atom's 'unbound capability group (subagents with no model) never renders', with its reasoning on screen. THE FLAG ROUND-TRIP: flipped the Tool groups switch on, then forced a FULL page load (new snapshot ref generation) and it came back checked.",
+    "notes": "The copy CHANGES WITH THE STATE, which is better than a static description: off reads 'Currently off: every session loads every group', on reads 'Chat keeps every group loaded; background, autonomous, and subagent runs start focused.' That second wording surfaces a real product decision a user could not otherwise infer — enabling groups does NOT narrow interactive chat, only unattended runs. Someone flipping the switch learns exactly what changed."
+  },
+  "CE2-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_codegraph.py passes 72/72 (see CE2-7 — the same suite backs both atoms)",
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Drove #/tools and read the group contents: code_map and code_map_overview are the FIRST TWO of the 21 tools listed under the workflows group — the atom's 'both tools in GET /api/tools (group=workflows)', observed rather than inferred.",
+    "notes": "Partial for the measurements. The atom's own numbers — 3.9 seconds for a full index and 37 milliseconds incremental over a 1,467-file repository, plus a centrality-ranked @-mention search — are timings on a specific tree that I did not reproduce. The tools are registered in the right group and the suite is green; the performance claim is unverified here rather than doubted."
+  },
+  "CE2-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 25 (CE2) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED against the atom's own stated number: tests/test_codegraph.py returns 72 passed, 0 failed, 0 skipped — exactly the 'a working one to pass 72/72' state the clause names. (The complementary 37-passed/35-skipped state is what a BROKEN loader must produce, which I did not induce by breaking the loader.)",
+      "codegraph/parse.py:229 parser_status() 'Probe[s] language's grammar now, recording the reason when it won't load', catching broadly with the reasoning inline: 'the absence is the answer; the reason is kept'",
+      ":240-246 parser_available() 'deliberately keeps its bool contract' — 'False is a normal answer, not an error: a stripped environment without the parser wheels simply gets no graph. Ask parser_status when you need to know why'",
+      "386 tests pass across the projection / compression / codegraph / tool-group modules (1 unrelated skip)"
+    ],
+    "notes": "The atom's title is the principle and it belongs beside WF2LOO-15's docstring rail and WF2UNI-13's anti-inertness ratchet: availability is a CAPABILITY TO BE PROBED, not an assertion to be trusted. Two design choices make it work. Adding a sibling that returns the reason rather than widening the bool preserves every existing caller — a tuple-returning parser_available would have been a breaking change dressed as an improvement. And the skip policy is exactly right in both directions: a missing GRAMMAR skips 35 tests naming the recorded reason, while an unimportable language PACK still hard-fails 'as the packaging regression it is'. A blanket skip would have hidden the second; a blanket failure would have made a stripped environment unusable."
   }
 }

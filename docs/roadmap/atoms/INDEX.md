@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 130 | `done_when` checked against the code and it holds |
-| `partial` | 124 | some `done_when` clauses hold, others do not |
+| `confirmed` | 135 | `done_when` checked against the code and it holds |
+| `partial` | 126 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 426 | not yet checked |
+| `unaudited` | 419 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -219,13 +219,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CE2-1`](CE2-1.md) | `done` | `unaudited` | Retrieval hardening + per-model savings accounting + subagent projection |
-| [`CE2-2`](CE2-2.md) | `done` | `unaudited` | Type-routed compressors (JSON crusher, AST code) + three-layer rule overlay + prose compressor |
-| [`CE2-3`](CE2-3.md) | `done` | `unaudited` | Continuous background compression service + shared topic segmenter + prefix-stability locks |
-| [`CE2-4`](CE2-4.md) | `done` | `unaudited` | Dynamic tool-group activation core: ToolGroup derivation, reset_tools meta-tool, assembly-seam group filter, per-surface defaults |
-| [`CE2-5`](CE2-5.md) | `done` | `unaudited` | Declaration surfaces: per-capability gating, groups API endpoints, config-wiring completion + Tools-page FE |
-| [`CE2-6`](CE2-6.md) | `done` | `unaudited` | Codebase graph: tree-sitter indexer + SQLite store + code_map tools + SDLC planning + @-mention centrality |
-| [`CE2-7`](CE2-7.md) | `done` | `unaudited` | Grammar availability is a capability, not an assertion: reason-recording + a skip gate for the codegraph suite |
+| [`CE2-1`](CE2-1.md) | `done` | `confirmed` | Retrieval hardening + per-model savings accounting + subagent projection |
+| [`CE2-2`](CE2-2.md) | `done` | `partial` | Type-routed compressors (JSON crusher, AST code) + three-layer rule overlay + prose compressor |
+| [`CE2-3`](CE2-3.md) | `done` | `confirmed` | Continuous background compression service + shared topic segmenter + prefix-stability locks |
+| [`CE2-4`](CE2-4.md) | `done` | `confirmed` | Dynamic tool-group activation core: ToolGroup derivation, reset_tools meta-tool, assembly-seam group filter, per-surface defaults |
+| [`CE2-5`](CE2-5.md) | `done` | `confirmed` | Declaration surfaces: per-capability gating, groups API endpoints, config-wiring completion + Tools-page FE |
+| [`CE2-6`](CE2-6.md) | `done` | `partial` | Codebase graph: tree-sitter indexer + SQLite store + code_map tools + SDLC planning + @-mention centrality |
+| [`CE2-7`](CE2-7.md) | `done` | `confirmed` | Grammar availability is a capability, not an assertion: reason-recording + a skip gate for the codegraph suite |
 
 ### `CRE` — CI-RELEASE-ENGINEERING (7/8 done)
 
