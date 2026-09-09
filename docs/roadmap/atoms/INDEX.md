@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 37 | `done_when` checked against the code and it holds |
-| `partial` | 77 | some `done_when` clauses hold, others do not |
+| `confirmed` | 43 | `done_when` checked against the code and it holds |
+| `partial` | 81 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 569 | not yet checked |
+| `unaudited` | 559 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -244,16 +244,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DAS-1`](DAS-1.md) | `done` | `unaudited` | State inventory + gap closure + safe sqlite snapshots (Session 1) |
-| [`DAS-2`](DAS-2.md) | `done` | `unaudited` | Deterministic shard format + manifest + `backup validate` (Session 2a) |
-| [`DAS-3`](DAS-3.md) | `done` | `unaudited` | Boot-started snapshot service + tiered retention + restore drills + endpoints (Session 2b) |
-| [`DAS-4`](DAS-4.md) | `done` | `unaudited` | Backups settings frontend panel (Session 2c) |
-| [`DAS-5`](DAS-5.md) | `done` | `unaudited` | Inventory-driven merge/restore/export sweep + restore endpoint (T2-M1..M3, Sessions 2d-2l) |
-| [`DAS-6`](DAS-6.md) | `done` | `unaudited` | Sync core + git-sync + dir-sync transports (Session 3) |
-| [`DAS-7`](DAS-7.md) | `done` | `unaudited` | Conflict handling — records + review queue + propose-only LLM merge (Session 3) |
-| [`DAS-8`](DAS-8.md) | `done` | `unaudited` | rsync-sync + s3-sync transports + end-to-end encryption (Session 4) |
-| [`DAS-9`](DAS-9.md) | `done` | `unaudited` | Workspace time-travel — adaptive-debounce git + rollback/revert/preview + panel (Session 5, §5) |
-| [`DAS-10`](DAS-10.md) | `done` | `unaudited` | §6 DSAR portability endpoints + remaining Durability FE (Session 5, §6) |
+| [`DAS-1`](DAS-1.md) | `done` | `partial` | State inventory + gap closure + safe sqlite snapshots (Session 1) |
+| [`DAS-2`](DAS-2.md) | `done` | `confirmed` | Deterministic shard format + manifest + `backup validate` (Session 2a) |
+| [`DAS-3`](DAS-3.md) | `done` | `confirmed` | Boot-started snapshot service + tiered retention + restore drills + endpoints (Session 2b) |
+| [`DAS-4`](DAS-4.md) | `done` | `confirmed` | Backups settings frontend panel (Session 2c) |
+| [`DAS-5`](DAS-5.md) | `done` | `confirmed` | Inventory-driven merge/restore/export sweep + restore endpoint (T2-M1..M3, Sessions 2d-2l) |
+| [`DAS-6`](DAS-6.md) | `done` | `partial` | Sync core + git-sync + dir-sync transports (Session 3) |
+| [`DAS-7`](DAS-7.md) | `done` | `confirmed` | Conflict handling — records + review queue + propose-only LLM merge (Session 3) |
+| [`DAS-8`](DAS-8.md) | `done` | `partial` | rsync-sync + s3-sync transports + end-to-end encryption (Session 4) |
+| [`DAS-9`](DAS-9.md) | `done` | `confirmed` | Workspace time-travel — adaptive-debounce git + rollback/revert/preview + panel (Session 5, §5) |
+| [`DAS-10`](DAS-10.md) | `done` | `partial` | §6 DSAR portability endpoints + remaining Durability FE (Session 5, §6) |
 
 ### `DC` — DESKTOP-CAPABILITIES (5/6 done)
 

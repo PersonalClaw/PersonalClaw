@@ -31,9 +31,18 @@ sha-divergence on the same entity id with both sides edited since the common anc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- tests/test_durability_conflicts.py and tests/test_durability_conflict_review.py pass (part of the 561-passed run)
+- tests/test_durability_error_copy.py also passes — a rail on the wording of the errors, not just their occurrence
+
+**Notes:** The propose-only posture is the safety property here (a conflict becomes a reviewable record rather than an automatic overwrite), and it has both a records rail and a review-queue rail. The separate error-copy rail is unusual and good: it means the message a user reads during a conflict is itself under test.
 
 ## Recorded history
 

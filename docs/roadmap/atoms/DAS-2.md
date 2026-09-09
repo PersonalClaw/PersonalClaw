@@ -30,9 +30,18 @@ durability/shards.py export_shards() writes canonical byte-identical JSONL (sort
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- tests/test_durability_db_shards.py passes (part of the 561-passed run) — the deterministic shard format is the atom's checkable core
+- the panel's own copy names the CLI counterpart the atom implies: 'backups only happen when you run them by hand — below, or with `personalclaw backup export`'
+
+**Notes:** A deterministic format plus a validate command is exactly the shape a test proves well, and 28 durability modules with 561 passing tests is a substantial corpus for it.
 
 ## Recorded history
 

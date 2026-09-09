@@ -31,9 +31,18 @@ restore --mode merge dispatches all five StateEntry merge strategies (append_ded
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- tests/test_durability_merge.py, test_durability_db_merge.py and test_durability_archive.py pass (part of the 561-passed run)
+- tests/test_durability_convergence_e2e.py passes — an end-to-end convergence rail, which is the strongest shape available for a merge/restore claim
+
+**Notes:** The convergence e2e module is why this is confirmed rather than partial: merge and restore are exactly where a unit test can pass while the composed behaviour diverges, and there is a rail for the composition.
 
 ## Recorded history
 

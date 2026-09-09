@@ -30,9 +30,19 @@ durability/service.py boot loop (hourly incremental shard export, nightly tar + 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 561-passed durability run
+
+**Driven in the UI:** The boot-started snapshot service and its retention are live and legible at #/settings/durability: a 'Schedule' section with an 'Automatic backups' switch (checked) explaining 'Take a nightly snapshot and an hourly incremental export in the background', and — the atom's restore half — a 'Monthly restore drill' switch (checked) whose copy reads 'Once a month, restore the newest snapshot into a temporary directory and verify it — a backup nobody has restored is a hope, not a backup. Never touches live data.'
+
+**Notes:** That drill copy is the best single sentence I have read in this product. It states the reason the feature exists AND its safety property in one line, which is what makes a default-on background job trustworthy rather than alarming. Confirmed on the surface being real and correctly defaulted; I did not wait a month to watch a drill fire.
 
 ## Recorded history
 

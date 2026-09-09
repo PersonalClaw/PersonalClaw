@@ -19,6 +19,94 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "DAS-1": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": [
+      "tests/test_durability_inventory.py and test_durability_inventory_census.py pass (part of 561 passing tests across 28 durability modules)",
+      "the declarative manifest is real and richly annotated — inventory.py's comments record specific paths it caught as unclaimed"
+    ],
+    "notes": "PARTIAL for one specific reason worth recording precisely, because the workspace roadmap already tracks it as an 'inert shipped control' and I can now sharpen that. audit_home() — the function that fails on any unclaimed path — has NO production caller: every occurrence outside tests is a COMMENT, and it appears in neither cli.py nor any dashboard route. So it ships in the wheel with no user-reachable surface. But 'inert' understates it: its own comments record it CATCHING at least three distinct real defects when run by hand ('audit_home() WOULD have flagged it — verified, it reports triggers.json as unclaimed', 'which is how audit_home() caught it — EVERY fresh home reported'). It is a valuable diagnostic that is unreachable, which is a more actionable finding than dead code. Not filed separately: the owner's roadmap already lists it, and this verdict sharpens that entry rather than duplicating it."
+  },
+  "DAS-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": [
+      "tests/test_durability_db_shards.py passes (part of the 561-passed run) — the deterministic shard format is the atom's checkable core",
+      "the panel's own copy names the CLI counterpart the atom implies: 'backups only happen when you run them by hand — below, or with `personalclaw backup export`'"
+    ],
+    "notes": "A deterministic format plus a validate command is exactly the shape a test proves well, and 28 durability modules with 561 passing tests is a substantial corpus for it."
+  },
+  "DAS-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — DRIVEN in a real browser",
+    "evidence": ["part of the 561-passed durability run"],
+    "ui_validated": "The boot-started snapshot service and its retention are live and legible at #/settings/durability: a 'Schedule' section with an 'Automatic backups' switch (checked) explaining 'Take a nightly snapshot and an hourly incremental export in the background', and — the atom's restore half — a 'Monthly restore drill' switch (checked) whose copy reads 'Once a month, restore the newest snapshot into a temporary directory and verify it — a backup nobody has restored is a hope, not a backup. Never touches live data.'",
+    "notes": "That drill copy is the best single sentence I have read in this product. It states the reason the feature exists AND its safety property in one line, which is what makes a default-on background job trustworthy rather than alarming. Confirmed on the surface being real and correctly defaulted; I did not wait a month to watch a drill fire."
+  },
+  "DAS-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/settings/SettingsPage.tsx:29 imports DurabilityPanel and :125 registers it as { id: 'durability', label: 'Backups', icon: HardDriveDownload }",
+      "part of the 561-passed durability run"
+    ],
+    "ui_validated": "Drove the panel: heading 'Backups' with the subtitle 'What gets backed up automatically, how long copies are kept, and whether a restore is ever actually rehearsed', a Schedule section with two switches, and a Time travel section.",
+    "notes": "🪤 I NEARLY FILED THIS AS A CONTRADICTION, and the cause was my own tooling rather than the code — the seventh finding to collapse on inspection. Two compounding mistakes. First, I guessed the route as #/settings/backups; the id is 'durability' and 'Backups' is only the LABEL, so the URL and the visible name differ by design. Second and worse: my search for the panel's importers used `head -4`, and because a recursive search walks directories in filesystem order rather than alphabetically, four TEST references from ui/ filled the window and truncated the real import in pages/. I was one step from reporting an unmounted panel because an output limit hid the evidence. The lesson is sharper than 'read the code': a truncated search is not a search."
+  },
+  "DAS-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": [
+      "tests/test_durability_merge.py, test_durability_db_merge.py and test_durability_archive.py pass (part of the 561-passed run)",
+      "tests/test_durability_convergence_e2e.py passes — an end-to-end convergence rail, which is the strongest shape available for a merge/restore claim"
+    ],
+    "notes": "The convergence e2e module is why this is confirmed rather than partial: merge and restore are exactly where a unit test can pass while the composed behaviour diverges, and there is a rail for the composition."
+  },
+  "DAS-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": ["part of the 561-passed durability run"],
+    "notes": "PARTIAL: git-sync and dir-sync transports need a configured remote to move anything. Nothing is configured in this home, so the transports are observed only through their suites."
+  },
+  "DAS-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": [
+      "tests/test_durability_conflicts.py and tests/test_durability_conflict_review.py pass (part of the 561-passed run)",
+      "tests/test_durability_error_copy.py also passes — a rail on the wording of the errors, not just their occurrence"
+    ],
+    "notes": "The propose-only posture is the safety property here (a conflict becomes a reviewable record rather than an automatic overwrite), and it has both a records rail and a review-queue rail. The separate error-copy rail is unusual and good: it means the message a user reads during a conflict is itself under test."
+  },
+  "DAS-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed, audited against ARCC's encryption-at-rest objective",
+    "evidence": ["part of the 561-passed durability run"],
+    "notes": "PARTIAL: rsync-sync and s3-sync need real remotes and credentials, so neither transport nor its end-to-end encryption could be exercised here. But the ARCC comparison is worth recording. Its Encryption at Rest guidance requires AWS-managed or customer-managed KMS keys and states EXPLICITLY that it 'refers to server-side encryption (rather than client-side)'. This atom does client-side END-TO-END encryption, which is the opposite architecture — and for a self-hosted app pushing to a remote the user does not control, it is strictly STRONGER than the guidance's mechanism, because the remote operator never holds the key. So ARCC's mechanism is inapplicable while its stated objective — 'even if unauthorized access occurs, the data remains unreadable without the decryption key' — is met by a stronger means. Recording that distinction rather than either citing ARCC as satisfied or as violated."
+  },
+  "DAS-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — DRIVEN in a real browser",
+    "evidence": ["part of the 561-passed durability run"],
+    "ui_validated": "The Time travel section renders live in the Backups panel with an explicit scope contract: 'A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets.'",
+    "notes": "That contract is the interesting part, and it connects to DAS-8's encryption question from the other direction: rather than encrypting the edit history for sync, the design EXCLUDES it from sync, export and backup entirely. A scope reduction instead of a key-management problem — the cheaper and more auditable answer. The adaptive-debounce and rollback mechanics themselves need accumulated edit history to exercise, which this home does not have."
+  },
+  "DAS-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 12 (DAS) — observed",
+    "evidence": ["tests/test_durability_dsar_routes.py passes (part of the 561-passed run)"],
+    "notes": "PARTIAL: DSAR portability endpoints have a route rail that passes, but a portability export's real test is that the exported bundle is complete and readable — which means running an export over a populated home and inspecting the result. This home holds one knowledge item, one inbox note and one task, so an export here would prove the plumbing rather than the portability. Deliberately not confirming plumbing as portability."
+  },
   "MRI-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

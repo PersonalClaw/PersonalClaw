@@ -29,9 +29,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 561-passed durability run
+
+**Driven in the UI:** The Time travel section renders live in the Backups panel with an explicit scope contract: 'A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets.'
+
+**Notes:** That contract is the interesting part, and it connects to DAS-8's encryption question from the other direction: rather than encrypting the edit history for sync, the design EXCLUDES it from sync, export and backup entirely. A scope reduction instead of a key-management problem — the cheaper and more auditable answer. The adaptive-debounce and rollback mechanics themselves need accumulated edit history to exercise, which this home does not have.
 
 ## Recorded history
 

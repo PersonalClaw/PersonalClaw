@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed, audited against ARCC's encryption-at-rest objective
+
+**Code evidence:**
+
+- part of the 561-passed durability run
+
+**Notes:** PARTIAL: rsync-sync and s3-sync need real remotes and credentials, so neither transport nor its end-to-end encryption could be exercised here. But the ARCC comparison is worth recording. Its Encryption at Rest guidance requires AWS-managed or customer-managed KMS keys and states EXPLICITLY that it 'refers to server-side encryption (rather than client-side)'. This atom does client-side END-TO-END encryption, which is the opposite architecture — and for a self-hosted app pushing to a remote the user does not control, it is strictly STRONGER than the guidance's mechanism, because the remote operator never holds the key. So ARCC's mechanism is inapplicable while its stated objective — 'even if unauthorized access occurs, the data remains unreadable without the decryption key' — is met by a stronger means. Recording that distinction rather than either citing ARCC as satisfied or as violated.
 
 ## Recorded history
 

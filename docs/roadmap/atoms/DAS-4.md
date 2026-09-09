@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/pages/settings/SettingsPage.tsx:29 imports DurabilityPanel and :125 registers it as { id: 'durability', label: 'Backups', icon: HardDriveDownload }
+- part of the 561-passed durability run
+
+**Driven in the UI:** Drove the panel: heading 'Backups' with the subtitle 'What gets backed up automatically, how long copies are kept, and whether a restore is ever actually rehearsed', a Schedule section with two switches, and a Time travel section.
+
+**Notes:** 🪤 I NEARLY FILED THIS AS A CONTRADICTION, and the cause was my own tooling rather than the code — the seventh finding to collapse on inspection. Two compounding mistakes. First, I guessed the route as #/settings/backups; the id is 'durability' and 'Backups' is only the LABEL, so the URL and the visible name differ by design. Second and worse: my search for the panel's importers used `head -4`, and because a recursive search walks directories in filesystem order rather than alphabetically, four TEST references from ui/ filled the window and truncated the real import in pages/. I was one step from reporting an unmounted panel because an output limit hid the evidence. The lesson is sharper than 'read the code': a truncated search is not a search.
 
 ## Recorded history
 

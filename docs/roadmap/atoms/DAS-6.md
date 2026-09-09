@@ -31,9 +31,17 @@
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- part of the 561-passed durability run
+
+**Notes:** PARTIAL: git-sync and dir-sync transports need a configured remote to move anything. Nothing is configured in this home, so the transports are observed only through their suites.
 
 ## Recorded history
 

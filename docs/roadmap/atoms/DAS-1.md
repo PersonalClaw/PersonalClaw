@@ -28,9 +28,18 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- tests/test_durability_inventory.py and test_durability_inventory_census.py pass (part of 561 passing tests across 28 durability modules)
+- the declarative manifest is real and richly annotated — inventory.py's comments record specific paths it caught as unclaimed
+
+**Notes:** PARTIAL for one specific reason worth recording precisely, because the workspace roadmap already tracks it as an 'inert shipped control' and I can now sharpen that. audit_home() — the function that fails on any unclaimed path — has NO production caller: every occurrence outside tests is a COMMENT, and it appears in neither cli.py nor any dashboard route. So it ships in the wheel with no user-reachable surface. But 'inert' understates it: its own comments record it CATCHING at least three distinct real defects when run by hand ('audit_home() WOULD have flagged it — verified, it reports triggers.json as unclaimed', 'which is how audit_home() caught it — EVERY fresh home reported'). It is a valuable diagnostic that is unreachable, which is a more actionable finding than dead code. Not filed separately: the owner's roadmap already lists it, and this verdict sharpens that entry rather than duplicating it.
 
 ## Recorded history
 

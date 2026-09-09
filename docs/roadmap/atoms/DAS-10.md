@@ -33,9 +33,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 12 (DAS) — observed
+
+**Code evidence:**
+
+- tests/test_durability_dsar_routes.py passes (part of the 561-passed run)
+
+**Notes:** PARTIAL: DSAR portability endpoints have a route rail that passes, but a portability export's real test is that the exported bundle is complete and readable — which means running an export over a populated home and inspecting the result. This home holds one knowledge item, one inbox note and one task, so an export here would prove the plumbing rather than the portability. Deliberately not confirming plumbing as portability.
 
 ## Recorded history
 
