@@ -31,9 +31,18 @@ knowledge/consolidation.py (gate stack, deterministic pre-dedup, injectable-metr
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- src/personalclaw/knowledge/consolidation.py exists on disk
+- tests/test_knowledge_consolidation_cadence.py passes (part of the 210-passed run)
+
+**Notes:** PARTIAL: consolidation is a cadence behaviour over accumulated knowledge. One item in the store, created a cycle ago — nothing to consolidate.
 
 ## Recorded history
 

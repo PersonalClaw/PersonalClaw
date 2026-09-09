@@ -28,9 +28,17 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- part of a 210-passed run across five WF2KNO modules
+
+**Notes:** PARTIAL: taxonomy, logical identity and claim semantics are store-level invariants with no user-facing surface of their own. Observed only through the suite.
 
 ## Recorded history
 

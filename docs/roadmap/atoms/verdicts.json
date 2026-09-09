@@ -19,6 +19,110 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "WF2KNO-1": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["part of a 210-passed run across five WF2KNO modules"],
+    "notes": "PARTIAL: taxonomy, logical identity and claim semantics are store-level invariants with no user-facing surface of their own. Observed only through the suite."
+  },
+  "WF2KNO-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "the provider pair is present AND REGISTERED — knowledge_persist / knowledge_retrieve appear in src/personalclaw/action_providers/registry.py, not merely in a module nobody imports",
+      "src/personalclaw/action_providers/knowledge_maintain_provider.py and src/personalclaw/knowledge/updates.py carry the implementation",
+      "part of the 210-passed run"
+    ],
+    "notes": "Registration is the load-bearing evidence: a provider module that exists but is absent from the registry would be an inert capability, which is exactly the failure class this roadmap tracks elsewhere. 🪤 I guessed the path as action_providers/knowledge_persist_provider.py and was WRONG — it lives in knowledge_maintain_provider.py. Third cycle running where my path guess was wrong and the atom right."
+  },
+  "WF2KNO-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "until_cancelled has THREE live consumers — workflows/controller.py, workflows/tick.py and workflows/validator.py — so the long-run mode is wired into the engine's dispatch, ordering and validation rather than sitting in one file",
+      "tests/test_workflows_longrun.py passes (part of the 210-passed run)"
+    ],
+    "notes": "PARTIAL: the reaper and sibling handling are time-and-lifecycle behaviours. Driving them means starting a long-run workflow and cancelling it, which needs a model provider to make the run do anything."
+  },
+  "WF2KNO-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "src/personalclaw/knowledge/consolidation.py exists on disk",
+      "tests/test_knowledge_consolidation_cadence.py passes (part of the 210-passed run)"
+    ],
+    "notes": "PARTIAL: consolidation is a cadence behaviour over accumulated knowledge. One item in the store, created a cycle ago — nothing to consolidate."
+  },
+  "WF2KNO-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "src/personalclaw/knowledge/contradiction.py exists on disk",
+      "tests/test_knowledge_contradiction.py passes (part of the 210-passed run)"
+    ],
+    "notes": "PARTIAL: a contradiction pass needs two claims that actually conflict AND a model to judge them. Neither is present."
+  },
+  "WF2KNO-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["tests/test_knowledge_longrun_validation.py passes (part of the 210-passed run)"],
+    "notes": "PARTIAL: a bundled template slate validated over a long run is precisely the clause a single UI session cannot settle. Its validation rail passes."
+  },
+  "WF2KNO-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "src/personalclaw/action_providers/knowledge_render_provider.py plus src/personalclaw/knowledge/reports.py carry the implementation",
+      "tests/test_knowledge_render_report.py passes (part of the 210-passed run)",
+      "the surface is REACHABLE: a 'Reports' button renders in the live Knowledge header, so the provider is not a capability with no way in"
+    ],
+    "notes": "The atom's own done_when is the existence of the render_report action provider, described in its title as a deferred/optional slice. Provider present, tested, and reachable from the UI. I did NOT render a report (that needs content worth reporting on), so the output's shape is unvalidated — but the atom's claim is the provider, and that holds."
+  },
+  "WF2KNO-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["part of the 210-passed run"],
+    "notes": "PARTIAL: routing gap-healing drafts INTO the Learning-Flywheel proposal queue needs a gap to heal and a model to draft. Both absent."
+  },
+  "WF2KNO-9": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["part of the 210-passed run"],
+    "notes": "PARTIAL, and the atom says so itself — it is the PROVIDER-BLOCKED template slate (market-monitor, trending-research and siblings). Those templates are blocked on external providers by design, so 'unvalidated here' is the expected state rather than a gap."
+  },
+  "WF2KNO-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["tests/test_knowledge_contradiction.py passes (part of the 210-passed run)"],
+    "notes": "PARTIAL: the atom's whole point is wiring the fast-model contradiction pass to a LIVE model. No model provider is configured, so this is the most directly model-blocked atom in the plan — it cannot be confirmed without one."
+  },
+  "WF2KNO-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": [
+      "both named surfaces exist in the frontend: staleness handling in web/src/pages/knowledge/KnowledgeDetail.tsx and web/src/pages/knowledge/RestructureControl.tsx, and propose-then-accept in web/src/pages/knowledge/KnowledgeListPage.tsx",
+      "the Knowledge list is live and I drove it this cycle"
+    ],
+    "notes": "PARTIAL: a staleness banner needs an item old enough to be stale (mine is minutes old) and propose-then-accept needs a proposal to accept (needs a model). Both surfaces are present in code; neither condition can be met here. Recording that I clicked the item row expecting a detail view and got an in-place expansion with a content preview instead — so the reading view is reached another way, which the next cycle should find rather than assume."
+  },
+  "WF2KNO-12": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 6 (WF2KNO) — observed",
+    "evidence": ["part of the 210-passed run; the 'Reports' surface exists in the live Knowledge header"],
+    "notes": "PARTIAL: scheduled research reports crossed over source-scope x context-scope x cadence is a matrix of scheduled, model-driven runs. Neither the schedule nor the model is present."
+  },
   "KL-1": {
     "verdict": "confirmed",
     "date": "2026-09-08",

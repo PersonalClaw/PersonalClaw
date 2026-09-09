@@ -30,9 +30,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- part of the 210-passed run
+
+**Notes:** PARTIAL, and the atom says so itself — it is the PROVIDER-BLOCKED template slate (market-monitor, trending-research and siblings). Those templates are blocked on external providers by design, so 'unvalidated here' is the expected state rather than a gap.
 
 ## Recorded history
 

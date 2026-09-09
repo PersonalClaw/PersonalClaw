@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- both named surfaces exist in the frontend: staleness handling in web/src/pages/knowledge/KnowledgeDetail.tsx and web/src/pages/knowledge/RestructureControl.tsx, and propose-then-accept in web/src/pages/knowledge/KnowledgeListPage.tsx
+- the Knowledge list is live and I drove it this cycle
+
+**Notes:** PARTIAL: a staleness banner needs an item old enough to be stale (mine is minutes old) and propose-then-accept needs a proposal to accept (needs a model). Both surfaces are present in code; neither condition can be met here. Recording that I clicked the item row expecting a detail view and got an in-place expansion with a content preview instead — so the reading view is reached another way, which the next cycle should find rather than assume.
 
 ## Recorded history
 

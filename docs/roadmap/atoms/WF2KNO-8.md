@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- part of the 210-passed run
+
+**Notes:** PARTIAL: routing gap-healing drafts INTO the Learning-Flywheel proposal queue needs a gap to heal and a model to draft. Both absent.
 
 ## Recorded history
 

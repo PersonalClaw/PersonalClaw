@@ -30,9 +30,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- src/personalclaw/action_providers/knowledge_render_provider.py plus src/personalclaw/knowledge/reports.py carry the implementation
+- tests/test_knowledge_render_report.py passes (part of the 210-passed run)
+- the surface is REACHABLE: a 'Reports' button renders in the live Knowledge header, so the provider is not a capability with no way in
+
+**Notes:** The atom's own done_when is the existence of the render_report action provider, described in its title as a deferred/optional slice. Provider present, tested, and reachable from the UI. I did NOT render a report (that needs content worth reporting on), so the output's shape is unvalidated — but the atom's claim is the provider, and that holds.
 
 ## Recorded history
 

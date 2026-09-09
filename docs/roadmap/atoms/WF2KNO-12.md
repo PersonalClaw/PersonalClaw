@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- part of the 210-passed run; the 'Reports' surface exists in the live Knowledge header
+
+**Notes:** PARTIAL: scheduled research reports crossed over source-scope x context-scope x cadence is a matrix of scheduled, model-driven runs. Neither the schedule nor the model is present.
 
 ## Recorded history
 

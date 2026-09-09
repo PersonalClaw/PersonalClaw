@@ -31,9 +31,19 @@ apps/native/knowledge-actions/ ships both providers (idempotent upsert/append_ev
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- the provider pair is present AND REGISTERED — knowledge_persist / knowledge_retrieve appear in src/personalclaw/action_providers/registry.py, not merely in a module nobody imports
+- src/personalclaw/action_providers/knowledge_maintain_provider.py and src/personalclaw/knowledge/updates.py carry the implementation
+- part of the 210-passed run
+
+**Notes:** Registration is the load-bearing evidence: a provider module that exists but is absent from the registry would be an inert capability, which is exactly the failure class this roadmap tracks elsewhere. 🪤 I guessed the path as action_providers/knowledge_persist_provider.py and was WRONG — it lives in knowledge_maintain_provider.py. Third cycle running where my path guess was wrong and the atom right.
 
 ## Recorded history
 

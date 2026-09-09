@@ -30,9 +30,18 @@ workflows/longrun.py adds until_cancelled loop mode + reap_watchers, {{siblings.
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 6 (WF2KNO) — observed
+
+**Code evidence:**
+
+- until_cancelled has THREE live consumers — workflows/controller.py, workflows/tick.py and workflows/validator.py — so the long-run mode is wired into the engine's dispatch, ordering and validation rather than sitting in one file
+- tests/test_workflows_longrun.py passes (part of the 210-passed run)
+
+**Notes:** PARTIAL: the reaper and sibling handling are time-and-lifecycle behaviours. Driving them means starting a long-run workflow and cancelling it, which needs a model provider to make the run do anything.
 
 ## Recorded history
 

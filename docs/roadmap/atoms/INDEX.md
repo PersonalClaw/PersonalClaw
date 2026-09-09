@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 14 | `done_when` checked against the code and it holds |
-| `partial` | 35 | some `done_when` clauses hold, others do not |
+| `confirmed` | 16 | `done_when` checked against the code and it holds |
+| `partial` | 45 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 635 | not yet checked |
+| `unaudited` | 623 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -918,18 +918,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2KNO-1`](WF2KNO-1.md) | `done` | `unaudited` | Store semantics groundwork: taxonomy, logical identity, claims/relations, migrations, KnowledgeConfig |
-| [`WF2KNO-2`](WF2KNO-2.md) | `done` | `unaudited` | The provider pair: knowledge_persist + knowledge_retrieve app, allowlist, native-provider retrieval seam |
-| [`WF2KNO-3`](WF2KNO-3.md) | `done` | `unaudited` | Long-run engine additions: until_cancelled + reaper, siblings/previous bindings, buffer-seal, adaptive clamp |
-| [`WF2KNO-4`](WF2KNO-4.md) | `done` | `unaudited` | Consolidation + maintenance lifecycle: consolidation.py, health/consolidate/gaps providers + 3 templates |
-| [`WF2KNO-5`](WF2KNO-5.md) | `done` | `unaudited` | Contradiction pass + retrieval polish: contradiction.py, session_brief.py, fenced_sources, conflict UI |
-| [`WF2KNO-6`](WF2KNO-6.md) | `done` | `unaudited` | Bundled template slate + long-run validation (4 provider-buildable templates) |
-| [`WF2KNO-7`](WF2KNO-7.md) | `done` | `unaudited` | render_report action provider (deferred/optional last slice) |
-| [`WF2KNO-8`](WF2KNO-8.md) | `done` | `unaudited` | Route gap-healing drafts to the LEARNING-FLYWHEEL proposal queue |
-| [`WF2KNO-9`](WF2KNO-9.md) | `done` | `unaudited` | Provider-blocked template slate: market-monitor, trending-repo-digest, dual-sink watcher, paper-ingest |
-| [`WF2KNO-10`](WF2KNO-10.md) | `done` | `unaudited` | Wire the model-tier (fast-model) contradiction pass to a live model via a stage node |
-| [`WF2KNO-11`](WF2KNO-11.md) | `done` | `unaudited` | Synthesis legibility: staleness banner, propose-then-accept update, parsed per-marker citations |
-| [`WF2KNO-12`](WF2KNO-12.md) | `done` | `unaudited` | Scheduled research reports: source-scope x context-scope x citation-policy, with hardened schedule semantics |
+| [`WF2KNO-1`](WF2KNO-1.md) | `done` | `partial` | Store semantics groundwork: taxonomy, logical identity, claims/relations, migrations, KnowledgeConfig |
+| [`WF2KNO-2`](WF2KNO-2.md) | `done` | `confirmed` | The provider pair: knowledge_persist + knowledge_retrieve app, allowlist, native-provider retrieval seam |
+| [`WF2KNO-3`](WF2KNO-3.md) | `done` | `partial` | Long-run engine additions: until_cancelled + reaper, siblings/previous bindings, buffer-seal, adaptive clamp |
+| [`WF2KNO-4`](WF2KNO-4.md) | `done` | `partial` | Consolidation + maintenance lifecycle: consolidation.py, health/consolidate/gaps providers + 3 templates |
+| [`WF2KNO-5`](WF2KNO-5.md) | `done` | `partial` | Contradiction pass + retrieval polish: contradiction.py, session_brief.py, fenced_sources, conflict UI |
+| [`WF2KNO-6`](WF2KNO-6.md) | `done` | `partial` | Bundled template slate + long-run validation (4 provider-buildable templates) |
+| [`WF2KNO-7`](WF2KNO-7.md) | `done` | `confirmed` | render_report action provider (deferred/optional last slice) |
+| [`WF2KNO-8`](WF2KNO-8.md) | `done` | `partial` | Route gap-healing drafts to the LEARNING-FLYWHEEL proposal queue |
+| [`WF2KNO-9`](WF2KNO-9.md) | `done` | `partial` | Provider-blocked template slate: market-monitor, trending-repo-digest, dual-sink watcher, paper-ingest |
+| [`WF2KNO-10`](WF2KNO-10.md) | `done` | `partial` | Wire the model-tier (fast-model) contradiction pass to a live model via a stage node |
+| [`WF2KNO-11`](WF2KNO-11.md) | `done` | `partial` | Synthesis legibility: staleness banner, propose-then-accept update, parsed per-marker citations |
+| [`WF2KNO-12`](WF2KNO-12.md) | `done` | `partial` | Scheduled research reports: source-scope x context-scope x citation-policy, with hardened schedule semantics |
 
 ### `WF2LEA` — WORKFLOWS-V2-LEARNING-FLYWHEEL (14/14 done)
 
