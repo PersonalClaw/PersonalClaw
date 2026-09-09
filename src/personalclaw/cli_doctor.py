@@ -126,6 +126,38 @@ def _doctor_paths() -> None:
         print(f"{label}\t{path}")
 
 
+def _doctor_rebuild_routing_stats() -> None:
+    """Refold ``routing_stats.json`` from the model-call audit — the §1.3 rebuild path.
+
+    🔑 THIS IS THE FLAG `routing/stats.py` ALREADY NAMED. Its :func:`~personalclaw.routing.
+    stats.rebuild` docstring calls itself "the ``--rebuild-routing-stats`` maintenance path" and
+    `routing/usage.py` notes in as many words that no argument implemented it — so the recovery
+    function shipped tested and unreachable, with the audit rows it needs sitting on disk.
+
+    That mattered because the two folds recover differently. The usage fold self-heals: every
+    ``GET /api/usage`` calls ``usage.refresh``, which refolds. The routing fold has no such read
+    path — ``GET /api/models/telemetry`` calls ``load_stats`` only, and a missing file reads as an
+    empty fold rather than an error (correct, and never fatal). So a deleted or truncated
+    ``routing_stats.json`` left the Routing & Efficiency view permanently blank and dropped the
+    learned policy's per-ref sample counts below its ``n >= 5`` floor, silently stopping it from
+    proposing — while ``model_calls.jsonl`` still held everything needed to restore both.
+
+    Reports the row count, because the number is the finding: the audit JSONL is capped and
+    rotated, so a rebuild recovers the retained tail rather than all history, and a caller who is
+    not told how many rows were folded cannot tell a successful rebuild from an empty one.
+    """
+    from personalclaw.routing.stats import _stats_path, rebuild
+
+    home = config_dir()
+    folded = rebuild(home)
+    print(f"routing stats: refolded {folded} attempt row(s) → {_stats_path(home)}")
+    if not folded:
+        # Not an error and not sys.exit(1): a fresh install has no audit rows, and an empty fold
+        # is the honest result there. Saying so beats a bare success line that reads identically
+        # to a recovered one.
+        print("  (no attempt rows in the audit log — the fold is empty, not broken)")
+
+
 def _doctor_credentials() -> list[str]:
     """Print which credential store is holding the secrets; return any issues (SH-1).
 
