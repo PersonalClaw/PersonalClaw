@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- tests/test_app_routes.py present and passing (part of an 85-passed run) — covers the backend.routes[] surface and the app_<name>_<op> route tools the atom names
+
+**Notes:** PARTIAL: the atom's proving pair is a Growth + Minutes manifest retrofit in the SEPARATE PersonalClawApps repository, which this audit did not touch, and the install_guarded chokepoint path needs an app actually installed to drive. In-core code and rail observed; the cross-repo half is unvalidated. Worth noting the workspace apps clone is named PersonalClawApps, so the gateway only discovers it via PERSONALCLAW_FIRST_PARTY_APPS_DIR.
 
 ## Recorded history
 
