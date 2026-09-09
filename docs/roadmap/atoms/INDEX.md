@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 199 | `done_when` checked against the code and it holds |
-| `partial` | 151 | some `done_when` clauses hold, others do not |
+| `confirmed` | 203 | `done_when` checked against the code and it holds |
+| `partial` | 155 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 329 | not yet checked |
+| `unaudited` | 321 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -122,14 +122,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AR2-1`](AR2-1.md) | `done` | `unaudited` | Add specialty + route_hints to AgentProfile and AgentDefinition (full round-trip on both layers) |
-| [`AR2-2`](AR2-2.md) | `done` | `unaudited` | agents/routing.py pure classifier: eligible_candidates + classify (keyword 0.7 → embedding 0.62 + 0.1 margin) + embedding cache with staleness check |
-| [`AR2-3`](AR2-3.md) | `done` | `unaudited` | suggest_for_send hook in api_chat + routing_suggestion WS broadcast + SEL agents.routing_suggest log |
-| [`AR2-4`](AR2-4.md) | `done` | `unaudited` | AgentsRoutingConfig 5-point wiring + suppression store (entity_settings/agent_routing.json) + dismiss/unmute/status routes |
-| [`AR2-5`](AR2-5.md) | `done` | `unaudited` | RoutingChip component: WS-driven pill, Route→setSessionAgent+toast, dismiss, FEEDBACK-SIGNAL double-write |
-| [`AR2-6`](AR2-6.md) | `done` | `unaudited` | Authoring fields: Specialty + Routing hints in AgentForm.tsx |
-| [`AR2-7`](AR2-7.md) | `done` | `unaudited` | Agent routing settings block (enabled / min confidence / cooldown) in Settings → Chat |
-| [`AR2-8`](AR2-8.md) | `done` | `unaudited` | Muted-state row + Unmute affordance on the agent detail page |
+| [`AR2-1`](AR2-1.md) | `done` | `confirmed` | Add specialty + route_hints to AgentProfile and AgentDefinition (full round-trip on both layers) |
+| [`AR2-2`](AR2-2.md) | `done` | `confirmed` | agents/routing.py pure classifier: eligible_candidates + classify (keyword 0.7 → embedding 0.62 + 0.1 margin) + embedding cache with staleness check |
+| [`AR2-3`](AR2-3.md) | `done` | `partial` | suggest_for_send hook in api_chat + routing_suggestion WS broadcast + SEL agents.routing_suggest log |
+| [`AR2-4`](AR2-4.md) | `done` | `confirmed` | AgentsRoutingConfig 5-point wiring + suppression store (entity_settings/agent_routing.json) + dismiss/unmute/status routes |
+| [`AR2-5`](AR2-5.md) | `done` | `partial` | RoutingChip component: WS-driven pill, Route→setSessionAgent+toast, dismiss, FEEDBACK-SIGNAL double-write |
+| [`AR2-6`](AR2-6.md) | `done` | `partial` | Authoring fields: Specialty + Routing hints in AgentForm.tsx |
+| [`AR2-7`](AR2-7.md) | `done` | `confirmed` | Agent routing settings block (enabled / min confidence / cooldown) in Settings → Chat |
+| [`AR2-8`](AR2-8.md) | `done` | `partial` | Muted-state row + Unmute affordance on the agent detail page |
 
 ### `AS` — AMBIENT-SURFACES (9/9 done)
 

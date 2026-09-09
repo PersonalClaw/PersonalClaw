@@ -4186,5 +4186,111 @@
     ],
     "ui_validated": "Drove the toggle and the reload, and confirmed the on-disk value.",
     "notes": "The clause's last phrase — 'no change to persistence format' — is the constraint that makes this atom small: thinking chunks were already broadcast and already persisted, so the whole task was rendering them behind a switch. An atom whose scope is 'wire the existing broadcast to the existing transcript' is the right shape for a T01 remainder, and the config round-trip is the only new state it introduces."
+  },
+  "AR2-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED on BOTH layers the clause names. Config layer: config/loader.py:1629 `specialty` and :1637 `route_hints` are real dataclass fields with _meta, and :3303-3304 maps them in load(). Marketplace layer: agents/marketplace.py:84 declares route_hints, :115 reads it in from_dict, and :129 enforces the length cap against _MAX_DESCRIPTION",
+      "test_config_roundtrip.py passes 17/17, which is the suite that catches a field wired at three of the four points",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "notes": "Two agent layers is the interesting part: a field that round-trips on the config layer only would work for a hand-written profile and silently drop on an installed one. Auditing both halves is the whole content of this atom, and the cap on the marketplace side (reusing the description cap rather than inventing a routing-specific one) is what stops a hostile installed agent from shipping a route-hints blob."
+  },
+  "AR2-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 agents/routing.py:1-6 THE TITLE IS THE GUARANTEE — 'suggest the right specialist, NEVER ROUTE SILENTLY' — and the consent line is explicit: 'The user consents; NOTHING ABOUT THE SESSION CHANGES UNTIL THEY CLICK'",
+      ":8 deterministic-first with the LLM out of the hot path, borrowing 'the calibrated shape from workflows/surfacing' rather than inventing a scoring scheme",
+      "🔑 STAGE 1 CARRIES AN EXTRA PRECISION GUARD MOST IMPLEMENTATIONS SKIP: a keyword-only hit 'additionally requires the matched phrase to carry ≥3 words (SHORT-MESSAGE SPURIOUS-MATCH GUARD)'. And the 0.7 gate is skills.loader._MIN_TRIGGER_OVERLAP — one calibrated constant shared, not a second threshold",
+      "🔑 STAGE 2 REQUIRES A MARGIN, NOT JUST A SCORE: the top score must clear the confidence gate AND beat the runner-up by ≥0.1 'SO AMBIGUOUS FITS STAY SILENT'. Silence on ambiguity rather than a coin-flip suggestion",
+      "the embedding stage is 'skipped entirely when no embedder is bound', so a machine without one degrades to keyword-only rather than erroring",
+      ":19 'Never raises into the send path' — the send outranks the suggestion",
+      "MEASURED: tests/test_agent_routing.py passes 15/15, covering the clause's list — keyword hit, embedding hit, low-confidence None, no-embedder fallback, reserved agents never candidates",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "notes": "The margin rule is the design decision worth keeping. A confidence gate alone makes a two-way tie into a suggestion, and a wrong suggestion in a default-agent chat costs more than no suggestion — so the second condition converts an ambiguous classification into silence. That is the same never-fabricate posture the approval matcher takes with 'nothing matched is its own answer'."
+  },
+  "AR2-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED, routing.py:299-331 — the gate ladder is present, in order, each with its reason: rc.enabled; the explicit-agent opt-out ('a non-empty agent that isn't the default means THE USER ALREADY CHOSE'); the memory-mode gate; and the per-session frequency cap",
+      "🔑 THE PRIVACY GATE IS A POSITIVE REQUIREMENT, NOT A DENYLIST: `if getattr(session, 'memory_mode', 'persistent') != 'persistent': return None`. A temporary or incognito session is excluded because it FAILS to be persistent — so a privacy mode added later is excluded by default rather than needing to be added to a list of exclusions",
+      "the frequency cap counts USER turns rather than wall-clock, so a long pause does not re-arm a suggestion the user already declined by ignoring it",
+      ":300-301 'Best-effort; never raises into the send path' with the whole body inside a try — the classifier cannot break a send",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Not driven: a broadcast needs a send that matches an installed specialist, which needs a bound model. The gates are confirmed in code and by the 15 passing tests.",
+    "notes": "Partial for the live broadcast only. The default in `getattr(session, 'memory_mode', 'persistent')` is worth a note: it defaults to the PERMISSIVE value, so a session object missing the attribute is treated as persistent and can receive a suggestion. That is the right call for a suggestion (the failure costs a chip, not a leak) and it matches the store's fail-open direction below — but it is the one line in this atom where the privacy gate leans open, and it leans open by construction rather than by accident."
+  },
+  "AR2-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: the three-field config block is in the PATCH allowlist with per-field bounds — dashboard/handlers/core.py:810-812 agents_routing.enabled (bool), .min_confidence (float 0.3–0.95), .cooldown_hours (float 0–720)",
+      "test_config_roundtrip.py 17/17",
+      "🔑 THE FAIL DIRECTION IS STATED WITH ITS DOCTRINE (routing.py:203-206): 'Fail-OPEN per the availability doctrine: a missing/corrupt store = NOTHING SUPPRESSED. Class B (new persisted file) — plain clean break under the pre-1.0 banner (tolerant reads, no migration)'",
+      "_load_store (:211-219) implements exactly that — any exception returns {}, and a non-dict payload returns {} rather than being coerced",
+      "the store lives in entity_settings/ via the shared _load_entity_settings rather than a bespoke reader, so it inherits that layer's path handling",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "notes": "🔑 THE THIRD INSTANCE OF ONE DISCRIMINATOR IN THIS CAMPAIGN, and it is consistent all three times. This codebase defaults CLOSED where a flag gates an action and OPEN where it gates a suggestion, and each site states which it is: the screen-share opt-in fails off because it gates capture; the fingerprint switch fails on because it only proposes; and this store fails open because suppressing a suggestion is the thing being lost. The cost of the wrong direction is what decides it — an unwanted chip versus a silently disabled feature — rather than a blanket rule."
+  },
+  "AR2-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/chat/RoutingChip.tsx exists among the chat surface's 54 modules, and the frontend chat suite passes 300/300 (measured last cycle, same tree)",
+      "the double-write the clause requires is the FEEDBACK-SIGNAL contract — one signal on the suggestion target, one on the routing pair — so an accept and a dismiss both become training data rather than only the accept",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Not driven: the chip renders on a routing_suggestion broadcast, which needs a matching send against a bound model. No chip could be produced in this home.",
+    "notes": "Partial for the drive. The design point worth recording is that BOTH actions write feedback. A suggester that only learns from accepts sees a biased sample — every ignored or dismissed suggestion is the more informative half, because it is the case the classifier got wrong."
+  },
+  "AR2-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/pages/agents/AgentForm.tsx exists and is the authoring surface the clause names; the fields ride the existing draft/empty/toDraft/payload plumbing plus the SavedAgent type rather than a parallel form path",
+      "the underlying fields round-trip on both agent layers (AR2-1, confirmed above), which is the half a form cannot fake",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Not driven: creating or editing an agent through the form was not exercised this cycle.",
+    "notes": "Partial for the drive only. The clause's own detail — comma-separated-utterances hint text — is the part that matters for a field whose FORMAT is load-bearing: route_hints is scored per phrase by the classifier, so a user who types a sentence instead of comma-separated utterances gets worse matching, and the hint is what prevents that rather than a validator."
+  },
+  "AR2-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 DRIVEN AND PERSISTED, three points: toggled 'Suggest specialists' OFF, a FULL PAGE RELOAD showed it unchecked, and MEASURED on disk config.json carried agents_routing = {'enabled': False, 'min_confidence': 0.62, 'cooldown_hours': 24.0}. Then toggled back ON and confirmed enabled = True on disk, so the validation home is left as found",
+      "DRIVEN: all three controls render with copy that states the guarantee rather than the mechanism. Section: 'Suggest a better-fit specialist agent when a message matches one — YOU ALWAYS CONFIRM before it re-targets the chat.' Toggle hint ends 'NEVER ROUTES SILENTLY' — the module's own title, surfaced",
+      "🔑 the threshold shown is 0.62, EXACTLY the stage-2 gate the classifier docstring documents, and its hint explains the tradeoff rather than the number: 'Higher = fewer, surer suggestions'",
+      "🔑 the cooldown hint DISCLOSES THE ESCALATION: 'After you dismiss a suggestion for an agent, suppress it for this long (THREE DISMISSALS MUTE IT UNTIL YOU RE-ENABLE)'. So a user learns that the third dismissal has a different consequence from the first — before they discover it",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Drove the toggle, the reload and the on-disk value, then restored it. The clause's 'immediately with no restart' half is satisfied by the PATCH allowlist path (the config is re-read per send, not cached at boot), which the code shows and a live suggestion would confirm.",
+    "notes": "Best-documented settings block audited so far, for one reason: each of the three hints answers a different question — what the feature does, what the number trades off, and what happens if you keep saying no. The third is the rare one; a cooldown control that hides its own escalation is how a user ends up with a muted agent they never chose to mute."
+  },
+  "AR2-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 36 (AR2) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: web/src/pages/agents/AgentDetail.tsx:212-233 carries the muted row, the routingStatus read (:221-222) and the Unmute control wired to api.routingUnmute (:232)",
+      "🔑 :213 THE ROW IS CONDITIONAL BY DESIGN: 'A muted agent is otherwise INVISIBLE on this page — the mute is a routing preference the [user set]'. So an unmuted agent shows no control, which is the same not-rendering-a-no-op pattern this campaign has now found six times",
+      "🔑 :229 THE OPTIMISTIC UPDATE IS REFUSED, AND THE REASON IS STATED: 'Staying muted is right — setMuted(false) MUST NEVER CLAIM A STATE THE BACKEND REFUSED.' A failed unmute sets an error and leaves the row muted rather than showing a success the server did not grant",
+      "test_agent_routing 15/15; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Not driven: a muted state requires three dismissals, which require suggestions, which require a bound model. No agent in this home is muted, so the row correctly does not render.",
+    "notes": "Partial for the drive. The refused optimistic update is the detail worth keeping and it is the same rule three other surfaces in this campaign stated independently — the routing bindings table's 'the resolver's own answer, not a guess', the approval matcher's 'never a fabricated approval', and the preflight refusal that names where to fix it. A UI that reports a state the backend rejected is worse than one that reports the failure, because the user stops looking."
   }
 }
