@@ -29,15 +29,16 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
-# MUST mirror vector_memory's import: on Linux/x86_64 the store connects through
-# `pysqlite3` (a newer bundled SQLite), whose exception classes are DISTINCT objects
-# from the stdlib's. Importing plain `sqlite3` here made `except sqlite3.IntegrityError`
-# silently never match the error the connection actually raises, so the duplicate-edge
-# path crashed on CI while passing on macOS (no pysqlite3 → same class by accident).
-try:
-    import pysqlite3 as sqlite3
-except ImportError:  # pragma: no cover — platform-dependent
-    import sqlite3  # type: ignore[no-redef]
+# The driver comes from `sqlite_compat`, which resolves it ONCE for the whole
+# process, because on Linux/x86_64 the store connects through `pysqlite3` (a newer
+# bundled SQLite) whose exception classes are DISTINCT objects from the stdlib's.
+# Importing plain `sqlite3` here made `except sqlite3.IntegrityError` silently never
+# match the error the connection actually raises, so the duplicate-edge path crashed
+# on CI while passing on macOS (no pysqlite3 → same class by accident). Re-deriving
+# the driver with a local try/except reproduced that hazard by construction: two
+# independent decisions can disagree, and the platform where they disagree is the one
+# without a runner. Importing the module object makes agreement structural.
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 
