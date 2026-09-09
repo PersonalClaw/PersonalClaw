@@ -1,8 +1,8 @@
 # Learning Benchmark Protocol — does an approved skill make the next run better?
 
-**Status:** PROTOCOL v1 — FROZEN 2026-08-16 (LEARNING-VISIBILITY T4.1, atom [`LV-6`](../atomic/LV.md)). Owner-signed; see §8.
+**Status:** PROTOCOL v1 — FROZEN 2026-08-16 (LEARNING-VISIBILITY T4.1, atom LV-6). Owner-signed; see §8.
 **Question:** When a user approves a learned skill, does the next matching run measurably improve — and by how much, at what token cost?
-**Executed by:** [`LV-7`](../atomic/LV.md) as an EVALUATION-SUBSTRATE study. This document is the measurement contract `LV-7` implements; it deliberately builds nothing.
+**Executed by:** LV-7 as an EVALUATION-SUBSTRATE study. This document is the measurement contract `LV-7` implements; it deliberately builds nothing.
 **Reviewability rule:** the protocol is frozen BEFORE any run, so a disappointing result cannot retroactively edit the method. §6 lists what invalidates a result; §7 lists what must exist before a single number may be published.
 
 ---
@@ -14,7 +14,7 @@ The claim is narrow on purpose: **a skill the user approved improves the next ma
 Three failure modes are more likely than a wrong answer, so each gets a mechanical guard rather than a reader's caution:
 
 1. **The arms were never actually different.** A comparison that labels two identical runs "skills-on" and "skills-off" produces a delta of pure noise and reports it as a finding. Guard: §3's arm-integrity check — every run must carry positive evidence of what it injected, and a run whose evidence contradicts its label is discarded, not averaged.
-2. **The budget explains the delta, and the topology gets the credit.** This repo already refuses that shape once: [`harness/fanout_measure.py`](../../../harness/fanout_measure.py) will not name a winner unless both arms spent within `TOKEN_MATCH_TOLERANCE` of each other. The same rule binds here (§5).
+2. **The budget explains the delta, and the topology gets the credit.** This repo already refuses that shape once: [`harness/fanout_measure.py`](../../harness/fanout_measure.py) will not name a winner unless both arms spent within `TOKEN_MATCH_TOLERANCE` of each other. The same rule binds here (§5).
 3. **The delta is smaller than the noise.** Run-to-run variance on this kind of task set exceeds most architecture deltas in the literature. `INCONCLUSIVE_BAND_POINTS = 5.0` is not a tunable (§5).
 
 The honesty rule that follows from all three, and the reason this doc exists before the runs: **the result is published at whatever magnitude it lands, including `inconclusive` and including a skills-off win.** A protocol that only ever reports wins is not measuring.
@@ -88,7 +88,7 @@ Two properties of this table are load-bearing and easy to misread:
 
 ## 5. The verdict rule
 
-The thresholds are not re-derived here. They are the constants in [`harness/fanout_measure.py`](../../../harness/fanout_measure.py), imported rather than copied:
+The thresholds are not re-derived here. They are the constants in [`harness/fanout_measure.py`](../../harness/fanout_measure.py), imported rather than copied:
 
 - `INCONCLUSIVE_BAND_POINTS = 5.0` (`harness/fanout_measure.py:42`) — a sub-5-point mean delta is reported as `inconclusive`, including in our favour.
 - `TOKEN_MATCH_TOLERANCE = 0.05` (`:48`) — arms whose total spend differs by more than 5% yield `not_token_matched`, which is the measurement declining a question it did not ask.
@@ -117,7 +117,7 @@ This protocol is executable in its *design*: every surface it names exists and w
 - An empty fixture home is not a skills-off home. Constructing `SkillsLoader` calls `_ensure_builtin_skills(self._dir)` (`personalclaw/skills/loader.py:293`), which syncs `src/personalclaw/skills/bundled/` (`skills/loader.py:41`) into the home. A brand-new empty home holds **14 skills** immediately afterwards (§9, probe 2).
 - `feedback.suppressed_producers` is not a switch. It is derived from measured producer accuracy (`personalclaw/feedback.py::suppressed_producers`) and reaches surfacing only as `("skill_synthesis", key)` pairs (`personalclaw/skills/surfacing.py:304`), so it cannot suppress a bundled skill on request.
 
-No env override exists either. **The lever is already designed and already owned elsewhere:** EVALUATION-SUBSTRATE §3.3 (atom [`ES-7`](../atomic/ES.md)) specifies replaying runs "with the skill surfaced vs suppressed (`arm_mask`)". `arm_mask` appears nowhere in `src/`, `harness/` or `tests/` — it is unbuilt. `LV-7` must **consume** `ES-7`'s `arm_mask`, not grow a second toggle beside it (one owner per mechanism, [AGENTS.md](../../../AGENTS.md) §"Shared conventions"). `LV-7`'s atom row currently declares `EXT:EVALUATION-SUBSTRATE:S1-2` only; §3 is a later ES session, so that dependency is understated. Recorded as a DISCOVERY in the LEARNING-VISIBILITY execution log rather than edited here — the roadmap is owner-maintained.
+No env override exists either. **The lever is already designed and already owned elsewhere:** EVALUATION-SUBSTRATE §3.3 (atom ES-7) specifies replaying runs "with the skill surfaced vs suppressed (`arm_mask`)". `arm_mask` appears nowhere in `src/`, `harness/` or `tests/` — it is unbuilt. `LV-7` must **consume** `ES-7`'s `arm_mask`, not grow a second toggle beside it (one owner per mechanism, [AGENTS.md](../../AGENTS.md) §"Shared conventions"). `LV-7`'s atom row currently declares `EXT:EVALUATION-SUBSTRATE:S1-2` only; §3 is a later ES session, so that dependency is understated. Recorded as a DISCOVERY in the LEARNING-VISIBILITY execution log rather than edited here — the roadmap is owner-maintained.
 
 **G2 — A declared arm axis changes nothing.** `MatrixSpec(axes={"arm": [...]})` expands correctly: an `arm` axis with two values at `trial_count=3` yields six cells carrying distinct `arm` coords (§9, probe 7). But `evals/child.py` reads exactly one coordinate — `coords.get("model")` at `evals/child.py:162`, the only `coords.get` call in the file. Every other axis value is recorded in the cell coords and honoured by nothing. Declaring an `arm` axis today produces six identical runs labelled two ways: a fabricated comparison that would look like a real one in every artifact. `LV-7` must make the child honour the arm coordinate, or the axis must not be used.
 
@@ -140,7 +140,7 @@ No env override exists either. **The lever is already designed and already owned
 
 ## 9. Probes run while writing this protocol (2026-08-16)
 
-Each measurement the protocol prescribes was exercised once against the code on `main`, in throwaway homes. Full outputs are in the `LV-6` execution-log entry in [LEARNING-VISIBILITY](../plans/LEARNING-VISIBILITY.md); summarised here so a reviewer knows which claims are measured and which are read.
+Each measurement the protocol prescribes was exercised once against the code on `main`, in throwaway homes. Full outputs are in the `LV-6` execution-log entry in LEARNING-VISIBILITY; summarised here so a reviewer knows which claims are measured and which are read.
 
 1. `SkillsConfig(max_triggered=0)` → `1`, with a warning. Also `-5` → `1`. (G1)
 2. Fresh empty `PERSONALCLAW_HOME` + `SkillsLoader()` → 14 skills in `skills/`. (G1)

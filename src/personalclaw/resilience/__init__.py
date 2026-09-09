@@ -22,7 +22,7 @@ Session 2 adds the platform-wide no-model degraded contract:
 
 Later sessions add confirm-gated auto-fixes, the trust/debug simulators, mid-turn
 message handling, and the health-scored self-remediation engine (see
-``docs/roadmap/plans/PLATFORM-RESILIENCE.md``).
+`the PLATFORM-RESILIENCE plan (internal, not in this repo)`).
 """
 
 from personalclaw.resilience.active_jobs import (

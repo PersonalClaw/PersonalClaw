@@ -1,6 +1,6 @@
 # Design-System Consistency — Owner / CI Handoff
 
-**Plan:** [DESIGN-SYSTEM-CONSISTENCY](../roadmap/plans/DESIGN-SYSTEM-CONSISTENCY.md)
+**Plan:** DESIGN-SYSTEM-CONSISTENCY
 **Status at handoff:** all *autonomously-safe* S1–S3 work is done + green on `main`. The remaining work is **pixel-affecting** and gated on ONE thing the loop couldn't do unattended: **seeding the visual-regression harness with an authenticated session.** This doc is the minutes-long unblock.
 
 ---

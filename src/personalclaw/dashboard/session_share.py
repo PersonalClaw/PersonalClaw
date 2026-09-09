@@ -2,7 +2,7 @@
 
 T3.3 asked for two halves — "Markdown/JSON export (redacted) **+ optional read-only
 shared artifact (never auto-published)**". Only export shipped (see the plan's execution
-log, headed "T3.3 — export."), while `docs/roadmap/atomic/SM.md`'s SM-8 evidence line
+log, headed "T3.3 — export."), while the SM plan (internal, not in this repo)'s SM-8 evidence line
 already claimed the share half existed. This module is that half.
 
 **"Share" here means inside the owner's own instance.** It creates an artifact in the

@@ -3,7 +3,7 @@ STAGING NOTE — DELETE THIS COMMENT WHEN PUBLISHING.
 
 This directory is `scratch/registry/` in the PersonalClaw core repo: content prepared
 in-tree so it can be reviewed, tested and version-controlled before it exists as a
-repository. It is ET-3 in docs/roadmap/plans/ECOSYSTEM-TOOLING.md. Nothing in core
+repository. It is ET-3 in the ECOSYSTEM-TOOLING plan (internal, not in this repo). Nothing in core
 imports it, and `scratch/` is outside pytest's testpaths and `make lint`'s targets —
 see scratch/README.md.
 

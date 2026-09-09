@@ -5,7 +5,7 @@ Nothing here is imported, installed or served by PersonalClaw. It is content tha
 before it is pushed. `scratch/` is outside `testpaths` and outside `make lint`'s targets, so it
 does not participate in the core build.
 
-ET-2 (`docs/roadmap/plans/ECOSYSTEM-TOOLING.md`, Session 1 T1.4) stages one thing: the template
+ET-2 (the ECOSYSTEM-TOOLING plan (internal), Session 1 T1.4) stages one thing: the template
 repo below. Its second item — the apps-guide quickstart — is no longer staged here, because it
 has landed in the repository it belongs to (see §2).
 

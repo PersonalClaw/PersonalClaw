@@ -301,7 +301,7 @@ macOS's normal Gatekeeper treatment on first launch.
 
 There is no Windows shell, and none is planned until **both** of these change:
 
-1. The [native-Windows audit](../roadmap/research/windows-native-audit.md) ruled the
+1. The [native-Windows audit](../research/windows-native-audit.md) ruled the
    backend port **no-go** (its "Go / no-go" section): a native port would silently
    weaken file-permission and sandbox guarantees the rest of the system depends on.
    That doc's demand-evidence criteria are the flip condition.

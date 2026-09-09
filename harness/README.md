@@ -8,7 +8,7 @@ machine-checked, versioned, shared institutional knowledge. It lives beside `src
 `tests/`, and `scripts/`, and is **not** part of the shipped wheel (`pyproject` finds
 packages only under `src/`).
 
-It is built across the [Self-Verification plan](../docs/roadmap/plans/SELF-VERIFICATION.md)
+It is built across the Self-Verification plan
 sessions. Landed so far (Sessions 1–3):
 
 ```

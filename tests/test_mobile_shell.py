@@ -20,7 +20,7 @@ which ``tests/test_ci_tier_enforcement.py`` requires to exist.
 
 **What no rail here can prove:** that a real iPhone or Android device renders the companion inside
 its safe area. Those two keys are read by native code, so the assertions below establish only that
-they are shipped. See the dated PARTIAL in ``docs/roadmap/plans/MOBILE-COMPANION.md``.
+they are shipped. See the dated PARTIAL in `the MOBILE-COMPANION plan (internal, not in this repo)`.
 """
 
 from __future__ import annotations

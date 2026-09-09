@@ -8,7 +8,7 @@
     python scripts/learning_benchmark.py --run --task sk_grill --trials 5
     python scripts/learning_benchmark.py --reproduce <baseline_run_id> --run
 
-Protocol: `docs/roadmap/research/learning-benchmark-protocol.md` (PROTOCOL v1, owner-signed
+Protocol: `docs/research/learning-benchmark-protocol.md` (PROTOCOL v1, owner-signed
 before any run). This script implements §3's arms, §4's metrics, §5's verdict rule and §8's
 publication rules; it does not restate any of them.
 
@@ -436,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="learning_benchmark",
         description=(
             "The skill-impact paired benchmark. Protocol: "
-            "docs/roadmap/research/learning-benchmark-protocol.md"
+            "docs/research/learning-benchmark-protocol.md"
         ),
     )
     mode = p.add_mutually_exclusive_group(required=True)

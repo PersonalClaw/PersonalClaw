@@ -30,7 +30,7 @@ than the ones installed today, and one column was measured against the same buil
 failed to reproduce — see "Coverage" below before treating any row as current fact.
 
 **Evidence ids** (`O4`, `C12`, `K30`, `G27`) refer to the observation ledgers and gap
-inventory in [`../roadmap/plans/ACP-AGENT-PARITY.md`](../roadmap/plans/ACP-AGENT-PARITY.md).
+inventory in the ACP-AGENT-PARITY plan (internal).
 Every claim in this document traces to a ledger row, a `G`-entry, or a measured version below.
 Nothing here was derived by reading code alone.
 
@@ -508,4 +508,4 @@ the CLIs move. The refresh procedure is the audit's own checklist, re-run per pr
 5. **Regenerate the not-gateable section from the registry**, never by re-deriving it in prose.
 
 The observation ledgers, the full 63-cell matrices and the severity-ranked gap inventory live in
-[`../roadmap/plans/ACP-AGENT-PARITY.md`](../roadmap/plans/ACP-AGENT-PARITY.md).
+the ACP-AGENT-PARITY plan (internal).

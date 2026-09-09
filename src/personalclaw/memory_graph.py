@@ -18,7 +18,7 @@ Three properties are load-bearing and easy to lose:
 
 Scale note: this is one person's memory (hundreds to low thousands of records),
 so the matcher is a token trie rebuilt in-process, not a service. See
-``docs/roadmap/plans/MEMORY-GRAPH-AND-VAULT.md`` §1 for the design.
+`the MEMORY-GRAPH-AND-VAULT plan (internal, not in this repo)` §1 for the design.
 """
 
 from __future__ import annotations

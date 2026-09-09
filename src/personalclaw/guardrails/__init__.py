@@ -22,7 +22,7 @@ DISABLE_LIVE_WRITES and named safety profiles, plus:
   demotion. It sits ON TOP of the floor above and never relaxes it.
 
 The ``sdk.guardrails`` facade is still to come (see
-``docs/roadmap/plans/AUTONOMY-GUARDRAILS.md``).
+`the AUTONOMY-GUARDRAILS plan (internal, not in this repo)`).
 """
 
 from personalclaw.guardrails.autonomy import (

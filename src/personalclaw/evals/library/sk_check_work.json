@@ -1,5 +1,5 @@
 {
-  "description": "check-work: produce a short artifact, then verify it against the stated requirement list. Skill-impact task set v1 (see docs/roadmap/research/learning-benchmark-protocol.md \u00a72.2). Observable: an enumerated verification list whose every line carries a pass / fail / unverifiable outcome.\n",
+  "description": "check-work: produce a short artifact, then verify it against the stated requirement list. Skill-impact task set v1 (see docs/research/learning-benchmark-protocol.md \u00a72.2). Observable: an enumerated verification list whose every line carries a pass / fail / unverifiable outcome.\n",
   "dimensions": [
     "skill_impact"
   ],

@@ -5,7 +5,7 @@ public launch (DISCOVERABILITY-LAUNCH atom `DL-8`, tasks T4.2+T4.3). It gates th
 submissions drafted in [`listing-submissions-draft.md`](listing-submissions-draft.md) and the
 launch post drafted in [`launch-post-draft.md`](launch-post-draft.md). Nothing here posts anything;
 posting is an owner action (owner task 6 in
-[the source plan](../roadmap/plans/DISCOVERABILITY-LAUNCH.md)).
+the source plan).
 
 **Why this file is in core `docs/launch/` and not the site repo.** The `DL-8` deliverable column
 names `launch-checklist.md` in the site repo, marked "(internal)". It lives here for the same
@@ -127,7 +127,7 @@ front-door items below them are also blocking because a launch reader hits them 
   [`launch-post-draft.md`](launch-post-draft.md).
 - **No named competitors.** No peer/comparison product names in any public post — the standing
   pre-1.0 name-scrub ruling (see the `DL-7` entries in
-  [the source plan](../roadmap/plans/DISCOVERABILITY-LAUNCH.md)).
+  the source plan).
 - **Pre-1.0, breaking changes expected.** Say so, matching the README banner: 0.x updates may break
   state with no automatic migration; snapshot before upgrading.
 - **The egress chokepoint covers core, not apps.** Do not imply "nothing leaves without passing the
@@ -275,7 +275,7 @@ Kept here on purpose so the next editor does not "helpfully" add them back:
 
 ## Status
 
-`DL-8` stays `todo` in [`DL.md`](../roadmap/atomic/DL.md) / `dag.json`: this file and
+`DL-8` stays `todo` in DL.md / `dag.json`: this file and
 [`listing-submissions-draft.md`](listing-submissions-draft.md) are the *drafts* the `done_when`
 requires, but the atom also requires the gate to be all-green and the owner to actually submit and
 post — none of which an implementation session can complete. Flip the atom only when the submissions

@@ -232,12 +232,12 @@ they are.
 ## How the work is checked
 
 The roadmap is executed as small atoms, each with a written execution log in
-[`docs/roadmap/plans/`](../roadmap/plans). Those logs are unusual in one respect: they record what
+the  plan (internal) Those logs are unusual in one respect: they record what
 the session tried to **disprove**, not only what it built — along with deviations, adjacent problems
 found and deliberately not fixed, and blocks with reasons. Two entries in the
 DISCOVERABILITY-LAUNCH log alone exist mainly to record that an atom was *not* buildable and why.
 As of commit `5283468b`, 54 of the 70 plan files contain such a falsification note
-(`git grep -l -i falsif -- docs/roadmap/plans/ | wc -l`).
+(`git grep -l -i falsif -- the internal plans | wc -l`).
 
 Worth stating plainly: that is a project convention visible in the logs, not a rule written into
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md) or [`AGENTS.md`](../../AGENTS.md). Those files require

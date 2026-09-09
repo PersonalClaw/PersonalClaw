@@ -37,7 +37,7 @@ dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 ## <a name="-pre-10-heads-up"></a>⚠️ Pre-1.0 — breaking changes expected
 
 PersonalClaw is at **v0.1.3** and moving fast toward a deeper architecture (see the
-[roadmap](docs/roadmap/roadmap.md)). It follows a **clean-break** engineering doctrine:
+roadmap). It follows a **clean-break** engineering doctrine:
 when a design is replaced, the old path is removed in the same change rather than carried
 along behind compatibility shims. The upshot for you as an early user:
 
@@ -54,7 +54,7 @@ along behind compatibility shims. The upshot for you as an early user:
   second machine, not your primary driver.
 - **This is expected to last a while.** Migration-backed change discipline is scheduled
   deliberately *late* — it lands once the architecture has stopped moving, near the end of
-  the current [roadmap](docs/roadmap/roadmap.md), because freezing compatibility around a
+  the current roadmap, because freezing compatibility around a
   half-built architecture is worse than breaking it honestly now. Plan for breaking 0.x
   updates as the norm, not the exception, for the foreseeable future.
 
@@ -242,7 +242,7 @@ run on every push to `main`.
 - [Use it from your editor](docs/guides/use-from-your-ide.md) — exposing six read-only MCP tools to your editor's assistant: minting the surface token, the client config, why it is same-machine-only, and the kill switch.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md)
-- [Roadmap](docs/roadmap/roadmap.md) — 52 plans across 6 pillars, with a shared execution protocol.
+- Roadmap — 52 plans across 6 pillars, with a shared execution protocol.
 - [Visual showcase](SHOWCASE.md) — every screen, light and dark.
 
 ## Contributing
@@ -263,8 +263,8 @@ and closed.
 
 The roadmap is maintainer-owned, but not opaque: propose changes in
 [Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)
-rather than by PR'ing `docs/roadmap/`. See
-[the intake path](docs/roadmap/roadmap.md#proposing-roadmap-changes).
+rather than by PR'ing the owner's internal roadmap (not in this repo). See
+the intake path.
 
 ## License
 
