@@ -30,9 +30,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 1 (PL) — observed
+
+**Code evidence:**
+
+- web/scripts/buildUiDocs.mjs exists, and the REAL build run from this checkout emitted 'ui-docs.json: 109 components' — observed build output, not a claim
+- the atom's done_when says 70 components; the live number is 109, so the corpus has grown rather than decayed
+- web/src/ui/uiDocs.drift.test.ts passes (6 tests) via `npm run test:web` — the rail that reds if a primitive ships without a doc object or with mismatched props
+
+**Notes:** My first two invocations of the drift test failed and BOTH were my error, not the code's: the file is at web/src/ui/, not web/src/design/, and it resolves src/ui from cwd, so `vitest --root web` from the repo root looked for <repo>/src/ui. The project's own `npm run test:web` runs it correctly. Recording that so the next reader does not read those failures as a defect.
 
 ## Recorded history
 
