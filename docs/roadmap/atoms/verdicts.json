@@ -19,6 +19,19 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "OU-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "ordered audit pass 1 — observed, not read",
+    "evidence": [
+      "src/personalclaw/onboarding.py:53 STEPS = ('name','essentials','first_success','done'); _ESSENTIALS_SCHEMA carries model/search/speech/channel; the merge is partial at both levels (onboarding.py:145-168) and rejects an out-of-domain step with ValueError",
+      "OBSERVED ON DISK, not inferred: after driving the wizard in a real browser on a fresh PERSONALCLAW_HOME, .validate-home/entity_settings/onboarding.json held exactly {step:'done', essentials:{model,search,speech,channel}, first_success:{knowledge,trigger,loop}} — the atom's claimed shape, written by the running gateway",
+      "the POST write path works end to end: the name typed into step 1 landed in config.json as user_name='Keyur' (config round-trip contract honoured), and the dashboard then greeted 'Good evening, Keyur'",
+      "GET /api/onboarding merges live model readiness with the persisted point (handlers_system.py:638-645), which is what the frontend's single on-mount fetch consumes"
+    ],
+    "ui_validated": "Drove the 5-step wizard in a real browser (playwright-cli, real clicks and typing, no scripted API calls) on TWO fresh homes, ports 10011 and 10012: step gating (Continue disabled until the field has a value), completed steps collapsing into re-editable 'Go back to step N' summaries, a skipped step reading 'Skipped', migration detection finding Claude Code and Codex on this machine with an explicit statement that credentials are excluded, and the skip-to-dashboard escape.",
+    "notes": "Two things I initially read as defects and then disproved by observing the code, recorded so nobody re-chases them. (1) The UI shows 5 steps while STEPS has 4 — DELIBERATE: Onboarding.tsx:146-152 states the import step is intentionally not a stored resume point because item identity is a fingerprint and the importer keeps its own ledger, so a reload there redoes an idempotent step. (2) Typing a name, clicking Continue and reloading LOSES the name (observed: user_name stayed '' and onboarding.json was still absent 12s later, ruling out a debounce; the reload restarted at step 1). Also DELIBERATE: finish() commits identity LAST because user_name IS the `onboarded` route guard (Onboarding.tsx:188-189), so an early write would release the guard mid-flow. The cost is retyping one field and the flow is documented as 'guidance, never a gate'. Neither is an issue; no PR, no issue filed."
+  },
   "OO-7": {
     "verdict": "confirmed",
     "date": "2026-09-08",
