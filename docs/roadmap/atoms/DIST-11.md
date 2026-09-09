@@ -35,9 +35,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `unverifiable`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- dag.json records this atom as `todo`, and the plan's status is in_progress — the recorded state and the code agree here
+
+**Notes:** The audit's second unverifiable, and for the same reason as MRI-5: the deliverable IS a person on a clean machine. Four walkthroughs (wheel install to onboarding to first chat with Node absent; getting-started verbatim; container two-commands to a TLS dashboard surviving compose down/up; per-kind self-update) each require a fresh VM and a human who has never seen the project. No configuration change I can make closes it, which is what separates unverifiable from partial. Worth noting the roadmap prose in the workspace CLAUDE.md summarises Distribution as done — the plan and dag.json are the more honest record, and they say two atoms remain.
 
 ## Recorded history
 

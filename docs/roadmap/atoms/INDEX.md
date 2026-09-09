@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 83 | `done_when` checked against the code and it holds |
-| `partial` | 99 | some `done_when` clauses hold, others do not |
+| `confirmed` | 91 | `done_when` checked against the code and it holds |
+| `partial` | 103 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
-| `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 500 | not yet checked |
+| `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
+| `unaudited` | 487 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -310,19 +310,19 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DIST-1`](DIST-1.md) | `done` | `unaudited` | Packaging correctness: [project.urls], single-sourced __version__, drop zip-safe, verify_wheel contract (C3/C4) |
-| [`DIST-2`](DIST-2.md) | `done` | `unaudited` | Demote openai/anthropic to extras + require_sdk lazy-import errors (core-repo half of T1.4) |
-| [`DIST-3`](DIST-3.md) | `done` | `unaudited` | MANIFEST.in grafts web/dist into the sdist so wheel-from-sdist carries the SPA |
-| [`DIST-4`](DIST-4.md) | `done` | `unaudited` | personalclaw-client packaging metadata + a client CI job |
-| [`DIST-5`](DIST-5.md) | `done` | `unaudited` | Docs restructure: getting-started uv-first install matrix + extras table; CONTRIBUTING framed as contributor path |
-| [`DIST-6`](DIST-6.md) | `done` | `unaudited` | Bootstrap install.sh (uv-first, --container flag) + host at website /install |
-| [`DIST-7`](DIST-7.md) | `done` | `unaudited` | Provider apps declare openai/anthropic pythonDependencies (apps-repo half of T1.4) |
-| [`DIST-8`](DIST-8.md) | `done` | `unaudited` | Containers: install-kind env in both Dockerfiles + container guide + README compose snippet & install matrix |
-| [`DIST-9`](DIST-9.md) | `done` | `unaudited` | Install-kind-aware self-update: detect_install_kind, tag-driven check, per-kind apply, per-kind Updates panel (S4, clean break) |
-| [`DIST-10`](DIST-10.md) | `done` | `unaudited` | First real PyPI publish of core + client; verify uv tool / pipx on a clean machine (T2.1, owner) |
-| [`DIST-11`](DIST-11.md) | `todo` | `unaudited` | Owner clean-machine walkthroughs V1–V4 (wheel install, getting-started, container, per-kind self-update) |
-| [`DIST-12`](DIST-12.md) | `todo` | `unaudited` | Convenience channels: Homebrew tap + Nix flake (S5, post-launch, out of scope for this loop) |
-| [`DIST-13`](DIST-13.md) | `done` | `unaudited` | Route `personalclaw update` through the per-kind updater; lift it out of the dashboard layer into core `self_update` |
+| [`DIST-1`](DIST-1.md) | `done` | `confirmed` | Packaging correctness: [project.urls], single-sourced __version__, drop zip-safe, verify_wheel contract (C3/C4) |
+| [`DIST-2`](DIST-2.md) | `done` | `confirmed` | Demote openai/anthropic to extras + require_sdk lazy-import errors (core-repo half of T1.4) |
+| [`DIST-3`](DIST-3.md) | `done` | `confirmed` | MANIFEST.in grafts web/dist into the sdist so wheel-from-sdist carries the SPA |
+| [`DIST-4`](DIST-4.md) | `done` | `partial` | personalclaw-client packaging metadata + a client CI job |
+| [`DIST-5`](DIST-5.md) | `done` | `partial` | Docs restructure: getting-started uv-first install matrix + extras table; CONTRIBUTING framed as contributor path |
+| [`DIST-6`](DIST-6.md) | `done` | `partial` | Bootstrap install.sh (uv-first, --container flag) + host at website /install |
+| [`DIST-7`](DIST-7.md) | `done` | `partial` | Provider apps declare openai/anthropic pythonDependencies (apps-repo half of T1.4) |
+| [`DIST-8`](DIST-8.md) | `done` | `confirmed` | Containers: install-kind env in both Dockerfiles + container guide + README compose snippet & install matrix |
+| [`DIST-9`](DIST-9.md) | `done` | `confirmed` | Install-kind-aware self-update: detect_install_kind, tag-driven check, per-kind apply, per-kind Updates panel (S4, clean break) |
+| [`DIST-10`](DIST-10.md) | `done` | `confirmed` | First real PyPI publish of core + client; verify uv tool / pipx on a clean machine (T2.1, owner) |
+| [`DIST-11`](DIST-11.md) | `todo` | `unverifiable` | Owner clean-machine walkthroughs V1–V4 (wheel install, getting-started, container, per-kind self-update) |
+| [`DIST-12`](DIST-12.md) | `todo` | `confirmed` | Convenience channels: Homebrew tap + Nix flake (S5, post-launch, out of scope for this loop) |
+| [`DIST-13`](DIST-13.md) | `done` | `confirmed` | Route `personalclaw update` through the per-kind updater; lift it out of the dashboard layer into core `self_update` |
 
 ### `DL` — DISCOVERABILITY-LAUNCH (8/11 done)
 

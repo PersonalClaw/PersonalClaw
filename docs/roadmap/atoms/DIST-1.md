@@ -37,9 +37,23 @@ This atom sits in a cross-plan cycle, so no execution order can satisfy it as de
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MEASURED end to end: `python scripts/verify_wheel.py --build` printed PASS — the wheel carries personalclaw/static/dist/index.html, installs into a fresh Node-free venv from the wheel alone, boots `personalclaw gateway --test-mode`, answers /api/healthz 200 {'status':'ok','version':'0.1.3'} and / 200 HTML from the packaged assets
+- scripts/verify_wheel.py:1-16 states all five assertions and why they exist: they are 'the guarantee every install channel (pip/uv/pipx/container) rides on'
+- tests/test_version_consistency.py + test_sdist_bundles_spa.py + test_self_update.py = 40 passed
+
+**Notes:** The verifier is a real end-to-end proof rather than a namelist check — it boots the thing. That is also why the gap I filed matters: it had the gateway's own error output in hand and did not assert on it (#2758).
+
+**Follow-ups filed:**
+
+- issue #2758 (verify_wheel passes on a wheel whose bundled apps fail to load)
 
 ## Recorded history
 

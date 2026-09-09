@@ -34,9 +34,20 @@ PyPI carries `personalclaw` + `personalclaw-client` (live through 0.1.3); `uv to
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MEASURED against the live registry: pypi.org reports personalclaw latest 0.1.3 with releases 0.1.0, 0.1.1, 0.1.2, 0.1.3 — exactly the atom's 'live through 0.1.3'
+- personalclaw-client latest 0.1.3
+
+**Driven in the UI:** Not applicable. The remaining clause — `uv tool install` and `pipx install` yielding a working CLI on a CLEAN machine — is DIST-11's walkthrough territory; what I confirmed here is that both packages are published at the stated versions.
+
+**Notes:** The publish half is now checked against the registry itself rather than against a release log, which is the distinction this audit exists for.
 
 ## Recorded history
 

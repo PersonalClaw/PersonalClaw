@@ -1974,5 +1974,148 @@
     ],
     "ui_validated": "Not driven: the app is not installed in this validation home, and the atom's clause is that each owner trigger AUTONOMOUSLY FIRES a workflow, automation, prompt and action — the prompt kind needs a bound model, and the rest need the app installed and a tick to elapse.",
     "notes": "Partial for the firing, not for the packaging. Everything checkable without a running install checks out, including the two things most likely to be fudged: the permission set is genuinely minimal, and the alice fixtures exist rather than being described. Worth noting the app clone here is named PersonalClawApps, so the core rail that would cover an app bundle (test_acp_bundles.py) skips in this tree with 'workspace apps/ dir not present' — the same environmental blind spot recorded for BA-8."
+  },
+  "DIST-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MEASURED end to end: `python scripts/verify_wheel.py --build` printed PASS — the wheel carries personalclaw/static/dist/index.html, installs into a fresh Node-free venv from the wheel alone, boots `personalclaw gateway --test-mode`, answers /api/healthz 200 {'status':'ok','version':'0.1.3'} and / 200 HTML from the packaged assets",
+      "scripts/verify_wheel.py:1-16 states all five assertions and why they exist: they are 'the guarantee every install channel (pip/uv/pipx/container) rides on'",
+      "tests/test_version_consistency.py + test_sdist_bundles_spa.py + test_self_update.py = 40 passed"
+    ],
+    "notes": "The verifier is a real end-to-end proof rather than a namelist check — it boots the thing. That is also why the gap I filed matters: it had the gateway's own error output in hand and did not assert on it (#2758).",
+    "follow_ups": [
+      "issue #2758 (verify_wheel passes on a wheel whose bundled apps fail to load)"
+    ]
+  },
+  "DIST-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MEASURED from the built wheel's METADATA: openai and anthropic appear ONLY as extras — 'Provides-Extra: openai' / \"Requires-Dist: openai>=1.0; extra == 'openai'\" and the same pair for anthropic. Neither is an unconditional dependency",
+      "src/personalclaw/_sdk_deps.py:28 require_sdk(module, extra, *, feature) is the lazy-import seam the atom names"
+    ],
+    "notes": "Read off the artifact rather than off pyproject, which is the version that can actually be wrong — a manifest can declare an extra correctly and still leak the dependency into the base set through a transitive requirement."
+  },
+  "DIST-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MANIFEST.in:9 'graft web/dist', with the reasoning above it: setup.py's BuildWithWeb copies web/dist into personalclaw/static/dist 'but only if web/dist exists in the build tree. Without this graft the sdist omits web/dist, so the wheel-from-sdist is SPA-less'",
+      "the verify_wheel PASS above IS the from-sdist proof, since `python -m build` builds the wheel from the sdist it just made",
+      "tests/test_sdist_bundles_spa.py green"
+    ],
+    "notes": "The comment also records that web/dist is a gitignored build artifact, so the graft is a bridge between a gitignored input and a packaged output — exactly the seam where a release goes SPA-less silently. Same atom pair as #2758: the graft works, and the command around it can still pick up stale files.",
+    "follow_ups": [
+      "issue #2758 (verify_wheel passes on a wheel whose bundled apps fail to load)"
+    ]
+  },
+  "DIST-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "personalclaw-client 0.1.3 is LIVE on PyPI (read from the registry's own JSON API)"
+    ],
+    "ui_validated": "Not applicable — a client wheel has no UI.",
+    "notes": "Partial deliberately. The publish half is confirmed against the live index, but the atom's other clauses — the client wheel's METADATA being correct and 'the new client CI job builds the wheel and runs its 18-test suite green in a fresh venv' — are about a CI job and a sibling package I did not build or run here. Nothing suggests they are wrong; I simply did not observe them."
+  },
+  "DIST-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "docs/guides/getting-started.md and docs/guides/containers.md both exist"
+    ],
+    "notes": "The atom's clause is a STRANGER test — 'a stranger following docs/guides/getting-started.md never runs Node or git'. That is stranger-validation work, the same category as MRI-4's guide, and it cannot be settled by reading the file I would be grading. The install matrix and extras table are checkable and present; the claim about what a first-time reader ends up running is not."
+  },
+  "DIST-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "deploy/website/install.sh exists and `sh -n deploy/website/install.sh` parses CLEAN (measured)",
+      "it mentions the container path 11 times, so the --container branch is real rather than a stub",
+      "deploy/website/install.sh.sha256 ships BESIDE the script — a published hash for a curl-to-shell installer, which is the one integrity control that path can offer"
+    ],
+    "notes": "Partial for the clauses that need machines I do not have: 'sh install.sh on bare ubuntu+macos reaches a working CLI', idempotent re-run upgrades, and served as text/plain at the website URL. The syntax check and the hash file are the halves observable from here. The published .sha256 is worth calling out — ARCC's supply-chain objective (an artifact from a public source carries no integrity guarantee unless pinned or verified) has no private-registry analogue for a self-hosted OSS installer, and a published hash is the honest substitute."
+  },
+  "DIST-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "the apps repo is present at ../PersonalClawApps with the provider bundles"
+    ],
+    "notes": "Partial: the clause is a census over 12 provider apps declaring pythonDependencies and '38 manifests parse + round-trip stable', which is an apps-repo count I did not run. Recorded as unobserved rather than assumed. Note also that the core rail which would cover app bundles (tests/test_acp_bundles.py) SKIPS in this tree with 'workspace apps/ dir not present (standalone clone)', because this workspace's clone is named PersonalClawApps — the same environmental blind spot recorded for BA-8 and TSE-5. Three atoms across three plans now rest on a rail that does not run here."
+  },
+  "DIST-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MEASURED: PERSONALCLAW_INSTALL_KIND=container is baked into BOTH deploy/docker/Dockerfile.backend and deploy/docker/Dockerfile.web",
+      "docs/guides/containers.md exists"
+    ],
+    "notes": "The install-kind bake is what makes DIST-9's detection honest in a container, where neither a git root nor a pip marker would classify correctly — so this atom is the precondition for the next one rather than a separate nicety."
+  },
+  "DIST-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "self_update.py:123 detect_install_kind() resolves the env override first, then a git root, then pip — the container and desktop kinds arrive through PERSONALCLAW_INSTALL_KIND, which DIST-8 bakes in",
+      "cli_server.py:436-458 _update_git: with update_dev_mode OFF (the default) 'the checkout rides release TAGS like every other install kind, so being on the latest tag is \"up to date\" even when main has newer commits', and it names the setting that changes that",
+      "self_update.py:320-330 upgrade_spec PINS the wheel upgrade to 'personalclaw==<latest>' 'so the upgrade lands on the same release the check reported', falling back to unpinned only when the tag is unknown (offline)",
+      ":133 container_instructions() is 'Pure and network-free so the CLI's container branch needs neither a release probe nor a source tree to print an honest answer'",
+      ":208-237 the release check is ETag-conditional against a cache, so a check costs one 304 when nothing changed",
+      "40 tests pass including the C2 wire-shape conformance suite"
+    ],
+    "notes": "ARCC's transferable supply-chain objective is that an artifact pulled from a public source has no integrity guarantee unless it is pinned or verified. This PINS (an exact ==version, matching the release the check reported) and delegates integrity to pip over TLS; it does not verify a signature or a hash. For a self-hosted OSS project publishing to PyPI there is no private registry to mirror into — ARCC's actual mechanism has no analogue — so I am recording the comparison rather than filing a gap. Adding sigstore verification would be hardening beyond anything this plan claims."
+  },
+  "DIST-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MEASURED against the live registry: pypi.org reports personalclaw latest 0.1.3 with releases 0.1.0, 0.1.1, 0.1.2, 0.1.3 — exactly the atom's 'live through 0.1.3'",
+      "personalclaw-client latest 0.1.3"
+    ],
+    "ui_validated": "Not applicable. The remaining clause — `uv tool install` and `pipx install` yielding a working CLI on a CLEAN machine — is DIST-11's walkthrough territory; what I confirmed here is that both packages are published at the stated versions.",
+    "notes": "The publish half is now checked against the registry itself rather than against a release log, which is the distinction this audit exists for."
+  },
+  "DIST-11": {
+    "verdict": "unverifiable",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "dag.json records this atom as `todo`, and the plan's status is in_progress — the recorded state and the code agree here"
+    ],
+    "notes": "The audit's second unverifiable, and for the same reason as MRI-5: the deliverable IS a person on a clean machine. Four walkthroughs (wheel install to onboarding to first chat with Node absent; getting-started verbatim; container two-commands to a TLS dashboard surviving compose down/up; per-kind self-update) each require a fresh VM and a human who has never seen the project. No configuration change I can make closes it, which is what separates unverifiable from partial. Worth noting the roadmap prose in the workspace CLAUDE.md summarises Distribution as done — the plan and dag.json are the more honest record, and they say two atoms remain."
+  },
+  "DIST-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "dag.json records `todo`, and the atom's own title says '(S5, post-launch, out of scope for this loop)'",
+      "no Homebrew tap or Nix flake exists in the repo, which MATCHES that status"
+    ],
+    "notes": "Confirmed as a correctly-recorded TODO rather than as delivered work — the code state and the recorded state agree, which is the only thing an audit can confirm about an atom nobody has started. Listing it as done anywhere would have been the contradiction."
+  },
+  "DIST-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 19 (DIST) — wheel built and booted on this machine",
+    "evidence": [
+      "MEASURED deletion: dashboard/handlers/ contains updates.py and NO updates_kind.py, and the only surviving mentions of that filename are historical prose in self_update.py's docstring, a line in the generated egg-info SOURCES.txt (a build artifact, not source), and a sentence in the test explaining where the module moved from. No importer, no re-export shim",
+      "cli_server.py:436+ routes `personalclaw update`'s git branch through self_update.git_root / resolve_default_branch / git_fetch, so the CLI consumes the core primitives rather than carrying its own",
+      "self_update.py:364-380 resolve_default_branch documents a four-step probe ordered 'cheapest and most specific first' with offline-safety noted per step",
+      "40 tests pass"
+    ],
+    "notes": "This atom fixed a real bug and says so: the pre-DIST-13 fallback branch name was 'hardcoded to a branch name this repository has never carried, so a detached-HEAD update fetched an unresolvable ref and failed confusingly'. Its first probe rule is the one that protects a contributor — 'Updating means advance the branch I am on; a contributor on a feature branch must not be reset onto another one' — which matters because the git path ends in a reset --hard."
   }
 }

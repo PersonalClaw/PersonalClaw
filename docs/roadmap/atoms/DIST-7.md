@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- the apps repo is present at ../PersonalClawApps with the provider bundles
+
+**Notes:** Partial: the clause is a census over 12 provider apps declaring pythonDependencies and '38 manifests parse + round-trip stable', which is an apps-repo count I did not run. Recorded as unobserved rather than assumed. Note also that the core rail which would cover app bundles (tests/test_acp_bundles.py) SKIPS in this tree with 'workspace apps/ dir not present (standalone clone)', because this workspace's clone is named PersonalClawApps — the same environmental blind spot recorded for BA-8 and TSE-5. Three atoms across three plans now rest on a rail that does not run here.
 
 ## Recorded history
 

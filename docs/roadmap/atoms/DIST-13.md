@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MEASURED deletion: dashboard/handlers/ contains updates.py and NO updates_kind.py, and the only surviving mentions of that filename are historical prose in self_update.py's docstring, a line in the generated egg-info SOURCES.txt (a build artifact, not source), and a sentence in the test explaining where the module moved from. No importer, no re-export shim
+- cli_server.py:436+ routes `personalclaw update`'s git branch through self_update.git_root / resolve_default_branch / git_fetch, so the CLI consumes the core primitives rather than carrying its own
+- self_update.py:364-380 resolve_default_branch documents a four-step probe ordered 'cheapest and most specific first' with offline-safety noted per step
+- 40 tests pass
+
+**Notes:** This atom fixed a real bug and says so: the pre-DIST-13 fallback branch name was 'hardcoded to a branch name this repository has never carried, so a detached-HEAD update fetched an unresolvable ref and failed confusingly'. Its first probe rule is the one that protects a contributor — 'Updating means advance the branch I am on; a contributor on a feature branch must not be reset onto another one' — which matters because the git path ends in a reset --hard.
 
 ## Recorded history
 

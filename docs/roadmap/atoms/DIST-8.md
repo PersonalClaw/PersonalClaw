@@ -31,9 +31,18 @@ PERSONALCLAW_INSTALL_KIND=container baked into Dockerfile.backend + Dockerfile.w
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MEASURED: PERSONALCLAW_INSTALL_KIND=container is baked into BOTH deploy/docker/Dockerfile.backend and deploy/docker/Dockerfile.web
+- docs/guides/containers.md exists
+
+**Notes:** The install-kind bake is what makes DIST-9's detection honest in a container, where neither a git root nor a pip marker would classify correctly — so this atom is the precondition for the next one rather than a separate nicety.
 
 ## Recorded history
 

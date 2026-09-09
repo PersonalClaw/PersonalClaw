@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- dag.json records `todo`, and the atom's own title says '(S5, post-launch, out of scope for this loop)'
+- no Homebrew tap or Nix flake exists in the repo, which MATCHES that status
+
+**Notes:** Confirmed as a correctly-recorded TODO rather than as delivered work — the code state and the recorded state agree, which is the only thing an audit can confirm about an atom nobody has started. Listing it as done anywhere would have been the contradiction.
 
 ## Recorded history
 

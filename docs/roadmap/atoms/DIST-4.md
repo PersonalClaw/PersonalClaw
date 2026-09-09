@@ -31,9 +31,19 @@ client wheel METADATA correct (name/urls/classifiers/markdown README); `pip inst
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- personalclaw-client 0.1.3 is LIVE on PyPI (read from the registry's own JSON API)
+
+**Driven in the UI:** Not applicable — a client wheel has no UI.
+
+**Notes:** Partial deliberately. The publish half is confirmed against the live index, but the atom's other clauses — the client wheel's METADATA being correct and 'the new client CI job builds the wheel and runs its 18-test suite green in a fresh venv' — are about a CI job and a sibling package I did not build or run here. Nothing suggests they are wrong; I simply did not observe them.
 
 ## Recorded history
 

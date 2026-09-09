@@ -31,9 +31,22 @@ detect_install_kind() classifies git/pip/container/desktop; C2 wire-shape confor
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- self_update.py:123 detect_install_kind() resolves the env override first, then a git root, then pip — the container and desktop kinds arrive through PERSONALCLAW_INSTALL_KIND, which DIST-8 bakes in
+- cli_server.py:436-458 _update_git: with update_dev_mode OFF (the default) 'the checkout rides release TAGS like every other install kind, so being on the latest tag is "up to date" even when main has newer commits', and it names the setting that changes that
+- self_update.py:320-330 upgrade_spec PINS the wheel upgrade to 'personalclaw==<latest>' 'so the upgrade lands on the same release the check reported', falling back to unpinned only when the tag is unknown (offline)
+- :133 container_instructions() is 'Pure and network-free so the CLI's container branch needs neither a release probe nor a source tree to print an honest answer'
+- :208-237 the release check is ETag-conditional against a cache, so a check costs one 304 when nothing changed
+- 40 tests pass including the C2 wire-shape conformance suite
+
+**Notes:** ARCC's transferable supply-chain objective is that an artifact pulled from a public source has no integrity guarantee unless it is pinned or verified. This PINS (an exact ==version, matching the release the check reported) and delegates integrity to pip over TLS; it does not verify a signature or a hash. For a self-hosted OSS project publishing to PyPI there is no private registry to mirror into — ARCC's actual mechanism has no analogue — so I am recording the comparison rather than filing a gap. Adding sigstore verification would be hardening beyond anything this plan claims.
 
 ## Recorded history
 

@@ -31,9 +31,17 @@ a stranger following docs/guides/getting-started.md never runs Node or git; §A 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- docs/guides/getting-started.md and docs/guides/containers.md both exist
+
+**Notes:** The atom's clause is a STRANGER test — 'a stranger following docs/guides/getting-started.md never runs Node or git'. That is stranger-validation work, the same category as MRI-4's guide, and it cannot be settled by reading the file I would be grading. The install matrix and extras table are checkable and present; the claim about what a first-time reader ends up running is not.
 
 ## Recorded history
 

@@ -37,9 +37,23 @@ This atom sits in a cross-plan cycle, so no execution order can satisfy it as de
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MANIFEST.in:9 'graft web/dist', with the reasoning above it: setup.py's BuildWithWeb copies web/dist into personalclaw/static/dist 'but only if web/dist exists in the build tree. Without this graft the sdist omits web/dist, so the wheel-from-sdist is SPA-less'
+- the verify_wheel PASS above IS the from-sdist proof, since `python -m build` builds the wheel from the sdist it just made
+- tests/test_sdist_bundles_spa.py green
+
+**Notes:** The comment also records that web/dist is a gitignored build artifact, so the graft is a bridge between a gitignored input and a packaged output — exactly the seam where a release goes SPA-less silently. Same atom pair as #2758: the graft works, and the command around it can still pick up stale files.
+
+**Follow-ups filed:**
+
+- issue #2758 (verify_wheel passes on a wheel whose bundled apps fail to load)
 
 ## Recorded history
 

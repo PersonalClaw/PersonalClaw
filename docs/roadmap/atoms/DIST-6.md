@@ -31,9 +31,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- deploy/website/install.sh exists and `sh -n deploy/website/install.sh` parses CLEAN (measured)
+- it mentions the container path 11 times, so the --container branch is real rather than a stub
+- deploy/website/install.sh.sha256 ships BESIDE the script — a published hash for a curl-to-shell installer, which is the one integrity control that path can offer
+
+**Notes:** Partial for the clauses that need machines I do not have: 'sh install.sh on bare ubuntu+macos reaches a working CLI', idempotent re-run upgrades, and served as text/plain at the website URL. The syntax check and the hash file are the halves observable from here. The published .sha256 is worth calling out — ARCC's supply-chain objective (an artifact from a public source carries no integrity guarantee unless pinned or verified) has no private-registry analogue for a self-hosted OSS installer, and a published hash is the honest substitute.
 
 ## Recorded history
 

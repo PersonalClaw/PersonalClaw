@@ -31,9 +31,18 @@ clean install without extras: wheel METADATA carries openai/anthropic ONLY as `e
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 19 (DIST) — wheel built and booted on this machine
+
+**Code evidence:**
+
+- MEASURED from the built wheel's METADATA: openai and anthropic appear ONLY as extras — 'Provides-Extra: openai' / "Requires-Dist: openai>=1.0; extra == 'openai'" and the same pair for anthropic. Neither is an unconditional dependency
+- src/personalclaw/_sdk_deps.py:28 require_sdk(module, extra, *, feature) is the lazy-import seam the atom names
+
+**Notes:** Read off the artifact rather than off pyproject, which is the version that can actually be wrong — a manifest can declare an extra correctly and still leak the dependency into the base set through a transitive requirement.
 
 ## Recorded history
 
