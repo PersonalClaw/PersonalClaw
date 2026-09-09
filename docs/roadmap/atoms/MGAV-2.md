@@ -30,9 +30,17 @@ Third retrieval arm resolves query entities via the same matcher, admits+boosts 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- the MGAV suite covering recall passes as part of the 246-passed run
+
+**Notes:** PARTIAL: a graph recall arm with backlink boost and evidence tags only demonstrates itself over a populated store answering a real query. This home has zero facts and no model provider, so the arm cannot be exercised. The Inspect tab DOES expose the right instrument for it — 'Preview the memory context that would be injected into a prompt for a given query' with a query box and Preview button — so a future cycle with data can drive this exactly.
 
 ## Recorded history
 

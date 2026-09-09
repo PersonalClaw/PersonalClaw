@@ -29,9 +29,17 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- covered by the passing MGAV modules in the 246-passed run
+
+**Notes:** PARTIAL: bounded always-injected registers are observable through the Inspect tab's context preview, but only once there is something to inject. Zero facts here.
 
 ## Recorded history
 

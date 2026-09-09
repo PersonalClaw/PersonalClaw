@@ -31,9 +31,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_vault.py passes (part of the 246-passed run)
+
+**Notes:** PARTIAL: the alias pre-pass sits in the knowledge INGESTION entry path, so exercising it means ingesting a document. Not done this cycle.
 
 ## Recorded history
 

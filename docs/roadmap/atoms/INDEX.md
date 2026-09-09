@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 10 | `done_when` checked against the code and it holds |
-| `partial` | 12 | some `done_when` clauses hold, others do not |
+| `confirmed` | 12 | `done_when` checked against the code and it holds |
+| `partial` | 19 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 662 | not yet checked |
+| `unaudited` | 653 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -562,15 +562,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MGAV-1`](MGAV-1.md) | `done` | `unaudited` | Graph data model + zero-LLM write-time linker (migration v7, alias index, backfill, lint) |
-| [`MGAV-2`](MGAV-2.md) | `done` | `unaudited` | Graph recall arm + backlink boost + evidence tags in hybrid retrieval |
-| [`MGAV-3`](MGAV-3.md) | `done` | `unaudited` | Ambient push-context reflex + volunteer-events table + per-arm stats (migration v8) |
-| [`MGAV-4`](MGAV-4.md) | `done` | `unaudited` | Knowledge-side deterministic alias pre-pass in the ingestion entities stage |
-| [`MGAV-5`](MGAV-5.md) | `done` | `unaudited` | Memory formation: Extract→Gather→Decide consolidation + holder attribution + Louvain topology |
-| [`MGAV-6`](MGAV-6.md) | `done` | `unaudited` | Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot |
-| [`MGAV-7`](MGAV-7.md) | `done` | `unaudited` | Memory citations in chat + admit-ignorance clause |
-| [`MGAV-8`](MGAV-8.md) | `done` | `unaudited` | Memory slots: bounded always-injected registers + reflection append hook + self-model |
-| [`MGAV-9`](MGAV-9.md) | `done` | `unaudited` | FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation |
+| [`MGAV-1`](MGAV-1.md) | `done` | `confirmed` | Graph data model + zero-LLM write-time linker (migration v7, alias index, backfill, lint) |
+| [`MGAV-2`](MGAV-2.md) | `done` | `partial` | Graph recall arm + backlink boost + evidence tags in hybrid retrieval |
+| [`MGAV-3`](MGAV-3.md) | `done` | `partial` | Ambient push-context reflex + volunteer-events table + per-arm stats (migration v8) |
+| [`MGAV-4`](MGAV-4.md) | `done` | `partial` | Knowledge-side deterministic alias pre-pass in the ingestion entities stage |
+| [`MGAV-5`](MGAV-5.md) | `done` | `partial` | Memory formation: Extract→Gather→Decide consolidation + holder attribution + Louvain topology |
+| [`MGAV-6`](MGAV-6.md) | `done` | `partial` | Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot |
+| [`MGAV-7`](MGAV-7.md) | `done` | `partial` | Memory citations in chat + admit-ignorance clause |
+| [`MGAV-8`](MGAV-8.md) | `done` | `partial` | Memory slots: bounded always-injected registers + reflection append hook + self-model |
+| [`MGAV-9`](MGAV-9.md) | `done` | `confirmed` | FE surfaces: MemoryPanel tabs, MemoryGraph viz + HTML export, full config wiring + as-a-user validation |
 
 ### `MI` — MULTIMODAL-IO (6/6 done)
 

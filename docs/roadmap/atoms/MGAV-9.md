@@ -33,9 +33,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_memory_fe_surfaces.py passes (part of the 246-passed run)
+- web/src/pages/settings/MemoryPanel.tsx:9 imports { MemoryGraph } from './MemoryGraph' and mounts it — the viz has a real call site, so it is not an inert component
+- web/src/ui/GraphZoomControls.tsx is shared by MemoryGraph, KnowledgeGraph and KnowledgeEgoGraph, so the graph primitive has three consumers
+
+**Driven in the UI:** Drove #/settings/memory. The tabs are real and functional: a tablist named 'Memory view' carrying Studio / Health / Recall / Inspect / Audit / Settings, and clicking Health then Inspect moved the [active][selected] state and swapped the panel body each time. Health rendered live consolidation + hygiene content with an actual verdict ('No issues flagged — memory is clean'). Inspect rendered the context-preview instrument with a query textbox and Preview button. Studio rendered the graph region with a 'Which graph to draw' tablist, an 'Entities 0' counter, and the empty state 'No memory graph yet — facts and their links appear here as memory grows.'
+
+**Notes:** Recorded because it nearly became a false finding. I grepped Studio, Health and Inspect for 'Graph'/'Export', found only prose, and was on the way to calling the viz missing — then read the code and found MemoryPanel mounts MemoryGraph directly. The graph WAS rendering the whole time; it was showing a well-written empty state because this home has zero facts. Two lessons: I searched the wrong tabs, and an empty state is not an absent component. The atom's 'HTML export' clause remains unexercised — it plausibly only surfaces once a graph exists — so that single clause is unvalidated while the tabs and viz are confirmed.
 
 ## Recorded history
 

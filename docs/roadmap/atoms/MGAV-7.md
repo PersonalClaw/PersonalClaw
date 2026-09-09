@@ -30,9 +30,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- covered by the passing MGAV modules in the 246-passed run
+
+**Notes:** PARTIAL: memory citations in chat and the admit-ignorance clause are both MODEL behaviours — they appear in an assistant turn. No model provider is configured, the same blocker that held RUA-3, INU-4 and INU-6. This is now the most frequent single cause of a partial verdict in this audit.
 
 ## Recorded history
 

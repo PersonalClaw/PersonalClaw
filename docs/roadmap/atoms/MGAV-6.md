@@ -31,9 +31,17 @@ memory.vault_mode off|mirror|two_way (back-reads vault_enabled); pages carry fro
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 4 (MGAV) — observed
+
+**Code evidence:**
+
+- tests/test_knowledge_vault.py passes (part of the 246-passed run)
+
+**Notes:** PARTIAL: a two-way readable vault needs its mode configured and a directory to project wikilinks into. Not configured in the validation home, so sync and projection are unexercised.
 
 ## Recorded history
 
