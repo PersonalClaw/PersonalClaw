@@ -33,9 +33,20 @@ The RunController tick consumes the stored steering/interrupt queue atomically a
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- MEASURED against the plan header's claim: controller.py:1176 calls _emit_judge_divergence, defined at :3289, which 'Reads this node's last judge_verdict from the ledger; emits judge_divergence only when' the readings disagree — a live emission on the tick path
+- controller.py:331-336 documents the steering queue and the tick's injection dict, so steering is consumed rather than merely queued
+- ALL FOUR of this plan's modules have live non-self importers in src/: judge_calibration 8, loop_aliases 5, loop_middleware 5, loop_run_map 3
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** 🔁 A DOCUMENTED-VS-ACTUAL DISCREPANCY, in the OPPOSITE direction to this campaign's usual one. The plan header still claims these modules have ZERO production importers; counting them says otherwise, and the workspace roadmap already flagged the header as wrong. Every prior instance of record-versus-code drift I have found overstated what shipped (BA-5's log claimed a frontend that does not exist). This one UNDERSTATES it. Same failure — the record disagreeing with the code — and worth having found in both directions, because an audit that only looks for over-claiming would have read this header as a finding rather than as stale prose.
 
 ## Recorded history
 

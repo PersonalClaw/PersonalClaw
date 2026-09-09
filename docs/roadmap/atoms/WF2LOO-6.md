@@ -31,9 +31,16 @@ dispatch_gate runs _judge_pretier_screen before the model call (opt-in via an ev
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- tests/test_workflows_judge_pretier.py green; this atom is the plan's own instance of the anti-inertness work — a control the dispatcher never read is a control that does not exist.
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
 
 ## Recorded history
 

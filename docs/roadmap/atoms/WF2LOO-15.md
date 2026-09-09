@@ -31,9 +31,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- tests/test_workflows_judge_actors_claims.py carries exactly the two rails the atom promises: test_the_enforced_invariant_still_has_a_live_caller (anti-inertness) and test_the_once_authored_invariant_is_wired_and_the_docstring_agrees (ANTI-DRIFT — the docstring is asserted against the code)
+- a third test checks the module parses and the symbols exist, which is the floor that stops the other two passing vacuously
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** Asserting that a DOCSTRING AGREES WITH THE CODE is the most transferable idea in this plan after WF2LOO-16's measurement. Every stale claim this audit has found — the plan header two atoms up, BA-5's execution log, DHT-3's atom text — is the same failure that test prevents inside one module.
 
 ## Recorded history
 

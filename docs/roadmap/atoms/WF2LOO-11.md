@@ -32,9 +32,16 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- tests/test_workflows_judge_isolation.py green — isolation is enforced rather than requested.
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
 
 ## Recorded history
 

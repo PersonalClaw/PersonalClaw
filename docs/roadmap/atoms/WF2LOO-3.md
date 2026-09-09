@@ -30,9 +30,19 @@ Five bundled templates ship with runtime_hints + judge contract wired: goal-purs
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- the bundled loop templates exist and are linted by tests/test_workflows_loop_templates.py
+- two of its skips are PARAMETRISED with per-template reasons ('diagnose-run has no work loop', 'code-project has no work loop') rather than a blanket skip — a template-shaped guard, not a hidden hole
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Driven in the UI:** The loops surface renders five kind tabs — General, Goal, Code, Research, Design — each with its own one-line explanation ('Research + action toward a goal — verifiable, open-ended, or monitoring'), so the authored templates reach a user as choices rather than as files.
 
 ## Recorded history
 

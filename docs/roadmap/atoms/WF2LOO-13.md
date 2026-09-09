@@ -32,9 +32,18 @@ GateKind.JUDGE asks for the contract JSON instead of one bare word; validate_ver
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- the contract is wired into the judge path and tests/test_workflows_judge_contract.py covers the shape
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** Partial: 'wire into the LIVE judge path' is exercised by a real judge call, which is a model call. The blast radius the atom cites was measured by WF2LOO-12, and WF2LOO-16 then measured the loop-cycle population directly — so the risky part of this wiring is the part with the most measurement behind it.
 
 ## Recorded history
 

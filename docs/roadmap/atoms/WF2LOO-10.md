@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- the code-project template ships; its work-loop absence is explicitly parametrised in the template lint ('code-project has no work loop')
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Driven in the UI:** The Code tab renders on #/loops.
+
+**Notes:** Partial for the same reason as its siblings. Worth recording that the template lint SKIPS this template's work-loop case by name rather than passing it vacuously — the skip is the honest answer for a template whose shape has no work loop.
 
 ## Recorded history
 

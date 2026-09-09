@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- controller.py:3754 states the rule — 'the loop declares progress_field → that field decides, wherever inside the' structure it sits — and :3765 reads it off the node config
+- :5168 states the rule for a loop that declares none, explicitly marked 'Unchanged', which is how a behaviour change stays scoped to the declaring templates
+- :5178 the readings are a CLOSED SET OF THREE rather than an open interpretation
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** The 'Unchanged' note at :5168 is the detail that makes this safe: a loop that declares no progress_field behaves exactly as before, so the atom adds a capability without redefining the default. A closed set of three readings is the same anti-open-vocabulary discipline WF2UNI-13's interrupt enum applied.
 
 ## Recorded history
 

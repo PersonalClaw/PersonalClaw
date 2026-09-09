@@ -31,9 +31,22 @@
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- MEASURED deletion: CycleVerdict survives only in prose explaining its removal (judge_contract.py:85/94/407 and loop/judge.py:20). No code path defines or returns it
+- judge_contract.py:85-91 states WHY the merge went both ways: 'each side was missing what the other had' — marginal_value and regressed are 'the product's ONLY diminishing-returns signals' and the record could not express them, while the loop could not express proof, the ratchet or the actor matrix
+- THE POPULATION WAS MEASURED BEFORE THE DECISION: ':94 the answer was **zero** — every shape CycleVerdict.to_dict() could persist failed validate_verdict at the FIRST step with unknown verdict None, the proof check never even being reached, and there were 0 persisted loop verdict files to grandfather'
+- the root cause is placed UPSTREAM of the record: the bundled task-cycle_judge prompt asks for six fields and 'names no verdict, no proof, no evidence_refs and no scores'
+- loop/judge.py:26 evidence_refs_from_observation is documented as 'proof the SUPERVISOR gathered, not a claim the worker made', called at :296 and :361
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** 🎯 THE BEST-REASONED ATOM I HAVE READ IN 22 CYCLES, and it is a deliberate NON-enforcement decision — exactly the kind an audit reading titles alone would misfile as a gap. Because the prompt never asked for the fields the preconditions check, 'Enforcing preconditions against a prompt that never stated them is the trap judge_instruction exists to prevent', so the supervisor still routes on `done` rather than `passed` and no loop cycle is failed by this module. What changed is that the loop now CITES evidence derived from what the supervisor itself observed. The closing sentence is the principle the whole campaign has been circling: 'That is the precondition becoming SATISFIABLE before it becomes binding.' Had I checked only whether validate_verdict gates loop cycles, I would have filed a false finding; the measurement in the docstring is what makes the non-enforcement correct rather than negligent.
 
 ## Recorded history
 

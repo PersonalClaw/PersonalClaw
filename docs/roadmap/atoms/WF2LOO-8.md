@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- 20 .tsx files under web/src/pages/loops/ including CockpitPromptBar, DesignCockpitPage, DesignStepPreview and their tests; 176 web tests pass over 16 loops-page files (measured in the previous cycle, same tree)
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Driven in the UI:** Drove #/loops: the kind chooser renders with all five tabs and per-kind copy. What could NOT be driven is the atom's own clause — 'as-a-user coexistence validation' — because coexistence means a legacy loop and a v2 loop running side by side, and starting either needs a bound model.
+
+**Notes:** Partial for the coexistence drive, not for the surfaces. The scaffolding half (WF2LOO-5's aliases and run-map) is what makes coexistence possible and that is confirmed independently.
 
 ## Recorded history
 

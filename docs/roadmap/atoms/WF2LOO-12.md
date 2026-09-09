@@ -32,9 +32,18 @@ judge_contract.py's docstring stops asserting live enforcement and records the m
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- tests/test_workflows_judge_contract.py green, and the atom's framing is the campaign's recurring theme stated as a task: make the ENFORCEMENT CLAIM honest, then rail it against drift
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** This atom and WF2LOO-15 are the plan's two 'the docstring must not outrun the code' tasks. Given what WF2LOO-16 then did — measuring the population before deciding whether a precondition applies — the sequencing reads as deliberate: make the claim honest, rail it, and only then consider enforcing it.
 
 ## Recorded history
 

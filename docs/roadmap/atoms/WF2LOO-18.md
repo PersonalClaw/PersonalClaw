@@ -29,9 +29,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- loop/watchdog.py:1-11 states the tenet in one line: 'The done-ness signal is always produced by something OTHER than the worker' — read from the loop's DECLARED SupervisorPolicy by one evaluator — and closes with 'This upholds the tenet that no agent certifies its own work'
+- 'The watchdog DECIDES; the policy only ADVISES' — the same enforce-versus-advise separation WF2UNI-5's interrupt taxonomy states
+- :189 and :192 name two worker-independent stall signals — byte-identical work product, and identical calls across every cycle in the window
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** The two stall signals are worker-independent in the strong sense: both are derived from the work product and the call log rather than from anything the worker asserts about its own progress. Also listed as 'next' in the workspace roadmap and since landed.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 104 | `done_when` checked against the code and it holds |
-| `partial` | 113 | some `done_when` clauses hold, others do not |
+| `confirmed` | 118 | `done_when` checked against the code and it holds |
+| `partial` | 117 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 464 | not yet checked |
+| `unaudited` | 446 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -954,24 +954,24 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2LOO-1`](WF2LOO-1.md) | `done` | `unaudited` | Judge contract + runtime_hints + engine-enforced primitives |
-| [`WF2LOO-2`](WF2LOO-2.md) | `done` | `unaudited` | Engine loop-node middleware decision layer (breaker + escalation + interrupt queue) |
-| [`WF2LOO-3`](WF2LOO-3.md) | `done` | `unaudited` | Author the bundled loop templates (5 of 8) |
-| [`WF2LOO-4`](WF2LOO-4.md) | `done` | `unaudited` | Calibration + acceptance-instrumentation modules + template lint |
-| [`WF2LOO-5`](WF2LOO-5.md) | `done` | `unaudited` | FE coexistence scaffolding: legacy aliases, steering endpoints, cockpit key-equivalence helper |
-| [`WF2LOO-6`](WF2LOO-6.md) | `done` | `unaudited` | Close inert judge/gate controls at the dispatcher: pre-tier + judge_samples + cross_model lint |
-| [`WF2LOO-7`](WF2LOO-7.md) | `done` | `unaudited` | Wire the decision layers into the RunController tick (steering + calibration emission + R6a) |
-| [`WF2LOO-8`](WF2LOO-8.md) | `done` | `unaudited` | FE surfaces + as-a-user coexistence validation |
-| [`WF2LOO-9`](WF2LOO-9.md) | `done` | `unaudited` | goal-pursuit-monitor template + self-schedule tool module + bounds config (R15) |
-| [`WF2LOO-10`](WF2LOO-10.md) | `done` | `unaudited` | code-project template (product decision + build) |
-| [`WF2LOO-11`](WF2LOO-11.md) | `done` | `unaudited` | cross_model judge isolation enforcement |
-| [`WF2LOO-12`](WF2LOO-12.md) | `done` | `unaudited` | Make judge_contract's enforcement claim honest, and rail it against drift |
-| [`WF2LOO-13`](WF2LOO-13.md) | `done` | `unaudited` | Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12) |
-| [`WF2LOO-14`](WF2LOO-14.md) | `done` | `unaudited` | Make until_dry read the progress_field its templates declare |
-| [`WF2LOO-15`](WF2LOO-15.md) | `done` | `unaudited` | judge_actors: separate the enforced invariant from the authored one, and rail the claim |
-| [`WF2LOO-16`](WF2LOO-16.md) | `done` | `unaudited` | Reconcile the THIRD verdict vocabulary (loop/judge.CycleVerdict) into the contract |
-| [`WF2LOO-17`](WF2LOO-17.md) | `done` | `unaudited` | Give the loop judge a model binding independent of the worker it grades |
-| [`WF2LOO-18`](WF2LOO-18.md) | `done` | `unaudited` | Give the loops engine a worker-independent progress signal |
+| [`WF2LOO-1`](WF2LOO-1.md) | `done` | `confirmed` | Judge contract + runtime_hints + engine-enforced primitives |
+| [`WF2LOO-2`](WF2LOO-2.md) | `done` | `confirmed` | Engine loop-node middleware decision layer (breaker + escalation + interrupt queue) |
+| [`WF2LOO-3`](WF2LOO-3.md) | `done` | `confirmed` | Author the bundled loop templates (5 of 8) |
+| [`WF2LOO-4`](WF2LOO-4.md) | `done` | `confirmed` | Calibration + acceptance-instrumentation modules + template lint |
+| [`WF2LOO-5`](WF2LOO-5.md) | `done` | `confirmed` | FE coexistence scaffolding: legacy aliases, steering endpoints, cockpit key-equivalence helper |
+| [`WF2LOO-6`](WF2LOO-6.md) | `done` | `confirmed` | Close inert judge/gate controls at the dispatcher: pre-tier + judge_samples + cross_model lint |
+| [`WF2LOO-7`](WF2LOO-7.md) | `done` | `confirmed` | Wire the decision layers into the RunController tick (steering + calibration emission + R6a) |
+| [`WF2LOO-8`](WF2LOO-8.md) | `done` | `partial` | FE surfaces + as-a-user coexistence validation |
+| [`WF2LOO-9`](WF2LOO-9.md) | `done` | `partial` | goal-pursuit-monitor template + self-schedule tool module + bounds config (R15) |
+| [`WF2LOO-10`](WF2LOO-10.md) | `done` | `partial` | code-project template (product decision + build) |
+| [`WF2LOO-11`](WF2LOO-11.md) | `done` | `confirmed` | cross_model judge isolation enforcement |
+| [`WF2LOO-12`](WF2LOO-12.md) | `done` | `confirmed` | Make judge_contract's enforcement claim honest, and rail it against drift |
+| [`WF2LOO-13`](WF2LOO-13.md) | `done` | `partial` | Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12) |
+| [`WF2LOO-14`](WF2LOO-14.md) | `done` | `confirmed` | Make until_dry read the progress_field its templates declare |
+| [`WF2LOO-15`](WF2LOO-15.md) | `done` | `confirmed` | judge_actors: separate the enforced invariant from the authored one, and rail the claim |
+| [`WF2LOO-16`](WF2LOO-16.md) | `done` | `confirmed` | Reconcile the THIRD verdict vocabulary (loop/judge.CycleVerdict) into the contract |
+| [`WF2LOO-17`](WF2LOO-17.md) | `done` | `confirmed` | Give the loop judge a model binding independent of the worker it grades |
+| [`WF2LOO-18`](WF2LOO-18.md) | `done` | `confirmed` | Give the loops engine a worker-independent progress signal |
 
 ### `WF2TAS` — WORKFLOWS-V2-TASKS-SOPS (12/12 done)
 

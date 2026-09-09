@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- the goal-pursuit-monitor template and its bounds config ship with the other bundled templates
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Driven in the UI:** The Goal tab is the selected default on #/loops and carries the monitoring language the atom describes.
+
+**Notes:** Partial: a self-scheduling monitor's substance is that it re-schedules itself within declared bounds, which needs a live run over time. The template and its bounds are present.
 
 ## Recorded history
 

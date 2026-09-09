@@ -30,9 +30,16 @@ workflows/loop_middleware.py provides 7-way failure classification, tool-argumen
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- workflows/loop_middleware.py exists AND has 5 non-self importers in src/ — a live decision layer, not a designed one.
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
 
 ## Recorded history
 

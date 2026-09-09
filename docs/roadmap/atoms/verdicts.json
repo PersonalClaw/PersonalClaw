@@ -2379,5 +2379,197 @@
       "its declared blocker is genuinely open: PP-16 ('A Loop becomes a WorkflowRun') is `todo` in the same catalogue, so the Phase-3-to-4 drain this atom waits on has not happened"
     ],
     "notes": "Confirmed as a correctly-recorded BLOCKED atom rather than as delivered work, which is the only thing an audit can confirm about work nobody has started. Two things had to hold together and both do: the deletions have not happened, and the dependency that would license them is still open. A stale blocker — one whose dependency had since landed — would have been the finding here; there isn't one."
+  },
+  "WF2LOO-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "workflows/judge_contract.py is the single contract module the whole plan converges on; its docstring distinguishes what the ENGINE enforces from what a template merely authors, which is the distinction WF2LOO-12 and WF2LOO-15 then rail.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "workflows/loop_middleware.py exists AND has 5 non-self importers in src/ — a live decision layer, not a designed one.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "workflows/judge_calibration.py has 8 non-self importers in src/, the most of any module in this plan; tests/test_workflows_judge_calibration.py green.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "workflows/loop_aliases.py (5 importers) and loop_run_map.py (3) both live; controller.py:331-336 documents the steering queue living on run.extra['steering_queue'], written by service.steer_run and read by the tick.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "tests/test_workflows_judge_pretier.py green; this atom is the plan's own instance of the anti-inertness work — a control the dispatcher never read is a control that does not exist.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "tests/test_workflows_judge_isolation.py green — isolation is enforced rather than requested.",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ]
+  },
+  "WF2LOO-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "the bundled loop templates exist and are linted by tests/test_workflows_loop_templates.py",
+      "two of its skips are PARAMETRISED with per-template reasons ('diagnose-run has no work loop', 'code-project has no work loop') rather than a blanket skip — a template-shaped guard, not a hidden hole",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "ui_validated": "The loops surface renders five kind tabs — General, Goal, Code, Research, Design — each with its own one-line explanation ('Research + action toward a goal — verifiable, open-ended, or monitoring'), so the authored templates reach a user as choices rather than as files."
+  },
+  "WF2LOO-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "MEASURED against the plan header's claim: controller.py:1176 calls _emit_judge_divergence, defined at :3289, which 'Reads this node's last judge_verdict from the ledger; emits judge_divergence only when' the readings disagree — a live emission on the tick path",
+      "controller.py:331-336 documents the steering queue and the tick's injection dict, so steering is consumed rather than merely queued",
+      "ALL FOUR of this plan's modules have live non-self importers in src/: judge_calibration 8, loop_aliases 5, loop_middleware 5, loop_run_map 3",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "🔁 A DOCUMENTED-VS-ACTUAL DISCREPANCY, in the OPPOSITE direction to this campaign's usual one. The plan header still claims these modules have ZERO production importers; counting them says otherwise, and the workspace roadmap already flagged the header as wrong. Every prior instance of record-versus-code drift I have found overstated what shipped (BA-5's log claimed a frontend that does not exist). This one UNDERSTATES it. Same failure — the record disagreeing with the code — and worth having found in both directions, because an audit that only looks for over-claiming would have read this header as a finding rather than as stale prose."
+  },
+  "WF2LOO-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "20 .tsx files under web/src/pages/loops/ including CockpitPromptBar, DesignCockpitPage, DesignStepPreview and their tests; 176 web tests pass over 16 loops-page files (measured in the previous cycle, same tree)",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "ui_validated": "Drove #/loops: the kind chooser renders with all five tabs and per-kind copy. What could NOT be driven is the atom's own clause — 'as-a-user coexistence validation' — because coexistence means a legacy loop and a v2 loop running side by side, and starting either needs a bound model.",
+    "notes": "Partial for the coexistence drive, not for the surfaces. The scaffolding half (WF2LOO-5's aliases and run-map) is what makes coexistence possible and that is confirmed independently."
+  },
+  "WF2LOO-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "the goal-pursuit-monitor template and its bounds config ship with the other bundled templates",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "ui_validated": "The Goal tab is the selected default on #/loops and carries the monitoring language the atom describes.",
+    "notes": "Partial: a self-scheduling monitor's substance is that it re-schedules itself within declared bounds, which needs a live run over time. The template and its bounds are present."
+  },
+  "WF2LOO-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "the code-project template ships; its work-loop absence is explicitly parametrised in the template lint ('code-project has no work loop')",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "ui_validated": "The Code tab renders on #/loops.",
+    "notes": "Partial for the same reason as its siblings. Worth recording that the template lint SKIPS this template's work-loop case by name rather than passing it vacuously — the skip is the honest answer for a template whose shape has no work loop."
+  },
+  "WF2LOO-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "tests/test_workflows_judge_contract.py green, and the atom's framing is the campaign's recurring theme stated as a task: make the ENFORCEMENT CLAIM honest, then rail it against drift",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "This atom and WF2LOO-15 are the plan's two 'the docstring must not outrun the code' tasks. Given what WF2LOO-16 then did — measuring the population before deciding whether a precondition applies — the sequencing reads as deliberate: make the claim honest, rail it, and only then consider enforcing it."
+  },
+  "WF2LOO-13": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "the contract is wired into the judge path and tests/test_workflows_judge_contract.py covers the shape",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "Partial: 'wire into the LIVE judge path' is exercised by a real judge call, which is a model call. The blast radius the atom cites was measured by WF2LOO-12, and WF2LOO-16 then measured the loop-cycle population directly — so the risky part of this wiring is the part with the most measurement behind it."
+  },
+  "WF2LOO-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "controller.py:3754 states the rule — 'the loop declares progress_field → that field decides, wherever inside the' structure it sits — and :3765 reads it off the node config",
+      ":5168 states the rule for a loop that declares none, explicitly marked 'Unchanged', which is how a behaviour change stays scoped to the declaring templates",
+      ":5178 the readings are a CLOSED SET OF THREE rather than an open interpretation",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "The 'Unchanged' note at :5168 is the detail that makes this safe: a loop that declares no progress_field behaves exactly as before, so the atom adds a capability without redefining the default. A closed set of three readings is the same anti-open-vocabulary discipline WF2UNI-13's interrupt enum applied."
+  },
+  "WF2LOO-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "tests/test_workflows_judge_actors_claims.py carries exactly the two rails the atom promises: test_the_enforced_invariant_still_has_a_live_caller (anti-inertness) and test_the_once_authored_invariant_is_wired_and_the_docstring_agrees (ANTI-DRIFT — the docstring is asserted against the code)",
+      "a third test checks the module parses and the symbols exist, which is the floor that stops the other two passing vacuously",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "Asserting that a DOCSTRING AGREES WITH THE CODE is the most transferable idea in this plan after WF2LOO-16's measurement. Every stale claim this audit has found — the plan header two atoms up, BA-5's execution log, DHT-3's atom text — is the same failure that test prevents inside one module."
+  },
+  "WF2LOO-16": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "MEASURED deletion: CycleVerdict survives only in prose explaining its removal (judge_contract.py:85/94/407 and loop/judge.py:20). No code path defines or returns it",
+      "judge_contract.py:85-91 states WHY the merge went both ways: 'each side was missing what the other had' — marginal_value and regressed are 'the product's ONLY diminishing-returns signals' and the record could not express them, while the loop could not express proof, the ratchet or the actor matrix",
+      "THE POPULATION WAS MEASURED BEFORE THE DECISION: ':94 the answer was **zero** — every shape CycleVerdict.to_dict() could persist failed validate_verdict at the FIRST step with unknown verdict None, the proof check never even being reached, and there were 0 persisted loop verdict files to grandfather'",
+      "the root cause is placed UPSTREAM of the record: the bundled task-cycle_judge prompt asks for six fields and 'names no verdict, no proof, no evidence_refs and no scores'",
+      "loop/judge.py:26 evidence_refs_from_observation is documented as 'proof the SUPERVISOR gathered, not a claim the worker made', called at :296 and :361",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "🎯 THE BEST-REASONED ATOM I HAVE READ IN 22 CYCLES, and it is a deliberate NON-enforcement decision — exactly the kind an audit reading titles alone would misfile as a gap. Because the prompt never asked for the fields the preconditions check, 'Enforcing preconditions against a prompt that never stated them is the trap judge_instruction exists to prevent', so the supervisor still routes on `done` rather than `passed` and no loop cycle is failed by this module. What changed is that the loop now CITES evidence derived from what the supervisor itself observed. The closing sentence is the principle the whole campaign has been circling: 'That is the precondition becoming SATISFIABLE before it becomes binding.' Had I checked only whether validate_verdict gates loop cycles, I would have filed a false finding; the measurement in the docstring is what makes the non-enforcement correct rather than negligent."
+  },
+  "WF2LOO-17": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "tests/test_loop_judge_model_binding.py covers the plural-call-site form (test_all_three_judge_call_sites_resolve_the_judge_entry) rather than one site",
+      "IT CARRIES A VACUITY FLOOR: test_rail_discriminates_when_judge_is_pinned_to_the_worker_axis — the rail must be able to FAIL, or it proves nothing",
+      "the fallback direction is the safe one: test_unknown_axis_falls_back_to_reasoning_NOT_the_worker_axis, so a misconfigured axis cannot silently collapse judge and worker onto one model",
+      "three fail-safe tests, one per judge call site: primary defers and warns, skeptic defers and warns, gate returns empty and warns — a dead bridge degrades loudly instead of grading with the worker's model",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "ARCC was queried first and returned Credential Separation, which is about production credentials reaching non-prod stages — no analogue in a single-user self-hosted app with no environments. Its SHAPE transfers weakly (separate bindings per distinct role) and this atom satisfies that shape for a reason that is about VALIDITY rather than secrecy: a judge sharing the worker's model cannot grade it independently. Recorded as checked with the analogy named as weak rather than stretched into a compliance claim. The workspace roadmap listed this atom as 'next'; it has since landed, so that note is stale in the optimistic direction."
+  },
+  "WF2LOO-18": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 22 (WF2LOO) — code, tests and the loops surface driven",
+    "evidence": [
+      "loop/watchdog.py:1-11 states the tenet in one line: 'The done-ness signal is always produced by something OTHER than the worker' — read from the loop's DECLARED SupervisorPolicy by one evaluator — and closes with 'This upholds the tenet that no agent certifies its own work'",
+      "'The watchdog DECIDES; the policy only ADVISES' — the same enforce-versus-advise separation WF2UNI-5's interrupt taxonomy states",
+      ":189 and :192 name two worker-independent stall signals — byte-identical work product, and identical calls across every cycle in the window",
+      "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
+    ],
+    "notes": "The two stall signals are worker-independent in the strong sense: both are derived from the work product and the call log rather than from anything the worker asserts about its own progress. Also listed as 'next' in the workspace roadmap and since landed."
   }
 }

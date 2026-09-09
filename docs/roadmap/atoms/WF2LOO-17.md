@@ -28,9 +28,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- tests/test_loop_judge_model_binding.py covers the plural-call-site form (test_all_three_judge_call_sites_resolve_the_judge_entry) rather than one site
+- IT CARRIES A VACUITY FLOOR: test_rail_discriminates_when_judge_is_pinned_to_the_worker_axis — the rail must be able to FAIL, or it proves nothing
+- the fallback direction is the safe one: test_unknown_axis_falls_back_to_reasoning_NOT_the_worker_axis, so a misconfigured axis cannot silently collapse judge and worker onto one model
+- three fail-safe tests, one per judge call site: primary defers and warns, skeptic defers and warns, gate returns empty and warns — a dead bridge degrades loudly instead of grading with the worker's model
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
+
+**Notes:** ARCC was queried first and returned Credential Separation, which is about production credentials reaching non-prod stages — no analogue in a single-user self-hosted app with no environments. Its SHAPE transfers weakly (separate bindings per distinct role) and this atom satisfies that shape for a reason that is about VALIDITY rather than secrecy: a judge sharing the worker's model cannot grade it independently. Recorded as checked with the analogy named as weak rather than stretched into a compliance claim. The workspace roadmap listed this atom as 'next'; it has since landed, so that note is stale in the optimistic direction.
 
 ## Recorded history
 

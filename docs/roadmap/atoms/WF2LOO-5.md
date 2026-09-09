@@ -31,9 +31,16 @@ workflows/loop_aliases.py (one-way read-time legacy-kind aliases, each asserted 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 22 (WF2LOO) — code, tests and the loops surface driven
+
+**Code evidence:**
+
+- workflows/loop_aliases.py (5 importers) and loop_run_map.py (3) both live; controller.py:331-336 documents the steering queue living on run.extra['steering_queue'], written by service.steer_run and read by the tick.
+- 593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)
 
 ## Recorded history
 
