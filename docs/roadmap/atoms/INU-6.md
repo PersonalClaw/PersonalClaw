@@ -33,9 +33,17 @@ NotificationKind.verifiable + rule verify field (rules PUT 400s verify:true on a
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_draft_gate.py passes (part of the 86-passed run)
+
+**Notes:** PARTIAL for the same blocker that stopped RUA-3 and INU-4: a second-opinion verification gate runs a model over a draft, and no model provider is configured in the validation home. The gate's code path is exercised by its test; its live behaviour is not.
 
 ## Recorded history
 

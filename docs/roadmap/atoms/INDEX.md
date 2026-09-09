@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 7 | `done_when` checked against the code and it holds |
-| `partial` | 6 | some `done_when` clauses hold, others do not |
+| `confirmed` | 10 | `done_when` checked against the code and it holds |
+| `partial` | 12 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 671 | not yet checked |
+| `unaudited` | 662 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -485,15 +485,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`INU-1`](INU-1.md) | `done` | `unaudited` | Kind registry + rules engine (S1) |
-| [`INU-2`](INU-2.md) | `done` | `unaudited` | Inbox as the attention store (S2) |
-| [`INU-3`](INU-3.md) | `done` | `unaudited` | Settings unification + alert-fields backfill (S3) |
-| [`INU-4`](INU-4.md) | `done` | `unaudited` | Fold the proposal surfaces (S4) |
-| [`INU-5`](INU-5.md) | `done` | `unaudited` | Digest + demotion (S5) |
-| [`INU-6`](INU-6.md) | `done` | `unaudited` | Second-opinion verification gate (S6) |
-| [`INU-7`](INU-7.md) | `done` | `unaudited` | Proposals contract + app emission path (S7) |
-| [`INU-8`](INU-8.md) | `done` | `unaudited` | Resolve app-contributed inbox sources through the app registry's manifest factory (InboxTypeHandler) + make the PROVIDER_TYPES/handler guard bidirectional |
-| [`INU-9`](INU-9.md) | `done` | `unaudited` | A user-authored note reaches the inbox — the create-from-free-text capability the tray's quick-capture promises |
+| [`INU-1`](INU-1.md) | `done` | `confirmed` | Kind registry + rules engine (S1) |
+| [`INU-2`](INU-2.md) | `done` | `confirmed` | Inbox as the attention store (S2) |
+| [`INU-3`](INU-3.md) | `done` | `partial` | Settings unification + alert-fields backfill (S3) |
+| [`INU-4`](INU-4.md) | `done` | `partial` | Fold the proposal surfaces (S4) |
+| [`INU-5`](INU-5.md) | `done` | `partial` | Digest + demotion (S5) |
+| [`INU-6`](INU-6.md) | `done` | `partial` | Second-opinion verification gate (S6) |
+| [`INU-7`](INU-7.md) | `done` | `partial` | Proposals contract + app emission path (S7) |
+| [`INU-8`](INU-8.md) | `done` | `partial` | Resolve app-contributed inbox sources through the app registry's manifest factory (InboxTypeHandler) + make the PROVIDER_TYPES/handler guard bidirectional |
+| [`INU-9`](INU-9.md) | `done` | `confirmed` | A user-authored note reaches the inbox — the create-from-free-text capability the tray's quick-capture promises |
 
 ### `KL` — KNOWLEDGE-LIBRARY (18/18 done)
 

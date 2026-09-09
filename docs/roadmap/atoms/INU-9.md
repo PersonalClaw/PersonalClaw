@@ -28,9 +28,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — DRIVEN end to end, including a real gateway restart
+
+**Code evidence:**
+
+- tests/test_inbox_user_note.py passes (part of the 132-passed run)
+- the persisted record carries item_kind='user_note' with id 'user_note_0953322c_1788920765.065293' — the atom's 'typed kind that identifies it as user-authored rather than synthesized from a system source', stamped on a record a real user action produced
+- source='user', channel='user', can_reply=false, status='pending', and message holding the full free text including both lines
+
+**Driven in the UI:** The whole claim, driven: clicked 'Capture a note' in the inbox header (the affordance the atom says must stop being inert), typed a two-line note into the dialog, clicked 'Save to inbox'. The inbox went 0 -> '1 pending · 1 total' and the item rendered as 'Notes — Audit probe note INU-9 …'. Then the RESTART half: killed the gateway process (PID 25766, listeners on 10011 dropped to 0), started a fresh one on the same home (PID 13471, HTTP 200), reloaded the page, and the item was still there — new snapshot generation (refs f5e…), 'Inbox 1 pending · 1 total', same 'Notes —' row. So it was read back off disk by a process that never held it in memory.
+
+**Notes:** Two honesty notes. (1) My first post-restart check returned IDENTICAL element refs, which is the signature of a stale snapshot rather than a fresh read — I did not accept it, and re-verified with a forced reload that produced a new ref generation. (2) My guesses at the persisted field names were wrong twice (kind/subject/body); the real fields are item_kind/message. The atom was right; my assumptions were not, which is exactly why the record was read rather than predicted.
 
 ## Recorded history
 

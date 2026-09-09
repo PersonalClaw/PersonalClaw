@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 3 (INU) — observed
+
+**Code evidence:**
+
+- tests/test_inbox_digest_handler.py and tests/test_inbox_dismiss_all_signal.py exist; the digest handler module passes in the 86-passed run
+
+**Notes:** PARTIAL: a digest is a time-and-volume behaviour — it needs accumulated items across a period, and this home has exactly one item that I created a minute earlier. Not drivable here without fabricating history, which would test my fixture rather than the product.
 
 ## Recorded history
 
