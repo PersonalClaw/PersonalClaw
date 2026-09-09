@@ -6192,5 +6192,158 @@
     ],
     "ui_validated": "No surface: an audit document, deliberately with no code.",
     "notes": "🔑 THE BEST AUDIT DOCUMENT IN THE CATALOGUE, and the reason is structural: every mechanism gets options rather than a single proposal, every option carries effort AND risk, and the verdicts are per-mechanism rather than one verdict for the platform. That is what makes the go/no-go a real decision instead of a rubber stamp — three of the six turn out to be cheap and two expensive, which is invisible if you only ask 'should we support Windows'."
+  },
+  "APE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "both flags exist on the permission dataclass with accessors, and both are disclosed at install consent — the frontend wire type carries them and `PermissionList` renders them among the ENFORCED bullets",
+      "🔑 `backgroundTasks` RECORDS ITS OWN DE-INERTING, quoting the comment it replaced: the flag was 'NOT ENFORCED TODAY, and honestly so: nothing in core hosts an app worker yet'. 'That is no longer true — this is the accessor the host consults, so the declaration APE-1 disclosed at install consent now denies as well as declares.' The campaign's inert-control class, closed with the old admission preserved",
+      "unknown-field preservation and the round-trip are covered by the manifest suites in the 113",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable end to end: the validation home has no apps installed and no Store source bound, so the consent dialog cannot be reached without mutating the home. The rendering is covered by 32 frontend tests, one per clause.",
+    "notes": "The two flags are the plan's entry fee — a permission that is parsed but unenforced is exactly the shape this campaign keeps finding, and this atom's own accessor is what retired it."
+  },
+  "APE-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "🔑 THE SUBSCRIPTION AXIS IS DELIBERATELY SEPARATE FROM THE WEBSOCKET ALLOWLIST, AND A NAMED TEST KEEPS IT THAT WAY: `can_receive_platform_event` reads `eventSubscriptions`, `can_use_event` reads `events`, and 'declaring one grants nothing about the other' is pinned by `test_event_subscriptions_do_not_widen_the_ws_event_allowlist`. Privilege escalation by adjacency, prevented and tested rather than assumed",
+      "🔑 EXACT MATCH ONLY ON THIS AXIS, WITH THE REASON STATED: 'no prefix, no trailing `*`. So a subscription to `task.completed` never matches `task.completed.extra` or `task.*`, and a typo denies rather than widens.' The vocabulary is CLOSED, so a wildcard here is pure downside",
+      "the gate is at DISPATCH — 'the only path a platform event reaches an app by' — rather than at subscribe time, so a revoked grant stops delivery immediately instead of at the next re-subscribe",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: delivering a platform event to an app needs an installed subscriber. Covered by the fixture-app tests in the 113.",
+    "notes": "🔑 THE WILDCARD POLICY IS PER-AXIS AND THAT IS THE CORRECT RULE, which is worth stating because most systems apply one matching function everywhere. Prefixes are admitted where the namespace is open (app names, API paths) and refused where it is closed (platform events, desktop capabilities). ARCC's least-privilege guidance treats wildcards as the mechanism by which a grant becomes over-broad; this code makes admitting one a decision with a reason attached."
+  },
+  "APE-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "`sdk/background.py` exists and `backgroundTasks` is consulted by the host, with the revocation semantics stated: 'the supervisor re-asks at every spawn, so revoking the grant in an app update stops the next revival rather than only the first launch' — a check at every spawn, not once at launch",
+      "the background-contract suite is green inside the 113",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable, and its decisive clause is a process-table observation: 'V1: uninstall leaves no orphan worker (PPID-reaping verified)'. That needs a real installed app with a running worker, then an uninstall, then a check of the process table — none of which this validation home can produce.",
+    "notes": "Partial for the orphan-worker clause specifically, which is the one that matters most and the one only a live run can settle. Everything checkable statically — the SDK module, the gate, the re-ask-per-spawn contract — is present."
+  },
+  "APE-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "the quality-enforcement suite is green inside the 113, and the atom's own framing is the strongest thing about it: 'a DISHONEST first-party quality declaration turns apps-repo CI red'. The declaration is not trusted, it is checked against the thing it claims (tests green, token-lint pass, axe pass)",
+      "🔑 THAT IS THE SAME SHAPE AS PLATFORM-REACH'S PROOF TOKENS ONE PLAN OVER: a badge is only worth rendering if something can contradict it. A `quality` block nobody verifies is a self-assigned grade",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: Store cards need a bound Store source. The badge rendering is covered by the card suites in the 32.",
+    "notes": "Worth noting the direction of the gate — it fires in the APPS repo, where the declaration lives, rather than in core. The claim is policed where it is made."
+  },
+  "APE-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "`apps/native_contract.py` exists and documents the subset, including how the per-app backend subprocess environment reaches the SDK reader",
+      "the import-boundary test remains green — apps reach core only through `personalclaw.sdk.*`, which is the constraint that makes a 'native' capability additive rather than a core edit",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable without installing an exemplar bundle.",
+    "notes": "The load-bearing property is the one the atom words carefully: a native bundle gains a real provider method WITHOUT CORE EDITS. That is what stops 'native' from meaning 'privileged enough to need a patch'."
+  },
+  "APE-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "the atom's own acceptance is half a machine check and half a human one: token-lint pass (checkable) plus 'look native (screenshot check)' (not)",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: both apps would have to be installed and their pages opened, and the second half of the clause is an explicit visual judgement rather than an assertion.",
+    "notes": "Partial because the visual half is not something an audit can settle without the apps running, and because a screenshot comparison is a claim about appearance that this environment cannot reproduce faithfully. The token-lint half is the part a rail can hold, and it is the part that will keep holding."
+  },
+  "APE-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "the atom's clauses are unusually precise about the failure modes that matter: ONE notification rather than one per surface, dedup 'by name+latest_version' so re-viewing does not re-nag, and 'zero polling processes added'",
+      "🔑 THE DEDUP KEY IS THE RIGHT KEY: keying on name alone would suppress the notification for a SECOND update, and keying on time would re-nag; name plus the version being announced is the pair that fires once per actual new version",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: it needs a local Store source whose version can be bumped, and this home has no source bound. Bumping one would mutate the validation home.",
+    "notes": "Partial on the drive rather than on the design. The 'zero polling processes' clause is the one worth re-checking whenever this area changes — an update badge is exactly the feature that acquires a background poller by accident."
+  },
+  "APE-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "the fix-with-AI frontend suite is green inside the 32, covering the button's presence on a failed install",
+      "🔑 THE LOG IS FENCED WITH A PROVENANCE SOURCE, WHICH IS THE WHOLE POINT: the excerpt reaches chat wrapped in `fence_untrusted(source=app_install_log:<name>)`, so a hostile app cannot put instructions in its own install failure and have them read as a prompt. An install log is attacker-influenced text being handed to a model — precisely the case the core fence exists for",
+      "the chat is OPENED PREFILLED rather than sent, so the user still decides whether to spend the turn",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: it needs a deliberately broken app to install, which would mean writing into the validation home.",
+    "notes": "This is the feature most likely to have been built without a fence — the text is 'just a log' — and it is fenced with a source that names the app. Good instinct captured as code rather than as advice."
+  },
+  "APE-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "🔑 DENY-BY-DEFAULT AND SINGLE-PATH, both stated at the accessor: 'an app that declares no `appMessaging` scope can message NO app', and 'the gateway broker (`POST /api/apps/message`) is the only app-to-app path, so this is the sole gate on the sender→target edge'. Both routes exist (`POST` to send, `GET` to poll) and there is no socket path between apps",
+      "the messaging suite is green inside the 113, covering the undeclared pair refused 403 with a SEL row, the payload cap and the fence",
+      "🔑 THE MATCHING FUNCTION IS SHARED WITH `can_use_mcp_tool` RATHER THAN RE-IMPLEMENTED (`_matches_any`), which is what lets the consent surface one plan later mirror the grammar exactly instead of guessing it",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: two installed fixture apps are needed to exchange a message.",
+    "notes": "The single-path claim is the one that makes the gate meaningful, and it is the claim to re-check if an app ever gains a direct socket. Everything else here is a bound (cap, fence, audit row) on a path that already narrows."
+  },
+  "APE-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "🔑 DOUBLE DECLARATION, VERIFIED AGAINST THE TARGET'S OWN INSTALLED MANIFEST: `can_read_shared_storage` requires the consumer to name the sharer AND re-reads the sharer's manifest for `storageShared`, so 'neither app can create a one-sided share'. Stronger than the messaging gate, which needs only the sender's declaration",
+      "🔑 I DROVE THE READ-ONLY HANDLE DIRECTLY rather than reading its docstring. `write_text`, `open('w')`, `open('r+')` and `mkdir` all raise `PermissionError`; an ungranted app gets `None`. And the CHILD PATH INHERITS the read-only class — `type(d / 'notes.json').__name__ == '_ReadOnlyPath'` — which is the subtlety a hand-rolled wrapper usually misses, since a child rebuilt as a plain `Path` would defeat the whole guard",
+      "🔑 `open` IS FILTERED ON MODE CHARACTERS (`w`, `a`, `x`, `+`), not just on the obvious writers, so `open('r+')` is refused too — the escape hatch a method-only denylist leaves open",
+      "the error message routes rather than just refuses: 'send it data over the appMessaging broker (APE-9) instead'",
+      "the mount emits a `capability_grant` SEL row at the moment it is built, so a share is auditable at grant time rather than only at use",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "The read-only contract was exercised directly in-process against a real temp dir — four write paths refused, the child class checked, and the ungranted case returning None. The end-to-end mount needs two installed apps.",
+    "notes": "🪤 A FINDING COLLAPSED, AND THE COLLAPSE MADE THE ANSWER STRONGER. The mount is a plain path string in an env var with no chmod, so I had this as SDK-only enforcement — a backend could open the raw path and write. Then I read one function further: `build_backend_sandbox_spec` sets `allowed_write_paths` to the app's OWN data dir and nothing else, so a sandboxed backend cannot write another app's dir even bypassing the handle. Read-only is enforced at TWO layers, and the SDK layer's job is to fail LEGIBLY (with the broker named) rather than to be the only barrier. The honest residual: on a host where the sandbox tier degrades, the handle is the only barrier — which is the same architectural limit `limitations.md` §2 states for the network permission."
+  },
+  "APE-11": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "the UI SDK path exists and the atom's bar is the right one — a fixture page rendering with host primitives should be 'indistinguishable from a native page'",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not drivable: an app page rendering through the SDK needs the app installed and its contributed surface opened.",
+    "notes": "Partial for the same reason as APE-6: 'indistinguishable' is a visual judgement, and the atom is right to state it that way rather than pretending a test can settle it. What a rail CAN hold is the token-lint half, and that is where the enforcement sits."
+  },
+  "APE-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified",
+    "evidence": [
+      "🔑 THE WILDCARD IS DISCLOSED AS A WILDCARD, WHICH IS EXACTLY WHAT ARCC'S LEAST-PRIVILEGE GUIDANCE IS ABOUT. `describeMessagingTarget` renders `mail-*` as 'any app whose name starts with “mail-”' and a bare `*` as 'any installed app', and the reason is written down: 'Rendering `mail-*` as though an app called \"mail-*\" existed would UNDERSTATE the grant — it covers every current AND future app under that prefix'",
+      "🔑 FALSIFIED: replacing the descriptor with a literal pass-through reddens EXACTLY the two pattern tests — 'renders a trailing-* target as a PATTERN, never as a literal app name' and 'renders a bare * as every installed app'. 2 failed / 20 passed, reverted to 22/22",
+      "🔑 THE RULE FOR WHAT BELONGS IN THE ENFORCED LIST IS DISCRIMINATING RATHER THAN UNIFORM, and both errors are named: `network` stays OUT because there is no per-app egress chokepoint, since listing it beside enforced grants 'would read as a grant the platform polices' while omitting a declared `false` 'would read as a block' — 'Both are false, so it gets its own advisory row'. `appMessaging` goes IN because the broker refuses an undeclared target with 403 and a SEL row",
+      "🔑 THREE NETWORK STATES, NOT TWO, and the fix went through the server to get there: an explicit `\"network\": false` used to collapse into 'not declared', erasing 'the statement a user most wants: \"this app says it does not go out to the internet\"'. `Permissions.to_dict` now keeps the key when the manifest mentioned it so the frontend can tell silence from denial",
+      "🔑 THE DEFECT THIS ATOM FIXED IS THE INVERSE OF THE CAMPAIGN'S USUAL ONE: not a disclosed control that is unenforced, but an ENFORCED control that was undisclosed — `appMessaging` 'used to render nowhere at all — `AppPermissionsWire` never declared the field — so install consent never said which other apps an app may talk to'",
+      "declaring nothing is disclosed as messaging no app rather than omitted, 'and silence would repeat the mistake D2 found for `network`'; a companion test checks it is not claimed twice for a declaring app",
+      "app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)"
+    ],
+    "ui_validated": "Not reachable in this home — no apps installed and no Store source bound, so the consent dialog cannot be opened without mutating it. Validated instead by falsifying the exact rendering rule, which is the clause that carries the security meaning.",
+    "notes": "🔑 THE BEST CONSENT-DISCLOSURE REASONING IN THE CAMPAIGN. Three separate ideas, each of which most products get wrong: a wildcard grant must be described by its REACH and not its literal text; the enforced list must contain exactly what is enforced, with the two symmetric misreadings named; and an explicit denial is information a user wants, so it must not be flattened into silence. ARCC's least-privilege material treats wildcards as how a grant quietly becomes administrative — this is that concern handled at the moment consent is given."
   }
 }

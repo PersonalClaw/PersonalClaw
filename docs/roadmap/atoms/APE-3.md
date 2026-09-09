@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- `sdk/background.py` exists and `backgroundTasks` is consulted by the host, with the revocation semantics stated: 'the supervisor re-asks at every spawn, so revoking the grant in an app update stops the next revival rather than only the first launch' — a check at every spawn, not once at launch
+- the background-contract suite is green inside the 113
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable, and its decisive clause is a process-table observation: 'V1: uninstall leaves no orphan worker (PPID-reaping verified)'. That needs a real installed app with a running worker, then an uninstall, then a check of the process table — none of which this validation home can produce.
+
+**Notes:** Partial for the orphan-worker clause specifically, which is the one that matters most and the one only a live run can settle. Everything checkable statically — the SDK module, the gate, the re-ask-per-spawn contract — is present.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 303 | `done_when` checked against the code and it holds |
-| `partial` | 193 | some `done_when` clauses hold, others do not |
+| `confirmed` | 311 | `done_when` checked against the code and it holds |
+| `partial` | 197 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 180 | not yet checked |
+| `unaudited` | 168 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -91,18 +91,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`APE-1`](APE-1.md) | `done` | `unaudited` | Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent) |
-| [`APE-2`](APE-2.md) | `done` | `unaudited` | Platform event registry (app_events.py) + emit sites + declared-subscription WS filter |
-| [`APE-3`](APE-3.md) | `done` | `unaudited` | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting |
-| [`APE-4`](APE-4.md) | `done` | `unaudited` | quality manifest block + Store card rendering + first-party CI verification |
-| [`APE-5`](APE-5.md) | `done` | `unaudited` | Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles |
-| [`APE-6`](APE-6.md) | `done` | `unaudited` | Migrate Minutes + Growth backend+UI apps to the current design system |
-| [`APE-7`](APE-7.md) | `done` | `unaudited` | Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification |
-| [`APE-8`](APE-8.md) | `done` | `unaudited` | Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat |
-| [`APE-9`](APE-9.md) | `done` | `unaudited` | appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL) |
-| [`APE-10`](APE-10.md) | `done` | `unaudited` | storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir |
-| [`APE-11`](APE-11.md) | `done` | `unaudited` | UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path |
-| [`APE-12`](APE-12.md) | `done` | `unaudited` | Disclose appMessaging targets at install consent (the last mile APE-9 left open) |
+| [`APE-1`](APE-1.md) | `done` | `confirmed` | Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent) |
+| [`APE-2`](APE-2.md) | `done` | `confirmed` | Platform event registry (app_events.py) + emit sites + declared-subscription WS filter |
+| [`APE-3`](APE-3.md) | `done` | `partial` | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting |
+| [`APE-4`](APE-4.md) | `done` | `confirmed` | quality manifest block + Store card rendering + first-party CI verification |
+| [`APE-5`](APE-5.md) | `done` | `confirmed` | Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles |
+| [`APE-6`](APE-6.md) | `done` | `partial` | Migrate Minutes + Growth backend+UI apps to the current design system |
+| [`APE-7`](APE-7.md) | `done` | `partial` | Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification |
+| [`APE-8`](APE-8.md) | `done` | `confirmed` | Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat |
+| [`APE-9`](APE-9.md) | `done` | `confirmed` | appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL) |
+| [`APE-10`](APE-10.md) | `done` | `confirmed` | storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir |
+| [`APE-11`](APE-11.md) | `done` | `partial` | UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path |
+| [`APE-12`](APE-12.md) | `done` | `confirmed` | Disclose appMessaging targets at install consent (the last mile APE-9 left open) |
 
 ### `AR` — AGENT-ROOMS (1/9 done)
 

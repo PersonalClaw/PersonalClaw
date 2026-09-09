@@ -32,9 +32,20 @@ a fixture app page renders using host Button/Surface/tokens via @personalclaw/ap
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- the UI SDK path exists and the atom's bar is the right one — a fixture page rendering with host primitives should be 'indistinguishable from a native page'
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: an app page rendering through the SDK needs the app installed and its contributed surface opened.
+
+**Notes:** Partial for the same reason as APE-6: 'indistinguishable' is a visual judgement, and the atom is right to state it that way rather than pretending a test can settle it. What a rail CAN hold is the token-lint half, and that is where the enforcement sits.
 
 ## Recorded history
 

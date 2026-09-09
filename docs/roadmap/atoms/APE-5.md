@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- `apps/native_contract.py` exists and documents the subset, including how the per-app backend subprocess environment reaches the SDK reader
+- the import-boundary test remains green — apps reach core only through `personalclaw.sdk.*`, which is the constraint that makes a 'native' capability additive rather than a core edit
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable without installing an exemplar bundle.
+
+**Notes:** The load-bearing property is the one the atom words carefully: a native bundle gains a real provider method WITHOUT CORE EDITS. That is what stops 'native' from meaning 'privileged enough to need a patch'.
 
 ## Recorded history
 

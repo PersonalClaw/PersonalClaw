@@ -31,9 +31,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- 🔑 DOUBLE DECLARATION, VERIFIED AGAINST THE TARGET'S OWN INSTALLED MANIFEST: `can_read_shared_storage` requires the consumer to name the sharer AND re-reads the sharer's manifest for `storageShared`, so 'neither app can create a one-sided share'. Stronger than the messaging gate, which needs only the sender's declaration
+- 🔑 I DROVE THE READ-ONLY HANDLE DIRECTLY rather than reading its docstring. `write_text`, `open('w')`, `open('r+')` and `mkdir` all raise `PermissionError`; an ungranted app gets `None`. And the CHILD PATH INHERITS the read-only class — `type(d / 'notes.json').__name__ == '_ReadOnlyPath'` — which is the subtlety a hand-rolled wrapper usually misses, since a child rebuilt as a plain `Path` would defeat the whole guard
+- 🔑 `open` IS FILTERED ON MODE CHARACTERS (`w`, `a`, `x`, `+`), not just on the obvious writers, so `open('r+')` is refused too — the escape hatch a method-only denylist leaves open
+- the error message routes rather than just refuses: 'send it data over the appMessaging broker (APE-9) instead'
+- the mount emits a `capability_grant` SEL row at the moment it is built, so a share is auditable at grant time rather than only at use
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** The read-only contract was exercised directly in-process against a real temp dir — four write paths refused, the child class checked, and the ungranted case returning None. The end-to-end mount needs two installed apps.
+
+**Notes:** 🪤 A FINDING COLLAPSED, AND THE COLLAPSE MADE THE ANSWER STRONGER. The mount is a plain path string in an env var with no chmod, so I had this as SDK-only enforcement — a backend could open the raw path and write. Then I read one function further: `build_backend_sandbox_spec` sets `allowed_write_paths` to the app's OWN data dir and nothing else, so a sandboxed backend cannot write another app's dir even bypassing the handle. Read-only is enforced at TWO layers, and the SDK layer's job is to fail LEGIBLY (with the broker named) rather than to be the only barrier. The honest residual: on a host where the sandbox tier degrades, the handle is the only barrier — which is the same architectural limit `limitations.md` §2 states for the network permission.
 
 ## Recorded history
 

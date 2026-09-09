@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- 🔑 THE SUBSCRIPTION AXIS IS DELIBERATELY SEPARATE FROM THE WEBSOCKET ALLOWLIST, AND A NAMED TEST KEEPS IT THAT WAY: `can_receive_platform_event` reads `eventSubscriptions`, `can_use_event` reads `events`, and 'declaring one grants nothing about the other' is pinned by `test_event_subscriptions_do_not_widen_the_ws_event_allowlist`. Privilege escalation by adjacency, prevented and tested rather than assumed
+- 🔑 EXACT MATCH ONLY ON THIS AXIS, WITH THE REASON STATED: 'no prefix, no trailing `*`. So a subscription to `task.completed` never matches `task.completed.extra` or `task.*`, and a typo denies rather than widens.' The vocabulary is CLOSED, so a wildcard here is pure downside
+- the gate is at DISPATCH — 'the only path a platform event reaches an app by' — rather than at subscribe time, so a revoked grant stops delivery immediately instead of at the next re-subscribe
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: delivering a platform event to an app needs an installed subscriber. Covered by the fixture-app tests in the 113.
+
+**Notes:** 🔑 THE WILDCARD POLICY IS PER-AXIS AND THAT IS THE CORRECT RULE, which is worth stating because most systems apply one matching function everywhere. Prefixes are admitted where the namespace is open (app names, API paths) and refused where it is closed (platform events, desktop capabilities). ARCC's least-privilege guidance treats wildcards as the mechanism by which a grant becomes over-broad; this code makes admitting one a decision with a reason attached.
 
 ## Recorded history
 

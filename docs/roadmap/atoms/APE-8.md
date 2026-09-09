@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- the fix-with-AI frontend suite is green inside the 32, covering the button's presence on a failed install
+- 🔑 THE LOG IS FENCED WITH A PROVENANCE SOURCE, WHICH IS THE WHOLE POINT: the excerpt reaches chat wrapped in `fence_untrusted(source=app_install_log:<name>)`, so a hostile app cannot put instructions in its own install failure and have them read as a prompt. An install log is attacker-influenced text being handed to a model — precisely the case the core fence exists for
+- the chat is OPENED PREFILLED rather than sent, so the user still decides whether to spend the turn
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: it needs a deliberately broken app to install, which would mean writing into the validation home.
+
+**Notes:** This is the feature most likely to have been built without a fence — the text is 'just a log' — and it is fenced with a source that names the app. Good instinct captured as code rather than as advice.
 
 ## Recorded history
 

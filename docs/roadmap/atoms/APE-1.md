@@ -31,9 +31,22 @@ round-trip (to_dict/from_dict) tests pass; install consent UI surfaces the two n
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- both flags exist on the permission dataclass with accessors, and both are disclosed at install consent — the frontend wire type carries them and `PermissionList` renders them among the ENFORCED bullets
+- 🔑 `backgroundTasks` RECORDS ITS OWN DE-INERTING, quoting the comment it replaced: the flag was 'NOT ENFORCED TODAY, and honestly so: nothing in core hosts an app worker yet'. 'That is no longer true — this is the accessor the host consults, so the declaration APE-1 disclosed at install consent now denies as well as declares.' The campaign's inert-control class, closed with the old admission preserved
+- unknown-field preservation and the round-trip are covered by the manifest suites in the 113
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable end to end: the validation home has no apps installed and no Store source bound, so the consent dialog cannot be reached without mutating the home. The rendering is covered by 32 frontend tests, one per clause.
+
+**Notes:** The two flags are the plan's entry fee — a permission that is parsed but unenforced is exactly the shape this campaign keeps finding, and this atom's own accessor is what retired it.
 
 ## Recorded history
 

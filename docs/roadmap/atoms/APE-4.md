@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- the quality-enforcement suite is green inside the 113, and the atom's own framing is the strongest thing about it: 'a DISHONEST first-party quality declaration turns apps-repo CI red'. The declaration is not trusted, it is checked against the thing it claims (tests green, token-lint pass, axe pass)
+- 🔑 THAT IS THE SAME SHAPE AS PLATFORM-REACH'S PROOF TOKENS ONE PLAN OVER: a badge is only worth rendering if something can contradict it. A `quality` block nobody verifies is a self-assigned grade
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: Store cards need a bound Store source. The badge rendering is covered by the card suites in the 32.
+
+**Notes:** Worth noting the direction of the gate — it fires in the APPS repo, where the declaration lives, rather than in core. The claim is policed where it is made.
 
 ## Recorded history
 

@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- the atom's clauses are unusually precise about the failure modes that matter: ONE notification rather than one per surface, dedup 'by name+latest_version' so re-viewing does not re-nag, and 'zero polling processes added'
+- 🔑 THE DEDUP KEY IS THE RIGHT KEY: keying on name alone would suppress the notification for a SECOND update, and keying on time would re-nag; name plus the version being announced is the pair that fires once per actual new version
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: it needs a local Store source whose version can be bumped, and this home has no source bound. Bumping one would mutate the validation home.
+
+**Notes:** Partial on the drive rather than on the design. The 'zero polling processes' clause is the one worth re-checking whenever this area changes — an update badge is exactly the feature that acquires a background poller by accident.
 
 ## Recorded history
 

@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- the atom's own acceptance is half a machine check and half a human one: token-lint pass (checkable) plus 'look native (screenshot check)' (not)
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: both apps would have to be installed and their pages opened, and the second half of the clause is an explicit visual judgement rather than an assertion.
+
+**Notes:** Partial because the visual half is not something an audit can settle without the apps running, and because a screenshot comparison is a claim about appearance that this environment cannot reproduce faithfully. The token-lint half is the part a rail can hold, and it is the part that will keep holding.
 
 ## Recorded history
 

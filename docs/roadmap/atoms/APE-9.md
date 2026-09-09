@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- 🔑 DENY-BY-DEFAULT AND SINGLE-PATH, both stated at the accessor: 'an app that declares no `appMessaging` scope can message NO app', and 'the gateway broker (`POST /api/apps/message`) is the only app-to-app path, so this is the sole gate on the sender→target edge'. Both routes exist (`POST` to send, `GET` to poll) and there is no socket path between apps
+- the messaging suite is green inside the 113, covering the undeclared pair refused 403 with a SEL row, the payload cap and the fence
+- 🔑 THE MATCHING FUNCTION IS SHARED WITH `can_use_mcp_tool` RATHER THAN RE-IMPLEMENTED (`_matches_any`), which is what lets the consent surface one plan later mirror the grammar exactly instead of guessing it
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not drivable: two installed fixture apps are needed to exchange a message.
+
+**Notes:** The single-path claim is the one that makes the gate meaningful, and it is the claim to re-check if an app ever gains a direct socket. Everything else here is a bound (cap, fence, audit row) on a path that already narrows.
 
 ## Recorded history
 

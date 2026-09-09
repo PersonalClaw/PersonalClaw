@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 55 (APE) — the read-only shared handle driven directly; the wildcard disclosure falsified
+
+**Code evidence:**
+
+- 🔑 THE WILDCARD IS DISCLOSED AS A WILDCARD, WHICH IS EXACTLY WHAT ARCC'S LEAST-PRIVILEGE GUIDANCE IS ABOUT. `describeMessagingTarget` renders `mail-*` as 'any app whose name starts with “mail-”' and a bare `*` as 'any installed app', and the reason is written down: 'Rendering `mail-*` as though an app called "mail-*" existed would UNDERSTATE the grant — it covers every current AND future app under that prefix'
+- 🔑 FALSIFIED: replacing the descriptor with a literal pass-through reddens EXACTLY the two pattern tests — 'renders a trailing-* target as a PATTERN, never as a literal app name' and 'renders a bare * as every installed app'. 2 failed / 20 passed, reverted to 22/22
+- 🔑 THE RULE FOR WHAT BELONGS IN THE ENFORCED LIST IS DISCRIMINATING RATHER THAN UNIFORM, and both errors are named: `network` stays OUT because there is no per-app egress chokepoint, since listing it beside enforced grants 'would read as a grant the platform polices' while omitting a declared `false` 'would read as a block' — 'Both are false, so it gets its own advisory row'. `appMessaging` goes IN because the broker refuses an undeclared target with 403 and a SEL row
+- 🔑 THREE NETWORK STATES, NOT TWO, and the fix went through the server to get there: an explicit `"network": false` used to collapse into 'not declared', erasing 'the statement a user most wants: "this app says it does not go out to the internet"'. `Permissions.to_dict` now keeps the key when the manifest mentioned it so the frontend can tell silence from denial
+- 🔑 THE DEFECT THIS ATOM FIXED IS THE INVERSE OF THE CAMPAIGN'S USUAL ONE: not a disclosed control that is unenforced, but an ENFORCED control that was undisclosed — `appMessaging` 'used to render nowhere at all — `AppPermissionsWire` never declared the field — so install consent never said which other apps an app may talk to'
+- declaring nothing is disclosed as messaging no app rather than omitted, 'and silence would repeat the mistake D2 found for `network`'; a companion test checks it is not claimed twice for a declaring app
+- app messaging + platform events + background contract + quality enforcement 113/113; consent/card/fix-with-AI frontend suites 32/32 (falsified: literalising a wildcard target reds exactly the two pattern tests)
+
+**Driven in the UI:** Not reachable in this home — no apps installed and no Store source bound, so the consent dialog cannot be opened without mutating it. Validated instead by falsifying the exact rendering rule, which is the clause that carries the security meaning.
+
+**Notes:** 🔑 THE BEST CONSENT-DISCLOSURE REASONING IN THE CAMPAIGN. Three separate ideas, each of which most products get wrong: a wildcard grant must be described by its REACH and not its literal text; the enforced list must contain exactly what is enforced, with the two symmetric misreadings named; and an explicit denial is information a user wants, so it must not be flattened into silence. ARCC's least-privilege material treats wildcards as how a grant quietly becomes administrative — this is that concern handled at the moment consent is given.
 
 ## Recorded history
 
