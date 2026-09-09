@@ -395,17 +395,20 @@ def _doctor() -> None:
     # ── Python Runtime ──
     print("\nRuntime")
     print(f"  python:      ✅ {sys.executable} ({sys.version.split()[0]})")
-    print(f"  backend:   ✅ {_pc_version}")
+    print(f"  backend:     ✅ {_pc_version}")
     if is_venv_install:
         try:
             py_result = subprocess.run(
                 [str(venv_py), "--version"], capture_output=True, text=True, timeout=5
             )
             py_result.check_returncode()
-            ver = py_result.stdout.strip()
-            print(f"  python:      ✅ {venv_py} ({ver})")
+            # `python3 --version` prints "Python 3.13.14"; the label already says
+            # python, so the prefix would read "(Python 3.13.14)" beside the row
+            # above's bare "(3.13.14)" for the same fact.
+            ver = py_result.stdout.strip().removeprefix("Python ").strip()
+            print(f"  venv python: ✅ {venv_py} ({ver})")
         except Exception as exc:
-            print(f"  python:      ❌ venv python broken: {exc}")
+            print(f"  venv python: ❌ broken: {exc}")
             issues.append("venv python")
         else:
             try:
@@ -441,7 +444,9 @@ def _doctor() -> None:
                 print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
         else:
-            print("  python:      ⚠️  python3 not found on PATH")
+            # Same probe as the `fallback:` row above — its other outcome, so it
+            # carries the same label rather than a second "python:".
+            print("  fallback:    ⚠️  python3 not found on PATH")
 
     # WSL note: the background service depends on systemd, which WSL2 only runs
     # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether
