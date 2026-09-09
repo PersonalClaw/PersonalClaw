@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/dashboard/views_store.py:81 PRESET_MISSION_CONTROL_ID and :298 _mission_control_preset, with :321 returning both presets; handlers/views.py is the CRUD surface
+- web/src/app/App.tsx:64 lazy-loads MissionControl and :136 routes 'mission-control'
+- tests/test_dashboard_views.py + test_dashboard_mission_control_preset.py green
+- 193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files
+
+**Driven in the UI:** Drove Home. The 'Pinned artifacts' section renders with a teaching empty state that names the action AND where to do it: 'No pinned artifacts. Pin one from its page to keep it here.' A 'Desktop live view' switch sits beside it.
+
+**Notes:** No view switcher appears on Home, and that is the atom's own clause rather than a gap: the locked Overview preset 'renders byte-identical to today's dashboard when the registry is empty', so with no custom views there is nothing to switch between and no control is shown. Same progressive-disclosure decision as TSE-2's mine-vs-everyone lens — a control that could only ever be a no-op is not rendered.
 
 ## Recorded history
 

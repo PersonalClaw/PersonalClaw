@@ -31,9 +31,21 @@ web/src/ui/widget/useWidgetActionBridge.ts extracted with ChatPage behavior byte
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/widget/useWidgetActionBridge.ts:1-28 is the whole contract in one docstring: 'ONE wire contract, one validator, one publisher', five allowlisted child-to-parent message types, and a reserved parent-to-child namespace
+- SOURCE BINDING at :79 — 'if (!frame || !e.source || e.source !== frame.contentWindow) return null' — so 'a sibling frame, an extension, or the page itself cannot forge one'
+- the child's HOST_SCRIPT forwards a [data-action] click ONLY when e.isTrusted, so 'a widget's own script cannot synthesize a human gesture'
+- FAIL-CLOSED default: 'A host whose child document carries no isTrusted gate (the react harness) does not opt into action forwarding at all'
+- web/src/ui/widget/widgetBridgeSinglePath.test.ts + useWidgetActionBridge.test.tsx + nonChatWidgetHosts.test.tsx + widgetWire.test.tsx green (124-passed run)
+
+**Notes:** ARCC's Input Validation requirement is 'always use an allowlisting approach over a denylisting approach' at entry points handling untrusted data, and this is the cleanest instance of it in the codebase: a closed set of five message types, each parsed into a typed shape, everything else returning null. One subtlety worth recording because generic advice would get it WRONG here — the iframe is sandboxed WITHOUT allow-same-origin, so it has a null origin and an origin check is impossible. Binding to that frame's own contentWindow is not a workaround, it is strictly stronger than an origin string, which a same-origin attacker could satisfy. The e.isTrusted gate then adds something ARCC's guidance does not reach for at all: the message must originate in a human gesture, not merely arrive well-formed.
 
 ## Recorded history
 

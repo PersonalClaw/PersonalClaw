@@ -29,9 +29,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/genui/registry.ts + components.tsx + parse.ts + actions.ts + GenUiWidget.tsx present
+- MEASURED: web/src/design/tokenLint.test.ts 3/3 pass — the token ratchet the atom requires to stay at zero is green
+- genui.test.tsx, genuiActions.test.tsx, genuiHosts.test.tsx all green in the 124-passed run; tests/test_genui_visualize.py green server-side
+- 193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files
+
+**Notes:** The atom asks the component set to be token-driven AND the ratchet to stay at zero, which is the pair that matters: a registry can be token-driven today and drift tomorrow, so the ratchet is the part that keeps it. Rendering through the existing parseWidgetBlocks seam rather than a second parser is the same one-seam discipline the widget bridge states explicitly.
 
 ## Recorded history
 

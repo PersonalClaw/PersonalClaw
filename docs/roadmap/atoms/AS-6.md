@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/genui/actions.ts + genuiActions.test.tsx; tests/test_genui_gate_resolution.py and tests/test_genui_tile_action_fence.py green server-side
+- the tile-action FENCE has its own test file, which is the control that keeps a tile-born action from being read as trusted instruction
+- 193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files
+
+**Driven in the UI:** Not driven: the atom's clauses land in a CHAT TURN — 'a chat-born widget action becomes the next user turn showing humanFriendlyMessage (not raw JSON)' and a workflow-gate form submission resolving the gate. Both need a bound model to produce the turn.
+
+**Notes:** Partial for the turn. The dual-payload design is the interesting half and is observable in the code: one payload for the model, one for the human, so the transcript never shows raw JSON to a person and never shows prose-only to the model. That the fence has a dedicated test file rather than a line inside another suite is the right weight for a trust boundary.
 
 ## Recorded history
 

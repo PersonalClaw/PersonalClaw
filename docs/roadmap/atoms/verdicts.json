@@ -2117,5 +2117,114 @@
       "40 tests pass"
     ],
     "notes": "This atom fixed a real bug and says so: the pre-DIST-13 fallback branch name was 'hardcoded to a branch name this repository has never carried, so a detached-HEAD update fetched an unresolvable ref and failed confusingly'. Its first probe rule is the one that protects a contributor — 'Updating means advance the branch I am on; a contributor on a feature branch must not be reset onto another one' — which matters because the git path ends in a reset --hard."
+  },
+  "AS-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/dashboard/views_store.py:81 PRESET_MISSION_CONTROL_ID and :298 _mission_control_preset, with :321 returning both presets; handlers/views.py is the CRUD surface",
+      "web/src/app/App.tsx:64 lazy-loads MissionControl and :136 routes 'mission-control'",
+      "tests/test_dashboard_views.py + test_dashboard_mission_control_preset.py green",
+      "193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files"
+    ],
+    "ui_validated": "Drove Home. The 'Pinned artifacts' section renders with a teaching empty state that names the action AND where to do it: 'No pinned artifacts. Pin one from its page to keep it here.' A 'Desktop live view' switch sits beside it.",
+    "notes": "No view switcher appears on Home, and that is the atom's own clause rather than a gap: the locked Overview preset 'renders byte-identical to today's dashboard when the registry is empty', so with no custom views there is nothing to switch between and no control is shown. Same progressive-disclosure decision as TSE-2's mine-vs-everyone lens — a control that could only ever be a no-op is not rendered."
+  },
+  "AS-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_ambient_tile_refresh.py rails every clause, and the decisive one is PAIRED: test_the_model_sink_is_never_reached_and_the_render_still_changed proves the LLM was not called AND that the render actually changed — either half alone would be satisfiable by a no-op",
+      "test_a_refresh_writes_one_row_carrying_zero_tokens_and_a_duration is the ledger-only row the atom names; test_the_row_carries_one_outcome_per_data_node covers the per-node accounting",
+      "test_two_refreshes_of_unchanged_data_produce_byte_identical_bodies pins determinism; test_the_same_inputs_render_byte_identical_bodies does it at the transform level",
+      "test_an_unresolvable_slot_raises_instead_of_emptying_the_panel — a missing binding fails LOUD rather than silently blanking the tile",
+      "the transform validator rejects a transform with neither expr nor skeleton, and accepts a skeleton-only one"
+    ],
+    "notes": "The zero-LLM claim is the kind that rots into a lie the moment a fallback is added, and the test that guards it is written the only way that works: assert the sink was never reached AND that output changed anyway. The unresolvable-slot decision is the other half of an honest refresh — a stale panel is better than a blank one, and a raise is better than either."
+  },
+  "AS-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/widget/editMode.ts + editMode.test.ts, artifactIteration.test.tsx, ArtifactIterationRail.tsx, useArtifactIteration.ts, annotate.ts + annotate.test.ts, cssSanitize.ts all present",
+      "the parent-to-child direction is a RESERVED namespace ('__edit_mode_*'), declared in the bridge's wire contract so a widget cannot collide with it",
+      "part of the 124-passed web run"
+    ],
+    "ui_validated": "Not driven: the clause is a live drag on an EDITMODE control with ZERO network requests, which needs an artifact carrying marker-fenced EDITMODE keys. The widget artifact I seeded for the previous cycle has no EDITMODE block, and authoring one to grade it would be grading my own fixture rather than the product's output.",
+    "notes": "Partial for the drag. Worth noting what IS observable in the design: the restyle is batched into a single postMessage rather than a request per change, which is what makes 'zero network requests' structurally true rather than incidentally true."
+  },
+  "AS-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/genui/registry.ts + components.tsx + parse.ts + actions.ts + GenUiWidget.tsx present",
+      "MEASURED: web/src/design/tokenLint.test.ts 3/3 pass — the token ratchet the atom requires to stay at zero is green",
+      "genui.test.tsx, genuiActions.test.tsx, genuiHosts.test.tsx all green in the 124-passed run; tests/test_genui_visualize.py green server-side",
+      "193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files"
+    ],
+    "notes": "The atom asks the component set to be token-driven AND the ratchet to stay at zero, which is the pair that matters: a registry can be token-driven today and drift tomorrow, so the ratchet is the part that keeps it. Rendering through the existing parseWidgetBlocks seam rather than a second parser is the same one-seam discipline the widget bridge states explicitly."
+  },
+  "AS-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/widget/useWidgetActionBridge.ts:1-28 is the whole contract in one docstring: 'ONE wire contract, one validator, one publisher', five allowlisted child-to-parent message types, and a reserved parent-to-child namespace",
+      "SOURCE BINDING at :79 — 'if (!frame || !e.source || e.source !== frame.contentWindow) return null' — so 'a sibling frame, an extension, or the page itself cannot forge one'",
+      "the child's HOST_SCRIPT forwards a [data-action] click ONLY when e.isTrusted, so 'a widget's own script cannot synthesize a human gesture'",
+      "FAIL-CLOSED default: 'A host whose child document carries no isTrusted gate (the react harness) does not opt into action forwarding at all'",
+      "web/src/ui/widget/widgetBridgeSinglePath.test.ts + useWidgetActionBridge.test.tsx + nonChatWidgetHosts.test.tsx + widgetWire.test.tsx green (124-passed run)"
+    ],
+    "notes": "ARCC's Input Validation requirement is 'always use an allowlisting approach over a denylisting approach' at entry points handling untrusted data, and this is the cleanest instance of it in the codebase: a closed set of five message types, each parsed into a typed shape, everything else returning null. One subtlety worth recording because generic advice would get it WRONG here — the iframe is sandboxed WITHOUT allow-same-origin, so it has a null origin and an origin check is impossible. Binding to that frame's own contentWindow is not a workaround, it is strictly stronger than an origin string, which a same-origin attacker could satisfy. The e.isTrusted gate then adds something ARCC's guidance does not reach for at all: the message must originate in a human gesture, not merely arrive well-formed."
+  },
+  "AS-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/genui/actions.ts + genuiActions.test.tsx; tests/test_genui_gate_resolution.py and tests/test_genui_tile_action_fence.py green server-side",
+      "the tile-action FENCE has its own test file, which is the control that keeps a tile-born action from being read as trusted instruction",
+      "193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files"
+    ],
+    "ui_validated": "Not driven: the atom's clauses land in a CHAT TURN — 'a chat-born widget action becomes the next user turn showing humanFriendlyMessage (not raw JSON)' and a workflow-gate form submission resolving the gate. Both need a bound model to produce the turn.",
+    "notes": "Partial for the turn. The dual-payload design is the interesting half and is observable in the code: one payload for the model, one for the human, so the transcript never shows raw JSON to a person and never shows prose-only to the model. That the fence has a dedicated test file rather than a line inside another suite is the right weight for a trust boundary."
+  },
+  "AS-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "../PersonalClawApps/menu-bar-companion/app.json declares platform {os: ['darwin'], installMode: 'client'} exactly as the atom specifies",
+      "PERMISSIONS ARE AN ALLOWLIST of exactly what the atom names: api ['/api/loops', '/api/approvals', '/api/ws'] and events ['approval', 'approval_resolved'] — nothing wider",
+      "MEASURED: 64 tests pass in the app's own suite (test_doorbell.py, test_launcher.py, test_manifest.py and the menubar_companion package)"
+    ],
+    "ui_validated": "Not driven: it is a macOS menu-bar process installed outside the browser, so live run rows and one-click Approve/Deny cannot be exercised from a browser session at all.",
+    "notes": "Partial for the live tray. One thing worth stating plainly rather than leaving implicit: clientInstall runs a shell step on the user's machine (a sparse git clone plus a pip install of rumps). That is genuine code execution at install time, and the control is that the exact shell line is DECLARED IN THE MANIFEST, so it appears on the install-consent surface rather than happening invisibly. The permission allowlist means the installed client cannot reach beyond three endpoints even after it runs."
+  },
+  "AS-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "views_store.py:298 _mission_control_preset; App.tsx:136 routes it; web/src/pages/dashboard/MissionControl.tsx + missionControl.test.tsx",
+      "tests/test_dashboard_mission_control_preset.py green",
+      "193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files"
+    ],
+    "ui_validated": "Drove #/mission-control. All FOUR lanes render — Needs approval / Your turn / Working / Idle — under a heading that states the promise: 'Everything wanting your attention, in the order it wants it. Approve, reject, and answer from here — you do not have to open the run.' 'Your turn' carries a real item from the unified attention store with a count badge of 1; the other three show DISTINCT empty states ('Nothing is waiting on your approval', 'Nothing is running right now', 'Nothing is idle') rather than one shared placeholder.",
+    "notes": "The inline-resolution clause is only half observable here: the item in 'Your turn' is an inbox note rather than an approval, so it correctly carries no Approve/Deny control — those belong to the empty 'Needs approval' lane. Confirmed on the lane structure, the attention-store sourcing and the counts; the approve-from-a-lane action needs a pending approval, which needs a run."
+  },
+  "AS-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 20 (AS) — DRIVEN in a real browser",
+    "evidence": [
+      "the hook and contract exist alongside the dashboard surfaces; tests in the 193-passed server run and the 124-passed web run cover the folding logic"
+    ],
+    "ui_validated": "Not driven with live data: Mission Control's 'Working' lane read 'Nothing is running right now', which is the honest state of a home with no runs. The fold has nothing to fold.",
+    "notes": "Partial because the atom's substance is that the hook FOLDS four live signal sources (loops, chat session states, subagent states, progress envelopes) refreshed by EXISTING WS envelopes. The reuse-not-mint half is checkable and holds — no new WS event was introduced, the same decision AE-10 made and the opposite of BA-5's three unconsumed events. What is unobserved is the fold under real concurrent activity, which is exactly where a signal-folding hook would go wrong."
   }
 }

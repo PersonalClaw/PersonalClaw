@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_ambient_tile_refresh.py rails every clause, and the decisive one is PAIRED: test_the_model_sink_is_never_reached_and_the_render_still_changed proves the LLM was not called AND that the render actually changed — either half alone would be satisfiable by a no-op
+- test_a_refresh_writes_one_row_carrying_zero_tokens_and_a_duration is the ledger-only row the atom names; test_the_row_carries_one_outcome_per_data_node covers the per-node accounting
+- test_two_refreshes_of_unchanged_data_produce_byte_identical_bodies pins determinism; test_the_same_inputs_render_byte_identical_bodies does it at the transform level
+- test_an_unresolvable_slot_raises_instead_of_emptying_the_panel — a missing binding fails LOUD rather than silently blanking the tile
+- the transform validator rejects a transform with neither expr nor skeleton, and accepts a skeleton-only one
+
+**Notes:** The zero-LLM claim is the kind that rots into a lie the moment a fallback is added, and the test that guards it is written the only way that works: assert the sink was never reached AND that output changed anyway. The unresolvable-slot decision is the other half of an honest refresh — a stale panel is better than a blank one, and a raise is better than either.
 
 ## Recorded history
 

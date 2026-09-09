@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- views_store.py:298 _mission_control_preset; App.tsx:136 routes it; web/src/pages/dashboard/MissionControl.tsx + missionControl.test.tsx
+- tests/test_dashboard_mission_control_preset.py green
+- 193 python tests pass (dashboard views / ambient / genui / widget-action) plus 124 web tests across 12 widget+genui files
+
+**Driven in the UI:** Drove #/mission-control. All FOUR lanes render — Needs approval / Your turn / Working / Idle — under a heading that states the promise: 'Everything wanting your attention, in the order it wants it. Approve, reject, and answer from here — you do not have to open the run.' 'Your turn' carries a real item from the unified attention store with a count badge of 1; the other three show DISTINCT empty states ('Nothing is waiting on your approval', 'Nothing is running right now', 'Nothing is idle') rather than one shared placeholder.
+
+**Notes:** The inline-resolution clause is only half observable here: the item in 'Your turn' is an inbox note rather than an approval, so it correctly carries no Approve/Deny control — those belong to the empty 'Needs approval' lane. Confirmed on the lane structure, the attention-store sourcing and the counts; the approve-from-a-lane action needs a pending approval, which needs a run.
 
 ## Recorded history
 

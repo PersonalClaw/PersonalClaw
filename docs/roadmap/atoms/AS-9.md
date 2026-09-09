@@ -31,9 +31,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the hook and contract exist alongside the dashboard surfaces; tests in the 193-passed server run and the 124-passed web run cover the folding logic
+
+**Driven in the UI:** Not driven with live data: Mission Control's 'Working' lane read 'Nothing is running right now', which is the honest state of a home with no runs. The fold has nothing to fold.
+
+**Notes:** Partial because the atom's substance is that the hook FOLDS four live signal sources (loops, chat session states, subagent states, progress envelopes) refreshed by EXISTING WS envelopes. The reuse-not-mint half is checkable and holds — no new WS event was introduced, the same decision AE-10 made and the opposite of BA-5's three unconsumed events. What is unobserved is the fold under real concurrent activity, which is exactly where a signal-folding hook would go wrong.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 91 | `done_when` checked against the code and it holds |
-| `partial` | 103 | some `done_when` clauses hold, others do not |
+| `confirmed` | 96 | `done_when` checked against the code and it holds |
+| `partial` | 107 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 487 | not yet checked |
+| `unaudited` | 478 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -135,15 +135,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AS-1`](AS-1.md) | `done` | `unaudited` | Composable home: dashboard-as-views registry + Overview preset + pinning + AmbientConfig |
-| [`AS-2`](AS-2.md) | `done` | `unaudited` | Chatless refresh: layout/data split render transform + ttl refresh + freshness/error chips |
-| [`AS-3`](AS-3.md) | `done` | `unaudited` | Artifact iteration: EDITMODE tweak controls + click-annotation corrections |
-| [`AS-4`](AS-4.md) | `done` | `unaudited` | Generative-UI core: typed component registry + streaming genui renderer + visualize primitive |
-| [`AS-5`](AS-5.md) | `done` | `unaudited` | Widget action bridge: extract useWidgetActionBridge, route non-chat hosts, harden |
-| [`AS-6`](AS-6.md) | `done` | `unaudited` | Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode |
-| [`AS-7`](AS-7.md) | `done` | `unaudited` | macOS menu-bar tray companion (thin client app) |
-| [`AS-8`](AS-8.md) | `done` | `unaudited` | Mission Control preset: four attention lanes with inline resolution |
-| [`AS-9`](AS-9.md) | `done` | `unaudited` | Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world |
+| [`AS-1`](AS-1.md) | `done` | `confirmed` | Composable home: dashboard-as-views registry + Overview preset + pinning + AmbientConfig |
+| [`AS-2`](AS-2.md) | `done` | `confirmed` | Chatless refresh: layout/data split render transform + ttl refresh + freshness/error chips |
+| [`AS-3`](AS-3.md) | `done` | `partial` | Artifact iteration: EDITMODE tweak controls + click-annotation corrections |
+| [`AS-4`](AS-4.md) | `done` | `confirmed` | Generative-UI core: typed component registry + streaming genui renderer + visualize primitive |
+| [`AS-5`](AS-5.md) | `done` | `confirmed` | Widget action bridge: extract useWidgetActionBridge, route non-chat hosts, harden |
+| [`AS-6`](AS-6.md) | `done` | `partial` | Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode |
+| [`AS-7`](AS-7.md) | `done` | `partial` | macOS menu-bar tray companion (thin client app) |
+| [`AS-8`](AS-8.md) | `done` | `confirmed` | Mission Control preset: four attention lanes with inline resolution |
+| [`AS-9`](AS-9.md) | `done` | `partial` | Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world |
 
 ### `BA` — BROWSE-AUTOMATION (9/9 done)
 

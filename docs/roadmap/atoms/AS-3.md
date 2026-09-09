@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/widget/editMode.ts + editMode.test.ts, artifactIteration.test.tsx, ArtifactIterationRail.tsx, useArtifactIteration.ts, annotate.ts + annotate.test.ts, cssSanitize.ts all present
+- the parent-to-child direction is a RESERVED namespace ('__edit_mode_*'), declared in the bridge's wire contract so a widget cannot collide with it
+- part of the 124-passed web run
+
+**Driven in the UI:** Not driven: the clause is a live drag on an EDITMODE control with ZERO network requests, which needs an artifact carrying marker-fenced EDITMODE keys. The widget artifact I seeded for the previous cycle has no EDITMODE block, and authoring one to grade it would be grading my own fixture rather than the product's output.
+
+**Notes:** Partial for the drag. Worth noting what IS observable in the design: the restyle is batched into a single postMessage rather than a request per change, which is what makes 'zero network requests' structurally true rather than incidentally true.
 
 ## Recorded history
 

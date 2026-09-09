@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 20 (AS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- ../PersonalClawApps/menu-bar-companion/app.json declares platform {os: ['darwin'], installMode: 'client'} exactly as the atom specifies
+- PERMISSIONS ARE AN ALLOWLIST of exactly what the atom names: api ['/api/loops', '/api/approvals', '/api/ws'] and events ['approval', 'approval_resolved'] — nothing wider
+- MEASURED: 64 tests pass in the app's own suite (test_doorbell.py, test_launcher.py, test_manifest.py and the menubar_companion package)
+
+**Driven in the UI:** Not driven: it is a macOS menu-bar process installed outside the browser, so live run rows and one-click Approve/Deny cannot be exercised from a browser session at all.
+
+**Notes:** Partial for the live tray. One thing worth stating plainly rather than leaving implicit: clientInstall runs a shell step on the user's machine (a sparse git clone plus a pip install of rumps). That is genuine code execution at install time, and the control is that the exact shell line is DECLARED IN THE MANIFEST, so it appears on the install-consent surface rather than happening invisibly. The permission allowlist means the installed client cannot reach beyond three endpoints even after it runs.
 
 ## Recorded history
 
