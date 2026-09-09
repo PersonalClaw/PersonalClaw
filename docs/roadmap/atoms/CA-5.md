@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- 🔑 THE THREAT FRAMING IS CORRECT AND STATED (discovery.py:14-18): 'A discovery packet is a broadcast: everything in it is public to every device on the network, forever, with no authentication.' Hence a CLOSED TXT key set of four — name, port, requires_pairing, schema
+- 🔑 THE CLOSED SET IS ENFORCED, NOT CONVENTIONAL: test_encode_txt_ignores_keys_outside_the_closed_set proves the encoder DROPS unknown keys, so a future caller cannot smuggle a token into the record even by passing one
+- 🔑 'IT DOES NOT WIDEN ACCESS' — 'discovery tells a client WHERE to knock; the token rail still decides WHETHER it gets in. Announcing an address grants nothing.' The locating/authorizing distinction most mDNS integrations blur
+- off by default, and proven by ABSENCE of network activity rather than by a flag read (test_disabled_never_probes_the_network). decide() also asks `enabled` FIRST 'so a user who never opted in never has their interfaces enumerated'
+- the loopback refusal is a no-op whose log NAMES THE FIX, not just the symptom: a record naming 127.0.0.1 'resolves to the *client* on every other device. Bind beyond loopback (PERSONALCLAW_BIND_HOST=0.0.0.0) to advertise' — pinned by test_loopback_only_bind_does_not_advertise_and_logs_why
+- no third-party mDNS responder in the dependency set — the wire bytes are built here 'in one function, where they can be read'
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** The negative clauses were driven (discovery enabled on a loopback-bound gateway advertises nothing). The POSITIVE clause — 'a resolver on the LAN finds the instance by name and can begin pairing' — needs a second device on a real LAN and was not driven; the log line for the loopback no-op is emitted at INFO and did not appear in this home's gateway log, so that half rests on its caplog test rather than on observation.
+
+**Notes:** Partial for the resolver hop only; every refusal is confirmed. This is the best-reasoned network-exposure module audited so far, and the reason is that it treats the broadcast as permanently public and then asks what may therefore be in it — rather than asking what would be convenient to include.
 
 ## Recorded history
 

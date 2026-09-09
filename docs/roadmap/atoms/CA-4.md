@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- 🔑 DRIVEN TO THREE POINTS: toggled 'LAN discovery' on, a FULL PAGE RELOAD showed switch [checked], and config.json on disk carried companion = {'discovery_enabled': True, 'instance_name': ''}. Then toggled back off and confirmed False on disk, so the home is left as found
+- all five config points present: the dataclass + _meta, load(), to_dict(), the PATCH allowlist (core.py:1074-1075, with max_len 64 on the name) and a real FE control (CompanionPanel.tsx)
+- 🔑 THE LIVE-APPLY HOOK NAMES THIS CAMPAIGN'S RECURRING DEFECT IN ITS OWN COMMENT (core.py:1298-1301): 'Without this the toggle would be a control that needs a gateway restart to mean anything — and worse, the status route beside it would keep reporting the old reality while the switch read on.' The PATCH calls discovery.reconcile() so the switch is the mechanism, not a stored intention
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** Toggle, reload, on-disk value, restored.
+
+**Notes:** Worth recording that the Self-QA toggle immediately below cites this hook as its precedent ('the same defect the LAN-discovery hook above fixes') — a case of an anti-inertness fix propagating to a second surface by being written down where the next author would read it. The panel copy also carries the posture: 'Nothing is announced on your network unless you turn discovery on.'
 
 ## Recorded history
 

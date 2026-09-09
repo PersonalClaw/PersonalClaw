@@ -32,9 +32,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- MEASURED: desktop/connectMode.js is 828 lines of real merged work and its suite passes 65/65. spawn-local is the default and every non-justified path returns it WITH a reason ('Every path that is not connect to a fully justified endpoint returns spawn-local with a reason')
+- 🔑 CLAUSE 3'S ISOLATION IS STRUCTURAL, exactly as the atom claims: probeAll (:745) maps Promise.all over registry.endpoints and NEVER MUTATES THE REGISTRY, so one row's outcome has no path to another's
+- 🔑 A ROW WITH NO URL REPORTS UNKNOWN, NOT UNREACHABLE — ':751 This row has no URL is not this row is unreachable. Kept apart on purpose.' The absent-versus-declared-false distinction at row level
+- 🔑 THE CAMPAIGN'S PRINCIPLE STATED A SEVENTH TIME, here in JavaScript (:762): 'WITHOUT A CALLER, THE TIME-OF-CHECK/TIME-OF-USE GUARD IS DEAD CODE' — with the history of what silently skipped the host-moved check until every deciding site was routed through it
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** Not driven: V4 names a second machine and a real tunnel, which no amount of local testing substitutes for.
+
+**Notes:** 🔑 THE dag STATUS UNDERSTATES REALITY — the one status discrepancy this cycle, and it points the opposite way from every other stale record found so far. The atom is `todo` while the work is MERGED (#2584) and only the environment-gated V4 remains; its own blocked_reason says so ('PARTIAL — everything reachable without a second machine is now DONE and MERGED'). Proposing `in_progress` rather than flipping it, since the roadmap is owner-maintained. Also worth carrying out of this atom: its blocked_reason records a worry that turned out WRONG IN ITS SPECIFIC FORM and says so — the author expected revocation to ride the tamper path that distrusts every row, which would have made clause 3 violated by design; the tamper path and the per-row probe are separate seams and the test proves the separation. And one reusable finding stated there is genuinely reusable: `new URL('http://2130706433').hostname` already returns '127.0.0.1', so a loopback-spoofing refusal must fire on the RAW AUTHORITY TEXT, because checking url.hostname cannot see the spelling it is meant to catch.
 
 ## Recorded history
 

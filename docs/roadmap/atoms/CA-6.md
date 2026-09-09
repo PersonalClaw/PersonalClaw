@@ -31,9 +31,22 @@ contract is precise enough that desktop + mobile implement it without re-decidin
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- docs/guides/companion-apps.md is 542 lines and carries the hub veto VERBATIM as the clause requires (§'No hub, ever'): 'No hub in core, ever. No gateway-to-gateway anything.'
+- the {active, endpoints[]} registry is real on the desktop side and IS consumed by production code — desktop/connectMode.js:73 imports it — with per-endpoint namespaced state
+- the two-gateway switch with zero state bleed is proven by desktop/test/connectMode.test.js, 65/65 passing, including the isolation case
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** Not driven: a second gateway to switch to needs a second machine (the same gate as CA-8's V4).
+
+**Notes:** 🔑 CENSUS EXTENDED BEYOND WHAT CA-7's CORRECTION EXAMINED. That correction states endpointSocketUrl has 'ZERO production consumers — the only hits are its own definition in desktop/endpointRegistry.js, its differential tests, and a docs example'. Accurate as far as it looked, but there is a SECOND parallel definition it did not name: web/src/lib/endpoints.ts, whose ONLY importer in the entire web tree is its own test — so the module is wholly unconsumed, not merely one helper inside it. That is not a defect: this atom's own scope commissioned an 'OPTIONAL minimal shared TS helper in web/src/lib/' as the reference implementation future clients build against, and CA-9 deliberately ships no per-platform code. The word doing the work in that scope line is 'optional'. Recorded because the residual is genuinely larger than the correction says: the S3 client contract is currently implemented twice, in two languages, with no production caller in either — which is a thing to know before a third copy appears.
 
 ## Recorded history
 

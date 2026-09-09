@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- 🔑 DRIVEN, the full round trip: the panel mints a QR (with alt text naming the ACTION — 'scan it with the camera on the device you are adding'), the code, the link, a LIVE COUNTDOWN ('Expires in 4:53'), New code / Done, and an aria-live status sentence
+- a dedicated /pair page served BEFORE the SPA (the route is reachable without a session by design), code pre-filled from the URL, optional device name, and a pointer back to where the code came from
+- 🔑 THE LIST ROW CARRIES EVERY FIELD THE CLAUSE NAMES, observed: 'Audit probe device · Browser · Last seen never · Paired with a code' plus 'Paired just now · session expires Oct 9' — name, kind, last-seen, issuer AND the expiry
+- revoke is behind an alertdialog that names the device and states the consequence ('will lose access to this gateway immediately and will have to pair again with a new code'), with Cancel focused — the safe default for a destructive dialog. Confirming it emptied the list and the disk row
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** Everything except the two halves this machine cannot produce: the pairing hop was loopback rather than LAN (one machine), and the live lockout is UNOBSERVABLE on this gateway for a structural reason — it runs loopback-trusted ('auth: loopback trusted (no token required)'), so a loopback client is authorized by the loopback rail without its session nonce being consulted at all. The revoked browser therefore still loads, and that is the environment, not the mechanism.
+
+**Notes:** 🔑 A FINDING COLLAPSED, and the same environment fact explains it. 'Last seen never' persisted after the paired browser made several authenticated page loads, which looked exactly like an inert field. It is not: touch_device_last_seen is written 'from the one honest place — where a device's request is AUTHORIZED (TokenStateManager.is_nonce_valid)', and on a loopback-trusted gateway that check never runs. The store's docstring predicts the rendering I saw — 'a last_seen set at pairing time would read as fresh … a device that paired and never came back must render as never' — and three tests pin the writer's payable properties (throttled, never gates the verdict, unstamped reads as never). WITHDRAWN. Fifth collapsed finding of this campaign, and the second where the VALIDATION HOME'S OWN CONFIGURATION is the explanation. 🔑 SECOND ARCC OBJECTIVE MET AND VISIBLE IN THE PRODUCT: bounded session duration. The row showed 'session expires Oct 9' — 30 days, DEFAULT_BROWSER_SESSION_TTL_SECS — and devices.py:272 states why a device does not get the 1-year cap: 'a phone in a drawer should not hold a live session for a year.' token_auth.py:370 reaches ARCC's threat model independently: 'Now that they survive restarts, a 1-year default would mean a browser cookie that outlives the reason it was issued, and A STOLEN ONE STAYS GOOD FOR A YEAR.' There is no IDLE expiry — last_seen feeds the owner's judgment plus a revoke button instead, which is the defensible choice for a single-owner tool where auto-expiring your own phone would be hostile.
 
 ## Recorded history
 

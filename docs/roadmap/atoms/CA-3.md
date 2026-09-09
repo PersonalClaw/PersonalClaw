@@ -29,9 +29,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- the supersession holds where it can be MEASURED rather than asserted: CA-9's census test proves one pairing store with one production importer, one provenance writer, and ZERO device-token identifiers across src + web + desktop
+- MOBILE-COMPANION's task refs point at this plan's C2/C1/S3 rather than carrying a rival design
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Notes:** A docs-reconciliation atom whose acceptance criterion ('grep shows no second/parallel device-token design surviving') would normally be unverifiable prose. It is verifiable here only because CA-9 turned it into a census test with a vacuity floor — the atom that made the earlier atom checkable.
 
 ## Recorded history
 

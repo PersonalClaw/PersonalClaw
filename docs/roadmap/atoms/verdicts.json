@@ -4462,5 +4462,126 @@
       "test_app_cli + test_sdk_cli + test_provider_boundary_residue + test_app_manifest + test_app_catalog 141/141"
     ],
     "notes": "🔑 THE BEST ANTI-INERTNESS ARTEFACT THIS CAMPAIGN HAS AUDITED, and the keeps table is why. A bare grep gate would have to choose between false positives and holes; pairing it with a per-file JUDGMENT makes the exceptions legible. config/safety.py's entry is the proof: it records a genuine FALSE POSITIVE (one 'SLACK_BOT_TOKEN' inside a _meta help string as an example env var an operator might pass through), says the pattern 'cannot tell the two apart', notes it arrived by a FILE MOVE rather than new residue ('the residue did not change, its file did'), and states why it is deliberately NOT reworded — _meta help strings render into the config JSON schema, so editing the sentence would be observable schema drift. Entries 17-18 also carry a live DISCOVERY (a generic 'is any channel configured' helper would remove two of the keeps) pointing at CHANNEL-EXPANSION. ARCC returned only cloud secret-management material here — checked-and-thin — but its one transferable objective, 'eliminating the need to hardcode credentials in source code', is precisely what this rail enforces MECHANICALLY rather than by policy statement, and the keeps table is the honest record of the four places where a credential-shaped literal is the control itself (detection regexes, an env denylist, and the key names existing installs hold)."
+  },
+  "CA-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "🔑 DRIVEN END TO END, not read: minted a real pairing code in the UI, opened the /pair link in a SEPARATE BROWSER SESSION, named the device, and it landed signed in at #/dashboard. Then revoked it and MEASURED sessions.json on disk — the device row is gone and the two non-device rows are untouched",
+      "auth/pairing.py enumerates six bounding properties WITH reasons, and the single-use ordering is the correct one: 'the record is removed and persisted BEFORE the caller mints a session, so two simultaneous redemptions cannot both succeed'",
+      "🔑 THE PARTIAL-FAILURE PATH RETRACTS THE SESSION (devices.py:288-294): if the device block cannot be attached, the just-minted session is revoked and forgotten — 'an un-listed device session is the exact failure the registry exists to prevent'",
+      "the two rejection results the contract requires are distinct (device_pair_code_invalid / expired) but BOTH count toward the per-IP lockout — 'the difference is what the user is told, not how much grinding they are allowed'",
+      "restart durability and revoke-across-restart are pinned by clause-named tests: test_clause_2_the_device_session_survives_a_restart, test_clause_4_revoke_locks_the_device_out_across_a_restart, test_revoke_refuses_the_devices_next_http_request, test_a_revoked_device_stays_refused_across_a_restart",
+      "SEL on each route via _audit(...) with denied outcomes recorded too",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "Pair start → complete → list → revoke, driven in two independent browser sessions; the revoke's effect confirmed on disk.",
+    "notes": "🔑 ARCC WAS SUBSTANTIVE HERE FOR THE FIRST TIME IN SEVERAL CYCLES, and both objectives it returned are met. (1) Token revocation must be real AND SCOPED — 'a revoked refresh token can no longer be used … any other refresh tokens are unaffected'. Measured exactly that on disk: the revoked device's row vanished, the others did not. Its threat statement ('without revocation a compromised token cannot be invalidated, allowing persistent access until it naturally expires') is why session_store.py DISCARDS an old-shape row rather than upgrading it — 'a row with no issuer is a live session the registry can neither describe nor revoke, which is precisely the audit gap this record exists to close'. That is a clean break justified by the security property, not by convenience. (2) Bounded session duration — see CA-2's note, where the number is visible in the product."
+  },
+  "CA-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "🔑 DRIVEN, the full round trip: the panel mints a QR (with alt text naming the ACTION — 'scan it with the camera on the device you are adding'), the code, the link, a LIVE COUNTDOWN ('Expires in 4:53'), New code / Done, and an aria-live status sentence",
+      "a dedicated /pair page served BEFORE the SPA (the route is reachable without a session by design), code pre-filled from the URL, optional device name, and a pointer back to where the code came from",
+      "🔑 THE LIST ROW CARRIES EVERY FIELD THE CLAUSE NAMES, observed: 'Audit probe device · Browser · Last seen never · Paired with a code' plus 'Paired just now · session expires Oct 9' — name, kind, last-seen, issuer AND the expiry",
+      "revoke is behind an alertdialog that names the device and states the consequence ('will lose access to this gateway immediately and will have to pair again with a new code'), with Cancel focused — the safe default for a destructive dialog. Confirming it emptied the list and the disk row",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "Everything except the two halves this machine cannot produce: the pairing hop was loopback rather than LAN (one machine), and the live lockout is UNOBSERVABLE on this gateway for a structural reason — it runs loopback-trusted ('auth: loopback trusted (no token required)'), so a loopback client is authorized by the loopback rail without its session nonce being consulted at all. The revoked browser therefore still loads, and that is the environment, not the mechanism.",
+    "notes": "🔑 A FINDING COLLAPSED, and the same environment fact explains it. 'Last seen never' persisted after the paired browser made several authenticated page loads, which looked exactly like an inert field. It is not: touch_device_last_seen is written 'from the one honest place — where a device's request is AUTHORIZED (TokenStateManager.is_nonce_valid)', and on a loopback-trusted gateway that check never runs. The store's docstring predicts the rendering I saw — 'a last_seen set at pairing time would read as fresh … a device that paired and never came back must render as never' — and three tests pin the writer's payable properties (throttled, never gates the verdict, unstamped reads as never). WITHDRAWN. Fifth collapsed finding of this campaign, and the second where the VALIDATION HOME'S OWN CONFIGURATION is the explanation. 🔑 SECOND ARCC OBJECTIVE MET AND VISIBLE IN THE PRODUCT: bounded session duration. The row showed 'session expires Oct 9' — 30 days, DEFAULT_BROWSER_SESSION_TTL_SECS — and devices.py:272 states why a device does not get the 1-year cap: 'a phone in a drawer should not hold a live session for a year.' token_auth.py:370 reaches ARCC's threat model independently: 'Now that they survive restarts, a 1-year default would mean a browser cookie that outlives the reason it was issued, and A STOLEN ONE STAYS GOOD FOR A YEAR.' There is no IDLE expiry — last_seen feeds the owner's judgment plus a revoke button instead, which is the defensible choice for a single-owner tool where auto-expiring your own phone would be hostile."
+  },
+  "CA-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "the supersession holds where it can be MEASURED rather than asserted: CA-9's census test proves one pairing store with one production importer, one provenance writer, and ZERO device-token identifiers across src + web + desktop",
+      "MOBILE-COMPANION's task refs point at this plan's C2/C1/S3 rather than carrying a rival design",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "notes": "A docs-reconciliation atom whose acceptance criterion ('grep shows no second/parallel device-token design surviving') would normally be unverifiable prose. It is verifiable here only because CA-9 turned it into a census test with a vacuity floor — the atom that made the earlier atom checkable."
+  },
+  "CA-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "🔑 DRIVEN TO THREE POINTS: toggled 'LAN discovery' on, a FULL PAGE RELOAD showed switch [checked], and config.json on disk carried companion = {'discovery_enabled': True, 'instance_name': ''}. Then toggled back off and confirmed False on disk, so the home is left as found",
+      "all five config points present: the dataclass + _meta, load(), to_dict(), the PATCH allowlist (core.py:1074-1075, with max_len 64 on the name) and a real FE control (CompanionPanel.tsx)",
+      "🔑 THE LIVE-APPLY HOOK NAMES THIS CAMPAIGN'S RECURRING DEFECT IN ITS OWN COMMENT (core.py:1298-1301): 'Without this the toggle would be a control that needs a gateway restart to mean anything — and worse, the status route beside it would keep reporting the old reality while the switch read on.' The PATCH calls discovery.reconcile() so the switch is the mechanism, not a stored intention",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "Toggle, reload, on-disk value, restored.",
+    "notes": "Worth recording that the Self-QA toggle immediately below cites this hook as its precedent ('the same defect the LAN-discovery hook above fixes') — a case of an anti-inertness fix propagating to a second surface by being written down where the next author would read it. The panel copy also carries the posture: 'Nothing is announced on your network unless you turn discovery on.'"
+  },
+  "CA-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "🔑 THE THREAT FRAMING IS CORRECT AND STATED (discovery.py:14-18): 'A discovery packet is a broadcast: everything in it is public to every device on the network, forever, with no authentication.' Hence a CLOSED TXT key set of four — name, port, requires_pairing, schema",
+      "🔑 THE CLOSED SET IS ENFORCED, NOT CONVENTIONAL: test_encode_txt_ignores_keys_outside_the_closed_set proves the encoder DROPS unknown keys, so a future caller cannot smuggle a token into the record even by passing one",
+      "🔑 'IT DOES NOT WIDEN ACCESS' — 'discovery tells a client WHERE to knock; the token rail still decides WHETHER it gets in. Announcing an address grants nothing.' The locating/authorizing distinction most mDNS integrations blur",
+      "off by default, and proven by ABSENCE of network activity rather than by a flag read (test_disabled_never_probes_the_network). decide() also asks `enabled` FIRST 'so a user who never opted in never has their interfaces enumerated'",
+      "the loopback refusal is a no-op whose log NAMES THE FIX, not just the symptom: a record naming 127.0.0.1 'resolves to the *client* on every other device. Bind beyond loopback (PERSONALCLAW_BIND_HOST=0.0.0.0) to advertise' — pinned by test_loopback_only_bind_does_not_advertise_and_logs_why",
+      "no third-party mDNS responder in the dependency set — the wire bytes are built here 'in one function, where they can be read'",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "The negative clauses were driven (discovery enabled on a loopback-bound gateway advertises nothing). The POSITIVE clause — 'a resolver on the LAN finds the instance by name and can begin pairing' — needs a second device on a real LAN and was not driven; the log line for the loopback no-op is emitted at INFO and did not appear in this home's gateway log, so that half rests on its caplog test rather than on observation.",
+    "notes": "Partial for the resolver hop only; every refusal is confirmed. This is the best-reasoned network-exposure module audited so far, and the reason is that it treats the broadcast as permanently public and then asks what may therefore be in it — rather than asking what would be convenient to include."
+  },
+  "CA-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "docs/guides/companion-apps.md is 542 lines and carries the hub veto VERBATIM as the clause requires (§'No hub, ever'): 'No hub in core, ever. No gateway-to-gateway anything.'",
+      "the {active, endpoints[]} registry is real on the desktop side and IS consumed by production code — desktop/connectMode.js:73 imports it — with per-endpoint namespaced state",
+      "the two-gateway switch with zero state bleed is proven by desktop/test/connectMode.test.js, 65/65 passing, including the isolation case",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "Not driven: a second gateway to switch to needs a second machine (the same gate as CA-8's V4).",
+    "notes": "🔑 CENSUS EXTENDED BEYOND WHAT CA-7's CORRECTION EXAMINED. That correction states endpointSocketUrl has 'ZERO production consumers — the only hits are its own definition in desktop/endpointRegistry.js, its differential tests, and a docs example'. Accurate as far as it looked, but there is a SECOND parallel definition it did not name: web/src/lib/endpoints.ts, whose ONLY importer in the entire web tree is its own test — so the module is wholly unconsumed, not merely one helper inside it. That is not a defect: this atom's own scope commissioned an 'OPTIONAL minimal shared TS helper in web/src/lib/' as the reference implementation future clients build against, and CA-9 deliberately ships no per-platform code. The word doing the work in that scope line is 'optional'. Recorded because the residual is genuinely larger than the correction says: the S3 client contract is currently implemented twice, in two languages, with no production caller in either — which is a thing to know before a third copy appears."
+  },
+  "CA-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "the mechanism is railed where the atom says it is: api_ws → _check_ws_origin → the paired-device session path, with 'no new origin exemption' holding BY ABSENCE plus a byte-identical rail on build_allowed_origins",
+      "tests/test_ca7_remote_wss_auth.py and test_ca7_wss_tunnel_e2e.py both green inside the 133",
+      "MEASURED, and it confirms the atom's own correction: endpointSocketUrl has no production consumer in desktop/connectMode.js or desktop/main.js",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "notes": "🔑 THE MOST INSTRUCTIVE ATOM IN THIS PLAN, and none of it is about code. Its residual field was EDITED on 2026-09-07 to withdraw an instruction, and the reasoning is the campaign's own lesson stated by the plan itself: the old residual told the next reader to 'give endpointSocket its first consumer — one shipped shell dialling the active registry row's wss', and doing that WOULD HAVE CONTRADICTED THE ARCHITECTURE, because the desktop shell hosts the SPA in a webview and therefore the socket is opened by the PAGE, origin-relative. CA-8 landed and correctly declined to do it. The correction's stated motive is exactly right: 'a residual is read as an instruction. This one pointed the next reader at a change the contract forbids, and it was going to keep pointing there every time someone asked what CA-7 still owed.' Editing a done atom to retract a wrong next-step is the same discipline as this audit's own withdrawals, applied to the plan record instead of to a finding."
+  },
+  "CA-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "MEASURED: desktop/connectMode.js is 828 lines of real merged work and its suite passes 65/65. spawn-local is the default and every non-justified path returns it WITH a reason ('Every path that is not connect to a fully justified endpoint returns spawn-local with a reason')",
+      "🔑 CLAUSE 3'S ISOLATION IS STRUCTURAL, exactly as the atom claims: probeAll (:745) maps Promise.all over registry.endpoints and NEVER MUTATES THE REGISTRY, so one row's outcome has no path to another's",
+      "🔑 A ROW WITH NO URL REPORTS UNKNOWN, NOT UNREACHABLE — ':751 This row has no URL is not this row is unreachable. Kept apart on purpose.' The absent-versus-declared-false distinction at row level",
+      "🔑 THE CAMPAIGN'S PRINCIPLE STATED A SEVENTH TIME, here in JavaScript (:762): 'WITHOUT A CALLER, THE TIME-OF-CHECK/TIME-OF-USE GUARD IS DEAD CODE' — with the history of what silently skipped the host-moved check until every deciding site was routed through it",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "ui_validated": "Not driven: V4 names a second machine and a real tunnel, which no amount of local testing substitutes for.",
+    "notes": "🔑 THE dag STATUS UNDERSTATES REALITY — the one status discrepancy this cycle, and it points the opposite way from every other stale record found so far. The atom is `todo` while the work is MERGED (#2584) and only the environment-gated V4 remains; its own blocked_reason says so ('PARTIAL — everything reachable without a second machine is now DONE and MERGED'). Proposing `in_progress` rather than flipping it, since the roadmap is owner-maintained. Also worth carrying out of this atom: its blocked_reason records a worry that turned out WRONG IN ITS SPECIFIC FORM and says so — the author expected revocation to ride the tamper path that distrusts every row, which would have made clause 3 violated by design; the tamper path and the per-row probe are separate seams and the test proves the separation. And one reusable finding stated there is genuinely reusable: `new URL('http://2130706433').hostname` already returns '127.0.0.1', so a loopback-spoofing refusal must fire on the RAW AUTHORITY TEXT, because checking url.hostname cannot see the spelling it is meant to catch."
+  },
+  "CA-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven",
+    "evidence": [
+      "MEASURED: tests/test_companion_single_pairing_mechanism.py proves the census the atom claims — one pairing store with one production importer, one device-provenance writer, zero parallel device-token identifiers, and no speculative per-platform code",
+      "🔑 EVERY CENSUS CARRIES A VACUITY FLOOR, and the file says why: 'A pattern that matches nothing looks clean while proving nothing' (test_scanner_is_not_vacuous)",
+      "the future-platform recipe is written in the guide with no per-platform code shipped, exactly as the clause requires",
+      "test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65"
+    ],
+    "notes": "Third self-falsifying census in this campaign, after the skills-suppression consumer census and the provider-boundary residue sweep's teeth test. The pattern is now consistent enough to name as a house style: a census assertion ships WITH a test that the census can fail. This atom is also what makes CA-3 auditable at all — a docs-reconciliation claim became a machine-checked one."
   }
 }

@@ -31,9 +31,25 @@ pair/start->complete yields a durable device session (a sessions.json row with d
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- 🔑 DRIVEN END TO END, not read: minted a real pairing code in the UI, opened the /pair link in a SEPARATE BROWSER SESSION, named the device, and it landed signed in at #/dashboard. Then revoked it and MEASURED sessions.json on disk — the device row is gone and the two non-device rows are untouched
+- auth/pairing.py enumerates six bounding properties WITH reasons, and the single-use ordering is the correct one: 'the record is removed and persisted BEFORE the caller mints a session, so two simultaneous redemptions cannot both succeed'
+- 🔑 THE PARTIAL-FAILURE PATH RETRACTS THE SESSION (devices.py:288-294): if the device block cannot be attached, the just-minted session is revoked and forgotten — 'an un-listed device session is the exact failure the registry exists to prevent'
+- the two rejection results the contract requires are distinct (device_pair_code_invalid / expired) but BOTH count toward the per-IP lockout — 'the difference is what the user is told, not how much grinding they are allowed'
+- restart durability and revoke-across-restart are pinned by clause-named tests: test_clause_2_the_device_session_survives_a_restart, test_clause_4_revoke_locks_the_device_out_across_a_restart, test_revoke_refuses_the_devices_next_http_request, test_a_revoked_device_stays_refused_across_a_restart
+- SEL on each route via _audit(...) with denied outcomes recorded too
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Driven in the UI:** Pair start → complete → list → revoke, driven in two independent browser sessions; the revoke's effect confirmed on disk.
+
+**Notes:** 🔑 ARCC WAS SUBSTANTIVE HERE FOR THE FIRST TIME IN SEVERAL CYCLES, and both objectives it returned are met. (1) Token revocation must be real AND SCOPED — 'a revoked refresh token can no longer be used … any other refresh tokens are unaffected'. Measured exactly that on disk: the revoked device's row vanished, the others did not. Its threat statement ('without revocation a compromised token cannot be invalidated, allowing persistent access until it naturally expires') is why session_store.py DISCARDS an old-shape row rather than upgrading it — 'a row with no issuer is a live session the registry can neither describe nor revoke, which is precisely the audit gap this record exists to close'. That is a clean break justified by the security property, not by convenience. (2) Bounded session duration — see CA-2's note, where the number is visible in the product.
 
 ## Recorded history
 

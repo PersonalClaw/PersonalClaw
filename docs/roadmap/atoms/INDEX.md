@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 213 | `done_when` checked against the code and it holds |
-| `partial` | 158 | some `done_when` clauses hold, others do not |
+| `confirmed` | 220 | `done_when` checked against the code and it holds |
+| `partial` | 160 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 308 | not yet checked |
+| `unaudited` | 299 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -163,15 +163,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CA-1`](CA-1.md) | `done` | `unaudited` | S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows |
-| [`CA-2`](CA-2.md) | `done` | `unaudited` | S1 frontend: Settings → Devices panel (list, revoke, QR pairing) |
-| [`CA-3`](CA-3.md) | `done` | `unaudited` | S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract |
-| [`CA-4`](CA-4.md) | `done` | `unaudited` | S2 config: new `companion` section wired through all 5 config points |
-| [`CA-5`](CA-5.md) | `done` | `unaudited` | S2 discovery: optional mDNS advertiser + client resolver + guide |
-| [`CA-6`](CA-6.md) | `done` | `unaudited` | S3 shared client contract doc + multi-gateway registry (amendment T3.3) |
-| [`CA-7`](CA-7.md) | `done` | `unaudited` | S3 remote-endpoint auth path over wss (no new origin exemption) |
-| [`CA-8`](CA-8.md) | `todo` | `unaudited` | S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4) |
-| [`CA-9`](CA-9.md) | `done` | `unaudited` | S4 coordination docs: mobile task refs + future-platform recipe |
+| [`CA-1`](CA-1.md) | `done` | `confirmed` | S1 backend: unified pairing routes (C2) + Devices registry over REMOTE-USER-AUTH session rows |
+| [`CA-2`](CA-2.md) | `done` | `confirmed` | S1 frontend: Settings → Devices panel (list, revoke, QR pairing) |
+| [`CA-3`](CA-3.md) | `done` | `confirmed` | S1 supersession reconciliation: fold MOBILE-COMPANION C1/C4 into this pairing contract |
+| [`CA-4`](CA-4.md) | `done` | `confirmed` | S2 config: new `companion` section wired through all 5 config points |
+| [`CA-5`](CA-5.md) | `done` | `partial` | S2 discovery: optional mDNS advertiser + client resolver + guide |
+| [`CA-6`](CA-6.md) | `done` | `confirmed` | S3 shared client contract doc + multi-gateway registry (amendment T3.3) |
+| [`CA-7`](CA-7.md) | `done` | `confirmed` | S3 remote-endpoint auth path over wss (no new origin exemption) |
+| [`CA-8`](CA-8.md) | `todo` | `partial` | S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4) |
+| [`CA-9`](CA-9.md) | `done` | `confirmed` | S4 coordination docs: mobile task refs + future-platform recipe |
 
 ### `CATO` — COST-AND-TOKEN-OBSERVABILITY (8/8 done)
 

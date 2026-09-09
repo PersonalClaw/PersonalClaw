@@ -32,9 +32,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- MEASURED: tests/test_companion_single_pairing_mechanism.py proves the census the atom claims — one pairing store with one production importer, one device-provenance writer, zero parallel device-token identifiers, and no speculative per-platform code
+- 🔑 EVERY CENSUS CARRIES A VACUITY FLOOR, and the file says why: 'A pattern that matches nothing looks clean while proving nothing' (test_scanner_is_not_vacuous)
+- the future-platform recipe is written in the guide with no per-platform code shipped, exactly as the clause requires
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Notes:** Third self-falsifying census in this campaign, after the skills-suppression consumer census and the provider-boundary residue sweep's teeth test. The pattern is now consistent enough to name as a house style: a census assertion ships WITH a test that the census can fail. This atom is also what makes CA-3 auditable at all — a docs-reconciliation claim became a machine-checked one.
 
 ## Recorded history
 

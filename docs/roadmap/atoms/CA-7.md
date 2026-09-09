@@ -31,9 +31,20 @@ a native client reaches a remote gateway over the owner's tunnel using its devic
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 39 (CA) — a SECOND BROWSER paired end-to-end and was revoked, driven
+
+**Code evidence:**
+
+- the mechanism is railed where the atom says it is: api_ws → _check_ws_origin → the paired-device session path, with 'no new origin exemption' holding BY ABSENCE plus a byte-identical rail on build_allowed_origins
+- tests/test_ca7_remote_wss_auth.py and test_ca7_wss_tunnel_e2e.py both green inside the 133
+- MEASURED, and it confirms the atom's own correction: endpointSocketUrl has no production consumer in desktop/connectMode.js or desktop/main.js
+- test_device_pairing + test_companion_discovery + test_companion_single_pairing_mechanism + test_ca7_remote_wss_auth + test_mc2_device_session_consumption 133/133; desktop/test/connectMode.test.js 65/65
+
+**Notes:** 🔑 THE MOST INSTRUCTIVE ATOM IN THIS PLAN, and none of it is about code. Its residual field was EDITED on 2026-09-07 to withdraw an instruction, and the reasoning is the campaign's own lesson stated by the plan itself: the old residual told the next reader to 'give endpointSocket its first consumer — one shipped shell dialling the active registry row's wss', and doing that WOULD HAVE CONTRADICTED THE ARCHITECTURE, because the desktop shell hosts the SPA in a webview and therefore the socket is opened by the PAGE, origin-relative. CA-8 landed and correctly declined to do it. The correction's stated motive is exactly right: 'a residual is read as an instruction. This one pointed the next reader at a change the contract forbids, and it was going to keep pointing there every time someone asked what CA-7 still owed.' Editing a done atom to retract a wrong next-step is the same discipline as this audit's own withdrawals, applied to the plan record instead of to a finding.
 
 ## Recorded history
 
