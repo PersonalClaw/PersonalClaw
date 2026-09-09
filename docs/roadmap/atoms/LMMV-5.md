@@ -31,9 +31,21 @@ local_models/sidecar.py runner owns a per-app dedicated venv, a newline-JSON std
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- local_models/sidecar.py and _sidecar_child.py both present — the runner and its newline-JSON stdio child
+- status agrees everywhere, and the detail section carries an explicit '**DONE.**' paragraph naming the shipped module
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Driven in the UI:** Not driven: the clause's decisive test is a sidecar KILLED MID-ENCODE keeping the gateway alive, raising a typed crash, respawning, and search recovering without a restart. That needs a live sentence-transformers sidecar and a real encode to interrupt.
+
+**Notes:** Partial for the crash-recovery drive, not for the machinery. The process-generation counter is the detail that makes respawn safe — without it a late frame from a dead child can be attributed to its replacement.
 
 ## Recorded history
 

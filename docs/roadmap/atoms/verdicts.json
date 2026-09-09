@@ -2571,5 +2571,107 @@
       "593 tests pass across the judge / loop-node / until-dry / steering / calibration modules (3 skips, all explained)"
     ],
     "notes": "The two stall signals are worker-independent in the strong sense: both are derived from the work product and the call log rather than from anything the worker asserts about its own progress. Also listed as 'next' in the workspace roadmap and since landed."
+  },
+  "LMMV-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "src/personalclaw/local_models/layouts.py exists and is the one place that knows the HF cache layouts (it is the only module in the package referencing huggingface)",
+      "status agrees everywhere: dag.json `done` and the plan's own detail section `done`",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "The workspace roadmap lists 'Local-Model-Manager's cleanup half' among inert shipped controls. This atom is the layout PROBE rather than the cleanup driver, and the probe is what a cleanup UI would consume, so I am not treating the roadmap note as settled either way here — the atom's own clause (multi-layout probing) is what I checked, and it holds."
+  },
+  "LMMV-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "MEASURED: CapabilityMatrix AND runtime_contract both present in local_models/provider.py — the two symbols the clause names",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "STATUS MISMATCH resolved in favour of done: the plan's detail section says `todo` while its table says ✅ and dag.json says `done`. The code backs done, so the detail section is stale prose. Recorded in issue #2763 alongside its siblings rather than filed separately.",
+    "follow_ups": [
+      "issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)"
+    ]
+  },
+  "LMMV-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "MEASURED: ModelDownloadJob present in dashboard/model_downloads.py — the canonical job record the clause names",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "Same mismatch shape as LMMV-2 and resolved the same way: detail section stale at `todo`, code backs `done`. The clause's most interesting half — 'FE owns no download state; on mount it polls and reattaches' — is the right architecture for a long download surviving a tab switch, and it is the reason the canonical server-side record has to exist at all.",
+    "follow_ups": [
+      "issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)"
+    ]
+  },
+  "LMMV-4": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "dag.json records `done` and the plan's summary table marks ✅ — while the plan's OWN detail section for the same atom says `**Status:** todo`",
+      "MEASURED absent, each checked individually: local_models/hf_token.py does not exist (the package has 8 modules); ZERO references to hf_token / HF_TOKEN / resolve_hf_token anywhere in src/personalclaw/; sdk/credentials.py is 11 lines re-exporting only the generic Credential/CredentialStore with no HF symbol; no GET /api/models/hf-token/status route in dashboard/ or reference/routes.md; no whoami_ttl_s or selftest_timeout_s in config/loader.py; no whoami call in local_models/",
+      "LMMV-5's detail section ends with a '**DONE.**' paragraph naming its shipped module; LMMV-4's carries no such marker, consistent with the todo",
+      "THE CONSEQUENCE IS LIVE: the plan's §62 describes the pre-cascade state as 'two-source and validation-free… each provider rolls its own', and ../PersonalClawApps/diarization-pyannote/provider.py:55 still reads exactly `self._config.get('hf_token') or os.environ.get('HF_TOKEN')` — no whoami, no per-source status, no HF-CLI-file fallback",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "THE CAMPAIGN'S SECOND CONTRADICTED VERDICT, and the best-evidenced one — because I did not have to weigh my reading against the record. The record contradicts ITSELF, and the code says which half to trust. Six named artifacts, each checked separately rather than inferred from one search, and all six absent. What makes this worse than a bookkeeping slip is the subject: a reader trusting dag.json would believe a CREDENTIAL-handling improvement shipped (three-source resolution, whoami validation, masked-only status, egress-chokepoint routing, SEL logging of set/clear) while the ad-hoc per-provider lookup is what actually runs. Filed as #2763, which PROPOSES the dag.json flip rather than making it.",
+    "follow_ups": [
+      "issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)"
+    ]
+  },
+  "LMMV-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "local_models/sidecar.py and _sidecar_child.py both present — the runner and its newline-JSON stdio child",
+      "status agrees everywhere, and the detail section carries an explicit '**DONE.**' paragraph naming the shipped module",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "ui_validated": "Not driven: the clause's decisive test is a sidecar KILLED MID-ENCODE keeping the gateway alive, raising a typed crash, respawning, and search recovering without a restart. That needs a live sentence-transformers sidecar and a real encode to interrupt.",
+    "notes": "Partial for the crash-recovery drive, not for the machinery. The process-generation counter is the detail that makes respawn safe — without it a late frame from a dead child can be attributed to its replacement."
+  },
+  "LMMV-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "MEASURED: credential_source present in llm/branded_specs.py (the BrandedProviderSpec home), llm/subscription_credentials.py and providers/loader.py — three live sites, not one declaration",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "Same status mismatch as LMMV-2/3, resolved to done on the code. The clause's ordered credential cascade (entry → options → subscription resolver → spec env var → anon placeholder) ends in a PLACEHOLDER rather than an error, which is the same fail-to-unauthenticated posture ES-17's cell provider took: a missing credential degrades to 'can only reach an anonymous endpoint' instead of throwing.",
+    "follow_ups": [
+      "issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)"
+    ]
+  },
+  "LMMV-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "dag.json records `blocked`, the plan's table marks ⬜ and its detail section says `blocked` — all three agree, which is notable in a file where four other atoms do not",
+      "its declared dependencies include LMMV-4, which this audit just found unbuilt — so the block is not merely recorded, it is CAUSED: the hardening session cannot complete over a session that never landed",
+      "local_models/budgets.py DOES exist, so the budget-derivation helper the clause names is present even though the atom as a whole is blocked",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "Confirmed as a correctly-recorded blocked atom, and the dependency check is what makes it more than a status echo: LMMV-7 lists LMMV-4 among its deps, and LMMV-4 is unbuilt. A stale blocker would have been the finding; instead the blocker is real and its cause is the very atom this cycle contradicted. Worth noting budgets.py exists — the atom is blocked on its full-matrix as-a-user validation and its regression locks, not on that helper."
+  },
+  "LMMV-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 23 (LMMV) — code and tests observed on this machine",
+    "evidence": [
+      "src/personalclaw/local_models/fit.py is the ONE module the clause requires, and status agrees everywhere",
+      "the clause names the arithmetic bug it exists to prevent: unified memory counted once, 'an integrated GPU's VRAM never added on top of system RAM (the arithmetic that otherwise reports a larger budget than the' machine has",
+      "tests/test_model_fit.py green inside the 309-passed run",
+      "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
+    ],
+    "notes": "Naming the specific wrong arithmetic — adding an integrated GPU's VRAM to system RAM it already shares — is what makes this atom checkable rather than aspirational. One module, one budget function, one traffic-light verdict is the same single-owner discipline WF2LOO's verdict reconciliation applied to judgements."
   }
 }

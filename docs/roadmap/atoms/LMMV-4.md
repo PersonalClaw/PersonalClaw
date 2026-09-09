@@ -29,9 +29,25 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- dag.json records `done` and the plan's summary table marks ✅ — while the plan's OWN detail section for the same atom says `**Status:** todo`
+- MEASURED absent, each checked individually: local_models/hf_token.py does not exist (the package has 8 modules); ZERO references to hf_token / HF_TOKEN / resolve_hf_token anywhere in src/personalclaw/; sdk/credentials.py is 11 lines re-exporting only the generic Credential/CredentialStore with no HF symbol; no GET /api/models/hf-token/status route in dashboard/ or reference/routes.md; no whoami_ttl_s or selftest_timeout_s in config/loader.py; no whoami call in local_models/
+- LMMV-5's detail section ends with a '**DONE.**' paragraph naming its shipped module; LMMV-4's carries no such marker, consistent with the todo
+- THE CONSEQUENCE IS LIVE: the plan's §62 describes the pre-cascade state as 'two-source and validation-free… each provider rolls its own', and ../PersonalClawApps/diarization-pyannote/provider.py:55 still reads exactly `self._config.get('hf_token') or os.environ.get('HF_TOKEN')` — no whoami, no per-source status, no HF-CLI-file fallback
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** THE CAMPAIGN'S SECOND CONTRADICTED VERDICT, and the best-evidenced one — because I did not have to weigh my reading against the record. The record contradicts ITSELF, and the code says which half to trust. Six named artifacts, each checked separately rather than inferred from one search, and all six absent. What makes this worse than a bookkeeping slip is the subject: a reader trusting dag.json would believe a CREDENTIAL-handling improvement shipped (three-source resolution, whoami validation, masked-only status, egress-chokepoint routing, SEL logging of set/clear) while the ad-hoc per-provider lookup is what actually runs. Filed as #2763, which PROPOSES the dag.json flip rather than making it.
+
+**Follow-ups filed:**
+
+- issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)
 
 ## Recorded history
 

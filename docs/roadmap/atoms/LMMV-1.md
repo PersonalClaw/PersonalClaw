@@ -29,9 +29,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- src/personalclaw/local_models/layouts.py exists and is the one place that knows the HF cache layouts (it is the only module in the package referencing huggingface)
+- status agrees everywhere: dag.json `done` and the plan's own detail section `done`
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** The workspace roadmap lists 'Local-Model-Manager's cleanup half' among inert shipped controls. This atom is the layout PROBE rather than the cleanup driver, and the probe is what a cleanup UI would consume, so I am not treating the roadmap note as settled either way here — the atom's own clause (multi-layout probing) is what I checked, and it holds.
 
 ## Recorded history
 

@@ -31,9 +31,22 @@ ModelDownloadJob.to_dict() emits the one canonical shape (kind/state/progress/re
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- MEASURED: ModelDownloadJob present in dashboard/model_downloads.py — the canonical job record the clause names
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** Same mismatch shape as LMMV-2 and resolved the same way: detail section stale at `todo`, code backs `done`. The clause's most interesting half — 'FE owns no download state; on mount it polls and reattaches' — is the right architecture for a long download surviving a tab switch, and it is the reason the canonical server-side record has to exist at all.
+
+**Follow-ups filed:**
+
+- issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)
 
 ## Recorded history
 

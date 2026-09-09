@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- MEASURED: credential_source present in llm/branded_specs.py (the BrandedProviderSpec home), llm/subscription_credentials.py and providers/loader.py — three live sites, not one declaration
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** Same status mismatch as LMMV-2/3, resolved to done on the code. The clause's ordered credential cascade (entry → options → subscription resolver → spec env var → anon placeholder) ends in a PLACEHOLDER rather than an error, which is the same fail-to-unauthenticated posture ES-17's cell provider took: a missing credential degrades to 'can only reach an anonymous endpoint' instead of throwing.
+
+**Follow-ups filed:**
+
+- issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)
 
 ## Recorded history
 

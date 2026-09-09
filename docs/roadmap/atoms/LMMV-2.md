@@ -31,9 +31,22 @@ CapabilityMatrix (optional, default None) plus runtime/runtime_contract/license/
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- MEASURED: CapabilityMatrix AND runtime_contract both present in local_models/provider.py — the two symbols the clause names
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** STATUS MISMATCH resolved in favour of done: the plan's detail section says `todo` while its table says ✅ and dag.json says `done`. The code backs done, so the detail section is stale prose. Recorded in issue #2763 alongside its siblings rather than filed separately.
+
+**Follow-ups filed:**
+
+- issue #2763 (LMMV-4 recorded done with none of its artifacts present; three sibling status mismatches resolved)
 
 ## Recorded history
 

@@ -35,9 +35,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- dag.json records `blocked`, the plan's table marks ⬜ and its detail section says `blocked` — all three agree, which is notable in a file where four other atoms do not
+- its declared dependencies include LMMV-4, which this audit just found unbuilt — so the block is not merely recorded, it is CAUSED: the hardening session cannot complete over a session that never landed
+- local_models/budgets.py DOES exist, so the budget-derivation helper the clause names is present even though the atom as a whole is blocked
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** Confirmed as a correctly-recorded blocked atom, and the dependency check is what makes it more than a status echo: LMMV-7 lists LMMV-4 among its deps, and LMMV-4 is unbuilt. A stale blocker would have been the finding; instead the blocker is real and its cause is the very atom this cycle contradicted. Worth noting budgets.py exists — the atom is blocked on its full-matrix as-a-user validation and its regression locks, not on that helper.
 
 ## Recorded history
 

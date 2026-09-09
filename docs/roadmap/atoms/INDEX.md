@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 118 | `done_when` checked against the code and it holds |
-| `partial` | 117 | some `done_when` clauses hold, others do not |
-| `contradicted` | 1 | the recorded status disagrees with the code |
+| `confirmed` | 124 | `done_when` checked against the code and it holds |
+| `partial` | 118 | some `done_when` clauses hold, others do not |
+| `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 446 | not yet checked |
+| `unaudited` | 438 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -522,14 +522,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`LMMV-1`](LMMV-1.md) | `done` | `unaudited` | Shared multi-layout downloaded/delete probe + cleanup-candidate detection (local_models/layouts.py) |
-| [`LMMV-2`](LMMV-2.md) | `done` | `unaudited` | Session 1 — Catalog & contract: CapabilityMatrix, runtime-contract/license fields, declarative catalog.json loader + truncation detector, available payload + ModelsPanel chips |
-| [`LMMV-3`](LMMV-3.md) | `done` | `unaudited` | Session 2 — Download Manager v2: canonical job record, poll-first reattach, .part + cleanup candidates, gated/network/disk error classification, wire delete_all_layouts |
-| [`LMMV-4`](LMMV-4.md) | `done` | `unaudited` | Session 3 — HF token cascade (3-source, whoami-validated) + per-provider real-inference selftest & health endpoints |
-| [`LMMV-5`](LMMV-5.md) | `done` | `unaudited` | Session 4 — Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget |
-| [`LMMV-6`](LMMV-6.md) | `done` | `unaudited` | Session 5a — Subscription-credential model providers (credential_source resolver + one reference app) |
-| [`LMMV-7`](LMMV-7.md) | `blocked` | `unaudited` | Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation |
-| [`LMMV-8`](LMMV-8.md) | `done` | `unaudited` | Hardware-aware model fit: one memory budget, one traffic-light verdict, fit-filtered browse |
+| [`LMMV-1`](LMMV-1.md) | `done` | `confirmed` | Shared multi-layout downloaded/delete probe + cleanup-candidate detection (local_models/layouts.py) |
+| [`LMMV-2`](LMMV-2.md) | `done` | `confirmed` | Session 1 — Catalog & contract: CapabilityMatrix, runtime-contract/license fields, declarative catalog.json loader + truncation detector, available payload + ModelsPanel chips |
+| [`LMMV-3`](LMMV-3.md) | `done` | `confirmed` | Session 2 — Download Manager v2: canonical job record, poll-first reattach, .part + cleanup candidates, gated/network/disk error classification, wire delete_all_layouts |
+| [`LMMV-4`](LMMV-4.md) | `done` | `contradicted` | Session 3 — HF token cascade (3-source, whoami-validated) + per-provider real-inference selftest & health endpoints |
+| [`LMMV-5`](LMMV-5.md) | `done` | `partial` | Session 4 — Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget |
+| [`LMMV-6`](LMMV-6.md) | `done` | `confirmed` | Session 5a — Subscription-credential model providers (credential_source resolver + one reference app) |
+| [`LMMV-7`](LMMV-7.md) | `blocked` | `confirmed` | Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation |
+| [`LMMV-8`](LMMV-8.md) | `done` | `confirmed` | Hardware-aware model fit: one memory budget, one traffic-light verdict, fit-filtered browse |
 
 ### `LV` — LEARNING-VISIBILITY (6/7 done)
 

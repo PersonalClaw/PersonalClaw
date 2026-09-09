@@ -29,9 +29,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 23 (LMMV) — code and tests observed on this machine
+
+**Code evidence:**
+
+- src/personalclaw/local_models/fit.py is the ONE module the clause requires, and status agrees everywhere
+- the clause names the arithmetic bug it exists to prevent: unified memory counted once, 'an integrated GPU's VRAM never added on top of system RAM (the arithmetic that otherwise reports a larger budget than the' machine has
+- tests/test_model_fit.py green inside the 309-passed run
+- 309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)
+
+**Notes:** Naming the specific wrong arithmetic — adding an integrated GPU's VRAM to system RAM it already shares — is what makes this atom checkable rather than aspirational. One module, one budget function, one traffic-light verdict is the same single-owner discipline WF2LOO's verdict reconciliation applied to judgements.
 
 ## Recorded history
 
