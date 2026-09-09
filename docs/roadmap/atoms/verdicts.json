@@ -7844,5 +7844,109 @@
     ],
     "ui_validated": "Not driven: no container backend is running on this host.",
     "notes": "Deferred and opt-in is the honest posture for a tier that needs a container runtime the user may not have — and the manifest being validated at save time rather than at run time means an author learns about a bad declaration before a run depends on it."
+  },
+  "DCU-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "🏅 THE BEST-REASONED SECURITY MODULE IN THIS CATALOGUE, and the first sentence earns it: 'a process that can press buttons and type into the operator's own applications can, in principle, do anything the operator can. So the capability ships OFF, and the only thing that turns it on is a file a human writes by hand'",
+      "🔑 THERE IS DELIBERATELY NO IN-BAND PATH — 'not a config field, not a dashboard PATCH, not a tool, not a prompt, not a chat instruction — BECAUSE EVERY ONE OF THOSE IS REACHABLE BY THE THING BEING RESTRAINED'. That is containment by unreachability rather than by a check the restrained thing could satisfy",
+      "🔑 A DOCUMENT, NOT A MARKER, AND THE REASON IS THIS CAMPAIGN'S CLASS AT ITS MOST CONSEQUENTIAL: 'an empty or half-flushed file is indistinguishable from a deliberate one, so a truncated write — or any stray process that creates the path — would read as ENABLED. A document with a required positive shape fails the other way, which is the only acceptable direction here.' Absent-versus-declared, where getting it wrong grants desktop control",
+      "🔑 I FALSIFIED THE LITERAL-TRUE CHECK: relaxing `if flag is not True` to `if not flag` reddened exactly two named cases — `stringly-true` ('{\"enabled\": \"true\"}' armed the keystone) and `truthy-int` — 2 failed / 40 passed, restored 42/42, tree byte-identical. The comment had already said why: 'the string \"false\", 1, and [] are all things an operator or a stray writer can produce, and none of them is a human saying yes'",
+      "🔴 A 14-CASE MALFORMED CORPUS, each with a named id AND an asserted refusal REASON rather than a bare False — including `empty-file`, `truncated-open-brace` and `half-flushed-write`, whose docstring says 'as a marker, both would arm the machine'",
+      "🔑 UNKNOWN KEYS ARE REFUSED RATHER THAN IGNORED, with the worked example that makes it obvious: an operator writing `{\"enabled\": true, \"windows\": [\"Inbox\"]}` means 'on, FOR THAT WINDOW', and a build that honoured the flag while dropping the scope 'WOULD GRANT STRICTLY MORE THAN WAS ASKED'",
+      "the target allowlist lives in the keystone document rather than in config, because 'a PATCH-editable home for it would hand an agent with config-write access a route to widen its own reach — the same threat the keystone exists to close, one field over'. An absent or empty list means NO app may be driven",
+      "🔴 OBSERVED STATE: no `governance/` directory exists in the validation home, so the capability is off here — and this audit did NOT create one. Arming desktop control to test it would be the audit performing the act the atom exists to reserve for a human",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not a browser surface, and deliberately not driven: the enable file is the one thing an agent must never write.",
+    "notes": "🏅 The override path is the part that makes this a real trust root rather than a convention: the file can be pointed at 'a root-owned 0444 file outside the agent's home'. And the maintenance of the corpus is exemplary — the `unenforced-scope-key` case was migrated off `apps` when DCU-2 made that key enforced, 'or it stops testing the refusal its id names'. A test whose author noticed it was about to go vacuous."
+  },
+  "DCU-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "🔑 THE SECURE-FIELD SCREEN DOES NOT TRUST THE PLATFORM'S OWN MARKING, which is the whole difficulty: `AXSecureTextField` is the password subrole, but 'a password field in a web view or an Electron app very often has NO secure subrole at all — it is an `AXTextField` whose title is' password-shaped, so the screen also reads the keys that name the field to a human",
+      "🔴 AN UNSCREENABLE TARGET IS HANDLED EXACTLY AS A PASSWORD FIELD IS — fail-closed on the case where the accessibility tree cannot answer, rather than treating unknown as safe",
+      "the screen also refuses a field already holding credential-shaped text, so the refusal does not depend on the field advertising itself at all",
+      "🪤 AND THIS ATOM IS WHERE THE PROJECT FOUND THIS CAMPAIGN'S SIGNATURE DEFECT IN ITSELF: DCU-2 'shipped steps 2/4/5 as three correct, tested, and provably INERT functions — its own audit censused the production callers and found ZERO, which is why `tests/test_computer_use_call_sites.py` exists'. The inert-control class, found and then made impossible to reintroduce",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not driven: every path is behind the keystone, which is correctly off.",
+    "notes": "SEL 'records, never decides' is the right split for step 5 — an audit rail that could refuse would make the log a second policy engine with its own bugs."
+  },
+  "DCU-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "the driver is real and substantial — `macos_driver.py` with all seven `op_*` handlers, `macos_ffi.py` carrying actual ctypes calls, and `types.py`'s `fingerprint_of` — and the twelve suites are green (418/1 skipped)",
+      "🪤 THE ATOM'S OWN AUDIT CORRECTION IS THE BEST FINDING RECORD IN THE CATALOGUE, and it is this campaign's exact class: the clause has TWO verbs — a stale index must REFUSE and must FORCE A RE-SNAPSHOT — 'and only `refuses` had ever been asserted. The nearest existing test wound the frozen clock BACKWARDS, which is not a re-snapshot, and the rest asserted only that the string `computer_snapshot` appears in the FIX line: A REMEDY NOBODY HAD EXECUTED'",
+      "🔑 AND THE LOAD-BEARING ASSERTION IS THE ONE MOST AUDITS WOULD MISS: 'not that the new id acts — it is that THE OLD ID KEEPS REFUSING WHILE THE NEW ONE ACTS, since a test checking only the new id would pass against a store that had quietly started honouring the abandoned index, which is the opposite of the clause'. Verified present: `test_a_past_ttl_refusal_is_cleared_by_a_re_snapshot`, `test_a_changed_fingerprint_refusal_is_cleared_by_a_re_snapshot`, `test_a_re_snapshot_does_not_resurrect_an_evicted_id`",
+      "🔴 THE HARNESS REPORTS `unproven` RATHER THAN SKIPPING — `test_the_harness_reports_unproven_rather_than_skipping_without_the_grant`. A skip reads as 'not applicable'; unproven reads as 'we could not establish it'. Absent-versus-declared-false at the TEST RESULT level, which is a new place for it",
+      "🔴 THE LIVE HALF IS NOT OBSERVED HERE AND CANNOT HONESTLY BE: driving a real window needs the keystone armed and the accessibility grant. Arming it would be the audit taking the one action the design reserves for a human, so `todo` stands and the live clause is recorded as unproven rather than inferred from the unit suites",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not applicable, and deliberately not attempted.",
+    "notes": "Partial for a reason that is a credit rather than a gap: the harness itself distinguishes 'refused for the wrong cause' and 'reached the driver when it should not' as separate rejections (`test_the_harness_rejects_a_stale_refusal_with_the_wrong_cause`, `..._that_reached_the_driver_when_it_should_not`), so the harness is checked before it is trusted to check anything."
+  },
+  "DCU-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "🏅 THE PRODUCTION CODE NAMES THIS CAMPAIGN'S CENTRAL DEFECT CLASS IN ITS OWN WORDS AND DESIGNS AGAINST IT. `Snapshot.fingerprint` is 'the driver's own summary of the tree it walked. It is stored and compared, NEVER RECOMPUTED HERE: the dispatch has no accessibility API and a fingerprint it derived from the STORED elements would compare a value against itself and always agree — A CHECK THAT CANNOT FAIL, WHICH IS THE DEFECT SHAPE THIS CODEBASE KEEPS FINDING'",
+      "🔑 NO STAND-IN DRIVER, EVER: `resolve_driver` 'never invents a stand-in … a stand-in that accepted an operation and did nothing is the SIMULATED SUCCESS floor 6 forbids'. An action that reports success without acting is the worst outcome available to a desktop driver",
+      "🔑 THE ORDER IS THE DELIVERABLE AND IT IS ASSERTED AT RUNTIME: seven steps, keystone first, and `test_the_chain_runs_every_screen_before_the_acting_driver_call` 'records the actual sequence at runtime and asserts it, rather than asserting that each step happened somewhere' — because 'a screen that runs after the driver has already pressed the button is NOT A SCREEN'",
+      "🔑 ONE DISPATCH ENTRY POINT RATHER THAN SEVEN TOOL FUNCTIONS, and the reason is a count: seven module-level functions 'would be seven keystone readers in a process that must not hold the decision at all'",
+      "🔑 ARCC'S REQUIREMENT LANDS ON STEP 7 ALMOST WORD FOR WORD. The guidance is that an application with no requirement to handle sensitive data must MASK it in both the prompt and the response, masking preferred so context survives. Here every driver-produced string passes through `redact_credentials`, 'this codebase's ONE definition of credential-shaped text', with the reason stated exactly right: 'A FIELD VALUE THE SYSTEM REDACTS ON THE WAY OUT OF A LOG IS ONE IT MUST NOT HAND TO A MODEL OUT OF A WINDOW'",
+      "🔴 AND THE NARROWING IS DISCLOSED RATHER THAN SILENT: `computer_list_apps` is narrowed to the operator's allowlist AND 'reports how many applications were WITHHELD', because 'an armed machine granting \"drive TextEdit\" should not thereby disclose the full list of what the operator has open; the count keeps the narrowing honest instead of pretending nothing was hidden'",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not driven: behind the keystone.",
+    "notes": "The shim holding no OS handles is what makes the ceilinged spawn meaningful — a shim that held handles would keep the capability alive past the subprocess the ceiling applies to."
+  },
+  "DCU-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "the approval-ladder suite is green inside the 418, and the gate's SEL vocabulary reuses the existing domain nouns (`channel_trust`, `capability_grant`) rather than minting a private one",
+      "🔴 AN UNKNOWN SOURCE IS LABELLED UNATTENDED — 'attempt is labelled unattended instead. Callers that know better pass `source`.' Defaulting the ambiguous case to the STRICTER posture is the correct direction: a caller that forgot to declare interactivity gets the unattended ladder rather than the permissive one",
+      "an unattended run without the grant refuses AND notifies, so the refusal is not merely returned into a log nobody is reading at 3am",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not driven: needs an armed keystone plus an unattended run.",
+    "notes": "The ladder sits at step 5 in the chain, after the keystone and the target policy — so a grant can widen who may ask, never what the keystone permits."
+  },
+  "DCU-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "🏅 THE ATOM'S WHOLE POINT IS A DISTINCTION MOST PROJECTS FLATTEN, AND THE SOURCE SAYS SO: `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE` means 'this build has no driver for this platform at all', which is honest for FreeBSD or an unknown platform. Windows and Linux 'are a different situation and FLATTENING THE TWO IS THE DISHONESTY THIS ATOM EXISTS TO REMOVE'",
+      "🔑 THE DECISIVE CLAUSE IS THE ONE A USER ACTUALLY NEEDS: 'NO ACTION THE OPERATOR TAKES ON THAT MACHINE CHANGES THE ANSWER TODAY'. So they get their own registered code, a WHY naming the accessibility API each will use (UIA / AT-SPI), and a FIX naming the one platform that does work. A generic error would leave a Windows user permanently troubleshooting a permission they cannot grant",
+      "no silent no-op anywhere — the unsupported-platform suite is green inside the 418",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not observable from this host, which is macOS. The refusal is unit-covered per platform.",
+    "notes": "Naming the API that is missing is what makes the refusal a roadmap rather than a wall — it tells a contributor exactly which integration would close it."
+  },
+  "DCU-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code",
+    "evidence": [
+      "🔑 'NEITHER ADDS ANY AGENT CAPABILITY' IS ASSERTED THREE WAYS, not asserted once: `test_the_tool_surface_is_unchanged_with_the_views_on`, `test_the_computer_use_route_surface_is_pinned`, and `test_the_view_modules_import_no_driver_and_reach_no_dispatch`",
+      "🏅 AND THE REACH SCANNER HAS ITS OWN VACUITY FLOOR — `test_the_reach_scanner_detects_an_offender`. A scanner that found nothing because it could find nothing would have passed the previous test forever",
+      "🔴 `test_a_refused_attempt_paints_no_fake_cursor` — the overlay must not show motion that did not happen. A fabricated visualisation is the same class as a fabricated latency number, and here it would be a human watching a cursor move that never moved",
+      "🔑 AND ITS COMPLEMENT: `test_the_point_exists_even_when_the_acting_driver_call_fails` — a failed action still leaves a trail point, so an attempt that went wrong is visible rather than invisible. Refused paints nothing; failed paints the attempt. Those are different facts and both are pinned",
+      "`test_reads_leave_no_trail` keeps a snapshot from painting motion",
+      "418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home"
+    ],
+    "ui_validated": "Not driven: the live view needs an armed keystone and a real drive to show anything.",
+    "notes": "A human-facing view of an agent driving the desktop is the right thing to build and the easiest thing to make lie. Pinning refused-paints-nothing beside failed-paints-the-attempt is what makes the overlay evidence rather than decoration."
   }
 }

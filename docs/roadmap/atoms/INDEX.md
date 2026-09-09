@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 386 | `done_when` checked against the code and it holds |
-| `partial` | 226 | some `done_when` clauses hold, others do not |
+| `confirmed` | 392 | `done_when` checked against the code and it holds |
+| `partial` | 227 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 58 | not yet checked |
+| `unaudited` | 51 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -270,13 +270,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DCU-1`](DCU-1.md) | `done` | `unaudited` | Keystone out-of-band enable-state |
-| [`DCU-2`](DCU-2.md) | `done` | `unaudited` | Target policy, input-target screen, SEL-audit gate |
-| [`DCU-3`](DCU-3.md) | `todo` | `unaudited` | macOS accessibility driver (indexed AX tree) |
-| [`DCU-4`](DCU-4.md) | `done` | `unaudited` | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn |
-| [`DCU-5`](DCU-5.md) | `done` | `unaudited` | Approval-ladder integration for desktop drive |
-| [`DCU-6`](DCU-6.md) | `done` | `unaudited` | Windows/Linux honest typed refusals |
-| [`DCU-7`](DCU-7.md) | `done` | `unaudited` | Human-facing live-view + cursor-motion overlay |
+| [`DCU-1`](DCU-1.md) | `done` | `confirmed` | Keystone out-of-band enable-state |
+| [`DCU-2`](DCU-2.md) | `done` | `confirmed` | Target policy, input-target screen, SEL-audit gate |
+| [`DCU-3`](DCU-3.md) | `todo` | `partial` | macOS accessibility driver (indexed AX tree) |
+| [`DCU-4`](DCU-4.md) | `done` | `confirmed` | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn |
+| [`DCU-5`](DCU-5.md) | `done` | `confirmed` | Approval-ladder integration for desktop drive |
+| [`DCU-6`](DCU-6.md) | `done` | `confirmed` | Windows/Linux honest typed refusals |
+| [`DCU-7`](DCU-7.md) | `done` | `confirmed` | Human-facing live-view + cursor-motion overlay |
 
 ### `DFE` — DOCUMENT-FIDELITY-EDITOR (8/8 done)
 

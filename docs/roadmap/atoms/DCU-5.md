@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- the approval-ladder suite is green inside the 418, and the gate's SEL vocabulary reuses the existing domain nouns (`channel_trust`, `capability_grant`) rather than minting a private one
+- 🔴 AN UNKNOWN SOURCE IS LABELLED UNATTENDED — 'attempt is labelled unattended instead. Callers that know better pass `source`.' Defaulting the ambiguous case to the STRICTER posture is the correct direction: a caller that forgot to declare interactivity gets the unattended ladder rather than the permissive one
+- an unattended run without the grant refuses AND notifies, so the refusal is not merely returned into a log nobody is reading at 3am
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not driven: needs an armed keystone plus an unattended run.
+
+**Notes:** The ladder sits at step 5 in the chain, after the keystone and the target policy — so a grant can widen who may ask, never what the keystone permits.
 
 ## Recorded history
 

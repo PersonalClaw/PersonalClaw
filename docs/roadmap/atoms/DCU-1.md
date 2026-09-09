@@ -29,9 +29,27 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- 🏅 THE BEST-REASONED SECURITY MODULE IN THIS CATALOGUE, and the first sentence earns it: 'a process that can press buttons and type into the operator's own applications can, in principle, do anything the operator can. So the capability ships OFF, and the only thing that turns it on is a file a human writes by hand'
+- 🔑 THERE IS DELIBERATELY NO IN-BAND PATH — 'not a config field, not a dashboard PATCH, not a tool, not a prompt, not a chat instruction — BECAUSE EVERY ONE OF THOSE IS REACHABLE BY THE THING BEING RESTRAINED'. That is containment by unreachability rather than by a check the restrained thing could satisfy
+- 🔑 A DOCUMENT, NOT A MARKER, AND THE REASON IS THIS CAMPAIGN'S CLASS AT ITS MOST CONSEQUENTIAL: 'an empty or half-flushed file is indistinguishable from a deliberate one, so a truncated write — or any stray process that creates the path — would read as ENABLED. A document with a required positive shape fails the other way, which is the only acceptable direction here.' Absent-versus-declared, where getting it wrong grants desktop control
+- 🔑 I FALSIFIED THE LITERAL-TRUE CHECK: relaxing `if flag is not True` to `if not flag` reddened exactly two named cases — `stringly-true` ('{"enabled": "true"}' armed the keystone) and `truthy-int` — 2 failed / 40 passed, restored 42/42, tree byte-identical. The comment had already said why: 'the string "false", 1, and [] are all things an operator or a stray writer can produce, and none of them is a human saying yes'
+- 🔴 A 14-CASE MALFORMED CORPUS, each with a named id AND an asserted refusal REASON rather than a bare False — including `empty-file`, `truncated-open-brace` and `half-flushed-write`, whose docstring says 'as a marker, both would arm the machine'
+- 🔑 UNKNOWN KEYS ARE REFUSED RATHER THAN IGNORED, with the worked example that makes it obvious: an operator writing `{"enabled": true, "windows": ["Inbox"]}` means 'on, FOR THAT WINDOW', and a build that honoured the flag while dropping the scope 'WOULD GRANT STRICTLY MORE THAN WAS ASKED'
+- the target allowlist lives in the keystone document rather than in config, because 'a PATCH-editable home for it would hand an agent with config-write access a route to widen its own reach — the same threat the keystone exists to close, one field over'. An absent or empty list means NO app may be driven
+- 🔴 OBSERVED STATE: no `governance/` directory exists in the validation home, so the capability is off here — and this audit did NOT create one. Arming desktop control to test it would be the audit performing the act the atom exists to reserve for a human
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not a browser surface, and deliberately not driven: the enable file is the one thing an agent must never write.
+
+**Notes:** 🏅 The override path is the part that makes this a real trust root rather than a convention: the file can be pointed at 'a root-owned 0444 file outside the agent's home'. And the maintenance of the corpus is exemplary — the `unenforced-scope-key` case was migrated off `apps` when DCU-2 made that key enforced, 'or it stops testing the refusal its id names'. A test whose author noticed it was about to go vacuous.
 
 ## Recorded history
 

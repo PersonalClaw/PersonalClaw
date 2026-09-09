@@ -32,9 +32,24 @@ With the enable on, snapshotting a TextEdit window then AXPress-ing a button by 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- the driver is real and substantial — `macos_driver.py` with all seven `op_*` handlers, `macos_ffi.py` carrying actual ctypes calls, and `types.py`'s `fingerprint_of` — and the twelve suites are green (418/1 skipped)
+- 🪤 THE ATOM'S OWN AUDIT CORRECTION IS THE BEST FINDING RECORD IN THE CATALOGUE, and it is this campaign's exact class: the clause has TWO verbs — a stale index must REFUSE and must FORCE A RE-SNAPSHOT — 'and only `refuses` had ever been asserted. The nearest existing test wound the frozen clock BACKWARDS, which is not a re-snapshot, and the rest asserted only that the string `computer_snapshot` appears in the FIX line: A REMEDY NOBODY HAD EXECUTED'
+- 🔑 AND THE LOAD-BEARING ASSERTION IS THE ONE MOST AUDITS WOULD MISS: 'not that the new id acts — it is that THE OLD ID KEEPS REFUSING WHILE THE NEW ONE ACTS, since a test checking only the new id would pass against a store that had quietly started honouring the abandoned index, which is the opposite of the clause'. Verified present: `test_a_past_ttl_refusal_is_cleared_by_a_re_snapshot`, `test_a_changed_fingerprint_refusal_is_cleared_by_a_re_snapshot`, `test_a_re_snapshot_does_not_resurrect_an_evicted_id`
+- 🔴 THE HARNESS REPORTS `unproven` RATHER THAN SKIPPING — `test_the_harness_reports_unproven_rather_than_skipping_without_the_grant`. A skip reads as 'not applicable'; unproven reads as 'we could not establish it'. Absent-versus-declared-false at the TEST RESULT level, which is a new place for it
+- 🔴 THE LIVE HALF IS NOT OBSERVED HERE AND CANNOT HONESTLY BE: driving a real window needs the keystone armed and the accessibility grant. Arming it would be the audit taking the one action the design reserves for a human, so `todo` stands and the live clause is recorded as unproven rather than inferred from the unit suites
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not applicable, and deliberately not attempted.
+
+**Notes:** Partial for a reason that is a credit rather than a gap: the harness itself distinguishes 'refused for the wrong cause' and 'reached the driver when it should not' as separate rejections (`test_the_harness_rejects_a_stale_refusal_with_the_wrong_cause`, `..._that_reached_the_driver_when_it_should_not`), so the harness is checked before it is trusted to check anything.
 
 ## Recorded history
 

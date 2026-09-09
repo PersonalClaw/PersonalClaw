@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- 🏅 THE ATOM'S WHOLE POINT IS A DISTINCTION MOST PROJECTS FLATTEN, AND THE SOURCE SAYS SO: `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE` means 'this build has no driver for this platform at all', which is honest for FreeBSD or an unknown platform. Windows and Linux 'are a different situation and FLATTENING THE TWO IS THE DISHONESTY THIS ATOM EXISTS TO REMOVE'
+- 🔑 THE DECISIVE CLAUSE IS THE ONE A USER ACTUALLY NEEDS: 'NO ACTION THE OPERATOR TAKES ON THAT MACHINE CHANGES THE ANSWER TODAY'. So they get their own registered code, a WHY naming the accessibility API each will use (UIA / AT-SPI), and a FIX naming the one platform that does work. A generic error would leave a Windows user permanently troubleshooting a permission they cannot grant
+- no silent no-op anywhere — the unsupported-platform suite is green inside the 418
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not observable from this host, which is macOS. The refusal is unit-covered per platform.
+
+**Notes:** Naming the API that is missing is what makes the refusal a roadmap rather than a wall — it tells a contributor exactly which integration would close it.
 
 ## Recorded history
 

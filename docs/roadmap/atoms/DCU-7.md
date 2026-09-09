@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- 🔑 'NEITHER ADDS ANY AGENT CAPABILITY' IS ASSERTED THREE WAYS, not asserted once: `test_the_tool_surface_is_unchanged_with_the_views_on`, `test_the_computer_use_route_surface_is_pinned`, and `test_the_view_modules_import_no_driver_and_reach_no_dispatch`
+- 🏅 AND THE REACH SCANNER HAS ITS OWN VACUITY FLOOR — `test_the_reach_scanner_detects_an_offender`. A scanner that found nothing because it could find nothing would have passed the previous test forever
+- 🔴 `test_a_refused_attempt_paints_no_fake_cursor` — the overlay must not show motion that did not happen. A fabricated visualisation is the same class as a fabricated latency number, and here it would be a human watching a cursor move that never moved
+- 🔑 AND ITS COMPLEMENT: `test_the_point_exists_even_when_the_acting_driver_call_fails` — a failed action still leaves a trail point, so an attempt that went wrong is visible rather than invisible. Refused paints nothing; failed paints the attempt. Those are different facts and both are pinned
+- `test_reads_leave_no_trail` keeps a snapshot from painting motion
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not driven: the live view needs an armed keystone and a real drive to show anything.
+
+**Notes:** A human-facing view of an agent driving the desktop is the right thing to build and the easiest thing to make lie. Pinning refused-paints-nothing beside failed-paints-the-attempt is what makes the overlay evidence rather than decoration.
 
 ## Recorded history
 

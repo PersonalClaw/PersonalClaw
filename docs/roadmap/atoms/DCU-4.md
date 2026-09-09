@@ -33,9 +33,25 @@ The agent lists apps and clicks an element by index end-to-end; the shim holds n
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- 🏅 THE PRODUCTION CODE NAMES THIS CAMPAIGN'S CENTRAL DEFECT CLASS IN ITS OWN WORDS AND DESIGNS AGAINST IT. `Snapshot.fingerprint` is 'the driver's own summary of the tree it walked. It is stored and compared, NEVER RECOMPUTED HERE: the dispatch has no accessibility API and a fingerprint it derived from the STORED elements would compare a value against itself and always agree — A CHECK THAT CANNOT FAIL, WHICH IS THE DEFECT SHAPE THIS CODEBASE KEEPS FINDING'
+- 🔑 NO STAND-IN DRIVER, EVER: `resolve_driver` 'never invents a stand-in … a stand-in that accepted an operation and did nothing is the SIMULATED SUCCESS floor 6 forbids'. An action that reports success without acting is the worst outcome available to a desktop driver
+- 🔑 THE ORDER IS THE DELIVERABLE AND IT IS ASSERTED AT RUNTIME: seven steps, keystone first, and `test_the_chain_runs_every_screen_before_the_acting_driver_call` 'records the actual sequence at runtime and asserts it, rather than asserting that each step happened somewhere' — because 'a screen that runs after the driver has already pressed the button is NOT A SCREEN'
+- 🔑 ONE DISPATCH ENTRY POINT RATHER THAN SEVEN TOOL FUNCTIONS, and the reason is a count: seven module-level functions 'would be seven keystone readers in a process that must not hold the decision at all'
+- 🔑 ARCC'S REQUIREMENT LANDS ON STEP 7 ALMOST WORD FOR WORD. The guidance is that an application with no requirement to handle sensitive data must MASK it in both the prompt and the response, masking preferred so context survives. Here every driver-produced string passes through `redact_credentials`, 'this codebase's ONE definition of credential-shaped text', with the reason stated exactly right: 'A FIELD VALUE THE SYSTEM REDACTS ON THE WAY OUT OF A LOG IS ONE IT MUST NOT HAND TO A MODEL OUT OF A WINDOW'
+- 🔴 AND THE NARROWING IS DISCLOSED RATHER THAN SILENT: `computer_list_apps` is narrowed to the operator's allowlist AND 'reports how many applications were WITHHELD', because 'an armed machine granting "drive TextEdit" should not thereby disclose the full list of what the operator has open; the count keeps the narrowing honest instead of pretending nothing was hidden'
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not driven: behind the keystone.
+
+**Notes:** The shim holding no OS handles is what makes the ceilinged spawn meaningful — a shim that held handles would keep the capability alive past the subprocess the ceiling applies to.
 
 ## Recorded history
 

@@ -30,9 +30,23 @@ Driving a non-allowlisted app refuses; typing or set-value into a secure/passwor
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 67 (DCU) — the keystone's literal-true requirement falsified; the codebase names this campaign's own defect class in production code
+
+**Code evidence:**
+
+- 🔑 THE SECURE-FIELD SCREEN DOES NOT TRUST THE PLATFORM'S OWN MARKING, which is the whole difficulty: `AXSecureTextField` is the password subrole, but 'a password field in a web view or an Electron app very often has NO secure subrole at all — it is an `AXTextField` whose title is' password-shaped, so the screen also reads the keys that name the field to a human
+- 🔴 AN UNSCREENABLE TARGET IS HANDLED EXACTLY AS A PASSWORD FIELD IS — fail-closed on the case where the accessibility tree cannot answer, rather than treating unknown as safe
+- the screen also refuses a field already holding credential-shaped text, so the refusal does not depend on the field advertising itself at all
+- 🪤 AND THIS ATOM IS WHERE THE PROJECT FOUND THIS CAMPAIGN'S SIGNATURE DEFECT IN ITSELF: DCU-2 'shipped steps 2/4/5 as three correct, tested, and provably INERT functions — its own audit censused the production callers and found ZERO, which is why `tests/test_computer_use_call_sites.py` exists'. The inert-control class, found and then made impossible to reintroduce
+- 418 passed / 1 skipped across the twelve computer-use suites; the keystone's literal-true check falsified (2 named cases red) and restored 42/42; the enable file confirmed ABSENT in the validation home
+
+**Driven in the UI:** Not driven: every path is behind the keystone, which is correctly off.
+
+**Notes:** SEL 'records, never decides' is the right split for step 5 — an audit rail that could refuse would make the log a second policy engine with its own bugs.
 
 ## Recorded history
 
