@@ -7349,5 +7349,175 @@
     ],
     "ui_validated": "Not applicable: a facilitator document plus three human sessions.",
     "notes": "Partial on three stranger sessions the audit cannot run and should not simulate. The fix-now list being empty by session close and the timing delta are both outputs of sessions that have not occurred — a self-administered substitute would produce exactly the reassurance stranger validation exists to refuse."
+  },
+  "SH-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 THE SHARPEST SENTENCE IN THE PLAN IS IN THE DOCTOR PROBE, AND IT IS THIS CAMPAIGN'S RECURRING DEFECT ANTICIPATED: 'an install that sets `PERSONALCLAW_CREDENTIAL_BACKEND=keychain` on a headless box with no secret service keeps its credentials in `.env` at 0600, and a doctor line echoing the REQUEST would tell that user their secrets are in a keychain that does [not exist]'. So `requested_credential_backend()` is 'intent, not outcome', and the probe shows request AND outcome side by side",
+      "🔑 A KEYRING THAT IS PRESENT BUT USELESS IS DETECTED, which a naive import cannot do: `_UNUSABLE_KEYRING_BACKENDS = ('keyring.backends.fail.', 'keyring.backends.null.')` — the module installs those when there is no OS secret service, so 'keychain importable' and 'keychain usable' are separated. Absent-vs-declared-false, in the credential domain",
+      "reads are the UNION of both stores with keychain preferred REGARDLESS of the active backend — 'that is what makes reads backend-transparent: flipping the gate back off must' not orphan a secret",
+      "🔑 I SAW THE OUTCOME IN THE PRODUCT: the Security page reports `.env at mode 0600` with a per-store count (`0 in the keychain · 0 still in .env`) and states the never-plaintext-elsewhere rule to the user — 'A machine with no usable secret service keeps using .env and says so — THERE IS NEVER A THIRD LOCATION'",
+      "the probe also reports the `.env` mode and repairs it to 0600 on the next credential read",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Driven on :10011: Settings → Security → Credential storage renders the active backend, the mode, the split counts and the opt-in switch.",
+    "notes": "One honest wrinkle worth recording rather than glossing: here 'fail-closed' resolves TOWARD the weaker store — a broken `config.json` degrades to `.env`, and an explicit `dotenv` env var is honoured as 'the recovery lever for a machine whose secret service has stopped answering'. That is availability-first for a single-owner local tool, and it is disclosed by doctor rather than hidden, which is what makes it a decision instead of a defect."
+  },
+  "SH-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "`config/credential_migration.py` ships with `tests/test_credential_migration.py`, inside the 511 green",
+      "🔑 THE SETTINGS SURFACE IS HONEST ABOUT WHAT THE TOGGLE DOES NOT DO, which is the half most such switches get wrong: 'Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below'",
+      "🔴 AND THE MIGRATION BUTTON IS CORRECTLY DISABLED HERE — nothing to move and no usable keyring. An enabled 'Move to keychain' with zero movable secrets would be the inert-control class this campaign keeps finding",
+      "the gate is a persisted config field rather than env-only, 'without it the env var would have to be re-exported for every process, and the persisted request the migration acts on would have nowhere to live'",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Driven: the switch, its help text and the disabled 'Move to keychain' button were read off the live page.",
+    "notes": "Confirmed on the mechanism and the surface. The macOS migrate/rollback half of the clause was NOT driven — this host has no usable keyring, so the real keychain round-trip stays a fixture here. That is the one clause a future change could break invisibly."
+  },
+  "SH-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "`docs/security/signing.md` records the decision (detached Ed25519 in minisign's format), what gets signed, where verification runs, the three states and the trust store; `scripts/sign_app.py` exists; 13 cases in `tests/security/test_app_signature.py`",
+      "🔑 THE SIGNER NAME COMES FROM THE VERIFIER'S TRUST STORE, NEVER FROM THE BUNDLE: `test_signer_comes_from_the_trust_store_filename_not_the_bundle`. A bundle that named its own signer would let an attacker choose the label shown in the consent UI — this is the most important property a signing surface has, and it is pinned",
+      "🔑 THE VERIFIER HAS ITS OWN VACUITY FLOOR: `test_a_verifier_that_only_checked_the_manifest_would_pass_the_swap` proves the naive implementation FAILS this corpus, so the four refusal tests (payload swap, manifest swap, unlisted file added, signed file removed) are not passing for a trivial reason",
+      "`test_symlink_cannot_be_signed` closes the sign-then-repoint trick; `test_malformed_signature_never_reads_as_valid`; and the manifest/signature pair is tested in both half-present shapes",
+      "🔴 `test_no_private_key_material_is_committed`, and `src/personalclaw/trusted_keys/` contains a README ONLY — the trust store ships EMPTY on purpose (SH-11's reason says so explicitly), which is the correct pre-key state rather than a gap",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: the consent signature state needs a signed bundle and an install, and no key exists yet by design.",
+    "notes": "Unsigned staying installable at community tier is the right call for an ecosystem with no keys yet: refusing unsigned bundles before any signer exists would make the whole registry uninstallable."
+  },
+  "SH-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔴 STATUS-ONLY VERDICT: the atom is `todo`, no release pipeline signs anything, and that is accurate — the signing key does not exist (SH-11) and the trust store is empty, so a pipeline step would have nothing to sign with",
+      "the atom's own AUDIT CORRECTION is worth preserving: its external dep restated its OWN second done-when clause as a precondition, and SH-12 (the registry signer field) is in fact DONE — so the recorded dep was self-referential rather than a real block",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "Genuinely blocked on the owner credential act, not on engineering. Recording that the registry half already landed is what keeps this from looking like two blocks instead of one."
+  },
+  "SH-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "`tests/security/` carries the corpus directory plus `test_scanner_adversarial.py`, `test_scanner_recall.py` and `test_scanner_reachability.py`; `docs/security/scanner-testing.md` is the published methodology",
+      "🔑 THE NIGHTLY JOB IS ITS OWN JOB, NOT A MATRIX LINE, AND THE REASON IS RECORDED: `security-corpus` in `full.yml`, 'so a corpus regression is legible on its own' rather than buried in a matrix cell",
+      "🏅 THE RECALL GAPS ARE REGISTERED AS TESTS, NOT AS COMMENTS. The two xfails in the run are `TestKnownRecallGapsAreTrackedNotForgotten` — a concatenation-split payload and an argv-list payload — each naming its root cause ('the shell band is text-matched'; 'the destructive call is the spawned `rm`, not a Python one'). A known limitation encoded as a failing test is the only form that cannot be forgotten",
+      "that is also the transferred form of what ARCC asks: a control's limits must be DISCLOSED rather than presented as coverage",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a test corpus and a CI job.",
+    "notes": "The 'deliberate scanner weakness on a branch turns the corpus red' clause is the atom's own falsification instruction; I spent this cycle's falsification budget on SH-7's ordering pin instead, which the atom states just as explicitly."
+  },
+  "SH-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 THE TRUST ANCHOR IS THE FINGERPRINT CAPTURED AT IMPORT, NOT THE FILE'S OWN DECLARED DIGEST — which is the difference between an integrity control and a checksum. `test_a_self_consistent_rewrite_of_the_file_is_detected_and_not_adopted` rewrites BOTH the patterns and the sha256 so the file is internally consistent; the report still reads `file_verified: False`, the count stays 112, `rm -rf /` is still denied, and one `baseline_denylist_tamper_attempt` event lands",
+      "🔴 IT REFUSES TO SHRINK WITH NO VERIFIED SOURCE: `test_no_verified_source_left_refuses_to_shrink` and `test_a_missing_file_does_not_shrink_what_is_enforced` — fail-closed at the ENFORCEMENT level, the opposite polarity to the credential store's availability-first fallback and correct in both places",
+      "self-heal is covered in four shapes — cleared list, one pattern removed (named in the event), a reordering, and healing that survives a rebound snapshot by re-reading the file",
+      "🔑 `test_a_cold_untampered_read_logs_nothing` IS THE VACUITY FLOOR FOR THE SEL EVENTS: without it a tamper event on every read would mean nothing. `test_the_two_event_kinds_are_distinct` keeps reasserted apart from tamper_attempt",
+      "`test_both_packaging_surfaces_declare_the_data_file` closes the classic trap where a packaged data file works from the repo and is absent from the wheel",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Driven via SH-10's panel, which renders the verified state this atom computes.",
+    "notes": "Strictly-additive is its own test class, and the page states the contract in the user's words: 'your patterns are added to it, never subtracted from it'."
+  },
+  "SH-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 I RAN THE ATOM'S OWN FALSIFICATION AND BOTH RAILS FIRED. Moving the hard-deny block below `self._requires_approval(...)` in `_guard_and_invoke` reddened exactly two tests — `test_structural_deny_call_precedes_the_approval_gate_call` ('DENY-AFTER-APPROVAL ORDERING REGRESSION: security.is_denied…') and `test_behavioural_denied_tool_never_invoked_even_when_approved`. Restored: 31/31, tree byte-identical",
+      "🔑 TWO INDEPENDENT RAILS IS THE RIGHT NUMBER: the structural one is read by AST rather than regex (a regex on source is defeated by reformatting) and localises the cause instantly; the behavioural one proves the CONSEQUENCE. Either alone would be weaker than both",
+      "🏅 THE VACUITY DEFENCE IS THE BEST-CONSTRUCTED ONE IN THIS CATALOGUE. `TestTheProbeIsRealNotVacuous` proves the probe command matches a pattern in the PACKAGED baseline (not a user addition), the benign control matches nothing, the driver can observe a command it does NOT refuse, and — decisively — `test_the_denylist_is_the_control_that_fires_not_the_sensitive_path_guard`, so the file cannot be silently testing the neighbouring guard instead",
+      "the matrix proves the ARMS DIFFERED rather than both refusing trivially: `test_default_mode_really_did_prompt_and_the_human_really_did_approve` beside `test_permissive_modes_really_did_skip_the_prompt`; and `test_the_matrix_covers_every_mode_the_runtime_treats_as_permissive` reds if a new permissive mode is added without a cell",
+      "trust simulators too: channel yolo, the dashboard trust toggle and a config-pinned never-expiring yolo each 'grants approval and still cannot run it'",
+      "🔴 A RESIDUAL DEFECT IS PINNED RATHER THAN PAPERED, and the classification is right: the COMMAND-level baseline screen lives inside the bash tool, BELOW the runtime's approval gate. It is unconditional and precedes the spawn, so there is no execution bypass — but a baseline-denied command is still put in front of a human as an approvable request before being refused. Recorded as 'a legibility/audit defect, not a hole', with a rail holding today's ordering",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a runtime ordering property.",
+    "notes": "🏅 The cycle's falsification, and the atom invited it in writing. An atom that states the mutation which must red its own tests is the cheapest possible thing for an auditor to verify — and the only kind of claim that cannot be confirmed by reading."
+  },
+  "SH-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 I CLICKED VERIFY ON THE REAL PAGE AND IT ANSWERED OVER REAL DATA: 'Chain intact — all 350 events verified.' That is `/api/security/audit/verify` wrapping `verify_integrity` against 350 SEL events in this home, not a fixture",
+      "the panel carries outcome filters, an operation textbox, a Filters control, Refresh, Export, Rotate and cursor pagination ('Load older events'), under copy that states the claim: 'What your agent did — every tool call, approval, denial, and redaction, hash-chained and tamper-evident'",
+      "🔑 THE ORDERING NOBODY THINKS OF IS PINNED TWICE: `test_integrity_is_computed_before_redaction` and `test_chain_hashes_survive_redaction`. Redacting before hashing would make the chain verify the REDACTED text, so a tamper inside a redacted span would be invisible — the chain would still read 'intact'",
+      "`test_planted_secret_does_not_reach_the_read_surface` proves the redaction with a planted secret rather than asserting it; `test_tampered_record_is_flagged_per_row` and `test_verify_reports_checked_and_ok` close the tamper fixture; `test_verify_says_which_cap_it_applied` stops a partial verify reading as a full one",
+      "🔴 `test_app_token_is_refused_with_403_not_empty_results` — a scoped token gets a 403, NOT an empty page. Empty results would read as 'your agent did nothing', which is the honest-looking-zero failure in an AUTHORIZATION context",
+      "80/80 on the audit API and SEL suites",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Fully driven on :10011: Settings → Audit log, Verify clicked, the integrity answer read off the page.",
+    "notes": "The deliberately-broken-chain-link half of the clause is fixture-covered rather than driven; planting a broken link in the live home would have meant corrupting a real audit log to look at it."
+  },
+  "SH-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "the doc SHIPPED and is substantial — `docs/security/review-scope.md`, 442 lines, naming the five high-risk paths with the file and function for each, the review format and the publication plan",
+      "🔑 ITS OUT-OF-SCOPE SECTION IS THE PART WORTH KEEPING, because it is what stops a review drowning in non-findings: 'Owner-lowered guardrails. Auto-approve (YOLO), a permissive task mode, or a hand-edited config are DECISIONS, NOT VULNERABILITIES.' For a single-owner self-hosted tool, refusing to treat owner authority as a vulnerability is the correct threat model",
+      "🔴 THE REMAINING CLAUSES ARE OWNER ACTS AND ARE GENUINELY OPEN: the scope needs owner approval and the review must be executed or scheduled with a date. Commissioning an external review is a cost/counterparty/disclosure decision an audit cannot make or fake",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Not applicable: a scoping document and an owner decision.",
+    "notes": "Partial rather than contradicted, and `blocked` is defensible: two of three clauses are owner acts. Worth noting the shape though — a `blocked` atom whose agent-buildable half is fully done reads as 'nothing happened' in any status roll-up, which is the same encoding problem LV-7 has in the other direction."
+  },
+  "SH-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 EVERY CLAUSE OBSERVED ON THE LIVE PAGE. `Baseline (112) — always enforced, not editable here`; a status element reading 'Baseline v1 matches what shipped: 112 patterns verified against the release sha256'; the read-only 112-pattern group; and '0 user additions on top of the baseline'",
+      "🏅 AND THE LIMITATION IS STATED IN THE PRODUCT, NOT ONLY IN docs/ — which is the strongest form this can take, because it sits where the user reads the claim: 'That catches drift and tampering from the inside; it is not a lock. ANYONE WHO CAN EDIT THE INSTALLED PACKAGE BEFORE PERSONALCLAW STARTS OWNS THE BASELINE.'",
+      "the anti-drift/anti-LLM-tamper-not-anti-owner threat model is also in `docs/security/threat-model.md` under its own anchor, which `review-scope.md` links",
+      "the strictly-additive contract is stated in the user's words: 'The packaged baseline is always enforced and read-only; your patterns are added to it, never subtracted from it'",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Fully driven on :10011: Settings → Security → Shell denylist, including the verified-hash status element and the user-additions count.",
+    "notes": "A security indicator that names what it does NOT protect against is rarer than one that works. This one does both, in the same paragraph."
+  },
+  "SH-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔴 STATUS-ONLY VERDICT, and the negative state is the DESIGNED one rather than an omission: `src/personalclaw/trusted_keys/` contains a README and no key material, and SH-3's suite pins that with `test_no_private_key_material_is_committed`. So `todo` is accurate",
+      "🔑 THE REASON IS THE RIGHT ONE AND WORTH QUOTING: supplying Apple Developer secrets and generating the production minisign key 'are owner actions an agent must never perform (SH-3 ships the trust store empty for exactly this reason)'. An agent that generated a release signing key would have manufactured the project's root of trust",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "This atom and SH-4 are one owner act, not two blocks. It also gates DC-1's signed and notarized mac build."
+  },
+  "SH-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live",
+    "evidence": [
+      "🔑 I RAN THE VALIDATOR LIVE and it printed a `Signer` column for all four listings, every one reading `no claim`, with no crash — which is exactly the atom's 'a listing that omits the field handled by the declared policy rather than crashing', observed rather than inferred",
+      "🏅 THE SCHEMA FIELD CARRIES THE BEST STATEMENT OF THIS CAMPAIGN'S RECURRING CLASS THAT I HAVE SEEN WRITTEN INTO DATA: the registry 'RECORDS this claim and does not verify it — signatures are verified at install time on the user's own machine. Omitting the field is allowed and is published as \"no claim\", WHICH IS A DIFFERENT FACT FROM A DECLARED \"unsigned\".' Three states, in a schema, where they will outlive any renderer",
+      "the validator's own footnote repeats it to the reader and refuses to overclaim: 'Signer is what the row DECLARES, and nothing above proved it… Signatures are verified where it counts — on your own machine at install time'",
+      "records-not-verifies is also the right trust boundary: a registry that claimed to verify would ask users to trust a server for a property only their own machine can establish",
+      "511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a schema field plus a CLI validator, which was run.",
+    "notes": "This atom is what makes SH-4's recorded dependency self-referential — the registry half is done, so the release-signing block is purely the owner key act."
   }
 }

@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- 🔑 THE SHARPEST SENTENCE IN THE PLAN IS IN THE DOCTOR PROBE, AND IT IS THIS CAMPAIGN'S RECURRING DEFECT ANTICIPATED: 'an install that sets `PERSONALCLAW_CREDENTIAL_BACKEND=keychain` on a headless box with no secret service keeps its credentials in `.env` at 0600, and a doctor line echoing the REQUEST would tell that user their secrets are in a keychain that does [not exist]'. So `requested_credential_backend()` is 'intent, not outcome', and the probe shows request AND outcome side by side
+- 🔑 A KEYRING THAT IS PRESENT BUT USELESS IS DETECTED, which a naive import cannot do: `_UNUSABLE_KEYRING_BACKENDS = ('keyring.backends.fail.', 'keyring.backends.null.')` — the module installs those when there is no OS secret service, so 'keychain importable' and 'keychain usable' are separated. Absent-vs-declared-false, in the credential domain
+- reads are the UNION of both stores with keychain preferred REGARDLESS of the active backend — 'that is what makes reads backend-transparent: flipping the gate back off must' not orphan a secret
+- 🔑 I SAW THE OUTCOME IN THE PRODUCT: the Security page reports `.env at mode 0600` with a per-store count (`0 in the keychain · 0 still in .env`) and states the never-plaintext-elsewhere rule to the user — 'A machine with no usable secret service keeps using .env and says so — THERE IS NEVER A THIRD LOCATION'
+- the probe also reports the `.env` mode and repairs it to 0600 on the next credential read
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Driven on :10011: Settings → Security → Credential storage renders the active backend, the mode, the split counts and the opt-in switch.
+
+**Notes:** One honest wrinkle worth recording rather than glossing: here 'fail-closed' resolves TOWARD the weaker store — a broken `config.json` degrades to `.env`, and an explicit `dotenv` env var is honoured as 'the recovery lever for a machine whose secret service has stopped answering'. That is availability-first for a single-owner local tool, and it is disclosed by doctor rather than hidden, which is what makes it a decision instead of a defect.
 
 ## Recorded history
 

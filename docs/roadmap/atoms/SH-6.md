@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- 🔑 THE TRUST ANCHOR IS THE FINGERPRINT CAPTURED AT IMPORT, NOT THE FILE'S OWN DECLARED DIGEST — which is the difference between an integrity control and a checksum. `test_a_self_consistent_rewrite_of_the_file_is_detected_and_not_adopted` rewrites BOTH the patterns and the sha256 so the file is internally consistent; the report still reads `file_verified: False`, the count stays 112, `rm -rf /` is still denied, and one `baseline_denylist_tamper_attempt` event lands
+- 🔴 IT REFUSES TO SHRINK WITH NO VERIFIED SOURCE: `test_no_verified_source_left_refuses_to_shrink` and `test_a_missing_file_does_not_shrink_what_is_enforced` — fail-closed at the ENFORCEMENT level, the opposite polarity to the credential store's availability-first fallback and correct in both places
+- self-heal is covered in four shapes — cleared list, one pattern removed (named in the event), a reordering, and healing that survives a rebound snapshot by re-reading the file
+- 🔑 `test_a_cold_untampered_read_logs_nothing` IS THE VACUITY FLOOR FOR THE SEL EVENTS: without it a tamper event on every read would mean nothing. `test_the_two_event_kinds_are_distinct` keeps reasserted apart from tamper_attempt
+- `test_both_packaging_surfaces_declare_the_data_file` closes the classic trap where a packaged data file works from the repo and is absent from the wheel
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Driven via SH-10's panel, which renders the verified state this atom computes.
+
+**Notes:** Strictly-additive is its own test class, and the page states the contract in the user's words: 'your patterns are added to it, never subtracted from it'.
 
 ## Recorded history
 

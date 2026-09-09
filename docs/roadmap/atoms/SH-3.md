@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- `docs/security/signing.md` records the decision (detached Ed25519 in minisign's format), what gets signed, where verification runs, the three states and the trust store; `scripts/sign_app.py` exists; 13 cases in `tests/security/test_app_signature.py`
+- 🔑 THE SIGNER NAME COMES FROM THE VERIFIER'S TRUST STORE, NEVER FROM THE BUNDLE: `test_signer_comes_from_the_trust_store_filename_not_the_bundle`. A bundle that named its own signer would let an attacker choose the label shown in the consent UI — this is the most important property a signing surface has, and it is pinned
+- 🔑 THE VERIFIER HAS ITS OWN VACUITY FLOOR: `test_a_verifier_that_only_checked_the_manifest_would_pass_the_swap` proves the naive implementation FAILS this corpus, so the four refusal tests (payload swap, manifest swap, unlisted file added, signed file removed) are not passing for a trivial reason
+- `test_symlink_cannot_be_signed` closes the sign-then-repoint trick; `test_malformed_signature_never_reads_as_valid`; and the manifest/signature pair is tested in both half-present shapes
+- 🔴 `test_no_private_key_material_is_committed`, and `src/personalclaw/trusted_keys/` contains a README ONLY — the trust store ships EMPTY on purpose (SH-11's reason says so explicitly), which is the correct pre-key state rather than a gap
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Not driven: the consent signature state needs a signed bundle and an install, and no key exists yet by design.
+
+**Notes:** Unsigned staying installable at community tier is the right call for an ecosystem with no keys yet: refusing unsigned bundles before any signer exists would make the whole registry uninstallable.
 
 ## Recorded history
 

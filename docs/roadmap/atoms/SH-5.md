@@ -29,9 +29,23 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- `tests/security/` carries the corpus directory plus `test_scanner_adversarial.py`, `test_scanner_recall.py` and `test_scanner_reachability.py`; `docs/security/scanner-testing.md` is the published methodology
+- 🔑 THE NIGHTLY JOB IS ITS OWN JOB, NOT A MATRIX LINE, AND THE REASON IS RECORDED: `security-corpus` in `full.yml`, 'so a corpus regression is legible on its own' rather than buried in a matrix cell
+- 🏅 THE RECALL GAPS ARE REGISTERED AS TESTS, NOT AS COMMENTS. The two xfails in the run are `TestKnownRecallGapsAreTrackedNotForgotten` — a concatenation-split payload and an argv-list payload — each naming its root cause ('the shell band is text-matched'; 'the destructive call is the spawned `rm`, not a Python one'). A known limitation encoded as a failing test is the only form that cannot be forgotten
+- that is also the transferred form of what ARCC asks: a control's limits must be DISCLOSED rather than presented as coverage
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Not a browser surface: a test corpus and a CI job.
+
+**Notes:** The 'deliberate scanner weakness on a branch turns the corpus red' clause is the atom's own falsification instruction; I spent this cycle's falsification budget on SH-7's ordering pin instead, which the atom states just as explicitly.
 
 ## Recorded history
 

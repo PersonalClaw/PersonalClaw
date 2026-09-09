@@ -29,9 +29,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- 🔑 I CLICKED VERIFY ON THE REAL PAGE AND IT ANSWERED OVER REAL DATA: 'Chain intact — all 350 events verified.' That is `/api/security/audit/verify` wrapping `verify_integrity` against 350 SEL events in this home, not a fixture
+- the panel carries outcome filters, an operation textbox, a Filters control, Refresh, Export, Rotate and cursor pagination ('Load older events'), under copy that states the claim: 'What your agent did — every tool call, approval, denial, and redaction, hash-chained and tamper-evident'
+- 🔑 THE ORDERING NOBODY THINKS OF IS PINNED TWICE: `test_integrity_is_computed_before_redaction` and `test_chain_hashes_survive_redaction`. Redacting before hashing would make the chain verify the REDACTED text, so a tamper inside a redacted span would be invisible — the chain would still read 'intact'
+- `test_planted_secret_does_not_reach_the_read_surface` proves the redaction with a planted secret rather than asserting it; `test_tampered_record_is_flagged_per_row` and `test_verify_reports_checked_and_ok` close the tamper fixture; `test_verify_says_which_cap_it_applied` stops a partial verify reading as a full one
+- 🔴 `test_app_token_is_refused_with_403_not_empty_results` — a scoped token gets a 403, NOT an empty page. Empty results would read as 'your agent did nothing', which is the honest-looking-zero failure in an AUTHORIZATION context
+- 80/80 on the audit API and SEL suites
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Fully driven on :10011: Settings → Audit log, Verify clicked, the integrity answer read off the page.
+
+**Notes:** The deliberately-broken-chain-link half of the clause is fixture-covered rather than driven; planting a broken link in the live home would have meant corrupting a real audit log to look at it.
 
 ## Recorded history
 

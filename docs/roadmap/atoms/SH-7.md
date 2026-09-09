@@ -32,9 +32,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- 🔑 I RAN THE ATOM'S OWN FALSIFICATION AND BOTH RAILS FIRED. Moving the hard-deny block below `self._requires_approval(...)` in `_guard_and_invoke` reddened exactly two tests — `test_structural_deny_call_precedes_the_approval_gate_call` ('DENY-AFTER-APPROVAL ORDERING REGRESSION: security.is_denied…') and `test_behavioural_denied_tool_never_invoked_even_when_approved`. Restored: 31/31, tree byte-identical
+- 🔑 TWO INDEPENDENT RAILS IS THE RIGHT NUMBER: the structural one is read by AST rather than regex (a regex on source is defeated by reformatting) and localises the cause instantly; the behavioural one proves the CONSEQUENCE. Either alone would be weaker than both
+- 🏅 THE VACUITY DEFENCE IS THE BEST-CONSTRUCTED ONE IN THIS CATALOGUE. `TestTheProbeIsRealNotVacuous` proves the probe command matches a pattern in the PACKAGED baseline (not a user addition), the benign control matches nothing, the driver can observe a command it does NOT refuse, and — decisively — `test_the_denylist_is_the_control_that_fires_not_the_sensitive_path_guard`, so the file cannot be silently testing the neighbouring guard instead
+- the matrix proves the ARMS DIFFERED rather than both refusing trivially: `test_default_mode_really_did_prompt_and_the_human_really_did_approve` beside `test_permissive_modes_really_did_skip_the_prompt`; and `test_the_matrix_covers_every_mode_the_runtime_treats_as_permissive` reds if a new permissive mode is added without a cell
+- trust simulators too: channel yolo, the dashboard trust toggle and a config-pinned never-expiring yolo each 'grants approval and still cannot run it'
+- 🔴 A RESIDUAL DEFECT IS PINNED RATHER THAN PAPERED, and the classification is right: the COMMAND-level baseline screen lives inside the bash tool, BELOW the runtime's approval gate. It is unconditional and precedes the spawn, so there is no execution bypass — but a baseline-denied command is still put in front of a human as an approvable request before being refused. Recorded as 'a legibility/audit defect, not a hole', with a rail holding today's ordering
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Not a browser surface: a runtime ordering property.
+
+**Notes:** 🏅 The cycle's falsification, and the atom invited it in writing. An atom that states the mutation which must red its own tests is the cheapest possible thing for an auditor to verify — and the only kind of claim that cannot be confirmed by reading.
 
 ## Recorded history
 

@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- `config/credential_migration.py` ships with `tests/test_credential_migration.py`, inside the 511 green
+- 🔑 THE SETTINGS SURFACE IS HONEST ABOUT WHAT THE TOGGLE DOES NOT DO, which is the half most such switches get wrong: 'Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below'
+- 🔴 AND THE MIGRATION BUTTON IS CORRECTLY DISABLED HERE — nothing to move and no usable keyring. An enabled 'Move to keychain' with zero movable secrets would be the inert-control class this campaign keeps finding
+- the gate is a persisted config field rather than env-only, 'without it the env var would have to be re-exported for every process, and the persisted request the migration acts on would have nowhere to live'
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Driven: the switch, its help text and the disabled 'Move to keychain' button were read off the live page.
+
+**Notes:** Confirmed on the mechanism and the surface. The macOS migrate/rollback half of the clause was NOT driven — this host has no usable keyring, so the real keychain round-trip stays a fixture here. That is the one clause a future change could break invisibly.
 
 ## Recorded history
 

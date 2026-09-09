@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- the doc SHIPPED and is substantial — `docs/security/review-scope.md`, 442 lines, naming the five high-risk paths with the file and function for each, the review format and the publication plan
+- 🔑 ITS OUT-OF-SCOPE SECTION IS THE PART WORTH KEEPING, because it is what stops a review drowning in non-findings: 'Owner-lowered guardrails. Auto-approve (YOLO), a permissive task mode, or a hand-edited config are DECISIONS, NOT VULNERABILITIES.' For a single-owner self-hosted tool, refusing to treat owner authority as a vulnerability is the correct threat model
+- 🔴 THE REMAINING CLAUSES ARE OWNER ACTS AND ARE GENUINELY OPEN: the scope needs owner approval and the review must be executed or scheduled with a date. Commissioning an external review is a cost/counterparty/disclosure decision an audit cannot make or fake
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Not applicable: a scoping document and an owner decision.
+
+**Notes:** Partial rather than contradicted, and `blocked` is defensible: two of three clauses are owner acts. Worth noting the shape though — a `blocked` atom whose agent-buildable half is fully done reads as 'nothing happened' in any status roll-up, which is the same encoding problem LV-7 has in the other direction.
 
 ## Recorded history
 

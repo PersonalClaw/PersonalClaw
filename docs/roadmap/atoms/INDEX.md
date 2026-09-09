@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 353 | `done_when` checked against the code and it holds |
-| `partial` | 223 | some `done_when` clauses hold, others do not |
+| `confirmed` | 364 | `done_when` checked against the code and it holds |
+| `partial` | 224 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 94 | not yet checked |
+| `unaudited` | 82 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -827,18 +827,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`SH-1`](SH-1.md) | `done` | `unaudited` | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend |
-| [`SH-2`](SH-2.md) | `done` | `unaudited` | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action |
-| [`SH-3`](SH-3.md) | `done` | `unaudited` | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable |
-| [`SH-4`](SH-4.md) | `todo` | `unaudited` | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing |
-| [`SH-5`](SH-5.md) | `done` | `unaudited` | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc |
-| [`SH-6`](SH-6.md) | `done` | `unaudited` | Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py |
-| [`SH-7`](SH-7.md) | `done` | `unaudited` | Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness |
-| [`SH-8`](SH-8.md) | `done` | `unaudited` | SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export |
-| [`SH-9`](SH-9.md) | `blocked` | `unaudited` | External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan |
-| [`SH-10`](SH-10.md) | `done` | `unaudited` | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented |
-| [`SH-11`](SH-11.md) | `todo` | `unaudited` | Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/SH-4) |
-| [`SH-12`](SH-12.md) | `done` | `unaudited` | registry.json listings record signer identity: schema field + validation script captures it per listing |
+| [`SH-1`](SH-1.md) | `done` | `confirmed` | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend |
+| [`SH-2`](SH-2.md) | `done` | `confirmed` | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action |
+| [`SH-3`](SH-3.md) | `done` | `confirmed` | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable |
+| [`SH-4`](SH-4.md) | `todo` | `confirmed` | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing |
+| [`SH-5`](SH-5.md) | `done` | `confirmed` | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc |
+| [`SH-6`](SH-6.md) | `done` | `confirmed` | Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py |
+| [`SH-7`](SH-7.md) | `done` | `confirmed` | Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness |
+| [`SH-8`](SH-8.md) | `done` | `confirmed` | SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export |
+| [`SH-9`](SH-9.md) | `blocked` | `partial` | External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan |
+| [`SH-10`](SH-10.md) | `done` | `confirmed` | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented |
+| [`SH-11`](SH-11.md) | `todo` | `confirmed` | Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/SH-4) |
+| [`SH-12`](SH-12.md) | `done` | `confirmed` | registry.json listings record signer identity: schema field + validation script captures it per listing |
 
 ### `SL` — SECURITY-LEGIBILITY (7/7 done)
 

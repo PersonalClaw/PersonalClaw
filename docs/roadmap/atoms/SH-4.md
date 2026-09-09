@@ -34,9 +34,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 64 (SH) — the deny-before-approval ordering falsified (both rails red); the registry validator and the audit chain verify both run live
+
+**Code evidence:**
+
+- 🔴 STATUS-ONLY VERDICT: the atom is `todo`, no release pipeline signs anything, and that is accurate — the signing key does not exist (SH-11) and the trust store is empty, so a pipeline step would have nothing to sign with
+- the atom's own AUDIT CORRECTION is worth preserving: its external dep restated its OWN second done-when clause as a precondition, and SH-12 (the registry signer field) is in fact DONE — so the recorded dep was self-referential rather than a real block
+- 511 passed / 2 xfailed across tests/security + the credential and denylist suites; 80/80 on the audit API and SEL; the registry validator run live; the security and audit Settings pages driven on :10011
+
+**Driven in the UI:** Nothing to drive.
+
+**Notes:** Genuinely blocked on the owner credential act, not on engineering. Recording that the registry half already landed is what keeps this from looking like two blocks instead of one.
 
 ## Recorded history
 
