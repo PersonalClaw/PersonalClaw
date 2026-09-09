@@ -32,9 +32,24 @@ Personal CFO + Health OS bundled first-party packs export→wipe→import on a f
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: THREE bundled packs ship where the clause names two — personal-cfo, health-os and infra-ops. Growth past the atom
+- DRIVEN END TO END: Install on Personal CFO from the Pack store committed the whole closure in one click. All 8 components listed, the skipped connector surfaced, the setup chip offered, and it survived a RELOAD
+- MEASURED on disk after that install: the roster staged at packs/staged/personal-cfo/roster.json and the trigger at packs/staged/personal-cfo/triggers/cfo-spending-digest.json with `enabled: false` and `created_by: pack` — the clause's 'digest trigger DISABLED' is true, and stronger than stated (it is not registered in triggers.json at all)
+- every remaining clause has a named test in tests/test_packs_kinds.py: test_round_trip_on_a_fresh_home_lands_the_trigger_disabled, test_the_roster_stages_with_its_tiers, test_only_the_always_tier_deploys, test_deploy_is_idempotent, test_broken_roster_slug_blocks_the_import_naming_the_ref, test_a_runbook_slug_must_resolve_too, test_an_unknown_activation_tier_blocks, test_one_link_imports_through_the_same_pipeline, test_a_traversing_member_name_is_refused, test_an_undeclared_component_file_refuses_the_build
+- the prompt-card importer files a PROPOSAL and 'writes no entity' (handlers/packs.py:23-24), with test_each_target_builds_its_real_typed_object and test_every_proposal_kind_has_an_inbox_label
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Driven in the UI:** Drove the bundled install fully. Could NOT drive the roster deploy: 'only the always tier ONE-CLICK-deploys' has no click. POST /api/packs/{name}/roster/deploy exists and is tested, but web/src/lib/api.ts has no client method for it and PacksPanel.tsx has no control — the only `roster` occurrences there are two toast strings and a section hint.
+
+**Notes:** 🔴 PARTIAL FOR THE ONE-CLICK CLAIM, filed as an issue. installed.py:69 carries roster_rows 'so the pack detail surface can show the whole team'; no surface renders them. So the backend half of §4.2 is complete and tested and the user-facing half is absent — an inert control in the precise sense this campaign keeps finding, except here the control was never drawn. Everything else in this atom is confirmed, including the parts I drove.
 
 ## Recorded history
 

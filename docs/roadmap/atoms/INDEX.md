@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 150 | `done_when` checked against the code and it holds |
-| `partial` | 132 | some `done_when` clauses hold, others do not |
+| `confirmed` | 154 | `done_when` checked against the code and it holds |
+| `partial` | 135 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 398 | not yet checked |
+| `unaudited` | 391 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -79,13 +79,13 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AP-1`](AP-1.md) | `done` | `unaudited` | Pack format + export core (dependency-closure walker + two-layer redaction) |
-| [`AP-2`](AP-2.md) | `done` | `unaudited` | Import core: inspect-without-write, leaves-first commit, rollback, ref-integrity lint, scan |
-| [`AP-3`](AP-3.md) | `done` | `unaudited` | Requirements resolution + connector catalog (configure/substitute/skip) + setup-skill + PacksConfig |
-| [`AP-4`](AP-4.md) | `done` | `unaudited` | Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization |
-| [`AP-5`](AP-5.md) | `done` | `unaudited` | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) |
-| [`AP-6`](AP-6.md) | `done` | `unaudited` | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) |
-| [`AP-7`](AP-7.md) | `done` | `unaudited` | Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep |
+| [`AP-1`](AP-1.md) | `done` | `confirmed` | Pack format + export core (dependency-closure walker + two-layer redaction) |
+| [`AP-2`](AP-2.md) | `done` | `confirmed` | Import core: inspect-without-write, leaves-first commit, rollback, ref-integrity lint, scan |
+| [`AP-3`](AP-3.md) | `done` | `confirmed` | Requirements resolution + connector catalog (configure/substitute/skip) + setup-skill + PacksConfig |
+| [`AP-4`](AP-4.md) | `done` | `partial` | Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization |
+| [`AP-5`](AP-5.md) | `done` | `partial` | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) |
+| [`AP-6`](AP-6.md) | `done` | `confirmed` | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) |
+| [`AP-7`](AP-7.md) | `done` | `partial` | Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep |
 
 ### `APE` — APP-PLATFORM-EVOLUTION (12/12 done)
 

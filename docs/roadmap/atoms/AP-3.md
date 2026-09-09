@@ -31,9 +31,23 @@ connector_catalog.json store seeded; each connectors.json declaration resolves v
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: connector_catalog.json is seeded in a real home (observed in the validation home root, not read from a fixture)
+- DRIVEN, all three resolution modes are legible after an install: the installed-pack row reads 'Needs a connector: finance-statements' and a per-connector line renders `finance-statements · skip`. PacksPanel.tsx:300-311 `connectorWarning` parses the machine-readable `connector_missing:<prefix>` and passes anything unrecognised through — 'a code nobody planned for is better read than hidden'
+- 🔑 the ConnectorLine comment names the defect it fixed and it is a real one: the row 'said only "Unavailable: <markers>", which reports the skips and stays silent about everything that succeeded — so a pack with three configured connectors and no skips looked identical to one with none at all'. Reporting only failures made success unreadable
+- DRIVEN: the re-runnable 'Finish setup' chip is present on the installed row, and handlers/packs.py:8-12 states the discipline — 'it never runs the skill server-side (the interview runs under normal tool approval in a chat), and it is re-runnable (the ledger keeps setup_pending true)'
+- THE CONFIG ROUND-TRIP IS COMPLETE, all five points: loader.py:1035-1071 the PacksConfig dataclass with _meta on every field, load() at :3592-3598, the write path via edit_spec.py:255's skill_catalogs type, and a FE control (settings/PacksPanel.tsx) — DRIVEN at #/settings/packs with the fingerprint switch and the catalog-URL field both rendering their own help text. test_config_roundtrip 17/17
+- 🔑 loader.py:1040-1042 fingerprint_enabled is deliberately GUARD-FLAG-SAFE in the opposite direction to fail-closed: 'a missing/garbage value stays ON so the propose-only surface is never silently disabled' — justified because the feature only ever proposes, so the risk of a garbage value is a lost suggestion, not an unwanted action
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Notes:** The inverted fail-safe is worth keeping as a pattern: this codebase defaults closed everywhere it can act and defaults OPEN here, and states the discriminator (does the flag gate an action or a suggestion?). A blanket 'fail closed' rule would have made a propose-only surface silently vanish on a config typo.
 
 ## Recorded history
 

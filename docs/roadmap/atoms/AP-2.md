@@ -31,9 +31,25 @@ import runs inspect (dry-run, no writes) then quarantine→integrity recompute�
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 import_.py:1-9 names its own threat model without softening it: 'it is the more dangerous half: a pack is untrusted third-party content that ships executable skills, so a malicious or corrupt pack must not be able to write a dangerous skill, corrupt state, or leave a half-written mess. The whole module is built around one property: ATOMICITY'
+- :11-18 inspect is a true dry run — extracts to a SYSTEM tempdir 'never the home', re-derives content_hash from the ACTUAL member bytes so 'the manifest's value is never trusted', lints referential integrity, and scans every component at the ORIGIN'S TRUST TIER, returning a plan WITHOUT touching home state
+- 🔑 :19-21 THE THREE-TIER GATE, and the worst tier is not consentable: a commit 'refuses on any blocking condition (integrity mismatch, lint error, a DANGEROUS component REGARDLESS OF CONSENT, a WARNING component WITHOUT consent)'. :151-152 restates it as code contract — 'force/consent never clears any of these — they are terminal'
+- :22-27 leaves-first commit order (skills → prompts → agents → templates → triggers → config) with every write journaled to packs/.installing/<id>.json BEFORE it happens; skills route through PackMarketplace → install_guarded → .pclaw-lock.json; ids rewritten on the PARSED object 'never string-replaced over raw bytes — a byte splice corrupts'; any exception unwinds leaves-LAST
+- 🔑 :29-32 a pack cannot arm anything on install: 'Triggers land DISABLED and config_subset lands STAGED (never applied) … a pack cannot arm automation or edit config on install — those are human-enabled from their own surfaces later (§3.1 propose-don't-write applied to distribution)'
+- MEASURED: every done_when clause has a NAMED test, and the file indexes them with `done_when N:` section headers — test_inspect_is_pure_dry_run, test_import_commits_leaves_first_with_skill_lock, test_dangerous_skill_refused_even_with_consent, test_warning_skill_needs_consent, test_fault_mid_import_rolls_back_byte_identical, test_content_hash_mismatch_refused, test_fresh_id_rewrite_updates_referencing_template, test_trigger_lands_disabled_and_staged, test_unresolved_reference_refused, test_env_isolation_never_touches_real_home
+- 🔑 the rollback test is the strongest form of itself: it hashes the WHOLE tree before and after, and the fault is placed deliberately AFTER a guarded skill install — 'proving rollback unwinds a guarded install too, not just plain file writes'. It also asserts the fault actually fired (calls['n'] == 1) rather than trusting that it did
+- DRIVEN: installing the bundled Personal CFO pack from #/settings/packs committed 8 components (3 skills, 1 prompt, 2 agents, 1 template, 1 trigger), each listed by kind:slug, and the state survived a page RELOAD
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Notes:** 🎯 THE CLOSEST ARCC MATCH OF THE CAMPAIGN. BSC14/Shinrai's objective is that third-party code is graded BEFORE import and the grade gates use, on a three-tier verdict: Safe (use), Caution (avoid; contact Security if unavoidable), Avoid (do not use). This pipeline is the same three tiers with the same asymmetry — WARNING is consentable, DANGEROUS is not, and consent cannot reach it. Two things exceed the guidance. Shinrai grades a package but says nothing about trusting the package's SELF-REPORTED identity; here the manifest's content_hash is re-derived from actual bytes and a mismatch is terminal. And Shinrai's model is 'is this safe to link', not 'can installing it start doing things' — the disabled-and-staged rule answers a question the supply-chain framing does not ask.
 
 ## Recorded history
 

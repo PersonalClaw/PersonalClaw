@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 catalog_marketplace.py:10-14 THE BEST SENTENCE IN THE PLAN: the trust tier is hard-coded to COMMUNITY, 'never derived from config, BECAUSE "THE OPERATOR ADDED IT" IS NOT PROVENANCE'. That tier is what makes install_scanned run the full gate rather than the advisory bundled-content one
+- 🔑 :15-19 NO INSTALL PATH OF ITS OWN — the class is a read-only SOURCE (search + fetch only), and installing is install_guarded's job, which 'quarantines the fetched payload, scans the whole staged dir at this tier, commits the exact scanned bytes and writes .pclaw-lock.json. Zero chokepoint bypass'. The chokepoint holds because the bypass capability is absent, not because callers are disciplined
+- 🔑 :20-24 NETWORK REACH IS PROFILE-BOUND AND THE MODULE CANNOT ESCAPE IT: every byte arrives via net.fetch under the CONNECTOR egress profile layered with the operator's security.egress, 'so a catalog URL cannot reach a private address, follow a redirect off-policy, or stream unbounded bytes. THERE IS DELIBERATELY NO BARE HTTP CLIENT IN THIS MODULE'
+- :26-30 a large index browses without entering the agent budget: fetched once per catalog, memoized, filtered IN-PROCESS, search() returns at most `limit` rows, and only a chosen skill's files are ever fetched. 'Nothing here calls an LLM'
+- the Skills store's source filter and per-source counts exist, and handlers/skills.py:261-263 records the precision that makes them honest: 'counts carries the per-source matched count computed BEFORE the global cap, so the store's source filter can show how many of a large catalog's skills match' even when the cap truncated the rows
+- register_skill_catalogs (:313) registers each configured catalog on the shared registry; PacksConfig.skill_catalogs is the wired source
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Notes:** This is where ARCC's guidance would be actively misapplied by a naive implementation, and the module says so. BSC14/Shinrai grades the PACKAGE; a system that let the operator's act of configuring a source raise that source's trust tier would defeat the grading entirely, since every source is one an operator added. Hard-coding COMMUNITY is the refusal of that shortcut, and the phrasing — 'the operator added it' is not provenance — is the whole argument in seven words. The 'no bare HTTP client' choice is the same structural move: the egress profile is unbypassable because the alternative capability does not exist in the module.
 
 ## Recorded history
 

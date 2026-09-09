@@ -3199,5 +3199,117 @@
       "5238 tests pass across 107 workflow suites (2 skips, both a template legitimately having no work loop)"
     ],
     "notes": "The identity-by-construction line is the strongest anti-drift move I have seen in this campaign: six hand-copied rows would have been correct today and wrong at the seventh member, and the code says so. Every other row in both tables argues against the specific neighbouring outcome it could be mistaken for, which is what makes a nine-status vocabulary reviewable at all."
+  },
+  "AP-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 deny.py:1-8 states why a pack's exclude-set is WIDER than a portable export's, and it is the right distinction: 'an export carries the owner's own data to a new machine (memory, notifications, run history all travel), but a pack must carry none of it — a recipient's assistant must not inherit the author's episodic memory, personal documents, or session transcripts, let alone a credential'",
+      "deny.py:11-14 it EXTENDS portability.EXPORT_EXCLUDE by IMPORTING it, not re-listing: 'a second hand-maintained list is exactly the drift that let stores escape coverage before' — and :29-33 the import has a fail-closed fallback to the historical literals, because 'an import break must NEVER widen what a pack opens'",
+      "🔑 THE GUARANTEE IS STRUCTURAL, NOT A POST-READ FILTER. deny.py:14-16: 'a path under any denied name is never opened, not merely dropped after reading'. MEASURED: build.py:222-232 `_read_denied_safe` is 'the single choke point every store reader routes through', is_denied runs BEFORE the open, and the refusal comment is explicit — 'if it does, that is the structural guarantee doing its job — refuse the read, don't \"just this once\"'",
+      "is_denied fails CLOSED on an unnameable path, denies any .db plus -wal/-shm/-journal sidecars by SUFFIX 'so a future *.db store is covered without being re-listed', and explains why a broad .db refusal is correct here but not in the portable export (which does carry the user's databases)",
+      "🔑 build.py:19-21 THE CONTENT LAYER BLOCKS RATHER THAN REDACTS: 'a credential-bearing component is BLOCKED (recorded, never shipped) rather than redacted-and-shipped — A MANGLED SECRET IS STILL A LEAK'. Two independent detectors (security.redact difference + guardrails.scan_outbound), and the scope is stated precisely at :357-359: 'a PII hit alone does not block — the contract is \"credential-bearing\"'",
+      "build.py:484-488 the preview drives BOTH redaction layers exactly as build_pack will, 'so the tree a user sees is the pack they would get — including the requirements it demoted and any component it would block'. Preview/actual parity rather than an approximation",
+      "MEASURED, tests/test_packs_build.py:290-299 — the golden-pack round trip greps the RAW compressed archive AND every decompressed member for five distinct canary shapes (AWS key, .env value, local_secret, an xoxb token, an hmac key). Both layers, because a canary can survive one and not the other",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "notes": "ARCC's BSC14 material (Shinrai) is about grading third-party code on the way IN; this atom is the way OUT, which the guidance does not cover at all. The transferable idea it does supply — a definition must not carry plaintext secrets — is satisfied twice over here, and the block-not-redact ruling goes past anything ARCC says: the intuitive implementation redacts and ships, and this one refuses to ship, on the stated grounds that a mangled secret still tells an attacker there was a secret and often what shape."
+  },
+  "AP-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 import_.py:1-9 names its own threat model without softening it: 'it is the more dangerous half: a pack is untrusted third-party content that ships executable skills, so a malicious or corrupt pack must not be able to write a dangerous skill, corrupt state, or leave a half-written mess. The whole module is built around one property: ATOMICITY'",
+      ":11-18 inspect is a true dry run — extracts to a SYSTEM tempdir 'never the home', re-derives content_hash from the ACTUAL member bytes so 'the manifest's value is never trusted', lints referential integrity, and scans every component at the ORIGIN'S TRUST TIER, returning a plan WITHOUT touching home state",
+      "🔑 :19-21 THE THREE-TIER GATE, and the worst tier is not consentable: a commit 'refuses on any blocking condition (integrity mismatch, lint error, a DANGEROUS component REGARDLESS OF CONSENT, a WARNING component WITHOUT consent)'. :151-152 restates it as code contract — 'force/consent never clears any of these — they are terminal'",
+      ":22-27 leaves-first commit order (skills → prompts → agents → templates → triggers → config) with every write journaled to packs/.installing/<id>.json BEFORE it happens; skills route through PackMarketplace → install_guarded → .pclaw-lock.json; ids rewritten on the PARSED object 'never string-replaced over raw bytes — a byte splice corrupts'; any exception unwinds leaves-LAST",
+      "🔑 :29-32 a pack cannot arm anything on install: 'Triggers land DISABLED and config_subset lands STAGED (never applied) … a pack cannot arm automation or edit config on install — those are human-enabled from their own surfaces later (§3.1 propose-don't-write applied to distribution)'",
+      "MEASURED: every done_when clause has a NAMED test, and the file indexes them with `done_when N:` section headers — test_inspect_is_pure_dry_run, test_import_commits_leaves_first_with_skill_lock, test_dangerous_skill_refused_even_with_consent, test_warning_skill_needs_consent, test_fault_mid_import_rolls_back_byte_identical, test_content_hash_mismatch_refused, test_fresh_id_rewrite_updates_referencing_template, test_trigger_lands_disabled_and_staged, test_unresolved_reference_refused, test_env_isolation_never_touches_real_home",
+      "🔑 the rollback test is the strongest form of itself: it hashes the WHOLE tree before and after, and the fault is placed deliberately AFTER a guarded skill install — 'proving rollback unwinds a guarded install too, not just plain file writes'. It also asserts the fault actually fired (calls['n'] == 1) rather than trusting that it did",
+      "DRIVEN: installing the bundled Personal CFO pack from #/settings/packs committed 8 components (3 skills, 1 prompt, 2 agents, 1 template, 1 trigger), each listed by kind:slug, and the state survived a page RELOAD",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "notes": "🎯 THE CLOSEST ARCC MATCH OF THE CAMPAIGN. BSC14/Shinrai's objective is that third-party code is graded BEFORE import and the grade gates use, on a three-tier verdict: Safe (use), Caution (avoid; contact Security if unavoidable), Avoid (do not use). This pipeline is the same three tiers with the same asymmetry — WARNING is consentable, DANGEROUS is not, and consent cannot reach it. Two things exceed the guidance. Shinrai grades a package but says nothing about trusting the package's SELF-REPORTED identity; here the manifest's content_hash is re-derived from actual bytes and a mismatch is terminal. And Shinrai's model is 'is this safe to link', not 'can installing it start doing things' — the disabled-and-staged rule answers a question the supply-chain framing does not ask."
+  },
+  "AP-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: connector_catalog.json is seeded in a real home (observed in the validation home root, not read from a fixture)",
+      "DRIVEN, all three resolution modes are legible after an install: the installed-pack row reads 'Needs a connector: finance-statements' and a per-connector line renders `finance-statements · skip`. PacksPanel.tsx:300-311 `connectorWarning` parses the machine-readable `connector_missing:<prefix>` and passes anything unrecognised through — 'a code nobody planned for is better read than hidden'",
+      "🔑 the ConnectorLine comment names the defect it fixed and it is a real one: the row 'said only \"Unavailable: <markers>\", which reports the skips and stays silent about everything that succeeded — so a pack with three configured connectors and no skips looked identical to one with none at all'. Reporting only failures made success unreadable",
+      "DRIVEN: the re-runnable 'Finish setup' chip is present on the installed row, and handlers/packs.py:8-12 states the discipline — 'it never runs the skill server-side (the interview runs under normal tool approval in a chat), and it is re-runnable (the ledger keeps setup_pending true)'",
+      "THE CONFIG ROUND-TRIP IS COMPLETE, all five points: loader.py:1035-1071 the PacksConfig dataclass with _meta on every field, load() at :3592-3598, the write path via edit_spec.py:255's skill_catalogs type, and a FE control (settings/PacksPanel.tsx) — DRIVEN at #/settings/packs with the fingerprint switch and the catalog-URL field both rendering their own help text. test_config_roundtrip 17/17",
+      "🔑 loader.py:1040-1042 fingerprint_enabled is deliberately GUARD-FLAG-SAFE in the opposite direction to fail-closed: 'a missing/garbage value stays ON so the propose-only surface is never silently disabled' — justified because the feature only ever proposes, so the risk of a garbage value is a lost suggestion, not an unwanted action",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "notes": "The inverted fail-safe is worth keeping as a pattern: this codebase defaults closed everywhere it can act and defaults OPEN here, and states the discriminator (does the flag gate an action or a suggestion?). A blanket 'fail closed' rule would have made a propose-only surface silently vanish on a config typo."
+  },
+  "AP-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: THREE bundled packs ship where the clause names two — personal-cfo, health-os and infra-ops. Growth past the atom",
+      "DRIVEN END TO END: Install on Personal CFO from the Pack store committed the whole closure in one click. All 8 components listed, the skipped connector surfaced, the setup chip offered, and it survived a RELOAD",
+      "MEASURED on disk after that install: the roster staged at packs/staged/personal-cfo/roster.json and the trigger at packs/staged/personal-cfo/triggers/cfo-spending-digest.json with `enabled: false` and `created_by: pack` — the clause's 'digest trigger DISABLED' is true, and stronger than stated (it is not registered in triggers.json at all)",
+      "every remaining clause has a named test in tests/test_packs_kinds.py: test_round_trip_on_a_fresh_home_lands_the_trigger_disabled, test_the_roster_stages_with_its_tiers, test_only_the_always_tier_deploys, test_deploy_is_idempotent, test_broken_roster_slug_blocks_the_import_naming_the_ref, test_a_runbook_slug_must_resolve_too, test_an_unknown_activation_tier_blocks, test_one_link_imports_through_the_same_pipeline, test_a_traversing_member_name_is_refused, test_an_undeclared_component_file_refuses_the_build",
+      "the prompt-card importer files a PROPOSAL and 'writes no entity' (handlers/packs.py:23-24), with test_each_target_builds_its_real_typed_object and test_every_proposal_kind_has_an_inbox_label",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Drove the bundled install fully. Could NOT drive the roster deploy: 'only the always tier ONE-CLICK-deploys' has no click. POST /api/packs/{name}/roster/deploy exists and is tested, but web/src/lib/api.ts has no client method for it and PacksPanel.tsx has no control — the only `roster` occurrences there are two toast strings and a section hint.",
+    "notes": "🔴 PARTIAL FOR THE ONE-CLICK CLAIM, filed as an issue. installed.py:69 carries roster_rows 'so the pack detail surface can show the whole team'; no surface renders them. So the backend half of §4.2 is complete and tested and the user-facing half is absent — an inert control in the precise sense this campaign keeps finding, except here the control was never drawn. Everything else in this atom is confirmed, including the parts I drove."
+  },
+  "AP-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "external_formats.py declares the ExternalFormat contract and exactly the three renderers the clause names — CLAUDE_CODE_AGENTS (:303), CURSOR_RULES (:310), SKILL_MD (:317)",
+      "🔑 :7-9 EXPLICIT DEST CONFIRMATION IS A REFUSAL, NOT A PROMPT: export_entities 'refuses unless the caller passes confirm_dest=True. Nothing is ever \"auto-installed\" into another tool's config'. default_dest_dir only SUGGESTS the canonical location — so the code cannot write into ~/.claude without the caller having said so",
+      "🔑 :12-13 PATH CONTAINMENT ON USER-CONTROLLED DATA: '../', absolute paths and path separators in a slug are refused, 'so an entity name can never steer a write outside dest_dir'. An entity NAME is user data reaching a filesystem path, and that is the traversal seam",
+      "🔑 THE GOLDEN DISCIPLINE IS THE BEST PART. tests/test_packs_external_formats.py:5-7 renders every format TWICE inside one test and compares to a COMMITTED golden, so 'a timestamp, an absolute path or a dict-order leak reds both the twice-render check and the golden diff' — two failure detectors for one property. And :21-24: goldens regenerate only by running the file deliberately, because 'there is no environment variable that rewrites them from inside the run under test: A GOLDEN A TEST RUN REWROTE BLESSES WHATEVER THAT RUN DID'",
+      "the test also asserts each format's documented-required keys are PRESENT and the invented key `tools` is ABSENT — checking for fabrication, not only for omission",
+      "§2.2 content redaction runs on rendered output (the clause's reuse requirement)",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Not driven. The clause's final condition is that the exported file is one 'that Claude Code actually loads' — a third-party tool's behaviour, which I cannot observe here, and verifying it would mean writing into ~/.claude, which this session's standing constraints forbid.",
+    "notes": "Partial for exactly one clause and nothing else. Everything checkable is confirmed, and the golden discipline is stronger than the atom claims: the atom asks for byte-identical rendering across runs, and the test proves it two independent ways while also refusing the in-run regeneration escape hatch that makes most golden suites decorative. The Claude-Code-loads-it half is unobservable in this environment rather than doubted — the renderer emits the format's documented required front-matter keys and the golden pins them."
+  },
+  "AP-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 catalog_marketplace.py:10-14 THE BEST SENTENCE IN THE PLAN: the trust tier is hard-coded to COMMUNITY, 'never derived from config, BECAUSE \"THE OPERATOR ADDED IT\" IS NOT PROVENANCE'. That tier is what makes install_scanned run the full gate rather than the advisory bundled-content one",
+      "🔑 :15-19 NO INSTALL PATH OF ITS OWN — the class is a read-only SOURCE (search + fetch only), and installing is install_guarded's job, which 'quarantines the fetched payload, scans the whole staged dir at this tier, commits the exact scanned bytes and writes .pclaw-lock.json. Zero chokepoint bypass'. The chokepoint holds because the bypass capability is absent, not because callers are disciplined",
+      "🔑 :20-24 NETWORK REACH IS PROFILE-BOUND AND THE MODULE CANNOT ESCAPE IT: every byte arrives via net.fetch under the CONNECTOR egress profile layered with the operator's security.egress, 'so a catalog URL cannot reach a private address, follow a redirect off-policy, or stream unbounded bytes. THERE IS DELIBERATELY NO BARE HTTP CLIENT IN THIS MODULE'",
+      ":26-30 a large index browses without entering the agent budget: fetched once per catalog, memoized, filtered IN-PROCESS, search() returns at most `limit` rows, and only a chosen skill's files are ever fetched. 'Nothing here calls an LLM'",
+      "the Skills store's source filter and per-source counts exist, and handlers/skills.py:261-263 records the precision that makes them honest: 'counts carries the per-source matched count computed BEFORE the global cap, so the store's source filter can show how many of a large catalog's skills match' even when the cap truncated the rows",
+      "register_skill_catalogs (:313) registers each configured catalog on the shared registry; PacksConfig.skill_catalogs is the wired source",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "notes": "This is where ARCC's guidance would be actively misapplied by a naive implementation, and the module says so. BSC14/Shinrai grades the PACKAGE; a system that let the operator's act of configuring a source raise that source's trust tier would defeat the grading entirely, since every source is one an operator added. Hard-coding COMMUNITY is the refusal of that shortcut, and the phrasing — 'the operator added it' is not provenance — is the whole argument in seven words. The 'no bare HTTP client' choice is the same structural move: the egress profile is unbypassable because the alternative capability does not exist in the module."
+  },
+  "AP-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 28 (AP) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 fingerprint.py:5-7 sets the standard the whole module then meets: four properties, and 'each one is a MECHANISM here rather than a promise in a docstring'",
+      "🔑 ZERO-LLM IS PROVEN TWICE, AND THE MODULE SAYS WHY THAT IS NECESSARY: ':8-14 … tests/test_packs_fingerprint.py asserts that STATICALLY (an AST sweep over this file's imports) and DYNAMICALLY (a scan with the model-call audit sink wired to explode records zero attempts). \"ZERO-LLM\" IS OTHERWISE UNFALSIFIABLE PROSE'. MEASURED: both tests exist — test_the_scanner_makes_no_model_call (wired at guardrails.audit.record_attempt) and test_the_scanner_imports_no_model_seam (ast.walk over the imports)",
+      "🔑 ON-DEMAND-ONLY IS ENFORCED BY THE SIGNATURE: scan_project takes a MANDATORY `reason` from a closed set and raises on anything else, 'so a background loop cannot quietly acquire a scan: IT WOULD HAVE TO INVENT A REASON NAME AND FAIL'. And test_reading_a_project_does_not_scan is an AST sweep proving the read path contains no call — a rail for a NEGATIVE claim, which is the mirror image of this campaign's anti-inertness rails",
+      "propose-only: 'A scan writes NOTHING'; the single thing the module ever persists is the user's rejection, written only by reject_proposal. test_surfacing_writes_nothing_but_its_own_audit_row",
+      "the rejection is remembered per (project, pack) in packs/fingerprint_rejections.json and filtered on the next scan — test_a_rejection_is_remembered_and_never_re_nags",
+      "fingerprint_enabled=false is 'checked first, before the workspace is even resolved, so \"off\" costs zero directory reads' — the same argument PA-3 made about its kill switch not spending a store read",
+      "DRIVEN: #/settings/packs ships the whole surface — a Discovery section with the fingerprint switch, a Connector catalog section, 'Suggested for your projects' with a 'Suggest packs' on-demand button and an honest empty state ('Bind a project to a codebase directory to get suggestions'), a Pack store with three packs, and an Installed packs section. The update flow is present as 'Check for update' and PacksPanel.tsx:453 handles the drift case (`skip_not_pack_owned`)",
+      "🔑 DRIVEN, THE GUARANTEES ARE SURFACED WHERE A USER CAN HOLD THE PRODUCT TO THEM: the settings-hub card already reads 'Matching packs are proposed for a project — never installed on their own', and the page says 'Matched by file shape only — NO MODEL READS YOUR CODE' (the zero-LLM property translated into user language) and 'Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it'",
+      "263 tests pass across the 9 pack suites; test_config_roundtrip 17/17"
+    ],
+    "ui_validated": "Drove the full page and a real install. Two clauses not satisfied: the staged-trigger surfacing (see notes) and the export→wipe→import sweep on a SECOND home, which I did not run — the equivalent is covered by test_round_trip_on_a_fresh_home_lands_the_trigger_disabled.",
+    "notes": "🔴 PARTIAL, and the reason is the finding of the cycle, filed as an issue. The install toast promises 'Its triggers are disabled and its roster is staged UNTIL YOU ENABLE THEM'. MEASURED: packs/staged/<pack>/triggers/*.json is written by import_.py:988 and read by NOTHING — packs/staged has exactly one reader in the tree (packs/roster.py, for the roster), and no route, tool or FE touches the triggers subtree. #/triggers shows 5, its All chip reads 5, and its filter popover offers only kind lenses, so there is no status view to reveal it either. staged_triggers is on the backend record and in to_dict() but absent from the FE's InstalledPackRec. So the pack's recurring half is serialized to disk and permanently dormant, and the success message points at an action with no implementation. The SAFETY posture is right and should not change (import_.py:31 argues it well); the missing piece is the second step. Everything else in this atom is confirmed and the fingerprint module is the best-instrumented in the plan."
   }
 }

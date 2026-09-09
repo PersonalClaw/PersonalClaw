@@ -32,9 +32,27 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 fingerprint.py:5-7 sets the standard the whole module then meets: four properties, and 'each one is a MECHANISM here rather than a promise in a docstring'
+- 🔑 ZERO-LLM IS PROVEN TWICE, AND THE MODULE SAYS WHY THAT IS NECESSARY: ':8-14 … tests/test_packs_fingerprint.py asserts that STATICALLY (an AST sweep over this file's imports) and DYNAMICALLY (a scan with the model-call audit sink wired to explode records zero attempts). "ZERO-LLM" IS OTHERWISE UNFALSIFIABLE PROSE'. MEASURED: both tests exist — test_the_scanner_makes_no_model_call (wired at guardrails.audit.record_attempt) and test_the_scanner_imports_no_model_seam (ast.walk over the imports)
+- 🔑 ON-DEMAND-ONLY IS ENFORCED BY THE SIGNATURE: scan_project takes a MANDATORY `reason` from a closed set and raises on anything else, 'so a background loop cannot quietly acquire a scan: IT WOULD HAVE TO INVENT A REASON NAME AND FAIL'. And test_reading_a_project_does_not_scan is an AST sweep proving the read path contains no call — a rail for a NEGATIVE claim, which is the mirror image of this campaign's anti-inertness rails
+- propose-only: 'A scan writes NOTHING'; the single thing the module ever persists is the user's rejection, written only by reject_proposal. test_surfacing_writes_nothing_but_its_own_audit_row
+- the rejection is remembered per (project, pack) in packs/fingerprint_rejections.json and filtered on the next scan — test_a_rejection_is_remembered_and_never_re_nags
+- fingerprint_enabled=false is 'checked first, before the workspace is even resolved, so "off" costs zero directory reads' — the same argument PA-3 made about its kill switch not spending a store read
+- DRIVEN: #/settings/packs ships the whole surface — a Discovery section with the fingerprint switch, a Connector catalog section, 'Suggested for your projects' with a 'Suggest packs' on-demand button and an honest empty state ('Bind a project to a codebase directory to get suggestions'), a Pack store with three packs, and an Installed packs section. The update flow is present as 'Check for update' and PacksPanel.tsx:453 handles the drift case (`skip_not_pack_owned`)
+- 🔑 DRIVEN, THE GUARANTEES ARE SURFACED WHERE A USER CAN HOLD THE PRODUCT TO THEM: the settings-hub card already reads 'Matching packs are proposed for a project — never installed on their own', and the page says 'Matched by file shape only — NO MODEL READS YOUR CODE' (the zero-LLM property translated into user language) and 'Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it'
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Driven in the UI:** Drove the full page and a real install. Two clauses not satisfied: the staged-trigger surfacing (see notes) and the export→wipe→import sweep on a SECOND home, which I did not run — the equivalent is covered by test_round_trip_on_a_fresh_home_lands_the_trigger_disabled.
+
+**Notes:** 🔴 PARTIAL, and the reason is the finding of the cycle, filed as an issue. The install toast promises 'Its triggers are disabled and its roster is staged UNTIL YOU ENABLE THEM'. MEASURED: packs/staged/<pack>/triggers/*.json is written by import_.py:988 and read by NOTHING — packs/staged has exactly one reader in the tree (packs/roster.py, for the roster), and no route, tool or FE touches the triggers subtree. #/triggers shows 5, its All chip reads 5, and its filter popover offers only kind lenses, so there is no status view to reveal it either. staged_triggers is on the backend record and in to_dict() but absent from the FE's InstalledPackRec. So the pack's recurring half is serialized to disk and permanently dormant, and the success message points at an action with no implementation. The SAFETY posture is right and should not change (import_.py:31 argues it well); the missing piece is the second step. Everything else in this atom is confirmed and the fingerprint module is the best-instrumented in the plan.
 
 ## Recorded history
 

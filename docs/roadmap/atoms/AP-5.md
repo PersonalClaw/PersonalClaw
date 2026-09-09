@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- external_formats.py declares the ExternalFormat contract and exactly the three renderers the clause names — CLAUDE_CODE_AGENTS (:303), CURSOR_RULES (:310), SKILL_MD (:317)
+- 🔑 :7-9 EXPLICIT DEST CONFIRMATION IS A REFUSAL, NOT A PROMPT: export_entities 'refuses unless the caller passes confirm_dest=True. Nothing is ever "auto-installed" into another tool's config'. default_dest_dir only SUGGESTS the canonical location — so the code cannot write into ~/.claude without the caller having said so
+- 🔑 :12-13 PATH CONTAINMENT ON USER-CONTROLLED DATA: '../', absolute paths and path separators in a slug are refused, 'so an entity name can never steer a write outside dest_dir'. An entity NAME is user data reaching a filesystem path, and that is the traversal seam
+- 🔑 THE GOLDEN DISCIPLINE IS THE BEST PART. tests/test_packs_external_formats.py:5-7 renders every format TWICE inside one test and compares to a COMMITTED golden, so 'a timestamp, an absolute path or a dict-order leak reds both the twice-render check and the golden diff' — two failure detectors for one property. And :21-24: goldens regenerate only by running the file deliberately, because 'there is no environment variable that rewrites them from inside the run under test: A GOLDEN A TEST RUN REWROTE BLESSES WHATEVER THAT RUN DID'
+- the test also asserts each format's documented-required keys are PRESENT and the invented key `tools` is ABSENT — checking for fabrication, not only for omission
+- §2.2 content redaction runs on rendered output (the clause's reuse requirement)
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Driven in the UI:** Not driven. The clause's final condition is that the exported file is one 'that Claude Code actually loads' — a third-party tool's behaviour, which I cannot observe here, and verifying it would mean writing into ~/.claude, which this session's standing constraints forbid.
+
+**Notes:** Partial for exactly one clause and nothing else. Everything checkable is confirmed, and the golden discipline is stronger than the atom claims: the atom asks for byte-identical rendering across runs, and the test proves it two independent ways while also refusing the in-run regeneration escape hatch that makes most golden suites decorative. The Claude-Code-loads-it half is unobservable in this environment rather than doubted — the renderer emits the format's documented required front-matter keys and the golden pins them.
 
 ## Recorded history
 

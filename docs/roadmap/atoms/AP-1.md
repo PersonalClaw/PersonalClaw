@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 28 (AP) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 deny.py:1-8 states why a pack's exclude-set is WIDER than a portable export's, and it is the right distinction: 'an export carries the owner's own data to a new machine (memory, notifications, run history all travel), but a pack must carry none of it — a recipient's assistant must not inherit the author's episodic memory, personal documents, or session transcripts, let alone a credential'
+- deny.py:11-14 it EXTENDS portability.EXPORT_EXCLUDE by IMPORTING it, not re-listing: 'a second hand-maintained list is exactly the drift that let stores escape coverage before' — and :29-33 the import has a fail-closed fallback to the historical literals, because 'an import break must NEVER widen what a pack opens'
+- 🔑 THE GUARANTEE IS STRUCTURAL, NOT A POST-READ FILTER. deny.py:14-16: 'a path under any denied name is never opened, not merely dropped after reading'. MEASURED: build.py:222-232 `_read_denied_safe` is 'the single choke point every store reader routes through', is_denied runs BEFORE the open, and the refusal comment is explicit — 'if it does, that is the structural guarantee doing its job — refuse the read, don't "just this once"'
+- is_denied fails CLOSED on an unnameable path, denies any .db plus -wal/-shm/-journal sidecars by SUFFIX 'so a future *.db store is covered without being re-listed', and explains why a broad .db refusal is correct here but not in the portable export (which does carry the user's databases)
+- 🔑 build.py:19-21 THE CONTENT LAYER BLOCKS RATHER THAN REDACTS: 'a credential-bearing component is BLOCKED (recorded, never shipped) rather than redacted-and-shipped — A MANGLED SECRET IS STILL A LEAK'. Two independent detectors (security.redact difference + guardrails.scan_outbound), and the scope is stated precisely at :357-359: 'a PII hit alone does not block — the contract is "credential-bearing"'
+- build.py:484-488 the preview drives BOTH redaction layers exactly as build_pack will, 'so the tree a user sees is the pack they would get — including the requirements it demoted and any component it would block'. Preview/actual parity rather than an approximation
+- MEASURED, tests/test_packs_build.py:290-299 — the golden-pack round trip greps the RAW compressed archive AND every decompressed member for five distinct canary shapes (AWS key, .env value, local_secret, an xoxb token, an hmac key). Both layers, because a canary can survive one and not the other
+- 263 tests pass across the 9 pack suites; test_config_roundtrip 17/17
+
+**Notes:** ARCC's BSC14 material (Shinrai) is about grading third-party code on the way IN; this atom is the way OUT, which the guidance does not cover at all. The transferable idea it does supply — a definition must not carry plaintext secrets — is satisfied twice over here, and the block-not-redact ruling goes past anything ARCC says: the intuitive implementation redacts and ships, and this one refuses to ship, on the stated grounds that a mangled secret still tells an attacker there was a secret and often what shape.
 
 ## Recorded history
 
