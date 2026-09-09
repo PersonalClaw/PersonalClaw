@@ -30,9 +30,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- the clause specifies a LIVE DRY-RUN of 'exactly what would move (not an estimate)', which is the difference between a policy editor a user can trust and one they cannot
+- 'purge deliberately NOT built' — recorded as a decision in the atom's own text
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Not driven: the retention section lives in ChatPanel's 'Context & lifecycle' area and its preview needs sessions to move.
+
+**Notes:** Partial for the preview. The exact-not-estimated dry run is the right contract for a destructive-shaped policy: an estimate that undercounts is how a user discovers the rule by losing something. Paired with SM-4's excluded delete and the absent purge, this plan's whole retention posture is reversible-by-construction.
 
 ## Recorded history
 

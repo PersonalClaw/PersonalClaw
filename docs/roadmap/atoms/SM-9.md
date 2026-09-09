@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- the share path reuses session_export.render_markdown's output VERBATIM and the SAME redact_field for the derived artifact name — the one-redactor-two-callers discipline stated in SM-8's module
+- the artifact lands in the OWNER'S OWN library rather than anywhere public, which is what makes 'share' safe to name
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Not driven: sharing needs a session to share.
+
+**Notes:** Partial for the drive. Worth noting what this atom is NOT: despite the name, nothing leaves the machine — it creates a read-only artifact locally. Given how much of this campaign has been about records claiming more than they do, an atom whose name over-promises relative to its (safer) behaviour is the harmless direction.
 
 ## Recorded history
 

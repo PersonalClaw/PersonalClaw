@@ -28,9 +28,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- the clause scopes a starter to SETUP ONLY — agent, model, reasoning effort, optional first prompt — with 'no transcript, no workspace binding', persisted in entity_settings/session_templates.json
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Not driven: saving a starter requires a configured session.
+
+**Notes:** The exclusions are the interesting part. A template carrying a transcript would leak one conversation's content into every session started from it, and one carrying a workspace binding would silently point a new session at a directory the user did not choose. Both are named as out of scope rather than left to be discovered.
 
 ## Recorded history
 

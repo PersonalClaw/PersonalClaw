@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 124 | `done_when` checked against the code and it holds |
-| `partial` | 118 | some `done_when` clauses hold, others do not |
+| `confirmed` | 130 | `done_when` checked against the code and it holds |
+| `partial` | 124 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 438 | not yet checked |
+| `unaudited` | 426 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -856,18 +856,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`SM-1`](SM-1.md) | `done` | `unaudited` | session_search.py: FTS5 cross-session index + incremental heartbeat reindex |
-| [`SM-2`](SM-2.md) | `done` | `unaudited` | Search endpoint + ChatHistoryPage search box, marked snippets, jump-to-message |
-| [`SM-3`](SM-3.md) | `done` | `unaudited` | Sidebar windowing — premise corrected + deferred pending measurement |
-| [`SM-4`](SM-4.md) | `done` | `unaudited` | Bulk ops + session lifecycle + auto-archive rule + Archived view |
-| [`SM-5`](SM-5.md) | `done` | `unaudited` | T2.1 Suggested organization: deterministic→LLM folder/tag proposals via inbox proposal contract |
-| [`SM-6`](SM-6.md) | `done` | `unaudited` | Retention surface: editable auto-archive policy with live dry-run preview |
-| [`SM-7`](SM-7.md) | `done` | `unaudited` | Session templates/starters: save setup + New-from-template prefill |
-| [`SM-8`](SM-8.md) | `done` | `unaudited` | Export: credential-redacted Markdown/JSON transcript download |
-| [`SM-9`](SM-9.md) | `done` | `unaudited` | Share: one chat as a redacted, read-only artifact in the owner's own library |
-| [`SM-10`](SM-10.md) | `done` | `unaudited` | Spend-ceiling price-key rail: reconcile price-table ids with catalog ids (T03) |
-| [`SM-11`](SM-11.md) | `done` | `unaudited` | Session-index fidelity: deleted chats must leave the FTS index (T22) |
-| [`SM-12`](SM-12.md) | `done` | `unaudited` | MCP tool-name wire fidelity: preserve exact names across the chat turn boundary (T00) |
+| [`SM-1`](SM-1.md) | `done` | `confirmed` | session_search.py: FTS5 cross-session index + incremental heartbeat reindex |
+| [`SM-2`](SM-2.md) | `done` | `partial` | Search endpoint + ChatHistoryPage search box, marked snippets, jump-to-message |
+| [`SM-3`](SM-3.md) | `done` | `confirmed` | Sidebar windowing — premise corrected + deferred pending measurement |
+| [`SM-4`](SM-4.md) | `done` | `partial` | Bulk ops + session lifecycle + auto-archive rule + Archived view |
+| [`SM-5`](SM-5.md) | `done` | `partial` | T2.1 Suggested organization: deterministic→LLM folder/tag proposals via inbox proposal contract |
+| [`SM-6`](SM-6.md) | `done` | `partial` | Retention surface: editable auto-archive policy with live dry-run preview |
+| [`SM-7`](SM-7.md) | `done` | `partial` | Session templates/starters: save setup + New-from-template prefill |
+| [`SM-8`](SM-8.md) | `done` | `confirmed` | Export: credential-redacted Markdown/JSON transcript download |
+| [`SM-9`](SM-9.md) | `done` | `partial` | Share: one chat as a redacted, read-only artifact in the owner's own library |
+| [`SM-10`](SM-10.md) | `done` | `confirmed` | Spend-ceiling price-key rail: reconcile price-table ids with catalog ids (T03) |
+| [`SM-11`](SM-11.md) | `done` | `confirmed` | Session-index fidelity: deleted chats must leave the FTS index (T22) |
+| [`SM-12`](SM-12.md) | `done` | `confirmed` | MCP tool-name wire fidelity: preserve exact names across the chat turn boundary (T00) |
 
 ### `SV` — SELF-VERIFICATION (11/11 done)
 

@@ -28,9 +28,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- session_search.py:10-17 states both load-bearing rules. Exclusion 'happens at the index boundary AND is re-checked at read time, because a session can be reclassified after its rows were written' — the attack a single-point guard misses
+- the three enforcement points are real: is_restricted consulted at :184 (index), :237 (index_turn) and :327 (reindex), with _RESTRICTED_MODES = {temporary, incognito} at :36
+- 'The index is disposable. It holds no truth of its own — every row is derived from the JSONL transcripts, so a corrupt or missing database is repaired by rebuilding rather than restored. Any failure degrades to the linear scan, which is why nothing here raises into a caller'
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Notes:** The read-time re-check is the half that matters and the docstring says why: flip a session to incognito AFTER it was indexed and an index-time-only guard leaks it. Declaring the index disposable is what licenses the never-raise posture — a store with no truth of its own can fail safely.
 
 ## Recorded history
 

@@ -30,9 +30,20 @@ Search returns ranked sessions; clicking a result opens it scrolled to the match
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- tests/test_dashboard_sessions_search.py green; the search endpoint and its ranking are covered server-side
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Drove #/chat/history. It renders the EMPTY state — 'No chats yet · Start a conversation — your sessions will appear here to search and revisit' with a New-chat action — because this home has no chat transcripts (chat needs a bound model). I read the gate rather than assuming: ChatPage.tsx:4525-4527 is a three-state ladder that distinguishes a failed read (LoadError with retry) from loading (ListSkeleton) from genuinely empty (EmptyState).
+
+**Notes:** Partial for the search drive. That three-state ladder is worth recording because the AE cycle found the same distinction stated as an incident lesson in the artifact picker — 'a 500 told a user with artifacts to go make their first one'. Here it is structural: an error can never render as emptiness.
 
 ## Recorded history
 

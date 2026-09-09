@@ -28,9 +28,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- tests/test_chat_archived_session_integrity.py green (part of the 37-passed run) — archived rows leave the active list but stay searchable
+- the clause records the deliberate exclusion in its own text: multi-select archive/tag/folder/export, with 'delete deliberately excluded as irreversible'
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Not driven: bulk operations need a multi-session list, and this home has none.
+
+**Notes:** ARCC's one transferable objective this cycle comes from its Okta guidance: 'Deactivation is preferred over deletion because it preserves the account for audit purposes… Deletion is permanent and irreversible.' This atom reaches the same conclusion independently for a different subject — bulk DELETE is excluded precisely because it is irreversible, while archive is offered. The mechanism (an identity provider's account states) has no analogue here; the reasoning transfers exactly.
 
 ## Recorded history
 

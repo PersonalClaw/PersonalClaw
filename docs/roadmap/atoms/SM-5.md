@@ -30,9 +30,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- the proposal path is deterministic-first — title keywords, workspace dir, channel origin — with 'an LLM suggestion only when ambiguous', so the common case costs no model call
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Driven in the UI:** Not driven: a folder/tag proposal needs an untagged session to propose about.
+
+**Notes:** Partial. The deterministic-then-LLM ordering is the same cost posture ES-10's capture and WF2UNI-9's triage took: spend a model call only where a rule genuinely cannot decide. Routing the proposal through the inbox rather than applying it silently is the other half — a suggestion the user accepts is not the same as an automatic reorganisation.
 
 ## Recorded history
 

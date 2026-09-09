@@ -2673,5 +2673,143 @@
       "309 tests pass across the local-model / fit / sidecar / download modules (1 unrelated skip)"
     ],
     "notes": "Naming the specific wrong arithmetic — adding an integrated GPU's VRAM to system RAM it already shares — is what makes this atom checkable rather than aspirational. One module, one budget function, one traffic-light verdict is the same single-owner discipline WF2LOO's verdict reconciliation applied to judgements."
+  },
+  "SM-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "session_search.py:10-17 states both load-bearing rules. Exclusion 'happens at the index boundary AND is re-checked at read time, because a session can be reclassified after its rows were written' — the attack a single-point guard misses",
+      "the three enforcement points are real: is_restricted consulted at :184 (index), :237 (index_turn) and :327 (reindex), with _RESTRICTED_MODES = {temporary, incognito} at :36",
+      "'The index is disposable. It holds no truth of its own — every row is derived from the JSONL transcripts, so a corrupt or missing database is repaired by rebuilding rather than restored. Any failure degrades to the linear scan, which is why nothing here raises into a caller'",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "notes": "The read-time re-check is the half that matters and the docstring says why: flip a session to incognito AFTER it was indexed and an index-time-only guard leaks it. Declaring the index disposable is what licenses the never-raise posture — a store with no truth of its own can fail safely."
+  },
+  "SM-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "tests/test_dashboard_sessions_search.py green; the search endpoint and its ranking are covered server-side",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Drove #/chat/history. It renders the EMPTY state — 'No chats yet · Start a conversation — your sessions will appear here to search and revisit' with a New-chat action — because this home has no chat transcripts (chat needs a bound model). I read the gate rather than assuming: ChatPage.tsx:4525-4527 is a three-state ladder that distinguishes a failed read (LoadError with retry) from loading (ListSkeleton) from genuinely empty (EmptyState).",
+    "notes": "Partial for the search drive. That three-state ladder is worth recording because the AE cycle found the same distinction stated as an incident lesson in the artifact picker — 'a 500 told a user with artifacts to go make their first one'. Here it is structural: an error can never render as emptiness."
+  },
+  "SM-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the atom records its own RE-SCOPING: the premise (a chat sidebar to virtualize) was false — 'ChatPage documents No left sidebar' — and the session list lives in ChatHistoryPage, which already had a search box",
+      "virtualization deferred pending measurement rather than built speculatively"
+    ],
+    "notes": "Confirmed as a correctly-recorded premise correction, which is a real outcome rather than an absence of work. An atom that discovers its own premise is wrong and says so — instead of building the virtualization anyway to satisfy the task line — is the behaviour the audit protocol's own escalation rules ask for."
+  },
+  "SM-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "tests/test_chat_archived_session_integrity.py green (part of the 37-passed run) — archived rows leave the active list but stay searchable",
+      "the clause records the deliberate exclusion in its own text: multi-select archive/tag/folder/export, with 'delete deliberately excluded as irreversible'",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Not driven: bulk operations need a multi-session list, and this home has none.",
+    "notes": "ARCC's one transferable objective this cycle comes from its Okta guidance: 'Deactivation is preferred over deletion because it preserves the account for audit purposes… Deletion is permanent and irreversible.' This atom reaches the same conclusion independently for a different subject — bulk DELETE is excluded precisely because it is irreversible, while archive is offered. The mechanism (an identity provider's account states) has no analogue here; the reasoning transfers exactly."
+  },
+  "SM-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the proposal path is deterministic-first — title keywords, workspace dir, channel origin — with 'an LLM suggestion only when ambiguous', so the common case costs no model call",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Not driven: a folder/tag proposal needs an untagged session to propose about.",
+    "notes": "Partial. The deterministic-then-LLM ordering is the same cost posture ES-10's capture and WF2UNI-9's triage took: spend a model call only where a rule genuinely cannot decide. Routing the proposal through the inbox rather than applying it silently is the other half — a suggestion the user accepts is not the same as an automatic reorganisation."
+  },
+  "SM-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the clause specifies a LIVE DRY-RUN of 'exactly what would move (not an estimate)', which is the difference between a policy editor a user can trust and one they cannot",
+      "'purge deliberately NOT built' — recorded as a decision in the atom's own text",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Not driven: the retention section lives in ChatPanel's 'Context & lifecycle' area and its preview needs sessions to move.",
+    "notes": "Partial for the preview. The exact-not-estimated dry run is the right contract for a destructive-shaped policy: an estimate that undercounts is how a user discovers the rule by losing something. Paired with SM-4's excluded delete and the absent purge, this plan's whole retention posture is reversible-by-construction."
+  },
+  "SM-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the clause scopes a starter to SETUP ONLY — agent, model, reasoning effort, optional first prompt — with 'no transcript, no workspace binding', persisted in entity_settings/session_templates.json",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Not driven: saving a starter requires a configured session.",
+    "notes": "The exclusions are the interesting part. A template carrying a transcript would leak one conversation's content into every session started from it, and one carrying a workspace binding would silently point a new session at a directory the user did not choose. Both are named as out of scope rather than left to be discovered."
+  },
+  "SM-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "dashboard/session_export.py:7-14 documents a PREMISE CORRECTION found by reading the code: the plan said export 'reuses history.py's existing redaction', but the dashboard write path 'redacts assistant/tool content but deliberately SKIPS user and system roles (chat_persistence.py:606-608)'",
+      "the consequence is stated concretely: 'a credential the user typed — or one pasted into a system-context block — is stored raw and would leave the machine in a file the user is about to attach to an email'",
+      "the fix re-runs BOTH passes (redact_credentials + redact_exfiltration_urls, imported at :26) over EVERY role — 'defense in depth for the already-redacted roles and the only redaction the user/system roles ever get'",
+      ":44 redact_field is deliberately PUBLIC because session_share needs the same redaction for the artifact name it derives — 'One implementation with two callers, never a second pass'",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "notes": "🎯 THE STRONGEST SECURITY REASONING IN THIS PLAN, and the one place generic guidance would have been insufficient. ARCC-style 'redact secrets on output' advice would not have caught that the EXISTING redactor skips exactly the roles a user's own pasted secret lands in; only reading chat_persistence.py did. The implementer applied this audit's own governing rule — observe the code, do not trust the plan's claim about it — and corrected the premise instead of inheriting it. The boundary is drawn correctly too: 'Redaction is applied to the rendered value, never written back: the transcript on disk is the record of what happened and is not rewritten by reading it.' Redact the export, preserve the record."
+  },
+  "SM-9": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the share path reuses session_export.render_markdown's output VERBATIM and the SAME redact_field for the derived artifact name — the one-redactor-two-callers discipline stated in SM-8's module",
+      "the artifact lands in the OWNER'S OWN library rather than anywhere public, which is what makes 'share' safe to name",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "ui_validated": "Not driven: sharing needs a session to share.",
+    "notes": "Partial for the drive. Worth noting what this atom is NOT: despite the name, nothing leaves the machine — it creates a read-only artifact locally. Given how much of this campaign has been about records claiming more than they do, an atom whose name over-promises relative to its (safer) behaviour is the harmless direction."
+  },
+  "SM-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the clause is a RAIL rather than a fix: 'a rail test enumerates the live catalog against the' price table, so every catalog model id must resolve to a price entry",
+      "one canonical id form plus a normalization shim at THE SINGLE LOOKUP SEAM — one place, not per-caller normalisation",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "notes": "A spend ceiling that silently fails to price a model does not stop spending, so enumerating the live catalog against the table is the only check that means anything here. Normalising at the single lookup seam is the same one-owner discipline LMMV-8 applied to memory budgets."
+  },
+  "SM-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "history.py:636-641 names the defect and its class: 'the transcript and the FTS index are separate stores, so without this a deleted chat's messages stayed searchable — A PRIVACY HOLE'",
+      "the fail-safe direction is explicit: 'Best-effort: search-index failure must never block the deletion itself' — the user's deletion is the intent that must succeed",
+      "BOTH halves the atom permitted exist: the in-line _forget_search_rows call at :646 AND the named compensator, 'the periodic session_search.purge_orphans sweep'",
+      ":651-660 handles the KEY-FORM COLLISION — _safe_key collapses dashboard:chat-X and dashboard_chat-X onto one filename, callers pass either form, and the index stores a third, so it forgets the exact key plus both single-swap variants",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "notes": "The key-form detail is what makes this a real fix rather than an apparent one. Forgetting only the exact key form would leave rows under the sibling form, so the privacy hole would persist while the code read as closed — and a test asserting 'delete then search returns nothing' with one key form would have passed. Three forms, idempotent and cheap, is the correct answer to a collapsing key function."
+  },
+  "SM-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 24 (SM) — code, tests and the history page driven",
+    "evidence": [
+      "the clause requires a documented WIRE MAP of every transform a tool name undergoes end to end, plus a round-trip PROPERTY test asserting name-in equals name-out across the chat turn boundary for the full registered set",
+      "167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites"
+    ],
+    "notes": "A property test over the whole registered set rather than a handful of examples is the right shape for a name-mangling bug: the failures live in the names nobody thought to write a case for. Documenting the transform chain alongside it means the next person adding a transform can see what they are joining."
   }
 }

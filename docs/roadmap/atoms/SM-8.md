@@ -28,9 +28,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- dashboard/session_export.py:7-14 documents a PREMISE CORRECTION found by reading the code: the plan said export 'reuses history.py's existing redaction', but the dashboard write path 'redacts assistant/tool content but deliberately SKIPS user and system roles (chat_persistence.py:606-608)'
+- the consequence is stated concretely: 'a credential the user typed — or one pasted into a system-context block — is stored raw and would leave the machine in a file the user is about to attach to an email'
+- the fix re-runs BOTH passes (redact_credentials + redact_exfiltration_urls, imported at :26) over EVERY role — 'defense in depth for the already-redacted roles and the only redaction the user/system roles ever get'
+- :44 redact_field is deliberately PUBLIC because session_share needs the same redaction for the artifact name it derives — 'One implementation with two callers, never a second pass'
+- 167 tests pass across the session-search / export / share / template / retention / price-key / tool-name modules, plus 37 in the archived-integrity, resurrection-audit and sessions-search suites
+
+**Notes:** 🎯 THE STRONGEST SECURITY REASONING IN THIS PLAN, and the one place generic guidance would have been insufficient. ARCC-style 'redact secrets on output' advice would not have caught that the EXISTING redactor skips exactly the roles a user's own pasted secret lands in; only reading chat_persistence.py did. The implementer applied this audit's own governing rule — observe the code, do not trust the plan's claim about it — and corrected the premise instead of inheriting it. The boundary is drawn correctly too: 'Redaction is applied to the rendered value, never written back: the transcript on disk is the record of what happened and is not rewritten by reading it.' Redact the export, preserve the record.
 
 ## Recorded history
 

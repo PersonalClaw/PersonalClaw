@@ -30,9 +30,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 24 (SM) — code, tests and the history page driven
+
+**Code evidence:**
+
+- the atom records its own RE-SCOPING: the premise (a chat sidebar to virtualize) was false — 'ChatPage documents No left sidebar' — and the session list lives in ChatHistoryPage, which already had a search box
+- virtualization deferred pending measurement rather than built speculatively
+
+**Notes:** Confirmed as a correctly-recorded premise correction, which is a real outcome rather than an absence of work. An atom that discovers its own premise is wrong and says so — instead of building the virtualization anyway to satisfy the task line — is the behaviour the audit protocol's own escalation rules ask for.
 
 ## Recorded history
 
