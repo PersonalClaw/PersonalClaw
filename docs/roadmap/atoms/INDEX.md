@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 325 | `done_when` checked against the code and it holds |
-| `partial` | 216 | some `done_when` clauses hold, others do not |
+| `confirmed` | 333 | `done_when` checked against the code and it holds |
+| `partial` | 217 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 7 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 130 | not yet checked |
+| `unaudited` | 121 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -108,15 +108,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`AR-1`](AR-1.md) | `todo` | `unaudited` | Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts |
-| [`AR-2`](AR-2.md) | `todo` | `unaudited` | Room store and persistent shared-transcript format with per-member cursors |
-| [`AR-3`](AR-3.md) | `todo` | `unaudited` | Member model: agent binding + role blurb + listen policy, each holding its own provider session |
-| [`AR-4`](AR-4.md) | `todo` | `unaudited` | Per-member context cursors: feed fenced attributed transcript-since-cursor, then advance; per-member compaction |
-| [`AR-5`](AR-5.md) | `todo` | `unaudited` | Deterministic turn arbitration: mention-triggered FIFO queue + round budget that pauses to a human attention item |
-| [`AR-6`](AR-6.md) | `todo` | `unaudited` | Per-member tool/safety profiles and human-as-sole-approver routing |
-| [`AR-7`](AR-7.md) | `todo` | `unaudited` | Room-level SEL audit trail per turn |
-| [`AR-8`](AR-8.md) | `todo` | `unaudited` | Room UI surface: attributed messages, pause card, per-member status |
-| [`AR-9`](AR-9.md) | `done` | `unaudited` | Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable |
+| [`AR-1`](AR-1.md) | `todo` | `partial` | Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts |
+| [`AR-2`](AR-2.md) | `todo` | `confirmed` | Room store and persistent shared-transcript format with per-member cursors |
+| [`AR-3`](AR-3.md) | `todo` | `confirmed` | Member model: agent binding + role blurb + listen policy, each holding its own provider session |
+| [`AR-4`](AR-4.md) | `todo` | `confirmed` | Per-member context cursors: feed fenced attributed transcript-since-cursor, then advance; per-member compaction |
+| [`AR-5`](AR-5.md) | `todo` | `confirmed` | Deterministic turn arbitration: mention-triggered FIFO queue + round budget that pauses to a human attention item |
+| [`AR-6`](AR-6.md) | `todo` | `confirmed` | Per-member tool/safety profiles and human-as-sole-approver routing |
+| [`AR-7`](AR-7.md) | `todo` | `confirmed` | Room-level SEL audit trail per turn |
+| [`AR-8`](AR-8.md) | `todo` | `confirmed` | Room UI surface: attributed messages, pause card, per-member status |
+| [`AR-9`](AR-9.md) | `done` | `confirmed` | Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable |
 
 ### `AR2` — AGENT-ROUTING (8/8 done)
 

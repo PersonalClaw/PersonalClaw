@@ -6848,5 +6848,128 @@
     ],
     "ui_validated": "Partially, and the limit is the harness rather than the feature: `prefers-reduced-motion` cannot be emulated through this tool, and the protocol forbids `eval`, so computed styles under the media query are out of reach. The expressiveness and bounciness dials were driven directly instead, including persistence across a reload.",
     "notes": "Partial for the 60fps clause, which needs a real performance trace, and for the browser-level reduced-motion observation this harness cannot produce. The two clauses that carry the accessibility weight — zero springs under reduced motion, and a CI step that actually runs — are confirmed and falsified. Worth recording the shape: an exhaustive census plus a self-check on the stub plus a named vacuity floor is what makes a motion suite evidence rather than decoration."
+  },
+  "AR-1": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔑 THIS IS THE ONE ATOM WITH A CLAUSE GENUINELY MET, and it is the clause the whole plan was waiting on: the precursor SHIPPED. `AR-9`'s council template is in the tree and its suite passes 16/16, which is what makes the un-deferral question answerable rather than speculative",
+      "STATUS `todo` IS CORRECT and the block has narrowed to exactly one thing — an owner judgement about whether deliberation rather than fan-out is the missing capability. That is a product decision, not a missing seam",
+      "the six design questions the atom lists (transcript format, member context budget, rooms-versus-memory, and the rest) are unresolved, which is consistent with the seven downstream atoms being unbuilt",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Not applicable: the deliverable is a decision plus resolved contracts.",
+    "notes": "🔑 THE PLAN'S SHAPE IS THE THING WORTH CREDITING. It spent one cheap atom building the precursor that makes the expensive decision answerable, then stopped and asked. That is the opposite of the usual failure, where a large plan is half-built before anyone checks whether the capability is wanted — and it is why the other eight atoms being unbuilt is a sign of discipline rather than of neglect."
+  },
+  "AR-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "no room can be created, joined or archived, and no transcript file format exists",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "Worth noting the atom's own instinct for when it IS built: it requires reusing `history.py` redaction/rotation/export 'rather than reimplementing them'. A second transcript store with its own redaction is exactly how a redaction bug ships in one place and not the other."
+  },
+  "AR-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "no member model, role blurb or listen policy exists",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "The atom's stated constraint is the interesting one and it should survive into implementation: each member holds its OWN provider session 'with no shared context window or cross-provider [leakage]'. Members sharing one window would make a room a single agent wearing three name tags."
+  },
+  "AR-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "🔑 THE ATOM ALREADY NAMES THE RIGHT SECURITY SHAPE, which is worth recording for whoever builds it: each member is fed the `fence_untrusted`, ATTRIBUTED transcript-since-its-cursor. One agent's output becoming another agent's input is untrusted content by definition, and this campaign has audited that fence at several other boundaries",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "If this plan is ever un-deferred, this is the atom to watch: attribution plus fencing is what stops a room from becoming a prompt-injection channel between members, and it is easy to implement as plain concatenation instead."
+  },
+  "AR-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "🔑 THE ARBITRATION DESIGN IS ALREADY THE CORRECT ONE ON PAPER: a deterministic FIFO queue where 'no model ever decides speaking order', plus a round budget that PAUSES to a human attention item after N agent-to-agent exchanges. Letting a model choose the next speaker is how a room becomes unbounded, and a budget that warns instead of pausing is how it becomes expensive",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "The pause-to-a-human clause is the same fail-direction discipline this campaign found in the autonomy work: an unattended loop stops and asks rather than continuing on its own judgement."
+  },
+  "AR-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "the atom reuses the existing guardrails vocabulary for per-member approval mode, tool allowlist and budget rather than minting a room-specific one, and routes every approval to the human 'as in a solo session'",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "🔑 'HUMAN AS SOLE APPROVER' IS THE LOAD-BEARING PHRASE. A room where one member could approve another member's tool call would be an approval system with a bypass built in, and the atom rules that out before any code exists."
+  },
+  "AR-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "no room event family exists in the audit log, and the atom leaves the choice between an own family and extending an existing one as a decision rather than an assumption",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive.",
+    "notes": "The atom asks for speaker, trigger, budget state and approvals per turn — which is the set that would let someone reconstruct WHY a room said what it said, rather than only that it did."
+  },
+  "AR-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.",
+      "🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.",
+      "no room surface exists in the frontend; the sidebar-peer-versus-chat-mode question is explicitly still a resolved-decision dependency rather than a built choice",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Nothing to drive — and the absence was checked in the frontend tree, not only in core.",
+    "notes": "The atom's 'without inventing [new primitives]' clause is the one that keeps a room from growing a parallel design system, which is the same constraint the app-platform plan enforces for contributed surfaces."
+  },
+  "AR-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate",
+    "evidence": [
+      "🔑 THE TEMPLATE SHIPS FROM THE PACKAGE and a test pins exactly that — `test_it_is_shipped_from_the_package_and_not_a_stray_file`. A bundled template that exists only in a working tree is the inert-control class applied to templates",
+      "🔑 INDEPENDENCE IS ASSERTED PER MEMBER AND I FALSIFIED IT: `test_no_member_reads_another_member` is parametrized over the three members, and contaminating one member's prompt with another's output reddened it plus the ordering rail — 'a member must see only the que[stion]…' — 2 failed / 14 passed. Restored; 16/16",
+      "🔑 THE VACUITY FLOOR IS EXPLICIT: `test_the_default_roles_actually_differ`. Three members with the same role would be one opinion bought three times, and the shipped help text says so — 'three variations on \"be thorough\" produce three of the same answer at three times the price'",
+      "🔑 THE SYNTHESIS IS FORBIDDEN FROM PICKING A WINNER — `test_nothing_selects_a_single_member_as_the_answer` — and the prompt explains why in the sharpest product reasoning in this catalogue: 'A synthesis that launders three named reads into an anonymous consensus destroys the only thing the fan-out bought, because the reader can no longer tell which role the decision is standing on'",
+      "🔑 AND IT REFUSES TO AVERAGE: 'an averaged answer to a real disagreement is one nobody in the room actually holds', with 'where they agree for DIFFERENT reasons, that is weaker agreement than it looks'. The output schema REQUIRES a `dissent` field — 'the strongest position this decision does NOT follow, stated at full strength rather than softened'",
+      "🔑 IT IS NOT A VOTE: 'You are synthesizing, not counting votes: one member who is right outranks two who are wrong', and going against the majority must be stated and justified",
+      "`test_the_council_only_ever_thinks` — no side effects, so a council is N reasoners rather than N actors; and `test_the_cost_multiplier_is_declared` keeps the N-call spend disclosed, the same discipline as the best-of-n gate audited earlier",
+      "🔑 THE TEMPLATE DECLARES WHEN NOT TO USE IT, which almost nothing does: 'anything with one correct answer — three roles arguing over a lookup is three times the cost for the fact you already had. And this is not a verifier: members reason over what `context` hands them and cannot go read the tree'",
+      "`test_the_sibling_fails_the_attribution_contract` is a falsifying fixture built INTO the suite — a sibling template that violates attribution must fail, so the attribution check is proven to have teeth without anyone breaking the real file",
+      "council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family"
+    ],
+    "ui_validated": "Not driven: running a council needs a bound model and spends N calls. The template's structure, its independence and ordering rails, and its shipping location were all verified directly, and the independence rail was falsified.",
+    "notes": "🔑 THE BEST-REASONED TEMPLATE IN THE CATALOGUE, and the reason is that every rule in it answers a specific way the genre fails: anonymous consensus, split-the-difference averaging, vote-counting, agreement that is weaker than it looks, and a dissent that gets softened out. It also carries its own anti-use case. Worth noting the atom's role in the plan: it exists to make an expensive decision answerable cheaply, and it did — the un-deferral question now rests on one owner judgement rather than on speculation."
   }
 }

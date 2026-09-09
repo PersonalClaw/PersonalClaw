@@ -32,9 +32,22 @@ The LOOPS-EVOLUTION council template has shipped, the owner re-confirms delibera
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate
+
+**Code evidence:**
+
+- 🔑 THIS IS THE ONE ATOM WITH A CLAUSE GENUINELY MET, and it is the clause the whole plan was waiting on: the precursor SHIPPED. `AR-9`'s council template is in the tree and its suite passes 16/16, which is what makes the un-deferral question answerable rather than speculative
+- STATUS `todo` IS CORRECT and the block has narrowed to exactly one thing — an owner judgement about whether deliberation rather than fan-out is the missing capability. That is a product decision, not a missing seam
+- the six design questions the atom lists (transcript format, member context budget, rooms-versus-memory, and the rest) are unresolved, which is consistent with the seven downstream atoms being unbuilt
+- council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family
+
+**Driven in the UI:** Not applicable: the deliverable is a decision plus resolved contracts.
+
+**Notes:** 🔑 THE PLAN'S SHAPE IS THE THING WORTH CREDITING. It spent one cheap atom building the precursor that makes the expensive decision answerable, then stopped and asked. That is the opposite of the usual failure, where a large plan is half-built before anyone checks whether the capability is wanted — and it is why the other eight atoms being unbuilt is a sign of discipline rather than of neglect.
 
 ## Recorded history
 

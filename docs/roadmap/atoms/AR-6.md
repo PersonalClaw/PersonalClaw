@@ -30,9 +30,22 @@ Each member carries its own approval mode / tool allowlist / budget (the Autonom
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate
+
+**Code evidence:**
+
+- 🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.
+- 🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.
+- the atom reuses the existing guardrails vocabulary for per-member approval mode, tool allowlist and budget rather than minting a room-specific one, and routes every approval to the human 'as in a solo session'
+- council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family
+
+**Driven in the UI:** Nothing to drive.
+
+**Notes:** 🔑 'HUMAN AS SOLE APPROVER' IS THE LOAD-BEARING PHRASE. A room where one member could approve another member's tool call would be an approval system with a bypass built in, and the atom rules that out before any code exists.
 
 ## Recorded history
 

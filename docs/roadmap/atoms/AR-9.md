@@ -28,9 +28,28 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate
+
+**Code evidence:**
+
+- 🔑 THE TEMPLATE SHIPS FROM THE PACKAGE and a test pins exactly that — `test_it_is_shipped_from_the_package_and_not_a_stray_file`. A bundled template that exists only in a working tree is the inert-control class applied to templates
+- 🔑 INDEPENDENCE IS ASSERTED PER MEMBER AND I FALSIFIED IT: `test_no_member_reads_another_member` is parametrized over the three members, and contaminating one member's prompt with another's output reddened it plus the ordering rail — 'a member must see only the que[stion]…' — 2 failed / 14 passed. Restored; 16/16
+- 🔑 THE VACUITY FLOOR IS EXPLICIT: `test_the_default_roles_actually_differ`. Three members with the same role would be one opinion bought three times, and the shipped help text says so — 'three variations on "be thorough" produce three of the same answer at three times the price'
+- 🔑 THE SYNTHESIS IS FORBIDDEN FROM PICKING A WINNER — `test_nothing_selects_a_single_member_as_the_answer` — and the prompt explains why in the sharpest product reasoning in this catalogue: 'A synthesis that launders three named reads into an anonymous consensus destroys the only thing the fan-out bought, because the reader can no longer tell which role the decision is standing on'
+- 🔑 AND IT REFUSES TO AVERAGE: 'an averaged answer to a real disagreement is one nobody in the room actually holds', with 'where they agree for DIFFERENT reasons, that is weaker agreement than it looks'. The output schema REQUIRES a `dissent` field — 'the strongest position this decision does NOT follow, stated at full strength rather than softened'
+- 🔑 IT IS NOT A VOTE: 'You are synthesizing, not counting votes: one member who is right outranks two who are wrong', and going against the majority must be stated and justified
+- `test_the_council_only_ever_thinks` — no side effects, so a council is N reasoners rather than N actors; and `test_the_cost_multiplier_is_declared` keeps the N-call spend disclosed, the same discipline as the best-of-n gate audited earlier
+- 🔑 THE TEMPLATE DECLARES WHEN NOT TO USE IT, which almost nothing does: 'anything with one correct answer — three roles arguing over a lookup is three times the cost for the fact you already had. And this is not a verifier: members reason over what `context` hands them and cannot go read the tree'
+- `test_the_sibling_fails_the_attribution_contract` is a falsifying fixture built INTO the suite — a sibling template that violates attribution must fail, so the attribution check is proven to have teeth without anyone breaking the real file
+- council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family
+
+**Driven in the UI:** Not driven: running a council needs a bound model and spends N calls. The template's structure, its independence and ordering rails, and its shipping location were all verified directly, and the independence rail was falsified.
+
+**Notes:** 🔑 THE BEST-REASONED TEMPLATE IN THE CATALOGUE, and the reason is that every rule in it answers a specific way the genre fails: anonymous consensus, split-the-difference averaging, vote-counting, agreement that is weaker than it looks, and a dissent that gets softened out. It also carries its own anti-use case. Worth noting the atom's role in the plan: it exists to make an expensive decision answerable cheaply, and it did — the un-deferral question now rests on one owner judgement rather than on speculation.
 
 ## Recorded history
 

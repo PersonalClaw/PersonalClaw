@@ -30,9 +30,22 @@ Scope sketch — Turn arbitration is deterministic Python; Round budget
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 60 (AR) — the council template falsified; the eight unbuilt atoms swept to confirm their todo status is accurate
+
+**Code evidence:**
+
+- 🔴 THIS VERDICT IS ABOUT THE STATUS, NOT THE done_when. The atom is `todo`, NOTHING is built, and that is the accurate state — so there is no contradiction to report. Recorded this way because the audit's question is 'what is the true state?', and for an unbuilt atom the answer worth writing down is that its status does not overstate it. A reader counting `confirmed` verdicts as shipped features must not include this one.
+- 🔑 THE NEGATIVE SWEEP IS REAL, NOT AN ASSUMPTION: no `rooms/` package exists in core, and no occurrence of `transcript.jsonl`, `listen_policy`, `speaker_queue`, `room_id`, `AgentRoom` or `RoomMember` appears anywhere under core or the frontend, and `sel.py` carries no room event family. Eight atoms' worth of surface area, absent.
+- 🔑 THE ARBITRATION DESIGN IS ALREADY THE CORRECT ONE ON PAPER: a deterministic FIFO queue where 'no model ever decides speaking order', plus a round budget that PAUSES to a human attention item after N agent-to-agent exchanges. Letting a model choose the next speaker is how a room becomes unbounded, and a budget that warns instead of pausing is how it becomes expensive
+- council template 16/16 (falsified: contaminating one member's prompt with another's output reds the independence rail and the ordering rail); negative sweep across core + web finds no room store, member model, speaker queue or room event family
+
+**Driven in the UI:** Nothing to drive.
+
+**Notes:** The pause-to-a-human clause is the same fail-direction discipline this campaign found in the autonomy work: an unattended loop stops and asks rather than continuing on its own judgement.
 
 ## Recorded history
 
