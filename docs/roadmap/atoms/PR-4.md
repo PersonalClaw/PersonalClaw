@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- the gate is a real per-arch loop in `release.yml` — `for arch in amd64 arm64` — running each image's own liveness command rather than one hardcoded string, with the comment recording why: a 'single hardcoded `personalclaw --version` would fail on web'
+- 🔑 THE BLOCKING PROPERTY IS STATED AS A DEPENDENCY CHAIN, WHICH IS THE ONLY FORM THAT MAKES IT TRUE: the GitHub Release step `needs: images`, 'so a broken arm64 blocks' the release. A smoke test that ran but gated nothing would satisfy the words and none of the intent
+- the comment also discloses that arm64 executes under emulation on the runner, so the reader knows what the smoke does and does not prove
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** No user surface: a release-workflow gate.
+
+**Notes:** The per-image liveness command instead of one shared string is the detail worth keeping — it is what lets the same gate cover images that do not all ship the same entrypoint.
 
 ## Recorded history
 

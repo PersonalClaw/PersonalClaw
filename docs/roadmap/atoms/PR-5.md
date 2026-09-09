@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- 🔑 I CHECKED THE SUPPORT MATRIX ROW BY ROW AND EVERY ROW NAMES ITS PROOF TOKEN — no row claims support without one. Linux x86-64 and arm64 both cite a `CI:full/matrix` job AND a `CI:release/images smoke` platform; macOS Apple silicon cites its matrix entries; the two Windows rungs cite `checklist:` sections on the page itself; Windows native says 'not supported' and links the audit
+- 🔑 THE ONE ROW THAT COULD HAVE BEEN AN OVERCLAIM DISCLOSES ITSELF IN THE SAME CELL: Windows via Docker Desktop reads `supported` — followed by 'written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run'. That is the opposite of the unproven `supported` the atom forbids
+- 🔑 THE `best-effort` ROW REASONS RATHER THAN ASSERTS: macOS Intel is `community` because there is 'no Intel runner in CI', with the transfer argument stated — 'the x86-64 Python/wheel path is the same as Linux x86-64'. A reader can judge how much that is worth; 'best-effort' alone would not let them
+- the `[models]` per-arch table names concrete wheel tags rather than ticks — `macosx_14_0_arm64`, `manylinux_2_28_aarch64`, `musllinux_1_2_aarch64` — and draws a consequence from one of them ('musllinux wheel means Alpine works too'), plus 'CPU build; no CUDA on arm' where the arch actually changes what you get
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** No gateway surface: the deliverables are a guide page and a README section. Validated by reading every matrix row against its token.
+
+**Notes:** 🔑 THE PROOF-TOKEN DISCIPLINE IS THE BEST IDEA IN THIS PLAN AND IT GENERALISES BEYOND PLATFORMS. A support matrix normally decays because 'supported' is a word anyone can type; making every row name the artifact that proves it turns the matrix into something that can be re-checked — and, as the Docker Desktop row shows, into something that can admit a gap without being demoted.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 295 | `done_when` checked against the code and it holds |
+| `confirmed` | 303 | `done_when` checked against the code and it holds |
 | `partial` | 193 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 188 | not yet checked |
+| `unaudited` | 180 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -763,14 +763,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PR-1`](PR-1.md) | `done` | `unaudited` | sqlite_compat.py C1 helper: sqlite_features()/require_fts5() + refactor 7 import sites + doctor SQLite line |
-| [`PR-2`](PR-2.md) | `done` | `unaudited` | Fail-actionable FTS5 guards at the 6 FTS5 consumers' store-init (require_fts5 / documented degrade) |
-| [`PR-3`](PR-3.md) | `done` | `unaudited` | CI: add ubuntu-24.04-arm + macos-14 arm64 jobs to full.yml (non-PR path) |
-| [`PR-4`](PR-4.md) | `done` | `unaudited` | Make multi-arch images release-blocking: per-arch smoke gate (personalclaw --version) in release.yml |
-| [`PR-5`](PR-5.md) | `done` | `unaudited` | docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix |
-| [`PR-6`](PR-6.md) | `done` | `unaudited` | Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook |
-| [`PR-7`](PR-7.md) | `done` | `unaudited` | Windows rung 2 (WSL2): browser auto-open fallback + doctor WSL awareness + WSL2 guide |
-| [`PR-8`](PR-8.md) | `done` | `unaudited` | Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code) |
+| [`PR-1`](PR-1.md) | `done` | `confirmed` | sqlite_compat.py C1 helper: sqlite_features()/require_fts5() + refactor 7 import sites + doctor SQLite line |
+| [`PR-2`](PR-2.md) | `done` | `confirmed` | Fail-actionable FTS5 guards at the 6 FTS5 consumers' store-init (require_fts5 / documented degrade) |
+| [`PR-3`](PR-3.md) | `done` | `confirmed` | CI: add ubuntu-24.04-arm + macos-14 arm64 jobs to full.yml (non-PR path) |
+| [`PR-4`](PR-4.md) | `done` | `confirmed` | Make multi-arch images release-blocking: per-arch smoke gate (personalclaw --version) in release.yml |
+| [`PR-5`](PR-5.md) | `done` | `confirmed` | docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix |
+| [`PR-6`](PR-6.md) | `done` | `confirmed` | Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook |
+| [`PR-7`](PR-7.md) | `done` | `confirmed` | Windows rung 2 (WSL2): browser auto-open fallback + doctor WSL awareness + WSL2 guide |
+| [`PR-8`](PR-8.md) | `done` | `confirmed` | Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code) |
 
 ### `PR2` — PLATFORM-RESILIENCE (11/11 done)
 

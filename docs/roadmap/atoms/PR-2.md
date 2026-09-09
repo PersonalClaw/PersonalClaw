@@ -31,9 +31,24 @@ each of the 6 FTS5 modules checks sqlite_features().fts5 once at init and raises
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- the guards are at init and share one remedy string: `FTS5_REMEDY` imported alongside `probe` and `sqlite3` in `memory.py`, `session_search.py` and `knowledge/store.py`, with `vector_index.py` explicitly written 'in the same spirit … rather than leaving a bare capability=false'
+- 🔑 THE RAISE-VS-DEGRADE SPLIT IS VISIBLE IN THE CODE AND IT IS THE RIGHT SPLIT: `knowledge/store.py` RAISES (search is what that store is for), while `memory.py` and `session_search.py` LOG AND DEGRADE (search is one feature of a store that has others). A single policy applied to both would have either bricked memory or silently broken knowledge
+- 🔑 TWO TESTS PIN THE FAILURE MODES THAT MATTER MORE THAN THE MESSAGE: `test_no_db_file_created_when_it_raises` — a raise that had already created the file would leave a half-initialised store behind — and `test_non_search_functionality_still_works` plus `test_search_paths_are_clean_noops`, which make the degrade a real degrade rather than a store that limps
+- 🔑 EVERY CLASS IN THE SUITE CARRIES A `happy_path` CASE. That is the VACUITY FLOOR for a monkeypatched-capability test: without it, a suite that always saw 'no FTS5' would pass just as well against a store that never works at all. Eighth instance of this pattern in the campaign
+- 35 tests green across compat, the capability guard and WSL support
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** Not drivable: reaching these paths needs a SQLite build without FTS5, which the tests produce by monkeypatching the probe rather than by installing a different interpreter.
+
+**Notes:** The atom asked for the per-module choice to be RECORDED, and the better outcome is that the choice is legible from the code itself — a raise in the module whose purpose is search, a warning in the modules where search is a feature.
 
 ## Recorded history
 

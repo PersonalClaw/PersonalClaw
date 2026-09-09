@@ -29,9 +29,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- all six mechanisms are covered with options, effort and risk in per-mechanism tables and a stated **Verdict** each: process reaping (Job Objects vs PPID), file permissions (`icacls` vs `chmod`), symlinks (junction/copy), terminal (ConPTY/`pywinpty` vs disabling the page), service management, and the sandbox-degradation policy
+- 🔑 THE GO/NO-GO IS FRAMED AS A DECISION STILL OPEN — 'an owner decision, not a foregone one' — with demand-evidence thresholds, which is what the atom asked for and what most audit documents quietly skip by recommending their own conclusion
+- 🔑 IT SEPARATES OUT A CHANGE WORTH MAKING REGARDLESS OF THE RULING: 'The one change worth making regardless of the go/no-go is small and defensive.' An audit that produces one unconditional recommendation has earned its cost even if the answer is no
+- 🔑 THE MOST HONEST ROW IN THE DOCUMENT IS THE PERMISSIONS ONE, which admits the fix can reproduce the bug: getting the ACL wrong by 'leaving inherited ACEs' is 'a silent leak IDENTICAL to the one being fixed'. It also names why the risk cannot be retired cheaply — 'testing needs a real Windows box, not CI mocks'
+- the risk columns cite live code rather than gesturing: the copy-fallback row points at `resilience/doctor.py:555` as already watching for the exact stale-copy hazard it would introduce
+- the soul guardrail holds: the deliverable is a research document under `docs/roadmap/research/`, and no implementation code accompanies it
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** No surface: an audit document, deliberately with no code.
+
+**Notes:** 🔑 THE BEST AUDIT DOCUMENT IN THE CATALOGUE, and the reason is structural: every mechanism gets options rather than a single proposal, every option carries effort AND risk, and the verdicts are per-mechanism rather than one verdict for the platform. That is what makes the go/no-go a real decision instead of a rubber stamp — three of the six turn out to be cheap and two expensive, which is invisible if you only ask 'should we support Windows'.
 
 ## Recorded history
 

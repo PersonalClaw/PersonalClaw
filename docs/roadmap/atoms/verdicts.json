@@ -6080,5 +6080,117 @@
     ],
     "ui_validated": "Not a gateway surface.",
     "notes": "🔴 THE `make lint green` CLAUSE CANNOT BE OBSERVED FROM THIS BRANCH, AND THE REASON IS THIS AUDIT'S OWN DOING — recorded rather than glossed. The docs-lint baseline test fails, and every failing file is a GENERATED ATOM RECORD: 11 dead links and 12 unresolvable citations, because `gen_atom_records.py` copies plan prose into a different directory without re-anchoring relative links. One of the failing records is my own CE-2 verdict quoting `handler.py`. Nothing to do with this plan; filed as issue #2807 with the fix belonging in the generator rather than in the baseline, since regenerating the baseline would retire a rule that is currently catching a real defect."
+  },
+  "PR-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "`sqlite_compat.py` exists and does what the atom names: driver + version + FTS5 + JSON1, memoized with `lru_cache(maxsize=1)`, and the probe is separated from the driver/version read so — in its own words — a failing probe never breaks 'a caller that only wanted the driver/version'",
+      "🔑 THE MODULE'S REASON IS STATED AS A COUNTED DEFECT, not a preference: 'the driver choice was decided seven times and a test that patched the stdlib module' could not reach the others. That is the difference between a refactor and a tidy-up",
+      "🔑 IT EXPORTS THE DRIVER MODULE ITSELF, not only the capability struct — `__all__` carries `sqlite3` — so a caller that needs the same EXCEPTION CLASSES the connection raises can get them. That export is the thing that makes centralisation complete rather than partial",
+      "eleven modules now import from it, covering all six the atom names plus `loop/store.py` and the doctor",
+      "the doctor line matches the atom's format verbatim — `SQLite: <driver> <version>, FTS5 <✅|❌>, JSON1 <✅|❌>` — and a missing FTS5 adds an actionable remedy plus an issue entry rather than a bare ❌",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "No user surface beyond the CLI doctor line, which is a formatted probe read rather than an interaction.",
+    "notes": "🔑 THE RESIDUE SWEEP FOUND ONE STRAGGLER THE ATOM DID NOT LIST, so this is confirmed rather than contradicted: `memory_graph.py` still hand-rolled its own driver import. It is not among the seven call sites `done_when` enumerates, so the atom's scope was met — but the module it existed to centralise had one holdout, its comment told the reader to 'mirror vector_memory's import' after vector_memory had moved to sqlite_compat, and following that instruction literally would have reintroduced the exception-class mismatch. Fixed in PR #2809 with a package-wide rail: fixing it required no new mechanism, only the export PR-1 already shipped."
+  },
+  "PR-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "the guards are at init and share one remedy string: `FTS5_REMEDY` imported alongside `probe` and `sqlite3` in `memory.py`, `session_search.py` and `knowledge/store.py`, with `vector_index.py` explicitly written 'in the same spirit … rather than leaving a bare capability=false'",
+      "🔑 THE RAISE-VS-DEGRADE SPLIT IS VISIBLE IN THE CODE AND IT IS THE RIGHT SPLIT: `knowledge/store.py` RAISES (search is what that store is for), while `memory.py` and `session_search.py` LOG AND DEGRADE (search is one feature of a store that has others). A single policy applied to both would have either bricked memory or silently broken knowledge",
+      "🔑 TWO TESTS PIN THE FAILURE MODES THAT MATTER MORE THAN THE MESSAGE: `test_no_db_file_created_when_it_raises` — a raise that had already created the file would leave a half-initialised store behind — and `test_non_search_functionality_still_works` plus `test_search_paths_are_clean_noops`, which make the degrade a real degrade rather than a store that limps",
+      "🔑 EVERY CLASS IN THE SUITE CARRIES A `happy_path` CASE. That is the VACUITY FLOOR for a monkeypatched-capability test: without it, a suite that always saw 'no FTS5' would pass just as well against a store that never works at all. Eighth instance of this pattern in the campaign",
+      "35 tests green across compat, the capability guard and WSL support",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "Not drivable: reaching these paths needs a SQLite build without FTS5, which the tests produce by monkeypatching the probe rather than by installing a different interpreter.",
+    "notes": "The atom asked for the per-module choice to be RECORDED, and the better outcome is that the choice is legible from the code itself — a raise in the module whose purpose is search, a warning in the modules where search is a feature."
+  },
+  "PR-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "both arm jobs are in `full.yml`: `ubuntu-24.04-arm` and `macos-14`, with the comment naming why that image was chosen ('macos-14 is the arm64 image')",
+      "🔑 THIS ATOM HAS ALREADY PAID FOR ITSELF, AND THE EVIDENCE IS IN ANOTHER MODULE'S COMMENT: the memory-graph exception-class bug 'crashed on CI while passing on macOS' — a defect that is INVISIBLE without a Linux runner where the bundled driver is installed, and which an arm/Linux matrix is exactly the thing that surfaces. A platform matrix justifies itself by the class of bug only it can see",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "No user surface: a CI matrix. Verified in the workflow rather than by triggering a run, which would need a push to the non-PR path.",
+    "notes": "Confirmed on the workflow's contents rather than on a green run, which is the honest limit from here — the jobs are on the non-PR path, so a local audit cannot make them execute."
+  },
+  "PR-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "the gate is a real per-arch loop in `release.yml` — `for arch in amd64 arm64` — running each image's own liveness command rather than one hardcoded string, with the comment recording why: a 'single hardcoded `personalclaw --version` would fail on web'",
+      "🔑 THE BLOCKING PROPERTY IS STATED AS A DEPENDENCY CHAIN, WHICH IS THE ONLY FORM THAT MAKES IT TRUE: the GitHub Release step `needs: images`, 'so a broken arm64 blocks' the release. A smoke test that ran but gated nothing would satisfy the words and none of the intent",
+      "the comment also discloses that arm64 executes under emulation on the runner, so the reader knows what the smoke does and does not prove",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "No user surface: a release-workflow gate.",
+    "notes": "The per-image liveness command instead of one shared string is the detail worth keeping — it is what lets the same gate cover images that do not all ship the same entrypoint."
+  },
+  "PR-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "🔑 I CHECKED THE SUPPORT MATRIX ROW BY ROW AND EVERY ROW NAMES ITS PROOF TOKEN — no row claims support without one. Linux x86-64 and arm64 both cite a `CI:full/matrix` job AND a `CI:release/images smoke` platform; macOS Apple silicon cites its matrix entries; the two Windows rungs cite `checklist:` sections on the page itself; Windows native says 'not supported' and links the audit",
+      "🔑 THE ONE ROW THAT COULD HAVE BEEN AN OVERCLAIM DISCLOSES ITSELF IN THE SAME CELL: Windows via Docker Desktop reads `supported` — followed by 'written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run'. That is the opposite of the unproven `supported` the atom forbids",
+      "🔑 THE `best-effort` ROW REASONS RATHER THAN ASSERTS: macOS Intel is `community` because there is 'no Intel runner in CI', with the transfer argument stated — 'the x86-64 Python/wheel path is the same as Linux x86-64'. A reader can judge how much that is worth; 'best-effort' alone would not let them",
+      "the `[models]` per-arch table names concrete wheel tags rather than ticks — `macosx_14_0_arm64`, `manylinux_2_28_aarch64`, `musllinux_1_2_aarch64` — and draws a consequence from one of them ('musllinux wheel means Alpine works too'), plus 'CPU build; no CUDA on arm' where the arch actually changes what you get",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "No gateway surface: the deliverables are a guide page and a README section. Validated by reading every matrix row against its token.",
+    "notes": "🔑 THE PROOF-TOKEN DISCIPLINE IS THE BEST IDEA IN THIS PLAN AND IT GENERALISES BEYOND PLATFORMS. A support matrix normally decays because 'supported' is a word anyone can type; making every row name the artifact that proves it turns the matrix into something that can be re-checked — and, as the Docker Desktop row shows, into something that can admit a gap without being demoted."
+  },
+  "PR-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "the Windows checklist is merged into `docs/maintainers/release-runbook.md` as a per-release step ('Do this once per release on a Windows box with Docker Desktop (WSL2 backend)') with the concrete sequence the atom names",
+      "🔑 THE RUNBOOK AND THE MATRIX AGREE ABOUT WHAT PROVES WHAT, EXPLICITLY: the checklist 'is the only evidence behind the *Windows via Docker Desktop* row' in the support matrix, and it links to that row. Two documents that could drift are instead pinned to each other by a stated dependency",
+      "🔑 AND THE PROOF TOKEN HAS A CONSEQUENCE, WHICH IS WHAT KEEPS IT FROM BEING DECORATION: a failure is 'a **release-blocking** finding for the Windows row: fix the guide or demote the [row]'. The two options are the honest pair — repair the claim or reduce it",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "Not drivable from here: the checklist runs on a Windows machine with Docker Desktop. The atom assigns its verbatim validation to the owner.",
+    "notes": "Partial-looking but confirmed: the atom's deliverable is the guide section and the checklist, both present and cross-pinned. The 'owner task 2 validates verbatim' clause is the FIRST RUN of the checklist, which the matrix row already discloses as not yet done — so the documentation is honest about its own state rather than waiting on it silently."
+  },
+  "PR-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "🔑 THE FALLBACK IS BETTER SHAPED THAN THE ATOM ASKED FOR. Under WSL it goes STRAIGHT to `wslview`, because `webbrowser.open` there 'has no Linux browser to launch' — trying and failing first would just add a delay. On normal Linux and macOS the standard path is 'used unchanged', and `wslview` is attempted 'only … when that open reports failure (returns False) or raises'",
+      "🔑 A MISSING `wslview` IS SWALLOWED, with the reason stated: 'it must never crash the gateway boot'. A best-effort convenience that can fail startup is a worse bug than the inconvenience it fixes",
+      "the URL print is unconditional and framed as 'a no-op improvement on every platform' — the WSL work incidentally helps anyone whose browser does not auto-launch, which is the right way to pay for a platform fix",
+      "the doctor detects WSL and then explains the thing a Windows user actually needs to know: the background service depends on systemd, 'which WSL2 only runs when /etc/wsl.conf opts in', followed by the two concrete steps (`[boot] systemd=true`, then `wsl --shutdown`)",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "Not drivable: this environment is not WSL, so the branch cannot be taken for real. Its fixture-driven tests are in the 35 green.",
+    "notes": "🪤 A FALSE NEGATIVE OF MY OWN, AND THE FOURTH CONSECUTIVE CYCLE WITH THIS SHAPE. I searched for `wslview` in the two files the atom's `done_when` names — 'near cli_server.py --no-open handling' — found nothing, and briefly had it as unimplemented. It lives in `gateway.py`, which is where the auto-open actually happens. The atom's prose points at the wrong file; the code is complete. Withdrawn. Same lesson as the last three: a scoped search that comes back empty proves something about the scope, not about the tree."
+  },
+  "PR-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token",
+    "evidence": [
+      "all six mechanisms are covered with options, effort and risk in per-mechanism tables and a stated **Verdict** each: process reaping (Job Objects vs PPID), file permissions (`icacls` vs `chmod`), symlinks (junction/copy), terminal (ConPTY/`pywinpty` vs disabling the page), service management, and the sandbox-degradation policy",
+      "🔑 THE GO/NO-GO IS FRAMED AS A DECISION STILL OPEN — 'an owner decision, not a foregone one' — with demand-evidence thresholds, which is what the atom asked for and what most audit documents quietly skip by recommending their own conclusion",
+      "🔑 IT SEPARATES OUT A CHANGE WORTH MAKING REGARDLESS OF THE RULING: 'The one change worth making regardless of the go/no-go is small and defensive.' An audit that produces one unconditional recommendation has earned its cost even if the answer is no",
+      "🔑 THE MOST HONEST ROW IN THE DOCUMENT IS THE PERMISSIONS ONE, which admits the fix can reproduce the bug: getting the ACL wrong by 'leaving inherited ACEs' is 'a silent leak IDENTICAL to the one being fixed'. It also names why the risk cannot be retired cheaply — 'testing needs a real Windows box, not CI mocks'",
+      "the risk columns cite live code rather than gesturing: the copy-fallback row points at `resilience/doctor.py:555` as already watching for the exact stale-copy hazard it would introduce",
+      "the soul guardrail holds: the deliverable is a research document under `docs/roadmap/research/`, and no implementation code accompanies it",
+      "sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809"
+    ],
+    "ui_validated": "No surface: an audit document, deliberately with no code.",
+    "notes": "🔑 THE BEST AUDIT DOCUMENT IN THE CATALOGUE, and the reason is structural: every mechanism gets options rather than a single proposal, every option carries effort AND risk, and the verdicts are per-mechanism rather than one verdict for the platform. That is what makes the go/no-go a real decision instead of a rubber stamp — three of the six turn out to be cheap and two expensive, which is invisible if you only ask 'should we support Windows'."
   }
 }

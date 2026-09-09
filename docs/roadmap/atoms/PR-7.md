@@ -29,9 +29,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- 🔑 THE FALLBACK IS BETTER SHAPED THAN THE ATOM ASKED FOR. Under WSL it goes STRAIGHT to `wslview`, because `webbrowser.open` there 'has no Linux browser to launch' — trying and failing first would just add a delay. On normal Linux and macOS the standard path is 'used unchanged', and `wslview` is attempted 'only … when that open reports failure (returns False) or raises'
+- 🔑 A MISSING `wslview` IS SWALLOWED, with the reason stated: 'it must never crash the gateway boot'. A best-effort convenience that can fail startup is a worse bug than the inconvenience it fixes
+- the URL print is unconditional and framed as 'a no-op improvement on every platform' — the WSL work incidentally helps anyone whose browser does not auto-launch, which is the right way to pay for a platform fix
+- the doctor detects WSL and then explains the thing a Windows user actually needs to know: the background service depends on systemd, 'which WSL2 only runs when /etc/wsl.conf opts in', followed by the two concrete steps (`[boot] systemd=true`, then `wsl --shutdown`)
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** Not drivable: this environment is not WSL, so the branch cannot be taken for real. Its fixture-driven tests are in the 35 green.
+
+**Notes:** 🪤 A FALSE NEGATIVE OF MY OWN, AND THE FOURTH CONSECUTIVE CYCLE WITH THIS SHAPE. I searched for `wslview` in the two files the atom's `done_when` names — 'near cli_server.py --no-open handling' — found nothing, and briefly had it as unimplemented. It lives in `gateway.py`, which is where the auto-open actually happens. The atom's prose points at the wrong file; the code is complete. Withdrawn. Same lesson as the last three: a scoped search that comes back empty proves something about the scope, not about the tree.
 
 ## Recorded history
 

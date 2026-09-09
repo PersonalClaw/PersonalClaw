@@ -28,9 +28,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- `sqlite_compat.py` exists and does what the atom names: driver + version + FTS5 + JSON1, memoized with `lru_cache(maxsize=1)`, and the probe is separated from the driver/version read so — in its own words — a failing probe never breaks 'a caller that only wanted the driver/version'
+- 🔑 THE MODULE'S REASON IS STATED AS A COUNTED DEFECT, not a preference: 'the driver choice was decided seven times and a test that patched the stdlib module' could not reach the others. That is the difference between a refactor and a tidy-up
+- 🔑 IT EXPORTS THE DRIVER MODULE ITSELF, not only the capability struct — `__all__` carries `sqlite3` — so a caller that needs the same EXCEPTION CLASSES the connection raises can get them. That export is the thing that makes centralisation complete rather than partial
+- eleven modules now import from it, covering all six the atom names plus `loop/store.py` and the doctor
+- the doctor line matches the atom's format verbatim — `SQLite: <driver> <version>, FTS5 <✅|❌>, JSON1 <✅|❌>` — and a missing FTS5 adds an actionable remedy plus an issue entry rather than a bare ❌
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** No user surface beyond the CLI doctor line, which is a formatted probe read rather than an interaction.
+
+**Notes:** 🔑 THE RESIDUE SWEEP FOUND ONE STRAGGLER THE ATOM DID NOT LIST, so this is confirmed rather than contradicted: `memory_graph.py` still hand-rolled its own driver import. It is not among the seven call sites `done_when` enumerates, so the atom's scope was met — but the module it existed to centralise had one holdout, its comment told the reader to 'mirror vector_memory's import' after vector_memory had moved to sqlite_compat, and following that instruction literally would have reintroduced the exception-class mismatch. Fixed in PR #2809 with a package-wide rail: fixing it required no new mechanism, only the export PR-1 already shipped.
 
 ## Recorded history
 

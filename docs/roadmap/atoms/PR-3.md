@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- both arm jobs are in `full.yml`: `ubuntu-24.04-arm` and `macos-14`, with the comment naming why that image was chosen ('macos-14 is the arm64 image')
+- 🔑 THIS ATOM HAS ALREADY PAID FOR ITSELF, AND THE EVIDENCE IS IN ANOTHER MODULE'S COMMENT: the memory-graph exception-class bug 'crashed on CI while passing on macOS' — a defect that is INVISIBLE without a Linux runner where the bundled driver is installed, and which an arm/Linux matrix is exactly the thing that surfaces. A platform matrix justifies itself by the class of bug only it can see
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** No user surface: a CI matrix. Verified in the workflow rather than by triggering a run, which would need a push to the non-PR path.
+
+**Notes:** Confirmed on the workflow's contents rather than on a green run, which is the honest limit from here — the jobs are on the non-PR path, so a local audit cannot make them execute.
 
 ## Recorded history
 

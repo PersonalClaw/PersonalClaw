@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 54 (PR) — driver centralisation swept package-wide; the support matrix checked row by row for its proof token
+
+**Code evidence:**
+
+- the Windows checklist is merged into `docs/maintainers/release-runbook.md` as a per-release step ('Do this once per release on a Windows box with Docker Desktop (WSL2 backend)') with the concrete sequence the atom names
+- 🔑 THE RUNBOOK AND THE MATRIX AGREE ABOUT WHAT PROVES WHAT, EXPLICITLY: the checklist 'is the only evidence behind the *Windows via Docker Desktop* row' in the support matrix, and it links to that row. Two documents that could drift are instead pinned to each other by a stated dependency
+- 🔑 AND THE PROOF TOKEN HAS A CONSEQUENCE, WHICH IS WHAT KEEPS IT FROM BEING DECORATION: a failure is 'a **release-blocking** finding for the Windows row: fix the guide or demote the [row]'. The two options are the honest pair — repair the claim or reduce it
+- sqlite_compat + fts5 capability guard + wsl support 35/35; memory-graph + memory + vault + compat 92/92 after the fix in PR #2809
+
+**Driven in the UI:** Not drivable from here: the checklist runs on a Windows machine with Docker Desktop. The atom assigns its verbatim validation to the owner.
+
+**Notes:** Partial-looking but confirmed: the atom's deliverable is the guide section and the checklist, both present and cross-pinned. The 'owner task 2 validates verbatim' clause is the FIRST RUN of the checklist, which the matrix row already discloses as not yet done — so the documentation is honest about its own state rather than waiting on it silently.
 
 ## Recorded history
 
