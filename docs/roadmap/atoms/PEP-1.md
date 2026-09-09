@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- `web/src/ui/PresetEmptyState.tsx` ships with its own suite and doc, green inside the 185
+- 🔑 THE PRIMITIVE'S REASON FOR EXISTING SEPARATELY FROM `EmptyState` IS RECORDED RATHER THAN LEFT TO GUESSWORK (read in the OU cycle): it is 'the preset-first ON-RAMP for a surface whose create flow front-loads its whole ontology', offering finished examples that SEED the existing form, as distinct from stating a fact and offering one CTA
+- that distinction is what stopped OU-6's rollout being called incomplete when Triggers satisfied it through this primitive instead — one plan's atom depends on the other's vocabulary being precise
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven on a fresh home: this validation home has triggers configured, so the preset on-ramp does not mount.
+
+**Notes:** A preset that opens the create flow PRE-FILLED to a working schedule is the difference between an example and a demo — an on-ramp that lands the user in an empty form has only moved the blank page.
 
 ## Recorded history
 

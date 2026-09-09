@@ -29,9 +29,26 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🏅 THE THREE SECURITY FLOORS ARE THE BEST SECRET-HANDLING DESIGN IN THIS PLAN, and the framing is exactly right: reading another tool's config is 'reading a directory full of things the user never meant to hand over: an OAuth token cache, a `.env`, an API key in an MCP server's `env` block'
+- 🔑 ALL THREE ARE **COUNTING** FLOORS — 'the user is told how much was withheld, NEVER WHAT IT WAS'. Disclosed omission again, now in an import context: a silent skip would make the import look lossy for reasons nobody can name
+- 🔑 AND THE CONTAINMENT IS IN THE RETURN TYPE, WHICH IS STRONGER THAN A RULE: 'Nothing here returns a secret value. Every function returns a count, SO A CALLER *CANNOT* ACCIDENTALLY LOG ONE.' The mistake is made unavailable rather than forbidden
+- three layers at three levels: a credential-bearing PATH is never opened, a secret-NAMED key is dropped 'before the value is ever copied' into an item, and free text 'keeps its body but loses embedded credentials and exfiltration URLs'
+- 🔑 IT REUSES THE PROJECT'S OWN PREDICATE AND THEN CLOSES ITS KNOWN GAP: `is_sensitive_path` is 'the same predicate that blocks the agent's file reads', PLUS a filename denylist 'because a fixture/foreign root outside `$HOME` doesn't match the home-relative rules'. That is the exact gap EI-8 named for a workspace `.env`, found independently here
+- 🔴 'This module never writes: the foreign root is strictly read-only' — reading someone else's config must not mutate it
+- `test_planted_secret_appears_nowhere_in_scan_output` and `test_planted_secret_never_reaches_the_home` prove both halves with a planted value rather than asserting the intent; 112 green
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven: the import step needs a fresh, un-onboarded home with a fixture source.
+
+**Notes:** 🔑 ARCC's upload requirement transfers as a shape rather than a mechanism: its malware scan and approved storage service have no local analogue, but 'do not trust what the input declares — allowlist, verify, bound it' is exactly what three independent layers over a foreign directory implement. Re-scan idempotence matters for the same reason: an import that double-counted on re-entry would train the user to skip it.
 
 ## Recorded history
 

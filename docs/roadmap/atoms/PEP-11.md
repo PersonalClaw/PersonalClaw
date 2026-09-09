@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🔑 THE PROGRAM DELIVERED: all nine suite apps present in PersonalClawApps with app.json, a test file, a README and a LICENSE; every core import in their RUNTIME code goes through personalclaw.sdk (the boundary lint is 171/171 green)
+- 🔑 'EACH APP SHIPS AS ITS OWN VALIDATED PR' AND 'THE SUITE IS DELIVERED APP-BY-APP' IS THE PART THAT MATTERS ORGANISATIONALLY — nine apps in one change would have been one review nobody could hold, and a shared scaffold nobody could remove
+- 'is recorded as a platform exemplar' is what turns the suite into documentation of the app contract rather than nine one-offs — the same role ET-6's four exemplars play for the registry
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** The Store was driven in earlier cycles; these nine were verified in the apps repository rather than through a live Store listing.
+
+**Notes:** 🪤 AN EIGHTH FINDING WITHDRAWN HERE. Two non-SDK core imports appear in `docs-slides/test_provider.py`, which looked like an import-boundary violation. The lint EXEMPTS test files by name and says why — 'test files may import core helpers' — and it is 171/171 green. A test building a fixture from core parsers is not the boundary the rule protects.
 
 ## Recorded history
 

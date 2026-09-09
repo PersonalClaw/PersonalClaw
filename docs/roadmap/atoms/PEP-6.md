@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- `tests/test_artifact_folders.py` green inside the 112
+- 🔑 'FILING IS METADATA-ONLY (NO `updated_at` BUMP)' IS THE CLAUSE WORTH NAMING: moving an artifact into a folder is not editing it, and a filing that bumped the timestamp would reorder every recency-sorted view and make an organising action look like a content change
+- 🔴 RENAMING A FOLDER LEAVES ARTIFACT RECORDS UNTOUCHED, and DELETING a folder FALLS ITS MEMBERS BACK rather than deleting them — a folder delete that cascaded would make an organising primitive a destructive one
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven this cycle.
+
+**Notes:** All three clauses are the same principle from three sides: a container must not own its contents' identity, their timestamps, or their existence.
 
 ## Recorded history
 

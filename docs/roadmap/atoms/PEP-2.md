@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🔑 THE CLAUSE IS A NEGATIVE OVER THE WHOLE SURFACE SET — 'no list surface presents a bare form with no on-ramp' — which is the right shape: a per-surface checklist goes stale the moment a surface is added, while a sweep states the invariant
+- 'expert paths unchanged' is the other half and the easier one to break: an on-ramp that intercepted the create flow for users who already know it would tax every subsequent use to help the first
+- the empty states I drove in earlier cycles (Skills, Learning, Workflows, the Work board) each stated a fact and offered a next action rather than rendering a bare list
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Partially, across cycles: four surfaces' empty states were read off the live gateway while auditing other plans.
+
+**Notes:** Confirmed on the sweep plus the surfaces observed in passing, not on an exhaustive fresh-home tour of every list surface.
 
 ## Recorded history
 

@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🔑 THE ATOM'S SHAPE IS A DOUBLE NEGATIVE AND BOTH HALVES MATTER: a saved markdown artifact is SEARCHABLE in Knowledge 'WITHOUT APPEARING IN THE KNOWLEDGE LIST'. Indexing without listing is what stops the artifact store leaking into a surface the user curates by hand
+- 🔴 AND THE LIFECYCLE IS CLOSED IN BOTH DIRECTIONS: editing refreshes the index and deleting REMOVES it. An index that outlived its source would answer searches with content the user deleted — the most alarming shape a stale index has
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven: search needs an embedding provider, which is the campaign's dominant partial class.
+
+**Notes:** Confirmed on the acceptance shape and the suite rather than on a live query. PHF-7's offline harness is the instrument that would close this properly.
 
 ## Recorded history
 

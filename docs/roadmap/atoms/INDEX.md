@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 406 | `done_when` checked against the code and it holds |
+| `confirmed` | 426 | `done_when` checked against the code and it holds |
 | `partial` | 228 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 36 | not yet checked |
+| `unaudited` | 16 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -685,26 +685,26 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PEP-1`](PEP-1.md) | `done` | `unaudited` | PresetEmptyState primitive + Triggers/Schedule preset on-ramp |
-| [`PEP-2`](PEP-2.md) | `done` | `unaudited` | Cross-surface preset empty-state sweep |
-| [`PEP-3`](PEP-3.md) | `done` | `unaudited` | App Store persistent category/source rail + card polish |
-| [`PEP-4`](PEP-4.md) | `done` | `unaudited` | Onboarding import engine (scanners + writers) |
-| [`PEP-5`](PEP-5.md) | `done` | `unaudited` | Onboarding import step UI |
-| [`PEP-6`](PEP-6.md) | `done` | `unaudited` | Artifact folders |
-| [`PEP-7`](PEP-7.md) | `done` | `unaudited` | Artifacts as an indexed knowledge source |
-| [`PEP-8`](PEP-8.md) | `done` | `unaudited` | Local static artifact deploy (webapp kind + serve route) |
-| [`PEP-9`](PEP-9.md) | `done` | `unaudited` | React artifact build path |
-| [`PEP-10`](PEP-10.md) | `done` | `unaudited` | Always-on conventions viewer + first domain-craft skills |
-| [`PEP-11`](PEP-11.md) | `done` | `unaudited` | First-party product-app suite program |
-| [`PEP-12`](PEP-12.md) | `done` | `unaudited` | Code Review app (suite 1/9) |
-| [`PEP-13`](PEP-13.md) | `done` | `unaudited` | Research Lab app (suite 2/9) |
-| [`PEP-14`](PEP-14.md) | `done` | `unaudited` | Design Critique app (suite 3/9) |
-| [`PEP-15`](PEP-15.md) | `done` | `unaudited` | Docs/Slides app (suite 4/9) |
-| [`PEP-16`](PEP-16.md) | `done` | `unaudited` | Notes app (suite 5/9) |
-| [`PEP-17`](PEP-17.md) | `done` | `unaudited` | Issue Radar app (suite 6/9) |
-| [`PEP-18`](PEP-18.md) | `done` | `unaudited` | Spec Builder app (suite 7/9) |
-| [`PEP-19`](PEP-19.md) | `done` | `unaudited` | Ops app (suite 8/9) |
-| [`PEP-20`](PEP-20.md) | `done` | `unaudited` | Companion app (suite 9/9) |
+| [`PEP-1`](PEP-1.md) | `done` | `confirmed` | PresetEmptyState primitive + Triggers/Schedule preset on-ramp |
+| [`PEP-2`](PEP-2.md) | `done` | `confirmed` | Cross-surface preset empty-state sweep |
+| [`PEP-3`](PEP-3.md) | `done` | `confirmed` | App Store persistent category/source rail + card polish |
+| [`PEP-4`](PEP-4.md) | `done` | `confirmed` | Onboarding import engine (scanners + writers) |
+| [`PEP-5`](PEP-5.md) | `done` | `confirmed` | Onboarding import step UI |
+| [`PEP-6`](PEP-6.md) | `done` | `confirmed` | Artifact folders |
+| [`PEP-7`](PEP-7.md) | `done` | `confirmed` | Artifacts as an indexed knowledge source |
+| [`PEP-8`](PEP-8.md) | `done` | `confirmed` | Local static artifact deploy (webapp kind + serve route) |
+| [`PEP-9`](PEP-9.md) | `done` | `confirmed` | React artifact build path |
+| [`PEP-10`](PEP-10.md) | `done` | `confirmed` | Always-on conventions viewer + first domain-craft skills |
+| [`PEP-11`](PEP-11.md) | `done` | `confirmed` | First-party product-app suite program |
+| [`PEP-12`](PEP-12.md) | `done` | `confirmed` | Code Review app (suite 1/9) |
+| [`PEP-13`](PEP-13.md) | `done` | `confirmed` | Research Lab app (suite 2/9) |
+| [`PEP-14`](PEP-14.md) | `done` | `confirmed` | Design Critique app (suite 3/9) |
+| [`PEP-15`](PEP-15.md) | `done` | `confirmed` | Docs/Slides app (suite 4/9) |
+| [`PEP-16`](PEP-16.md) | `done` | `confirmed` | Notes app (suite 5/9) |
+| [`PEP-17`](PEP-17.md) | `done` | `confirmed` | Issue Radar app (suite 6/9) |
+| [`PEP-18`](PEP-18.md) | `done` | `confirmed` | Spec Builder app (suite 7/9) |
+| [`PEP-19`](PEP-19.md) | `done` | `confirmed` | Ops app (suite 8/9) |
+| [`PEP-20`](PEP-20.md) | `done` | `confirmed` | Companion app (suite 9/9) |
 
 ### `PHF` — PLATFORM-HARDENING-FLOORS (15/15 done)
 

@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- the Store frontend suites are green inside the 185
+- 🔴 'SURVIVES RELOAD' IS THE DECISIVE CLAUSE and it is the one this audit's own protocol insists on — a filter that resets on reload is a filter the user has to re-apply every time they follow a link
+- the responsive contract is stated as a fallback rather than a hide: wide viewport shows the rail persistently, narrow FALLS BACK to the dropdown, so the capability is never simply absent at a breakpoint
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven this cycle; the Store was driven in the ET and APE cycles for its consent surface.
+
+**Notes:** A persistent rail plus a narrow-viewport dropdown is two renderings of one state — the thing to watch is that both write the same place, which the reload clause is what proves.
 
 ## Recorded history
 

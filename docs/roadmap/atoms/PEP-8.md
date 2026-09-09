@@ -31,9 +31,27 @@ An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened an
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🔑 I FALSIFIED THE FENCE. Weakening `connect-src 'none'` to `'self'` reddened two tests by VALUE — `test_every_served_response_carries_the_fence` and `TestCspFenceValue::test_the_page_cannot_reach_the_gateway_api` (`assert ["'self'"] == ["'none'"]`) — 2 failed / 44 passed, restored 46/46, tree byte-identical
+- 🏅 THE TEST FILE STATES THIS CAMPAIGN'S OWN DISCIPLINE IN ITS DOCSTRING: each clause is 'asserted behaviourally (A RAIL THAT ONLY GREPS FOR A GUARD'S NAME CANNOT CATCH A NEUTERED GUARD)', and the CSP is 'parsed into directives and the VALUES are asserted … so weakening a directive reds this file rather than passing on MERE HEADER PRESENCE'. Header-presence-not-value is the classic false-comfort assertion in web security
+- 🔑 SIX ESCAPE SHAPES ARE REFUSED INCLUDING BOTH SYMLINK CASES — a symlink pointing out of the root AND a symlinked DIRECTORY COMPONENT. That second one is exactly the case I had to ADD for WF2WOR-10 last cycle; here it was already covered, at both the leaf and an intermediate component
+- 🔴 AND THE REFUSAL IS ASSERTED ON THE CONSEQUENCE, NOT THE STATUS: 'the target file's bytes never appear in a response'. A refusal that returned 200 with an error body would pass a status check
+- `test_allows_ordinary_relative_paths` + `test_resolves_a_real_nested_file` are the vacuity floor — a resolver that refused everything would satisfy all six refusals; and `test_refuses_dotdot_even_when_the_target_exists` proves the refusal is not an accidental 404
+- 🔑 THE FENCE'S REASONING IS PER-DIRECTIVE AND THE SHARPEST LINE IS ABOUT SAME-ORIGIN: `connect-src 'none'` means 'the page cannot call `/api` EVEN THOUGH IT IS SAME-ORIGIN' — which is precisely why it matters, since a served artifact would otherwise inherit the dashboard's session. `base-uri 'none'` is the directive most policies forget, here for a named reason: 'no rewriting relative URLs out from under the other directives'
+- the fence mirrors the widget iframe's own CSP 'so a deployed widget behaves the same served as embedded' — one definition, two surfaces
+- teardown removes the route: after teardown or artifact deletion the path 404s 'instead of serving a stale page'
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven this cycle; the route's behaviour was falsified at the response level instead, which is the stronger evidence for a header contract.
+
+**Notes:** 🔑 The `script-src` list is deliberately loose — `'unsafe-inline'`, `'unsafe-eval'` and three CDNs — and that is a design decision rather than a gap: these are the user's own artifacts in their own home, so the threat model is 'must not reach the gateway or exfiltrate' rather than 'must not run script', and `connect-src`/`form-action`/`base-uri`/`object-src` are what hold that line.
 
 ## Recorded history
 

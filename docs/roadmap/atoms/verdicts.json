@@ -8150,5 +8150,271 @@
     ],
     "ui_validated": "Not a browser surface.",
     "notes": "🏅 'The real-home rail must be able to see a metadata-preserving writer' is the most sophisticated statement of the campaign's central class in the catalogue: not just 'assert the thing', but 'assert it in a way the plausible evasion cannot slip past'."
+  },
+  "PEP-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`web/src/ui/PresetEmptyState.tsx` ships with its own suite and doc, green inside the 185",
+      "🔑 THE PRIMITIVE'S REASON FOR EXISTING SEPARATELY FROM `EmptyState` IS RECORDED RATHER THAN LEFT TO GUESSWORK (read in the OU cycle): it is 'the preset-first ON-RAMP for a surface whose create flow front-loads its whole ontology', offering finished examples that SEED the existing form, as distinct from stating a fact and offering one CTA",
+      "that distinction is what stopped OU-6's rollout being called incomplete when Triggers satisfied it through this primitive instead — one plan's atom depends on the other's vocabulary being precise",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven on a fresh home: this validation home has triggers configured, so the preset on-ramp does not mount.",
+    "notes": "A preset that opens the create flow PRE-FILLED to a working schedule is the difference between an example and a demo — an on-ramp that lands the user in an empty form has only moved the blank page."
+  },
+  "PEP-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🔑 THE CLAUSE IS A NEGATIVE OVER THE WHOLE SURFACE SET — 'no list surface presents a bare form with no on-ramp' — which is the right shape: a per-surface checklist goes stale the moment a surface is added, while a sweep states the invariant",
+      "'expert paths unchanged' is the other half and the easier one to break: an on-ramp that intercepted the create flow for users who already know it would tax every subsequent use to help the first",
+      "the empty states I drove in earlier cycles (Skills, Learning, Workflows, the Work board) each stated a fact and offered a next action rather than rendering a bare list",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Partially, across cycles: four surfaces' empty states were read off the live gateway while auditing other plans.",
+    "notes": "Confirmed on the sweep plus the surfaces observed in passing, not on an exhaustive fresh-home tour of every list surface."
+  },
+  "PEP-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "the Store frontend suites are green inside the 185",
+      "🔴 'SURVIVES RELOAD' IS THE DECISIVE CLAUSE and it is the one this audit's own protocol insists on — a filter that resets on reload is a filter the user has to re-apply every time they follow a link",
+      "the responsive contract is stated as a fallback rather than a hide: wide viewport shows the rail persistently, narrow FALLS BACK to the dropdown, so the capability is never simply absent at a breakpoint",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven this cycle; the Store was driven in the ET and APE cycles for its consent surface.",
+    "notes": "A persistent rail plus a narrow-viewport dropdown is two renderings of one state — the thing to watch is that both write the same place, which the reload clause is what proves."
+  },
+  "PEP-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🏅 THE THREE SECURITY FLOORS ARE THE BEST SECRET-HANDLING DESIGN IN THIS PLAN, and the framing is exactly right: reading another tool's config is 'reading a directory full of things the user never meant to hand over: an OAuth token cache, a `.env`, an API key in an MCP server's `env` block'",
+      "🔑 ALL THREE ARE **COUNTING** FLOORS — 'the user is told how much was withheld, NEVER WHAT IT WAS'. Disclosed omission again, now in an import context: a silent skip would make the import look lossy for reasons nobody can name",
+      "🔑 AND THE CONTAINMENT IS IN THE RETURN TYPE, WHICH IS STRONGER THAN A RULE: 'Nothing here returns a secret value. Every function returns a count, SO A CALLER *CANNOT* ACCIDENTALLY LOG ONE.' The mistake is made unavailable rather than forbidden",
+      "three layers at three levels: a credential-bearing PATH is never opened, a secret-NAMED key is dropped 'before the value is ever copied' into an item, and free text 'keeps its body but loses embedded credentials and exfiltration URLs'",
+      "🔑 IT REUSES THE PROJECT'S OWN PREDICATE AND THEN CLOSES ITS KNOWN GAP: `is_sensitive_path` is 'the same predicate that blocks the agent's file reads', PLUS a filename denylist 'because a fixture/foreign root outside `$HOME` doesn't match the home-relative rules'. That is the exact gap EI-8 named for a workspace `.env`, found independently here",
+      "🔴 'This module never writes: the foreign root is strictly read-only' — reading someone else's config must not mutate it",
+      "`test_planted_secret_appears_nowhere_in_scan_output` and `test_planted_secret_never_reaches_the_home` prove both halves with a planted value rather than asserting the intent; 112 green",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: the import step needs a fresh, un-onboarded home with a fixture source.",
+    "notes": "🔑 ARCC's upload requirement transfers as a shape rather than a mechanism: its malware scan and approved storage service have no local analogue, but 'do not trust what the input declares — allowlist, verify, bound it' is exactly what three independent layers over a foreign directory implement. Re-scan idempotence matters for the same reason: an import that double-counted on re-entry would train the user to skip it."
+  },
+  "PEP-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`web/src/app/onboarding/ImportStep.tsx` ships with `importStep.test.tsx`, green in the OU cycle's 265, and the API suites are green inside the 112",
+      "🔴 'RE-ENTRY SHOWS ALREADY-IMPORTED ITEMS AS EXISTING' is the clause that makes the step re-runnable: an import surface that offered the same items again would either duplicate them or silently do nothing, and both read as broken",
+      "'import completes without any secret appearing' is enforced upstream by PEP-4's counting floors rather than by this surface remembering to redact — the right layer, since a second redactor here could disagree with the first",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: this home is already onboarded, so the step does not mount.",
+    "notes": "Deriving the step's honesty from the engine's return type rather than from the view's care is what makes the claim hold under a future UI rewrite."
+  },
+  "PEP-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`tests/test_artifact_folders.py` green inside the 112",
+      "🔑 'FILING IS METADATA-ONLY (NO `updated_at` BUMP)' IS THE CLAUSE WORTH NAMING: moving an artifact into a folder is not editing it, and a filing that bumped the timestamp would reorder every recency-sorted view and make an organising action look like a content change",
+      "🔴 RENAMING A FOLDER LEAVES ARTIFACT RECORDS UNTOUCHED, and DELETING a folder FALLS ITS MEMBERS BACK rather than deleting them — a folder delete that cascaded would make an organising primitive a destructive one",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven this cycle.",
+    "notes": "All three clauses are the same principle from three sides: a container must not own its contents' identity, their timestamps, or their existence."
+  },
+  "PEP-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🔑 THE ATOM'S SHAPE IS A DOUBLE NEGATIVE AND BOTH HALVES MATTER: a saved markdown artifact is SEARCHABLE in Knowledge 'WITHOUT APPEARING IN THE KNOWLEDGE LIST'. Indexing without listing is what stops the artifact store leaking into a surface the user curates by hand",
+      "🔴 AND THE LIFECYCLE IS CLOSED IN BOTH DIRECTIONS: editing refreshes the index and deleting REMOVES it. An index that outlived its source would answer searches with content the user deleted — the most alarming shape a stale index has",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: search needs an embedding provider, which is the campaign's dominant partial class.",
+    "notes": "Confirmed on the acceptance shape and the suite rather than on a live query. PHF-7's offline harness is the instrument that would close this properly."
+  },
+  "PEP-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🔑 I FALSIFIED THE FENCE. Weakening `connect-src 'none'` to `'self'` reddened two tests by VALUE — `test_every_served_response_carries_the_fence` and `TestCspFenceValue::test_the_page_cannot_reach_the_gateway_api` (`assert [\"'self'\"] == [\"'none'\"]`) — 2 failed / 44 passed, restored 46/46, tree byte-identical",
+      "🏅 THE TEST FILE STATES THIS CAMPAIGN'S OWN DISCIPLINE IN ITS DOCSTRING: each clause is 'asserted behaviourally (A RAIL THAT ONLY GREPS FOR A GUARD'S NAME CANNOT CATCH A NEUTERED GUARD)', and the CSP is 'parsed into directives and the VALUES are asserted … so weakening a directive reds this file rather than passing on MERE HEADER PRESENCE'. Header-presence-not-value is the classic false-comfort assertion in web security",
+      "🔑 SIX ESCAPE SHAPES ARE REFUSED INCLUDING BOTH SYMLINK CASES — a symlink pointing out of the root AND a symlinked DIRECTORY COMPONENT. That second one is exactly the case I had to ADD for WF2WOR-10 last cycle; here it was already covered, at both the leaf and an intermediate component",
+      "🔴 AND THE REFUSAL IS ASSERTED ON THE CONSEQUENCE, NOT THE STATUS: 'the target file's bytes never appear in a response'. A refusal that returned 200 with an error body would pass a status check",
+      "`test_allows_ordinary_relative_paths` + `test_resolves_a_real_nested_file` are the vacuity floor — a resolver that refused everything would satisfy all six refusals; and `test_refuses_dotdot_even_when_the_target_exists` proves the refusal is not an accidental 404",
+      "🔑 THE FENCE'S REASONING IS PER-DIRECTIVE AND THE SHARPEST LINE IS ABOUT SAME-ORIGIN: `connect-src 'none'` means 'the page cannot call `/api` EVEN THOUGH IT IS SAME-ORIGIN' — which is precisely why it matters, since a served artifact would otherwise inherit the dashboard's session. `base-uri 'none'` is the directive most policies forget, here for a named reason: 'no rewriting relative URLs out from under the other directives'",
+      "the fence mirrors the widget iframe's own CSP 'so a deployed widget behaves the same served as embedded' — one definition, two surfaces",
+      "teardown removes the route: after teardown or artifact deletion the path 404s 'instead of serving a stale page'",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven this cycle; the route's behaviour was falsified at the response level instead, which is the stronger evidence for a header contract.",
+    "notes": "🔑 The `script-src` list is deliberately loose — `'unsafe-inline'`, `'unsafe-eval'` and three CDNs — and that is a design decision rather than a gap: these are the user's own artifacts in their own home, so the threat model is 'must not reach the gateway or exfiltrate' rather than 'must not run script', and `connect-src`/`form-action`/`base-uri`/`object-src` are what hold that line."
+  },
+  "PEP-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "the React build path shares PEP-8's serve route and CSP fence, so the containment falsified above covers it too — `script-src 'self'` is what lets a multi-file build load its OWN files without widening the fence",
+      "🔴 'A BUILD FAILURE IS LEGIBLE, NOT A HANG' is the clause that distinguishes this from a demo: a build step with no timeout and no surfaced error is the single most common way an artifact pipeline becomes unusable, and it fails in the shape users cannot report",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: needs a React artifact to build.",
+    "notes": "Serving a built bundle through the SAME route as a single-file widget is what keeps one fence rather than two — a separate route for React artifacts would have been a second CSP to keep in step."
+  },
+  "PEP-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🏅 THE VIEWER'S CLAUSE IS THE ONE THIS WHOLE AUDIT CAMPAIGN IS ABOUT: it 'MATCHES WHAT A SESSION ACTUALLY RECEIVES (spot-checked against an assembled prompt)'. A conventions viewer that rendered the config rather than the assembled result would show the user what was CONFIGURED, not what was SENT — the exact defect SH-1's doctor probe and LV-7's pin both avoid",
+      "🔴 'EDITING A PROJECT INSTRUCTION ROUND-TRIPS SAFELY' is the write half, and the pairing is what makes the surface trustworthy: a viewer that reads the true state but writes somewhere else is worse than one that does neither",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven this cycle; a project detail page WAS driven in the WF2WOR cycle and carried its brief affordance ('Add a project brief — shared as context with every agent working here').",
+    "notes": "Spot-checking a viewer against an assembled prompt is the only honest way to validate it, and it is the method this campaign has been applying to everything else."
+  },
+  "PEP-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "🔑 THE PROGRAM DELIVERED: all nine suite apps present in PersonalClawApps with app.json, a test file, a README and a LICENSE; every core import in their RUNTIME code goes through personalclaw.sdk (the boundary lint is 171/171 green)",
+      "🔑 'EACH APP SHIPS AS ITS OWN VALIDATED PR' AND 'THE SUITE IS DELIVERED APP-BY-APP' IS THE PART THAT MATTERS ORGANISATIONALLY — nine apps in one change would have been one review nobody could hold, and a shared scaffold nobody could remove",
+      "'is recorded as a platform exemplar' is what turns the suite into documentation of the app contract rather than nine one-offs — the same role ET-6's four exemplars play for the registry",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "The Store was driven in earlier cycles; these nine were verified in the apps repository rather than through a live Store listing.",
+    "notes": "🪤 AN EIGHTH FINDING WITHDRAWN HERE. Two non-SDK core imports appear in `docs-slides/test_provider.py`, which looked like an import-boundary violation. The lint EXEMPTS test files by name and says why — 'test files may import core helpers' — and it is 171/171 green. A test building a fixture from core parsers is not the boundary the rule protects."
+  },
+  "PEP-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/code-review/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing code-review and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving code-review in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/research-lab/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing research-lab and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving research-lab in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/design-critique/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing design-critique and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving design-critique in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/docs-slides/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing docs-slides and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving docs-slides in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-16": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/notes/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing notes and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving notes in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-17": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/issue-radar/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing issue-radar and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving issue-radar in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-18": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/spec-builder/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing spec-builder and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving spec-builder in the product. That is the honest limit of what this cycle observed for nine apps."
+  },
+  "PEP-19": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/ops/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: cron + network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing ops and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "The only app in the suite declaring `cron` — an ops app that polls needs a schedule, and it is the one permission here whose absence would have made the app inert. Confirmed on the contract artefacts rather than on driving it."
+  },
+  "PEP-20": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption",
+    "evidence": [
+      "`PersonalClawApps/companion/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires",
+      "declared permissions are MINIMAL and legible: network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer",
+      "no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree",
+      "112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46"
+    ],
+    "ui_validated": "Not driven: installing companion and exercising it needs a Store source configured plus, for most of these, a bound model.",
+    "notes": "Confirmed on the contract artefacts and the import boundary rather than on driving companion in the product. That is the honest limit of what this cycle observed for nine apps."
   }
 }

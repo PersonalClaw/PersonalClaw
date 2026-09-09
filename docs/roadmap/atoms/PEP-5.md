@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- `web/src/app/onboarding/ImportStep.tsx` ships with `importStep.test.tsx`, green in the OU cycle's 265, and the API suites are green inside the 112
+- 🔴 'RE-ENTRY SHOWS ALREADY-IMPORTED ITEMS AS EXISTING' is the clause that makes the step re-runnable: an import surface that offered the same items again would either duplicate them or silently do nothing, and both read as broken
+- 'import completes without any secret appearing' is enforced upstream by PEP-4's counting floors rather than by this surface remembering to redact — the right layer, since a second redactor here could disagree with the first
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven: this home is already onboarded, so the step does not mount.
+
+**Notes:** Deriving the step's honesty from the engine's return type rather than from the view's care is what makes the claim hold under a future UI rewrite.
 
 ## Recorded history
 

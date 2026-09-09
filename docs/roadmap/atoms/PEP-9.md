@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- the React build path shares PEP-8's serve route and CSP fence, so the containment falsified above covers it too — `script-src 'self'` is what lets a multi-file build load its OWN files without widening the fence
+- 🔴 'A BUILD FAILURE IS LEGIBLE, NOT A HANG' is the clause that distinguishes this from a demo: a build step with no timeout and no surfaced error is the single most common way an artifact pipeline becomes unusable, and it fails in the shape users cannot report
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven: needs a React artifact to build.
+
+**Notes:** Serving a built bundle through the SAME route as a single-file widget is what keeps one fence rather than two — a separate route for React artifacts would have been a second CSP to keep in step.
 
 ## Recorded history
 

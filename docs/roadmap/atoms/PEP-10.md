@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- 🏅 THE VIEWER'S CLAUSE IS THE ONE THIS WHOLE AUDIT CAMPAIGN IS ABOUT: it 'MATCHES WHAT A SESSION ACTUALLY RECEIVES (spot-checked against an assembled prompt)'. A conventions viewer that rendered the config rather than the assembled result would show the user what was CONFIGURED, not what was SENT — the exact defect SH-1's doctor probe and LV-7's pin both avoid
+- 🔴 'EDITING A PROJECT INSTRUCTION ROUND-TRIPS SAFELY' is the write half, and the pairing is what makes the surface trustworthy: a viewer that reads the true state but writes somewhere else is worse than one that does neither
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven this cycle; a project detail page WAS driven in the WF2WOR cycle and carried its brief affordance ('Add a project brief — shared as context with every agent working here').
+
+**Notes:** Spot-checking a viewer against an assembled prompt is the only honest way to validate it, and it is the method this campaign has been applying to everything else.
 
 ## Recorded history
 

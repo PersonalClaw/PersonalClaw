@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 69 (PEP) — the artifact-serve CSP falsified; an eighth finding withdrawn on a lint's own test-file exemption
+
+**Code evidence:**
+
+- `PersonalClawApps/ops/` exists with `app.json`, a test file, a `README.md` and a `LICENSE` — the four the app-creation contract requires
+- declared permissions are MINIMAL and legible: cron + network + storage. The Store shows these as the install-consent surface, so an over-broad declaration is a cost paid by every installer
+- no runtime module in this app imports core outside `personalclaw.sdk` — the boundary lint is 171/171 green over the whole apps tree
+- 112 passed across the artifact-serve, artifact-folders and onboarding-import suites; 185/185 across the PresetEmptyState + Store frontend suites; 171/171 on the apps import-boundary lint; the CSP falsified (2 red) and restored 46/46
+
+**Driven in the UI:** Not driven: installing ops and exercising it needs a Store source configured plus, for most of these, a bound model.
+
+**Notes:** The only app in the suite declaring `cron` — an ops app that polls needs a schedule, and it is the one permission here whose absence would have made the app inert. Confirmed on the contract artefacts rather than on driving it.
 
 ## Recorded history
 
