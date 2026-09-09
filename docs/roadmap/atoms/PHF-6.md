@@ -31,9 +31,23 @@ The current inert population is measured and committed; adding a declared-but-un
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🏅 THIS ATOM TURNS THIS CAMPAIGN'S SIGNATURE DEFECT CLASS INTO A COMMITTED, RATCHETED MEASUREMENT, and I read the artefact: `inert-surface-baseline.json` records **238 inert surfaces** across 36 files — 230 sdk_export, 8 enum, 0 config, 0 editable_config, 0 trigger_kind
+- 🔴 IT DOES NOT CLAIM ZERO, which is the whole point: the atom's own clause is that 'the current inert population is measured and committed' and that 'each cleanup commit shrinks a counter with a test proving the writer' — a baseline asserting zero would have been a lie on day one and would have had to be relaxed on day two
+- adding a declared-but-unread surface reds CI, so the population can only fall
+- the enum count of 8 against PHF-13's 'thirteen surviving enum surfaces' is the ratchet working — the counter fell as the per-class audit cleared members
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface: a committed census plus a CI ratchet.
+
+**Notes:** 🏅 Every cycle of this audit has found an inert control somewhere. This plan measured the whole population, committed the number, and made it monotonic. That is the correct systemic answer to a defect class an audit can only find one instance at a time.
 
 ## Recorded history
 

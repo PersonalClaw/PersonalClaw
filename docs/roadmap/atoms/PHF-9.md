@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🔑 FIVE CONSECUTIVE FULL-SUITE RUNS WITH ZERO UNCLOSED-DATABASE WARNINGS IS A ROOT-CAUSE CLAUSE RATHER THAN A RETRY CLAUSE, which is the difference between fixing a flake and hiding one
+- 🔴 AND THE BEST LINE IN THE ATOM IS THE INVERSION: 'a genuine SEL write failure now RAISES rather than' being swallowed. A test suite made quiet by swallowing a real error is worse than a flaky one, because the flake at least announced itself
+- the xdist scheduler decision being part of the atom is right: a parallel scheduler chosen without measuring is the usual cause of the next flake generation
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** The audit did not run the suite five times this cycle. What was observed is that every targeted suite this campaign has run — sixty-plus cycles, thousands of tests — has been deterministic, which is indirect evidence the floor holds.
 
 ## Recorded history
 

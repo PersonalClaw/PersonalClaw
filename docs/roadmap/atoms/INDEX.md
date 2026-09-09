@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 392 | `done_when` checked against the code and it holds |
-| `partial` | 227 | some `done_when` clauses hold, others do not |
+| `confirmed` | 406 | `done_when` checked against the code and it holds |
+| `partial` | 228 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 51 | not yet checked |
+| `unaudited` | 36 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -710,21 +710,21 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PHF-1`](PHF-1.md) | `done` | `unaudited` | Post-exec resource-ceiling shim + spawn tripwires |
-| [`PHF-2`](PHF-2.md) | `done` | `unaudited` | cgroup v2 second enforcement tier |
-| [`PHF-3`](PHF-3.md) | `done` | `unaudited` | App-backend inbound proxy-signature authentication |
-| [`PHF-4`](PHF-4.md) | `done` | `unaudited` | Environment-inheritance allowlist sweep for shell hooks and cron scripts |
-| [`PHF-5`](PHF-5.md) | `done` | `unaudited` | Committed config-schema baseline + drift gate |
-| [`PHF-6`](PHF-6.md) | `done` | `unaudited` | Inert-control inventory baseline (writer/reader ratchet) |
-| [`PHF-7`](PHF-7.md) | `done` | `unaudited` | Offline fake-model E2E harness + a11y rail |
-| [`PHF-8`](PHF-8.md) | `done` | `unaudited` | Ceiling-intersect-profile guardrail wiring |
-| [`PHF-9`](PHF-9.md) | `done` | `unaudited` | Suite flake root-cause fixes + xdist scheduler decision |
-| [`PHF-10`](PHF-10.md) | `done` | `unaudited` | Docs-lint + plan-hygiene gate |
-| [`PHF-11`](PHF-11.md) | `done` | `unaudited` | Aggregate gates report, they don't short-circuit |
-| [`PHF-12`](PHF-12.md) | `done` | `unaudited` | Teach the inert-surface census whole-enum iteration — the false-red class its own docstring promised was impossible |
-| [`PHF-13`](PHF-13.md) | `done` | `unaudited` | Per-class provenance verdicts for the census's 13 surviving enum surfaces — and the ruling that value-lookup E(value) must NOT clear a member |
-| [`PHF-14`](PHF-14.md) | `done` | `unaudited` | Decompose config/loader.py below the ceiling — restore the headroom every config field needs |
-| [`PHF-15`](PHF-15.md) | `done` | `unaudited` | AppConfig.load() must be a pure read — and the real-home rail must be able to see a metadata-preserving writer |
+| [`PHF-1`](PHF-1.md) | `done` | `confirmed` | Post-exec resource-ceiling shim + spawn tripwires |
+| [`PHF-2`](PHF-2.md) | `done` | `partial` | cgroup v2 second enforcement tier |
+| [`PHF-3`](PHF-3.md) | `done` | `confirmed` | App-backend inbound proxy-signature authentication |
+| [`PHF-4`](PHF-4.md) | `done` | `confirmed` | Environment-inheritance allowlist sweep for shell hooks and cron scripts |
+| [`PHF-5`](PHF-5.md) | `done` | `confirmed` | Committed config-schema baseline + drift gate |
+| [`PHF-6`](PHF-6.md) | `done` | `confirmed` | Inert-control inventory baseline (writer/reader ratchet) |
+| [`PHF-7`](PHF-7.md) | `done` | `confirmed` | Offline fake-model E2E harness + a11y rail |
+| [`PHF-8`](PHF-8.md) | `done` | `confirmed` | Ceiling-intersect-profile guardrail wiring |
+| [`PHF-9`](PHF-9.md) | `done` | `confirmed` | Suite flake root-cause fixes + xdist scheduler decision |
+| [`PHF-10`](PHF-10.md) | `done` | `confirmed` | Docs-lint + plan-hygiene gate |
+| [`PHF-11`](PHF-11.md) | `done` | `confirmed` | Aggregate gates report, they don't short-circuit |
+| [`PHF-12`](PHF-12.md) | `done` | `confirmed` | Teach the inert-surface census whole-enum iteration — the false-red class its own docstring promised was impossible |
+| [`PHF-13`](PHF-13.md) | `done` | `confirmed` | Per-class provenance verdicts for the census's 13 surviving enum surfaces — and the ruling that value-lookup E(value) must NOT clear a member |
+| [`PHF-14`](PHF-14.md) | `done` | `confirmed` | Decompose config/loader.py below the ceiling — restore the headroom every config field needs |
+| [`PHF-15`](PHF-15.md) | `done` | `confirmed` | AppConfig.load() must be a pure read — and the real-home rail must be able to see a metadata-preserving writer |
 
 ### `PL` — PLATFORM-LEGIBILITY (7/7 done)
 

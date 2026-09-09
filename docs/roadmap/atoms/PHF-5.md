@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- the config-schema and schema-validator suites are green inside the 76
+- 🔑 THE THREE CLAUSES COVER THE THREE WAYS A SCHEMA BASELINE ROTS, and the third is the one usually missed: a rename must red, a re-render must be BYTE-IDENTICAL (so the baseline is not sensitive to ordering or formatting noise that would make every diff a conflict), and ADDING a field without regenerating must be caught — an append-only drift check would let new fields in silently
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Byte-identical regeneration is what makes the gate usable rather than an aggravation — a baseline that re-renders differently each run trains contributors to regenerate without reading.
 
 ## Recorded history
 

@@ -28,9 +28,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- `tests/test_import_time_config_writes.py` is green inside the 76, and the shape is the load-bearing part
+- 🔑 A FRESH-INTERPRETER SUBPROCESS RAIL IS THE ONLY WAY TO PROVE 'NO WRITE UNDER ANY INPUT': in-process, a previous test's import has already run the module's side effects, so the write it is looking for has happened before the assertion exists. This campaign has found several assertions that could not fail; this one is designed so it can
+- 🔴 AND THE SECOND HALF IS THE SUBTLER REQUIREMENT: the real-home rail must be able to SEE a metadata-preserving writer. A writer that preserves mtime and permissions is invisible to the obvious check, so the rail is built to catch the write that tried not to be noticed
+- a pure `load()` is what lets every other atom in this plan read config freely — a loader that wrote on read would make config access a mutation nobody expected
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** 🏅 'The real-home rail must be able to see a metadata-preserving writer' is the most sophisticated statement of the campaign's central class in the catalogue: not just 'assert the thing', but 'assert it in a way the plausible evasion cannot slip past'.
 
 ## Recorded history
 

@@ -28,9 +28,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🔑 I MEASURED IT: `config/loader.py` is **4431 lines**, against a clause of at most 5400 — so roughly 970 lines of headroom, comfortably past the ≥600 the atom asked for
+- the extracted sections live as real siblings in `config/` — `coercion.py`, `credentials.py`, `edit_spec.py`, `external_access.py`, `learning.py`, `migrations.py` — rather than as one file split at an arbitrary line
+- 🔑 THE CLAUSE'S REASONING IS THE PART THAT MATTERS: headroom 'for several ordinary config fields rather than one'. A ceiling met with fifty lines to spare converts the next config field into a refactor, which is how a size gate starts costing more than it saves
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** This plan's config-round-trip contract needs a place for new fields to land; a loader at its ceiling would make every new field a two-part change and the round-trip contract the thing that gets skipped.
 
 ## Recorded history
 

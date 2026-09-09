@@ -31,9 +31,23 @@ whole-enum iteration clears every member of the iterated class, across for/async
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🏅 THE ATOM'S TITLE IS AN ADMISSION AND THAT IS WHY IT IS GOOD: 'the false-red class its own docstring promised was impossible'. The census reported `Lineage.INFORMED_BY` and `Lineage.RELATED` inert while `workflows/publish.py:136` validated author-supplied edges against `{e.value for e in Lineage}` — 'a template author could reach both members AND THE CENSUS CALLED THEM DEAD'
+- 🔑 THE REPAIR RULE IS THE PART WORTH KEEPING: 'the fix is to TEACH THE DETECTOR THAT SHAPE — never to delete the line from the baseline by hand, and never to relax the forbidden-to-raise rule'. A census whose false positives are silenced by editing the baseline becomes a record of what somebody found annoying
+- coverage is exhaustive by construction rather than by example: for/async for, all four comprehension forms, and the list/tuple/set/frozenset/sorted/iter/reversed builtins
+- 🔑 AND THE ERROR DIRECTION IS STATED HONESTLY, WITH THE COST NAMED: clearing a class from one iteration site trades MORE under-reporting for eliminating an entire false-red class, because 'this census exists to name work worth doing, and A REPORTED SURFACE THAT IS ACTUALLY REACHABLE SENDS SOMEONE TO "FIX" WORKING CODE'
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** 🏅 That last sentence is the deepest thing in this plan. Most static-analysis tools choose the opposite trade and become noise; this one names the cost of a false red as a person breaking working code, and accepts more silence to avoid it.
 
 ## Recorded history
 

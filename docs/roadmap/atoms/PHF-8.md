@@ -32,9 +32,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- `tests/test_guardrails_ceiling.py` is green inside the 87
+- 🔑 'A PROFILE CANNOT WIDEN THE CEILING (test per archetype)' IS THE CORRECT ALGEBRA — intersect, never union. A profile system where a profile could raise its own ceiling is a profile system with no ceiling, and per-archetype coverage is what stops one archetype being the exception
+- 🔴 AN UNKNOWN MATCHER ABORTS BOOT WITH A WHAT/WHY/FIX ERROR rather than being ignored: an unrecognised matcher silently skipped would mean a rule the operator wrote and believes is in force is not
+- 🔑 AND THE ATOM PINS ITS OWN WRONG IMPLEMENTATION: 'a normpath-on-pattern implementation reds the matcher test'. Normalising the PATTERN rather than the path is the plausible mistake, and it is nailed down as a red rather than left to review
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Aborting boot is the right severity for an unknown matcher: a guardrail whose configuration cannot be understood is not a guardrail that should be started around.
 
 ## Recorded history
 

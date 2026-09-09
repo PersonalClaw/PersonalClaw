@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- the cgroup config and scope suites are green inside the earlier EI run, and the probe's never-raise contract is what lets it ship on every platform
+- 🔴 THE macOS HALF IS OBSERVABLE AND CORRECT: one warning stating pids/RSS are not enforced, rather than silence. A second tier that silently does nothing on the operator's platform is worse than an absent one, because the operator believes they have it
+- 🔴 THE LINUX FORK-BOMB FIXTURE WAS NOT OBSERVED — this host is macOS, so 'a fork bomb hits pids.max and dies contained' is unit-shaped here rather than driven
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Partial for the same honest reason as EI-2 and SH-2's keychain half: a platform-specific enforcement tier cannot be observed from the other platform. Recorded as unobserved rather than inferred.
 
 ## Recorded history
 

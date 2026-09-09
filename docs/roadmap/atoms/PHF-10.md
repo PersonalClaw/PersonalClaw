@@ -29,9 +29,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🪤 I OBSERVED THIS GATE CATCH MY OWN CAMPAIGN, WHICH IS THE STRONGEST POSSIBLE EVIDENCE IT WORKS. `test_docs_lint_baseline.py` is 12/12 green on `main` and 2 RED on this audit branch — the per-file counter rose and the committed baseline no longer byte-matches a fresh render, because `gen_atom_records.py` writes 685 record files whose relative links it does not re-anchor
+- 🔴 THAT IS ALREADY FILED AS #2807 BY THIS CAMPAIGN AND IS NOT A PHF DEFECT — verified by checking out `main` and re-running: 12/12. Withdrawn as a finding against this atom and recorded as the gate functioning
+- the clause 'the current population is committed (NOT ZERO)' is the same honesty PHF-6 applies, in a second domain
+- the plan-hygiene checker's clause is that it 'reproduces the known stale-header audit finding' — a checker validated against a defect someone already found by hand, which is the only way to know a new checker sees anything
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** 🪤 A stale `file:line` citation reddening CI is the rail that would have caught several of the stale plan headers this campaign found by reading. The gate exists; the roadmap plans are outside the trees it lints.
 
 ## Recorded history
 

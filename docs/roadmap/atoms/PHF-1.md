@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- the spawn-ceiling audit and cron-script ceiling suites are green inside the 87, and EI-3's census rail (falsified in cycle 65) is the tripwire this atom installed — a new agent-influenced spawn cannot be added unclassified
+- 🔑 THE SHIM 'IMPORTS AND RUNS WITH NO CORE DEPENDENCY' IS THE LOAD-BEARING CLAUSE: a post-exec shim that pulled core in would put the whole import graph inside every child spawn, so the ceiling would cost what it is trying to bound
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** The ACP-sessions clause is the regression this atom exists to avoid — a ceiling low enough to be useful is low enough to break multi-MCP sessions, so both had to be measured together.
 
 ## Recorded history
 

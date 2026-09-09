@@ -29,9 +29,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- `tests/test_gate_aggregate_runs_in_ci.py` is green inside the 76
+- 🔑 'A TREE WITH THREE INDEPENDENT FAILURES REPORTS ALL THREE IN ONE RUN' IS A COST DECISION STATED AS A CORRECTNESS ONE, and it is correct: a short-circuiting aggregate turns N independent failures into N round trips, and each round trip is a full CI cycle. One result table with every failure visible is the difference between one fix session and three
+- the atom also pins that the aggregate RUNS IN CI, not merely that it exists — the anti-inertness clause for a gate
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** This is the same property the audit itself relies on: every cycle's targeted suite reports all its failures at once, which is why a single falsification run can name both a structural and a behavioural rail.
 
 ## Recorded history
 

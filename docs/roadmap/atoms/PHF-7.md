@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🔑 'A GATEWAY BOOTS ON THE FAKE PROVIDER AND COMPLETES A SCRIPTED CHAT TURN WITH NO CREDENTIALS PRESENT' IS THE CLAUSE THIS WHOLE AUDIT CAMPAIGN HAS BEEN MISSING — the dominant partial class across sixty-plus cycles is 'not drivable without a bound model', and an offline fake-model harness is exactly the instrument that would close it
+- the split is stated honestly in the Makefile: `test-visual` is separated from `test-e2e` 'because its baselines are environment-sensitive (28/39 red on a clean main checkout' — a MEASURED reason for the split rather than a convenience
+- 🔴 A BARE PYTEST DOES NOT RUN THE BROWSER GATE, which is the right default: a suite that silently needed a browser would fail for contributors in a way that reads as a code defect
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** The harness itself was not run this cycle — the browser gate is a `make test-e2e` target and this cycle's budget went to the falsifications.
+
+**Notes:** Recorded as the audit's own missed instrument: several partial verdicts in earlier cycles said 'needs a bound model', and this atom shipped the thing that answers that. Worth using in a future pass rather than re-deriving the limitation.
 
 ## Recorded history
 

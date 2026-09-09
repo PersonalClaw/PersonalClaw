@@ -7948,5 +7948,207 @@
     ],
     "ui_validated": "Not driven: the live view needs an armed keystone and a real drive to show anything.",
     "notes": "A human-facing view of an agent driving the desktop is the right thing to build and the easiest thing to make lie. Pinning refused-paints-nothing beside failed-paints-the-attempt is what makes the overlay evidence rather than decoration."
+  },
+  "PHF-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "the spawn-ceiling audit and cron-script ceiling suites are green inside the 87, and EI-3's census rail (falsified in cycle 65) is the tripwire this atom installed — a new agent-influenced spawn cannot be added unclassified",
+      "🔑 THE SHIM 'IMPORTS AND RUNS WITH NO CORE DEPENDENCY' IS THE LOAD-BEARING CLAUSE: a post-exec shim that pulled core in would put the whole import graph inside every child spawn, so the ceiling would cost what it is trying to bound",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "The ACP-sessions clause is the regression this atom exists to avoid — a ceiling low enough to be useful is low enough to break multi-MCP sessions, so both had to be measured together."
+  },
+  "PHF-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "the cgroup config and scope suites are green inside the earlier EI run, and the probe's never-raise contract is what lets it ship on every platform",
+      "🔴 THE macOS HALF IS OBSERVABLE AND CORRECT: one warning stating pids/RSS are not enforced, rather than silence. A second tier that silently does nothing on the operator's platform is worse than an absent one, because the operator believes they have it",
+      "🔴 THE LINUX FORK-BOMB FIXTURE WAS NOT OBSERVED — this host is macOS, so 'a fork bomb hits pids.max and dies contained' is unit-shaped here rather than driven",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Partial for the same honest reason as EI-2 and SH-2's keychain half: a platform-specific enforcement tier cannot be observed from the other platform. Recorded as unobserved rather than inferred."
+  },
+  "PHF-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🔑 ARCC'S CSRF REQUIREMENT AND THIS ATOM ARE THE SAME PRIMITIVE AGAINST DIFFERENT THREATS, and this implementation is the STRONGER of the two. The guidance asks for HMAC token verification on state-changing requests, in a header, constant-time compared, with a short lifespan. Here the signed message is `<ts>:<METHOD>:<raw_path?query>:<sha256_hex(body)>` — SO THE BODY IS BOUND INTO THE SIGNATURE, which ARCC's own worked example (an HMAC over the session id alone) does not do. A captured signature cannot have its payload swapped",
+      "🔑 I FALSIFIED THE ±60s WINDOW — ARCC's 'short token lifespan' made concrete. Disabling the timestamp check reddened exactly `test_stale_signature_is_401` ('assert 200 == 401'), 1 failed / 17 passed, restored 18/18, tree byte-identical",
+      "constant-time comparison via `hmac.compare_digest`, and verification is fail-closed",
+      "🔑 THE THREAT IS NAMED PRECISELY, AND IT IS THE CONFUSED-DEPUTY SHAPE CSRF IS AN INSTANCE OF: 'the port is a NETWORK boundary, not an AUTHORIZATION one', so the signature is what stops 'a local process that finds the port' bypassing the gateway proxy 'and therefore session auth + the app-permission middleware'",
+      "🔑 ONE DEFINITION OF THE WIRE CONTRACT: signer (gateway) and verifier (SDK) both call `build_signing_string`/`sign_proxy_request`, so the two sides cannot drift — the same rule WF2WOR-10's two path checkers and SH-6's two denylist readers follow",
+      "`/health` is exempt WITH a stated reason (the watchdog probes it directly, not through the signing proxy) rather than as an unexplained hole",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface: inbound middleware on an app backend.",
+    "notes": "The secret reaches the backend through an environment variable that the supervisor mints 0600 on disk — so the file permission and the injection path are both part of the atom rather than assumed."
+  },
+  "PHF-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "`tests/test_child_env_allowlist.py` is green inside the 87",
+      "🔑 THE CLAUSE DEMANDS ONE REGRESSION TEST PER SITE — hook child, cron-script child, bash-action child — rather than one test of a shared helper. That is the right shape for an allowlist: a helper that is correct and applied at two of three call sites leaks at the third, and a single test of the helper would pass",
+      "an ALLOWLIST rather than a denylist is the correct direction here: a denylist has to enumerate every secret-shaped variable a user might export, and misses the next one",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "This is the same property EI-1's sandbox spec states as 'the ONLY environment the container receives' — replacement rather than filtering — arrived at independently for shell children."
+  },
+  "PHF-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "the config-schema and schema-validator suites are green inside the 76",
+      "🔑 THE THREE CLAUSES COVER THE THREE WAYS A SCHEMA BASELINE ROTS, and the third is the one usually missed: a rename must red, a re-render must be BYTE-IDENTICAL (so the baseline is not sensitive to ordering or formatting noise that would make every diff a conflict), and ADDING a field without regenerating must be caught — an append-only drift check would let new fields in silently",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Byte-identical regeneration is what makes the gate usable rather than an aggravation — a baseline that re-renders differently each run trains contributors to regenerate without reading."
+  },
+  "PHF-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🏅 THIS ATOM TURNS THIS CAMPAIGN'S SIGNATURE DEFECT CLASS INTO A COMMITTED, RATCHETED MEASUREMENT, and I read the artefact: `inert-surface-baseline.json` records **238 inert surfaces** across 36 files — 230 sdk_export, 8 enum, 0 config, 0 editable_config, 0 trigger_kind",
+      "🔴 IT DOES NOT CLAIM ZERO, which is the whole point: the atom's own clause is that 'the current inert population is measured and committed' and that 'each cleanup commit shrinks a counter with a test proving the writer' — a baseline asserting zero would have been a lie on day one and would have had to be relaxed on day two",
+      "adding a declared-but-unread surface reds CI, so the population can only fall",
+      "the enum count of 8 against PHF-13's 'thirteen surviving enum surfaces' is the ratchet working — the counter fell as the per-class audit cleared members",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface: a committed census plus a CI ratchet.",
+    "notes": "🏅 Every cycle of this audit has found an inert control somewhere. This plan measured the whole population, committed the number, and made it monotonic. That is the correct systemic answer to a defect class an audit can only find one instance at a time."
+  },
+  "PHF-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🔑 'A GATEWAY BOOTS ON THE FAKE PROVIDER AND COMPLETES A SCRIPTED CHAT TURN WITH NO CREDENTIALS PRESENT' IS THE CLAUSE THIS WHOLE AUDIT CAMPAIGN HAS BEEN MISSING — the dominant partial class across sixty-plus cycles is 'not drivable without a bound model', and an offline fake-model harness is exactly the instrument that would close it",
+      "the split is stated honestly in the Makefile: `test-visual` is separated from `test-e2e` 'because its baselines are environment-sensitive (28/39 red on a clean main checkout' — a MEASURED reason for the split rather than a convenience",
+      "🔴 A BARE PYTEST DOES NOT RUN THE BROWSER GATE, which is the right default: a suite that silently needed a browser would fail for contributors in a way that reads as a code defect",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "The harness itself was not run this cycle — the browser gate is a `make test-e2e` target and this cycle's budget went to the falsifications.",
+    "notes": "Recorded as the audit's own missed instrument: several partial verdicts in earlier cycles said 'needs a bound model', and this atom shipped the thing that answers that. Worth using in a future pass rather than re-deriving the limitation."
+  },
+  "PHF-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "`tests/test_guardrails_ceiling.py` is green inside the 87",
+      "🔑 'A PROFILE CANNOT WIDEN THE CEILING (test per archetype)' IS THE CORRECT ALGEBRA — intersect, never union. A profile system where a profile could raise its own ceiling is a profile system with no ceiling, and per-archetype coverage is what stops one archetype being the exception",
+      "🔴 AN UNKNOWN MATCHER ABORTS BOOT WITH A WHAT/WHY/FIX ERROR rather than being ignored: an unrecognised matcher silently skipped would mean a rule the operator wrote and believes is in force is not",
+      "🔑 AND THE ATOM PINS ITS OWN WRONG IMPLEMENTATION: 'a normpath-on-pattern implementation reds the matcher test'. Normalising the PATTERN rather than the path is the plausible mistake, and it is nailed down as a red rather than left to review",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Aborting boot is the right severity for an unknown matcher: a guardrail whose configuration cannot be understood is not a guardrail that should be started around."
+  },
+  "PHF-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🔑 FIVE CONSECUTIVE FULL-SUITE RUNS WITH ZERO UNCLOSED-DATABASE WARNINGS IS A ROOT-CAUSE CLAUSE RATHER THAN A RETRY CLAUSE, which is the difference between fixing a flake and hiding one",
+      "🔴 AND THE BEST LINE IN THE ATOM IS THE INVERSION: 'a genuine SEL write failure now RAISES rather than' being swallowed. A test suite made quiet by swallowing a real error is worse than a flaky one, because the flake at least announced itself",
+      "the xdist scheduler decision being part of the atom is right: a parallel scheduler chosen without measuring is the usual cause of the next flake generation",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "The audit did not run the suite five times this cycle. What was observed is that every targeted suite this campaign has run — sixty-plus cycles, thousands of tests — has been deterministic, which is indirect evidence the floor holds."
+  },
+  "PHF-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🪤 I OBSERVED THIS GATE CATCH MY OWN CAMPAIGN, WHICH IS THE STRONGEST POSSIBLE EVIDENCE IT WORKS. `test_docs_lint_baseline.py` is 12/12 green on `main` and 2 RED on this audit branch — the per-file counter rose and the committed baseline no longer byte-matches a fresh render, because `gen_atom_records.py` writes 685 record files whose relative links it does not re-anchor",
+      "🔴 THAT IS ALREADY FILED AS #2807 BY THIS CAMPAIGN AND IS NOT A PHF DEFECT — verified by checking out `main` and re-running: 12/12. Withdrawn as a finding against this atom and recorded as the gate functioning",
+      "the clause 'the current population is committed (NOT ZERO)' is the same honesty PHF-6 applies, in a second domain",
+      "the plan-hygiene checker's clause is that it 'reproduces the known stale-header audit finding' — a checker validated against a defect someone already found by hand, which is the only way to know a new checker sees anything",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "🪤 A stale `file:line` citation reddening CI is the rail that would have caught several of the stale plan headers this campaign found by reading. The gate exists; the roadmap plans are outside the trees it lints."
+  },
+  "PHF-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "`tests/test_gate_aggregate_runs_in_ci.py` is green inside the 76",
+      "🔑 'A TREE WITH THREE INDEPENDENT FAILURES REPORTS ALL THREE IN ONE RUN' IS A COST DECISION STATED AS A CORRECTNESS ONE, and it is correct: a short-circuiting aggregate turns N independent failures into N round trips, and each round trip is a full CI cycle. One result table with every failure visible is the difference between one fix session and three",
+      "the atom also pins that the aggregate RUNS IN CI, not merely that it exists — the anti-inertness clause for a gate",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "This is the same property the audit itself relies on: every cycle's targeted suite reports all its failures at once, which is why a single falsification run can name both a structural and a behavioural rail."
+  },
+  "PHF-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🏅 THE ATOM'S TITLE IS AN ADMISSION AND THAT IS WHY IT IS GOOD: 'the false-red class its own docstring promised was impossible'. The census reported `Lineage.INFORMED_BY` and `Lineage.RELATED` inert while `workflows/publish.py:136` validated author-supplied edges against `{e.value for e in Lineage}` — 'a template author could reach both members AND THE CENSUS CALLED THEM DEAD'",
+      "🔑 THE REPAIR RULE IS THE PART WORTH KEEPING: 'the fix is to TEACH THE DETECTOR THAT SHAPE — never to delete the line from the baseline by hand, and never to relax the forbidden-to-raise rule'. A census whose false positives are silenced by editing the baseline becomes a record of what somebody found annoying",
+      "coverage is exhaustive by construction rather than by example: for/async for, all four comprehension forms, and the list/tuple/set/frozenset/sorted/iter/reversed builtins",
+      "🔑 AND THE ERROR DIRECTION IS STATED HONESTLY, WITH THE COST NAMED: clearing a class from one iteration site trades MORE under-reporting for eliminating an entire false-red class, because 'this census exists to name work worth doing, and A REPORTED SURFACE THAT IS ACTUALLY REACHABLE SENDS SOMEONE TO \"FIX\" WORKING CODE'",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "🏅 That last sentence is the deepest thing in this plan. Most static-analysis tools choose the opposite trade and become noise; this one names the cost of a false red as a person breaking working code, and accepts more silence to avoid it."
+  },
+  "PHF-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🔑 THE CONVERSE RULING IS AS VALUABLE AS PHF-12'S RULE: 'a shape is only worth teaching when it PROVES reachability. Value-lookup `E(value)` does not, so it is deliberately NOT taught.' The bar is stated as a conjunction — `E(value)` proves reachability only when the construction ACTUALLY EXECUTES in production AND its value crosses a trust/authoring boundary",
+      "🪤 AND IT AUDITED ITS PREDECESSOR'S PREMISE AND FOUND IT WRONG: PHF-12 had left value-lookup named as the 'known remaining false-red shape' on the strength of one site, and the six-site audit 'found that premise WRONG and the shape unsound as a clearing rule'. A plan atom that overturns the previous atom's stated assumption, with evidence",
+      "🔑 PER-SITE PROVENANCE WITH FILE AND LINE FOR ALL SIX, and exactly one is a genuine false red: `tasks/models.py:74` `DependencyType(raw_type)`, reached from `POST /api/tasks` through a named four-hop chain, where 'a client picks the member'. It 'stays REPORTED rather than being cleared by an unsound rule'",
+      "the internal-only rulings carry their disproof too: `MemoryTier`/`MemoryScope` are 'fed by rows this codebase wrote via `to_row`; the vault mirror is render-only (no parse back). NOTHING WRITES \"segment\" or \"workspace\", so neither member round-trips in'",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "Leaving the one true false red REPORTED rather than clearing it with a rule that would also clear five unreachable members is the correct call, and it is the opposite of what a metric-driven cleanup would do."
+  },
+  "PHF-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "🔑 I MEASURED IT: `config/loader.py` is **4431 lines**, against a clause of at most 5400 — so roughly 970 lines of headroom, comfortably past the ≥600 the atom asked for",
+      "the extracted sections live as real siblings in `config/` — `coercion.py`, `credentials.py`, `edit_spec.py`, `external_access.py`, `learning.py`, `migrations.py` — rather than as one file split at an arbitrary line",
+      "🔑 THE CLAUSE'S REASONING IS THE PART THAT MATTERS: headroom 'for several ordinary config fields rather than one'. A ceiling met with fifty lines to spare converts the next config field into a refactor, which is how a size gate starts costing more than it saves",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "This plan's config-round-trip contract needs a place for new fields to land; a loader at its ceiling would make every new field a two-part change and the round-trip contract the thing that gets skipped."
+  },
+  "PHF-15": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate",
+    "evidence": [
+      "`tests/test_import_time_config_writes.py` is green inside the 76, and the shape is the load-bearing part",
+      "🔑 A FRESH-INTERPRETER SUBPROCESS RAIL IS THE ONLY WAY TO PROVE 'NO WRITE UNDER ANY INPUT': in-process, a previous test's import has already run the module's side effects, so the write it is looking for has happened before the assertion exists. This campaign has found several assertions that could not fail; this one is designed so it can",
+      "🔴 AND THE SECOND HALF IS THE SUBTLER REQUIREMENT: the real-home rail must be able to SEE a metadata-preserving writer. A writer that preserves mtime and permissions is invisible to the obvious check, so the rail is built to catch the write that tried not to be noticed",
+      "a pure `load()` is what lets every other atom in this plan read config freely — a loader that wrote on read would make config access a mutation nobody expected",
+      "76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines"
+    ],
+    "ui_validated": "Not a browser surface.",
+    "notes": "🏅 'The real-home rail must be able to see a metadata-preserving writer' is the most sophisticated statement of the campaign's central class in the catalogue: not just 'assert the thing', but 'assert it in a way the plausible evasion cannot slip past'."
   }
 }

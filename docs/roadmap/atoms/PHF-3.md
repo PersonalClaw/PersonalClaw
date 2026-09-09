@@ -29,9 +29,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🔑 ARCC'S CSRF REQUIREMENT AND THIS ATOM ARE THE SAME PRIMITIVE AGAINST DIFFERENT THREATS, and this implementation is the STRONGER of the two. The guidance asks for HMAC token verification on state-changing requests, in a header, constant-time compared, with a short lifespan. Here the signed message is `<ts>:<METHOD>:<raw_path?query>:<sha256_hex(body)>` — SO THE BODY IS BOUND INTO THE SIGNATURE, which ARCC's own worked example (an HMAC over the session id alone) does not do. A captured signature cannot have its payload swapped
+- 🔑 I FALSIFIED THE ±60s WINDOW — ARCC's 'short token lifespan' made concrete. Disabling the timestamp check reddened exactly `test_stale_signature_is_401` ('assert 200 == 401'), 1 failed / 17 passed, restored 18/18, tree byte-identical
+- constant-time comparison via `hmac.compare_digest`, and verification is fail-closed
+- 🔑 THE THREAT IS NAMED PRECISELY, AND IT IS THE CONFUSED-DEPUTY SHAPE CSRF IS AN INSTANCE OF: 'the port is a NETWORK boundary, not an AUTHORIZATION one', so the signature is what stops 'a local process that finds the port' bypassing the gateway proxy 'and therefore session auth + the app-permission middleware'
+- 🔑 ONE DEFINITION OF THE WIRE CONTRACT: signer (gateway) and verifier (SDK) both call `build_signing_string`/`sign_proxy_request`, so the two sides cannot drift — the same rule WF2WOR-10's two path checkers and SH-6's two denylist readers follow
+- `/health` is exempt WITH a stated reason (the watchdog probes it directly, not through the signing proxy) rather than as an unexplained hole
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface: inbound middleware on an app backend.
+
+**Notes:** The secret reaches the backend through an environment variable that the supervisor mints 0600 on disk — so the file permission and the injection path are both part of the atom rather than assumed.
 
 ## Recorded history
 

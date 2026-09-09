@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- `tests/test_child_env_allowlist.py` is green inside the 87
+- 🔑 THE CLAUSE DEMANDS ONE REGRESSION TEST PER SITE — hook child, cron-script child, bash-action child — rather than one test of a shared helper. That is the right shape for an allowlist: a helper that is correct and applied at two of three call sites leaks at the third, and a single test of the helper would pass
+- an ALLOWLIST rather than a denylist is the correct direction here: a denylist has to enumerate every secret-shaped variable a user might export, and misses the next one
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** This is the same property EI-1's sandbox spec states as 'the ONLY environment the container receives' — replacement rather than filtering — arrived at independently for shell children.
 
 ## Recorded history
 

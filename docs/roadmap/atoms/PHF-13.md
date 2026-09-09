@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 68 (PHF) — the proxy-signature replay window falsified; the plan that turns this campaign's own defect class into a ratcheted CI gate
+
+**Code evidence:**
+
+- 🔑 THE CONVERSE RULING IS AS VALUABLE AS PHF-12'S RULE: 'a shape is only worth teaching when it PROVES reachability. Value-lookup `E(value)` does not, so it is deliberately NOT taught.' The bar is stated as a conjunction — `E(value)` proves reachability only when the construction ACTUALLY EXECUTES in production AND its value crosses a trust/authoring boundary
+- 🪤 AND IT AUDITED ITS PREDECESSOR'S PREMISE AND FOUND IT WRONG: PHF-12 had left value-lookup named as the 'known remaining false-red shape' on the strength of one site, and the six-site audit 'found that premise WRONG and the shape unsound as a clearing rule'. A plan atom that overturns the previous atom's stated assumption, with evidence
+- 🔑 PER-SITE PROVENANCE WITH FILE AND LINE FOR ALL SIX, and exactly one is a genuine false red: `tasks/models.py:74` `DependencyType(raw_type)`, reached from `POST /api/tasks` through a named four-hop chain, where 'a client picks the member'. It 'stays REPORTED rather than being cleared by an unsound rule'
+- the internal-only rulings carry their disproof too: `MemoryTier`/`MemoryScope` are 'fed by rows this codebase wrote via `to_row`; the vault mirror is render-only (no parse back). NOTHING WRITES "segment" or "workspace", so neither member round-trips in'
+- 76+87+18 = 181 passed across the inert-baseline, config-schema, import-time-write, aggregate-gate, ceiling, env-allowlist, config-roundtrip and app-backend-proxy suites; the replay window falsified and restored 18/18; loader.py measured at 4431 lines
+
+**Driven in the UI:** Not a browser surface.
+
+**Notes:** Leaving the one true false red REPORTED rather than clearing it with a rule that would also clear five unreachable members is the correct call, and it is the opposite of what a metric-driven cleanup would do.
 
 ## Recorded history
 
