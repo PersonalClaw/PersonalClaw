@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- web/src/pages/loops/QuestionSlider.tsx + sliderState.ts + sliderState.test.ts + LoopPlanReview.tsx all present
+- MEASURED: 176 web tests pass across 16 files under pages/loops
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Driven in the UI:** Not driven: the stepper renders inside a deep-rigor planning round and the review streams a generated plan — both need a model to produce the content the surface exists to show.
+
+**Notes:** Partial for the drive. The state machine being extracted into its own sliderState module with its own tests is what makes 'one-at-a-time, custom-answer escape hatch, single Submit' checkable without a live round.
 
 ## Recorded history
 

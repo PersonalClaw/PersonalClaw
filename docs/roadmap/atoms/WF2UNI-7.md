@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- session_map.py resolves a session id to sessions/<sid>.jsonl, feeding the mining path the atom names
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Partial for the wiring under load: discover-then-freeze persisting LLM-generated specs is a model path. The resolution seam is observable and present.
 
 ## Recorded history
 

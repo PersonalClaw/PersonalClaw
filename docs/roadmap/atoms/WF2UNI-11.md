@@ -32,9 +32,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- generation.py carries the codebase_context the atom names, cached per (project_id, tree-hash) with a 7-day TTL
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Partial: a populated brownfield context pass is a real synthesis over a real project tree. The cache key is the checkable part and it is the right one — keying on the tree hash rather than a timestamp means a changed tree invalidates immediately rather than waiting out the TTL.
 
 ## Recorded history
 

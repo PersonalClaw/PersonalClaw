@@ -32,9 +32,19 @@ Planning Surfaces Collapsed by This Plan; Execution log S40 DEVIATION (plan_memo
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- MEASURED deletion: src/personalclaw/plan_memory.py does NOT exist, and no module under src/personalclaw/ references that name — the retirement landed with no dangling importer and no re-export shim
+- the atom records the owner ruling that authorised the split (2026-08-27, q6), and the live subagent context-budget half survives elsewhere rather than being deleted with the planning half
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** A clean break in the repo's own sense: the replaced mechanism is gone in the same change rather than left beside its replacement. Same shape as DIST-13's deletion of the install-kind handler, which I verified two cycles ago.
 
 ## Recorded history
 

@@ -30,9 +30,20 @@ workflows/autonomy.py provides the action-shaped risk-signal registry (reusing e
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/autonomy.py:29 states the posture in one line: 'The interrupt taxonomy ADVISES; it does not enforce'
+- the risk-signal registry is action-shaped, REUSES the engine's RiskLevel rather than minting a second scale, and each signal states a consequence
+- false positives are pinned by regression tests — the half that keeps a risk registry from drifting into noise
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Reusing the engine's RiskLevel is the same one-vocabulary discipline ES-13's trust record applied to rungs, and the 'advises, does not enforce' line is the same honesty TSE-4's ownership module used for its author field. Three plans, one habit.
 
 ## Recorded history
 

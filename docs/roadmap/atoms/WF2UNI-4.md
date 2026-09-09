@@ -31,9 +31,19 @@ workflows/revision.py implements merge-by-id patch semantics (absent-preserved i
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/revision.py present with merge-by-id patch semantics; the atom's own framing is that 'absent-preserved is structural' and the replace/add refusals are deliberate
+- the NO_UPDATE sentinel plus TTL'd sketches with a TOMBSTONE SET — a tombstone is what stops a TTL'd item from silently reappearing
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Absent-means-preserved is the right default for a patch a model produces: the alternative (absent means delete) turns every omission in a generated patch into data loss.
 
 ## Recorded history
 

@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 96 | `done_when` checked against the code and it holds |
-| `partial` | 107 | some `done_when` clauses hold, others do not |
+| `confirmed` | 104 | `done_when` checked against the code and it holds |
+| `partial` | 113 | some `done_when` clauses hold, others do not |
 | `contradicted` | 1 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 478 | not yet checked |
+| `unaudited` | 464 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -994,20 +994,20 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2UNI-1`](WF2UNI-1.md) | `done` | `unaudited` | Matching + classification: no-LLM intent classifier + tiered match_template T1-T5 + routing-fixture CI gate |
-| [`WF2UNI-2`](WF2UNI-2.md) | `done` | `unaudited` | Grounded from-scratch generation: bundle from live registries + pattern-shape registry + schema-constrained oneOf emission + self-check/repair |
-| [`WF2UNI-3`](WF2UNI-3.md) | `done` | `unaudited` | Stage contracts + parameterization: resolve_unfilled_inputs/template_types + extraction contract + done-means lint + preflight + decision typing |
-| [`WF2UNI-4`](WF2UNI-4.md) | `done` | `unaudited` | Review + revision: typed merge-by-id patches + NO_UPDATE sentinel + TTL'd draft sketches + announce-block surface + plan-as-markdown |
-| [`WF2UNI-5`](WF2UNI-5.md) | `done` | `unaudited` | Autonomy + risk: risk-signal registry + autonomy floors/offers + HITL/AFK typing -> require_hitl + confirmation matrix + earned trust |
-| [`WF2UNI-6`](WF2UNI-6.md) | `done` | `unaudited` | Grill + rigor axis + template-pipeline & eval-spec modules (built, pure): structured deep-rigor protocol, fast-path/Specify, mining/scrubbing, per-template evals |
-| [`WF2UNI-7`](WF2UNI-7.md) | `done` | `unaudited` | Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer |
-| [`WF2UNI-8`](WF2UNI-8.md) | `done` | `unaudited` | revise{step_ref, comment} as a workflow_resume answer verb (span-scoped re-plan re-invoking the planner on one node) |
-| [`WF2UNI-9`](WF2UNI-9.md) | `done` | `unaudited` | Watched-scratchpad intake (Success Criterion 9): periodic scan proposes plans into the needs-input inbox, never auto-executed, with source backlink + dedup |
-| [`WF2UNI-10`](WF2UNI-10.md) | `done` | `unaudited` | Frontend review surface: QuestionSlider/ask() stepper widget + streaming multi-view render + new SSE events into RUN_LIFECYCLE + small-model naming call |
-| [`WF2UNI-11`](WF2UNI-11.md) | `done` | `unaudited` | Populate the grounding inputs: brownfield context pass (UP-R17), entity/topic preamble (UP-R14), and wire T4/T5 embedding tie-break to a live embedder/model |
-| [`WF2UNI-12`](WF2UNI-12.md) | `done` | `unaudited` | Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers |
-| [`WF2UNI-13`](WF2UNI-13.md) | `done` | `unaudited` | Give the unattended-interrupt taxonomy a producer and a reader, delete the member that had no signal, and ratchet both enums |
-| [`WF2UNI-14`](WF2UNI-14.md) | `blocked` | `unaudited` | Retire legacy planning modules after loop drain (split from WF2UNI-12 per ruling) |
+| [`WF2UNI-1`](WF2UNI-1.md) | `done` | `confirmed` | Matching + classification: no-LLM intent classifier + tiered match_template T1-T5 + routing-fixture CI gate |
+| [`WF2UNI-2`](WF2UNI-2.md) | `done` | `partial` | Grounded from-scratch generation: bundle from live registries + pattern-shape registry + schema-constrained oneOf emission + self-check/repair |
+| [`WF2UNI-3`](WF2UNI-3.md) | `done` | `confirmed` | Stage contracts + parameterization: resolve_unfilled_inputs/template_types + extraction contract + done-means lint + preflight + decision typing |
+| [`WF2UNI-4`](WF2UNI-4.md) | `done` | `confirmed` | Review + revision: typed merge-by-id patches + NO_UPDATE sentinel + TTL'd draft sketches + announce-block surface + plan-as-markdown |
+| [`WF2UNI-5`](WF2UNI-5.md) | `done` | `confirmed` | Autonomy + risk: risk-signal registry + autonomy floors/offers + HITL/AFK typing -> require_hitl + confirmation matrix + earned trust |
+| [`WF2UNI-6`](WF2UNI-6.md) | `done` | `partial` | Grill + rigor axis + template-pipeline & eval-spec modules (built, pure): structured deep-rigor protocol, fast-path/Specify, mining/scrubbing, per-template evals |
+| [`WF2UNI-7`](WF2UNI-7.md) | `done` | `partial` | Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer |
+| [`WF2UNI-8`](WF2UNI-8.md) | `done` | `partial` | revise{step_ref, comment} as a workflow_resume answer verb (span-scoped re-plan re-invoking the planner on one node) |
+| [`WF2UNI-9`](WF2UNI-9.md) | `done` | `confirmed` | Watched-scratchpad intake (Success Criterion 9): periodic scan proposes plans into the needs-input inbox, never auto-executed, with source backlink + dedup |
+| [`WF2UNI-10`](WF2UNI-10.md) | `done` | `partial` | Frontend review surface: QuestionSlider/ask() stepper widget + streaming multi-view render + new SSE events into RUN_LIFECYCLE + small-model naming call |
+| [`WF2UNI-11`](WF2UNI-11.md) | `done` | `partial` | Populate the grounding inputs: brownfield context pass (UP-R17), entity/topic preamble (UP-R14), and wire T4/T5 embedding tie-break to a live embedder/model |
+| [`WF2UNI-12`](WF2UNI-12.md) | `done` | `confirmed` | Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers |
+| [`WF2UNI-13`](WF2UNI-13.md) | `done` | `confirmed` | Give the unattended-interrupt taxonomy a producer and a reader, delete the member that had no signal, and ratchet both enums |
+| [`WF2UNI-14`](WF2UNI-14.md) | `blocked` | `confirmed` | Retire legacy planning modules after loop drain (split from WF2UNI-12 per ruling) |
 
 ### `WF2WOR` — WORKFLOWS-V2-WORK-CONTAINERS (12/12 done)
 

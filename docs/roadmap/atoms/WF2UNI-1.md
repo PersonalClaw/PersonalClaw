@@ -29,9 +29,19 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/intent.py and workflows/matcher.py both present, with the T1-T5 tiering and reason strings the atom names
+- the classifier is deliberately LLM-FREE, which is what makes the routing decision cheap enough to run on every plan request
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Confirmed on modules + tests. The no-LLM property matters beyond cost: it is also why the scratchpad intake (WF2UNI-9) can triage a line without spending a model call per jotted note.
 
 ## Recorded history
 

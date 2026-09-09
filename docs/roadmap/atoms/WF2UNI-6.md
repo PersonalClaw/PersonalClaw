@@ -30,9 +30,18 @@ workflows/grill_protocol.py (recommendation-bearing question rounds, facts-vs-de
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/grill_protocol.py and workflows/rigor.py both present, with the facts-vs-decisions channel split, Step-0, frozen prohibitions and a SaveFn persistence seam
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Partial: 'recommendation-bearing question rounds' and the stress-test are behaviours under a real deep-rigor session, which needs a model. The atom's own title says these are 'built, pure' modules, so the code half is exactly what is checkable — and it is present.
 
 ## Recorded history
 

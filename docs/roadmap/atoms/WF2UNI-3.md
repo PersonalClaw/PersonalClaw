@@ -31,9 +31,19 @@ workflows/contracts.py provides resolve_unfilled_inputs(), template_types(), the
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/contracts.py present with resolve_unfilled_inputs() and template_types()
+- the minimal-triple lint carries TWO MEASURED EXEMPTIONS rather than a blanket allowance, which is the shape that keeps a lint honest
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** The exemptions being measured rather than asserted is the detail worth recording: a lint with an unbounded escape hatch is a lint nobody has to satisfy.
 
 ## Recorded history
 

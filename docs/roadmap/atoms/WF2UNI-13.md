@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- MEASURED live producer: mcp_workflows.py:1127 emits 'unattended_interrupts': autonomy_mod.unattended_interrupts(confirmations) into the plan preview, and autonomy.py:761 is where should_interrupt is actually called — a production caller, not a test-only one
+- MEASURED deletion: CONFLICTING survives only in prose (the docstring explaining its removal and two test docstrings). No code path names it
+- THE ANTI-INERTNESS RATCHET IS REAL AND GENERAL: tests/test_workflows_autonomy.py:639 test_every_interrupt_member_is_produced reads the enum names out of should_interrupt's AST SOURCE and asserts they equal the enum's members, and its sibling explains why source-reading beats a parametrised call ('a fallthrough shared by two types would satisfy the parametrized test above while leaving the next type's semantics undeclared')
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** 🎯 THE MOST IMPORTANT FINDING OF THIS CYCLE, and it is a good one. The enum's docstring states the exact principle my audit has been rediscovering plan after plan: 'A documented interrupt nothing can produce is worse than no interrupt at all — it reads, to anyone auditing the guardrail, like a stop that exists.' That is BA-5's unconsumed broadcast, DHT-9's unrailed contract and DAS-1's unreachable diagnostic, named as a class — and this module does not merely avoid it, it RATCHETS against it in a way that generalises to any closed enum. WF2UNI-13 deleted CONFLICTING for precisely that reason and says where the one real contradiction is handled instead: a template autonomy_floor above the risk ceiling, resolved at PLAN time in offer_autonomy by letting the floor win, 'so it never reaches a run to stop it'. The codebase already had the vocabulary for the defect class this campaign keeps finding.
 
 ## Recorded history
 

@@ -2226,5 +2226,158 @@
     ],
     "ui_validated": "Not driven with live data: Mission Control's 'Working' lane read 'Nothing is running right now', which is the honest state of a home with no runs. The fold has nothing to fold.",
     "notes": "Partial because the atom's substance is that the hook FOLDS four live signal sources (loops, chat session states, subagent states, progress envelopes) refreshed by EXISTING WS envelopes. The reuse-not-mint half is checkable and holds — no new WS event was introduced, the same decision AE-10 made and the opposite of BA-5's three unconsumed events. What is unobserved is the fold under real concurrent activity, which is exactly where a signal-folding hook would go wrong."
+  },
+  "WF2UNI-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/intent.py and workflows/matcher.py both present, with the T1-T5 tiering and reason strings the atom names",
+      "the classifier is deliberately LLM-FREE, which is what makes the routing decision cheap enough to run on every plan request",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Confirmed on modules + tests. The no-LLM property matters beyond cost: it is also why the scratchpad intake (WF2UNI-9) can triage a line without spending a model call per jotted note."
+  },
+  "WF2UNI-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/grounding.py, patterns.py and generation.py all present with the three-tier signature discovery and the pattern-shape registry",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Partial: the atom's substance is that generation is GROUNDED in live registries and that each of seven proven shapes carries a stopping condition. The modules and their fixture tests hold, but a from-scratch generation run is a model call, so I did not observe a generated plan. The stopping-condition-per-shape claim is the one I would most want to see under a real generation, because a shape without one is how a planner loops forever."
+  },
+  "WF2UNI-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/contracts.py present with resolve_unfilled_inputs() and template_types()",
+      "the minimal-triple lint carries TWO MEASURED EXEMPTIONS rather than a blanket allowance, which is the shape that keeps a lint honest",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "The exemptions being measured rather than asserted is the detail worth recording: a lint with an unbounded escape hatch is a lint nobody has to satisfy."
+  },
+  "WF2UNI-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/revision.py present with merge-by-id patch semantics; the atom's own framing is that 'absent-preserved is structural' and the replace/add refusals are deliberate",
+      "the NO_UPDATE sentinel plus TTL'd sketches with a TOMBSTONE SET — a tombstone is what stops a TTL'd item from silently reappearing",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Absent-means-preserved is the right default for a patch a model produces: the alternative (absent means delete) turns every omission in a generated patch into data loss."
+  },
+  "WF2UNI-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/autonomy.py:29 states the posture in one line: 'The interrupt taxonomy ADVISES; it does not enforce'",
+      "the risk-signal registry is action-shaped, REUSES the engine's RiskLevel rather than minting a second scale, and each signal states a consequence",
+      "false positives are pinned by regression tests — the half that keeps a risk registry from drifting into noise",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Reusing the engine's RiskLevel is the same one-vocabulary discipline ES-13's trust record applied to rungs, and the 'advises, does not enforce' line is the same honesty TSE-4's ownership module used for its author field. Three plans, one habit."
+  },
+  "WF2UNI-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "workflows/grill_protocol.py and workflows/rigor.py both present, with the facts-vs-decisions channel split, Step-0, frozen prohibitions and a SaveFn persistence seam",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Partial: 'recommendation-bearing question rounds' and the stress-test are behaviours under a real deep-rigor session, which needs a model. The atom's own title says these are 'built, pure' modules, so the code half is exactly what is checkable — and it is present."
+  },
+  "WF2UNI-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "session_map.py resolves a session id to sessions/<sid>.jsonl, feeding the mining path the atom names",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Partial for the wiring under load: discover-then-freeze persisting LLM-generated specs is a model path. The resolution seam is observable and present."
+  },
+  "WF2UNI-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "revision.py's merge-by-id patch is the target the answer verb routes to (see WF2UNI-4)",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Partial: the clause is an answer-grammar round trip through workflow_resume — revise{step_ref, comment} scoped to exactly ONE node, with awaiting_review to running semantics. Exercising it needs a live run parked awaiting review."
+  },
+  "WF2UNI-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "planning/scratchpad.py:1-6 states the safety direction as the design: a periodic scan of one configured local file turns each actionable line into 'a proposal in the needs-input inbox, NEVER into a run. Nothing on this path can start a workflow — a human accepts first'",
+      "THREE HARD CAPS on untrusted input: MAX_SCAN_BYTES 512 KiB, MAX_SCAN_LINES 5000, MAX_PROPOSALS_PER_SCAN 5",
+      "the checked/struck filter is called out as 'the substance, not a detail', with the failure it prevents named: proposing work the user already finished or deliberately dropped, 'every scan, forever' — and it runs BEFORE anything else",
+      "TWO dedup tiers, with the reasoning for why the shared dedup_key is right for its own job and wrong here (a DISMISSED request is genuinely new when it recurs elsewhere, and must not be here)",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "ARCC was queried first (a configured filesystem path feeding an automated intake) and returned only AWS/Azure cloud detections with no application-level analogue — noted as checked. The interesting comparison is internal rather than external: this atom has exactly the bounded-input discipline that DFE-3 was missing, and which I filed as issue #2747 two cycles ago. Same repository, same class of untrusted input, one plan capped it three ways and the other capped nothing. I also checked for credential redaction on the intake and decided it is NOT owed: the classifier is LLM-free, the path is the owner's own configured notes file, and nothing reaches a model until a human accepts the proposal — materially different from DHT-2's web-authored HTML, where redaction IS applied."
+  },
+  "WF2UNI-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "web/src/pages/loops/QuestionSlider.tsx + sliderState.ts + sliderState.test.ts + LoopPlanReview.tsx all present",
+      "MEASURED: 176 web tests pass across 16 files under pages/loops",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "ui_validated": "Not driven: the stepper renders inside a deep-rigor planning round and the review streams a generated plan — both need a model to produce the content the surface exists to show.",
+    "notes": "Partial for the drive. The state machine being extracted into its own sliderState module with its own tests is what makes 'one-at-a-time, custom-answer escape hatch, single Submit' checkable without a live round."
+  },
+  "WF2UNI-11": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "generation.py carries the codebase_context the atom names, cached per (project_id, tree-hash) with a 7-day TTL",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "Partial: a populated brownfield context pass is a real synthesis over a real project tree. The cache key is the checkable part and it is the right one — keying on the tree hash rather than a timestamp means a changed tree invalidates immediately rather than waiting out the TTL."
+  },
+  "WF2UNI-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "MEASURED deletion: src/personalclaw/plan_memory.py does NOT exist, and no module under src/personalclaw/ references that name — the retirement landed with no dangling importer and no re-export shim",
+      "the atom records the owner ruling that authorised the split (2026-08-27, q6), and the live subagent context-budget half survives elsewhere rather than being deleted with the planning half",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "A clean break in the repo's own sense: the replaced mechanism is gone in the same change rather than left beside its replacement. Same shape as DIST-13's deletion of the install-kind handler, which I verified two cycles ago."
+  },
+  "WF2UNI-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "MEASURED live producer: mcp_workflows.py:1127 emits 'unattended_interrupts': autonomy_mod.unattended_interrupts(confirmations) into the plan preview, and autonomy.py:761 is where should_interrupt is actually called — a production caller, not a test-only one",
+      "MEASURED deletion: CONFLICTING survives only in prose (the docstring explaining its removal and two test docstrings). No code path names it",
+      "THE ANTI-INERTNESS RATCHET IS REAL AND GENERAL: tests/test_workflows_autonomy.py:639 test_every_interrupt_member_is_produced reads the enum names out of should_interrupt's AST SOURCE and asserts they equal the enum's members, and its sibling explains why source-reading beats a parametrised call ('a fallthrough shared by two types would satisfy the parametrized test above while leaving the next type's semantics undeclared')",
+      "430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files"
+    ],
+    "notes": "🎯 THE MOST IMPORTANT FINDING OF THIS CYCLE, and it is a good one. The enum's docstring states the exact principle my audit has been rediscovering plan after plan: 'A documented interrupt nothing can produce is worse than no interrupt at all — it reads, to anyone auditing the guardrail, like a stop that exists.' That is BA-5's unconsumed broadcast, DHT-9's unrailed contract and DAS-1's unreachable diagnostic, named as a class — and this module does not merely avoid it, it RATCHETS against it in a way that generalises to any closed enum. WF2UNI-13 deleted CONFLICTING for precisely that reason and says where the one real contradiction is handled instead: a template autonomy_floor above the risk ceiling, resolved at PLAN time in offer_autonomy by letting the floor win, 'so it never reaches a run to stop it'. The codebase already had the vocabulary for the defect class this campaign keeps finding."
+  },
+  "WF2UNI-14": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 21 (WF2UNI) — code + tests observed on this machine",
+    "evidence": [
+      "dag.json records this atom as `blocked` — the first blocked atom in this audit — and the code AGREES: all four named modules still exist (planning/runner.py, planning/session.py, loop/plan_walkthrough.py, loop/classify.py), which is what 'not yet deleted' looks like",
+      "its declared blocker is genuinely open: PP-16 ('A Loop becomes a WorkflowRun') is `todo` in the same catalogue, so the Phase-3-to-4 drain this atom waits on has not happened"
+    ],
+    "notes": "Confirmed as a correctly-recorded BLOCKED atom rather than as delivered work, which is the only thing an audit can confirm about work nobody has started. Two things had to hold together and both do: the deletions have not happened, and the dependency that would license them is still open. A stale blocker — one whose dependency had since landed — would have been the finding here; there isn't one."
   }
 }

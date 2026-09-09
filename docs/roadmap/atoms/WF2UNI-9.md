@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- planning/scratchpad.py:1-6 states the safety direction as the design: a periodic scan of one configured local file turns each actionable line into 'a proposal in the needs-input inbox, NEVER into a run. Nothing on this path can start a workflow — a human accepts first'
+- THREE HARD CAPS on untrusted input: MAX_SCAN_BYTES 512 KiB, MAX_SCAN_LINES 5000, MAX_PROPOSALS_PER_SCAN 5
+- the checked/struck filter is called out as 'the substance, not a detail', with the failure it prevents named: proposing work the user already finished or deliberately dropped, 'every scan, forever' — and it runs BEFORE anything else
+- TWO dedup tiers, with the reasoning for why the shared dedup_key is right for its own job and wrong here (a DISMISSED request is genuinely new when it recurs elsewhere, and must not be here)
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** ARCC was queried first (a configured filesystem path feeding an automated intake) and returned only AWS/Azure cloud detections with no application-level analogue — noted as checked. The interesting comparison is internal rather than external: this atom has exactly the bounded-input discipline that DFE-3 was missing, and which I filed as issue #2747 two cycles ago. Same repository, same class of untrusted input, one plan capped it three ways and the other capped nothing. I also checked for credential redaction on the intake and decided it is NOT owed: the classifier is LLM-free, the path is the owner's own configured notes file, and nothing reaches a model until a human accepts the proposal — materially different from DHT-2's web-authored HTML, where redaction IS applied.
 
 ## Recorded history
 

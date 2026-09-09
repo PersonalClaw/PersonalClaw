@@ -31,9 +31,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- revision.py's merge-by-id patch is the target the answer verb routes to (see WF2UNI-4)
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Partial: the clause is an answer-grammar round trip through workflow_resume — revise{step_ref, comment} scoped to exactly ONE node, with awaiting_review to running semantics. Exercising it needs a live run parked awaiting review.
 
 ## Recorded history
 

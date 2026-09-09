@@ -32,9 +32,18 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- dag.json records this atom as `blocked` — the first blocked atom in this audit — and the code AGREES: all four named modules still exist (planning/runner.py, planning/session.py, loop/plan_walkthrough.py, loop/classify.py), which is what 'not yet deleted' looks like
+- its declared blocker is genuinely open: PP-16 ('A Loop becomes a WorkflowRun') is `todo` in the same catalogue, so the Phase-3-to-4 drain this atom waits on has not happened
+
+**Notes:** Confirmed as a correctly-recorded BLOCKED atom rather than as delivered work, which is the only thing an audit can confirm about work nobody has started. Two things had to hold together and both do: the deletions have not happened, and the dependency that would license them is still open. A stale blocker — one whose dependency had since landed — would have been the finding here; there isn't one.
 
 ## Recorded history
 

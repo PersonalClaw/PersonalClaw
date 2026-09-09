@@ -31,9 +31,18 @@ workflows/grounding.py (three signature-discovery tiers, orient-then-drill, MCP 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 21 (WF2UNI) — code + tests observed on this machine
+
+**Code evidence:**
+
+- workflows/grounding.py, patterns.py and generation.py all present with the three-tier signature discovery and the pattern-shape registry
+- 430 python tests pass across the planning/matching/grounding/revision/grill modules (1 unrelated skip), plus 176 web tests over 16 loops-page files
+
+**Notes:** Partial: the atom's substance is that generation is GROUNDED in live registries and that each of seven proven shapes carries a stopping condition. The modules and their fixture tests hold, but a from-scratch generation run is a model call, so I did not observe a generated plan. The stopping-condition-per-shape claim is the one I would most want to see under a real generation, because a shape without one is how a planner loops forever.
 
 ## Recorded history
 
