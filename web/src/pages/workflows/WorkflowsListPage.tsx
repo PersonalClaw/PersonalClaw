@@ -8,13 +8,14 @@ import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderAc
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
 import { PresetEmptyState } from '../../ui/PresetEmptyState'
-import { api, type WorkflowDef, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
+import { api, ApiError, type WorkflowDef, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
+import { preflightRemediations } from './preflightRemediation'
 import { suggestTemplate } from './templateSuggest'
 import { workflowPresets } from './workflowPresets'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
@@ -146,7 +147,16 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     } catch (e) {
       // A preflight refusal is the common case and it is ACTIONABLE (missing credential, no
       // model) — surfacing the message is the whole point of failing at start.
-      notify(e instanceof Error ? e.message : 'Could not start the workflow', 'error')
+      //
+      // 🔑 The message is only the DIAGNOSIS. Each finding also carries a `remediation` naming
+      // where to fix it ("select a model for background in Settings → Models, or change the
+      // node's model_tier"), and that half reached no surface until `ApiError` began carrying
+      // `detail` — so a user learned that no model resolves and not that Settings → Models is
+      // the answer, though the server had said so. Appended rather than substituted: which
+      // requirement is unmet is what makes the instruction make sense.
+      const base = e instanceof Error ? e.message : 'Could not start the workflow'
+      const fixes = preflightRemediations(e instanceof ApiError ? e.detail : undefined)
+      notify(fixes.length ? `${base} — ${fixes.join('; ')}` : base, 'error')
     }
   }, [navigate])
 
@@ -163,6 +173,11 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
       label: 'What do you want to do?',
       placeholder: 'e.g. fix the login bug, or research vector databases',
       required: true,
+      // Not "Save" (the dialog default) — nothing is saved, and not "Run" either, because this
+      // step only RESOLVES the intent to a template and the next dialog still asks for its
+      // inputs. `promptForm` below already labels its own button "Run"; this one is the step
+      // before it.
+      confirmLabel: 'Continue',
     })
     if (!intent) return
     const template = suggestTemplate(intent, defs.map((d) => d.name))

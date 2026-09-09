@@ -41,6 +41,21 @@ export interface ErrEnvelope {
    *  carried none. Lifted even when the `message` was unusable and the status was substituted:
    *  a code-only envelope is still a legible fact for a caller, just not a sentence for a user. */
   code: string
+  /** The envelope's `error.detail` — the structured half, `undefined` when absent.
+   *
+   *  🔑 THE THIRD THING THE ENVELOPE CARRIES, AND THIS KEPT TWO. `errors.py`'s wire shape is
+   *  `{"error": {"code", "message", "detail"}}`, and `detail` is where a route puts the part
+   *  that is too structured to be a sentence. A workflow start refused by preflight answers
+   *  `detail.preflight.findings[]`, and `preflight.Finding` states why the field exists:
+   *  "the message says what is wrong, the remediation says what to do, and collapsing them
+   *  leaves the user with a diagnosis and no next step". Dropped here, that remediation
+   *  reached no surface at all — the user was told no model resolves for three use cases and
+   *  never told that Settings → Models is where to fix it, though the server said exactly that.
+   *
+   *  Deliberately `unknown`: this funnel must not learn any route's detail schema. A caller
+   *  that knows its own route narrows it (see `preflightRemediations`); everyone else ignores
+   *  it, and nothing a user reads moves. */
+  detail?: unknown
 }
 
 /** Read a failed `Response` ONCE and return both halves of its envelope. The body is a stream,
@@ -67,6 +82,7 @@ export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
   let wasJson = false
   let code = ''
   let message = ''
+  let detail: unknown
   try {
     const parsed = JSON.parse(text)
     wasJson = true
@@ -89,6 +105,11 @@ export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
         if (v && typeof v === 'object' && !Array.isArray(v)) {
           const c = (v as Record<string, unknown>).code
           if (!code && typeof c === 'string' && c.trim()) code = c.trim()
+          // Lifted BEFORE the `break` below, deliberately: the loop stops at the first usable
+          // sentence, and a detail read after it would be dropped for every envelope that has
+          // one — which is every envelope that has a detail worth reading.
+          const det = (v as Record<string, unknown>).detail
+          if (detail === undefined && det !== undefined) detail = det
           const msg = (v as Record<string, unknown>).message
           if (typeof msg === 'string' && msg.trim()) { message = msg.trim(); break }
         }
@@ -104,7 +125,7 @@ export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
       ? `HTTP ${r.status}`
       : text
   }
-  return { message, code }
+  return { message, code, detail }
 }
 
 export async function errText(r: Response): Promise<string> {
