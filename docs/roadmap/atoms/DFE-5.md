@@ -30,9 +30,26 @@ every existing content type still renders Monaco (asserted); an office type moun
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/content/contentTypes.ts:44 EditCapability.render?: ComponentType<DocumentEditorProps> — the renderer slot is additive and optional, and the comment says <ContentSurface> renders THIS instead of Monaco
+- src/personalclaw/config/loader.py:1495 document_editing: bool = field(default False); :3503 reads it from dashboard_data with False as the fallback
+- tests/test_document_editing_gate.py: the flag is off by default, is in the PATCH allowlist, and survives load + to_dict (the config round-trip contract)
+- web/src/ui/content/DocumentEditor.tsx + documentEditorContract.test.tsx + documentEditorSlot.test.tsx green (part of the 137 web tests)
+
+**Driven in the UI:** Drove #/settings/documents: heading 'Documents' with the subtitle 'How generated Word, Excel and PowerPoint files behave. Download-only by default — editing one re-creates it, which is a trade worth choosing deliberately', and a single switch 'Edit documents in place'. Toggled it ON, then forced a FULL page load (new snapshot ref generation, not a hash change) — it came back checked. Persistence proved by reload, not by a file scan.
+
+**Notes:** The config half and the lossy-edit contract are confirmed as a user, and the contract is unusually well stated in the UI: the hint says saving RE-CREATES the file, names what a document model cannot hold (comments, footnotes, embedded objects, exact styling), promises the report before the first edit AND in the save confirmation, points at Details › Versions for the pre-edit copy, and says the server refuses a document save outright with the flag off. What could NOT be validated is the clause that matters most — 'a user bolds a word, saves, and the downloaded file opens bold in Word' — because no office artifact can be created through any UI route (#2748), so the editor never mounts. It has a test (test_docx_run_fidelity.py) and a two-tab 409 test; it has no observed user drive. Partial on that basis, deliberately: a read-back test is not the same evidence as a user's file opening bold in Word.
+
+**Follow-ups filed:**
+
+- issue #2748 (empty state points at a route that dead-ends for binary kinds)
 
 ## Recorded history
 

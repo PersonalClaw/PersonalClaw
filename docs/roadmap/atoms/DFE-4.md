@@ -31,9 +31,23 @@ a stale If-Match is refused 409; an oversized body is refused before buffering; 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/artifacts/handlers.py:526 api_artifact_raw_write orders its guards deliberately and says why: authorization, then the size refusal from HEADERS ALONE, then format, then artifact, then precondition — 'the body is touched last', and the cap sits before the artifact lookup 'so an over-cap upload costs no disk read at all'
+- models.py:23 MAX_BINARY_CONTENT_BYTES = 16 MiB; :63 BINARY_KINDS = {image,video,docx,xlsx,pptx,pdf}; kind_for_mime maps mime→kind and returns '' for anything outside the allowlist (415)
+- If-Match is REQUIRED (428 when absent), because 'a whole-document save is exactly the write that can silently destroy another tab's work'
+- tests/test_artifact_binary_write_api.py names a test per done_when clause: stale If-Match refused 409 and nothing written; oversized body refused WITHOUT the body being read; the cap also refused through the real router; chunked body refused 411; a pdf body refused for a docx artifact; unstorable Content-Type 415; an accepted write bumps one version and logs one audit row; a refused write logs a denial and no ok row; GET /model returns the model + loss report; THE MODEL RESPONSE CARRIES NO OOXML; a model write renders server-side and the edit survives
+- handlers.py:601-614 keeps a redundant post-read length check and explains it: aiohttp will not deliver more than the declared length, so it cannot normally fire — 'it is here because the cap must not depend on that being true, and the provider TRUNCATES rather than refusing'
+
+**Driven in the UI:** Not drivable as a user: these are endpoints whose only consumer is the document editor, which cannot be reached (see DFE-1). The precondition test at :294 asserts enforcement INSIDE the provider lock, which is the part a UI drive could not prove anyway.
+
+**Notes:** The strongest atom in the plan. Two details worth keeping: the oversized-body test asserts the INSTRUMENT (that the body was not read) rather than just the status code, and the no-OOXML test makes 'the browser never sees OOXML' a checked property rather than an intention. ARCC's Secure File Uploads guidance says not to trust Content-Type and to detect type from the file; this path does trust the header for the type, but the exploit that requirement guards is closed by different means — the mime allowlist admits no active type (no text/html), the declared kind must match the artifact's server-side kind, and the read path serves stored mime with X-Content-Type-Options: nosniff (handlers.py:347). Malware scanning and S3-only storage are Amazon-internal mechanisms with no meaning for a self-hosted local app.
 
 ## Recorded history
 

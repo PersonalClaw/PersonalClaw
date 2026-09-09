@@ -31,9 +31,20 @@ Every existing model test passes untouched; a runs-only Block answers .text and 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/documents/model.py (435 lines) carries Run/ParagraphStyle/PageSetup/Cell; from_markup.py:145 parse_inline + :89 _scan build Runs from **bold**/*italic*/`code`/[t](url)
+- tests/test_markdown_inline_runs.py:1 states the atom's own contract ('_strip_inline is gone') and :196 pins MEASURED outputs of origin/main's _strip_inline as the compatibility proof — the old behaviour was captured by RUNNING it before deletion, not by reasoning about it
+- grep for _strip_inline across src/ returns nothing: deleted, not left beside the new path (clean break holds)
+- tests/test_document_model_runs.py + test_documents.py green in the 456-test run
+
+**Notes:** The __post_init__ derivation both ways (runs-only Block answers .text, cells-only table answers .rows) is what makes this additive rather than a fork of the model. The compatibility technique is worth copying: measure the old function's real outputs into the test BEFORE deleting it, so the round-trip proof is against observed behaviour rather than a remembered contract.
 
 ## Recorded history
 

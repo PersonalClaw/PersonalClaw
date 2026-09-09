@@ -31,9 +31,28 @@ paragraph↔table order preserved on an interleaved fixture; each unrepresentabl
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/documents/docx_parser.py (1239 lines) walks the body element's own children — its docstring names the failure it avoids: python-docx exposes doc.paragraphs and doc.tables as two independent sequences, so any parser iterating them in turn 'emits every paragraph before every table and silently reorders the document'
+- LossReport + LossItem present; the docstring makes the absence of an item a bug: 'A construct the model cannot express and that produces no item is a bug in this module, not an acceptable simplification'
+- tests/test_docx_parser.py, test_docx_roundtrip.py, test_docx_run_fidelity.py, test_docx_word_authored.py (the Word-authored fixture), test_docx_writer_coverage.py all green
+- knowledge/readers.py:240-251 ordering comment is updated ('Losing POSITION was always a…'), so the stale-comment clause of the scope holds
+- MEASURED absence of the caps: grep for MAX/_CAP/_safe_decompress/zipfile/infolist across src/personalclaw/documents/ returns NOTHING
+- MEASURED cost: a 56,457-byte .docx holding 200,000 one-character paragraphs parses to 200,001 blocks in 153.4s (0.77 ms/block), peak 77 MB by tracemalloc (Python allocations only — real RSS is higher)
+
+**Driven in the UI:** Not drivable: GET /api/artifacts/{slug}/model has no reachable UI without an office artifact, and none can be created (see DFE-1).
+
+**Notes:** Order preservation, the LossReport and the round-trip proof all hold and are well tested. The clause that does NOT hold is the scope's 'untrusted-input caps'. The plan states it as a soul guardrail at DOCUMENT-FIDELITY-EDITOR.md:287-289 — reuse doc_parser.py's _safe_decompress/_read_zip_entry posture (_MAX_ZIP_ENTRY = 50 MB, checked against the ACTUAL decompressed output) 'and cap parsed block count'. Neither reached documents/: the parsers hand raw bytes to python-docx/openpyxl/python-pptx, and the only bound in the path is the 16 MiB request cap, which bounds the COMPRESSED size. Filed as #2747 with the measurement. Two things I checked before filing, which sharpen the finding rather than soften it: (1) ONE huge text node IS refused — by lxml's own 10 MB text-node limit, incidental library protection this repo does not own — while many small blocks evade it entirely, which is exactly the case the guardrail's block-count clause named; (2) the XXE half of ARCC's Secure XML Processing guidance is genuinely closed, so I did not file it: python-docx and python-pptx both pin resolve_entities=False, and feeding the xlsx parser a worksheet part declaring <!ENTITY xxe SYSTEM "file:///tmp/…"> refused it with 'undefined entity' and the marker never reached the model. It is the DoS half of that same guidance that is open.
+
+**Follow-ups filed:**
+
+- issue #2747 (no zip-bomb/block-count cap on the office parsers)
 
 ## Recorded history
 

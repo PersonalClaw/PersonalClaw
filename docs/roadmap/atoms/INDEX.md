@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 43 | `done_when` checked against the code and it holds |
-| `partial` | 81 | some `done_when` clauses hold, others do not |
+| `confirmed` | 48 | `done_when` checked against the code and it holds |
+| `partial` | 84 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 1 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 559 | not yet checked |
+| `unaudited` | 551 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -282,14 +282,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`DFE-1`](DFE-1.md) | `done` | `unaudited` | Fix the artifact surface: register missing kinds, kind-icon cards, pdf artifact preview |
-| [`DFE-2`](DFE-2.md) | `done` | `unaudited` | Style-carrying document model + from_markup runs + docx writer emits new fields |
-| [`DFE-3`](DFE-3.md) | `done` | `unaudited` | First real docx→model parser with LossReport + parse→write→parse round-trip proof |
-| [`DFE-4`](DFE-4.md) | `done` | `unaudited` | Binary artifact write path + model read/render endpoints |
-| [`DFE-5`](DFE-5.md) | `done` | `unaudited` | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config |
-| [`DFE-6`](DFE-6.md) | `done` | `unaudited` | Layout control: page setup, paragraph layout, headers/footers, page-geometry preview |
-| [`DFE-7`](DFE-7.md) | `done` | `unaudited` | Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas) |
-| [`DFE-8`](DFE-8.md) | `done` | `unaudited` | Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor |
+| [`DFE-1`](DFE-1.md) | `done` | `confirmed` | Fix the artifact surface: register missing kinds, kind-icon cards, pdf artifact preview |
+| [`DFE-2`](DFE-2.md) | `done` | `confirmed` | Style-carrying document model + from_markup runs + docx writer emits new fields |
+| [`DFE-3`](DFE-3.md) | `done` | `partial` | First real docx→model parser with LossReport + parse→write→parse round-trip proof |
+| [`DFE-4`](DFE-4.md) | `done` | `confirmed` | Binary artifact write path + model read/render endpoints |
+| [`DFE-5`](DFE-5.md) | `done` | `partial` | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config |
+| [`DFE-6`](DFE-6.md) | `done` | `partial` | Layout control: page setup, paragraph layout, headers/footers, page-geometry preview |
+| [`DFE-7`](DFE-7.md) | `done` | `confirmed` | Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas) |
+| [`DFE-8`](DFE-8.md) | `done` | `confirmed` | Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor |
 
 ### `DHT` — DOCUMENT-HANDLING-TOOLS (10/10 done)
 

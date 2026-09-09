@@ -30,9 +30,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/documents/writers/pptx_writer.py:8 'A bullet's depth is written, not assumed. This writer used to pin level = 0'; :87 and :91 set frame.paragraphs[0].level and para.level from the model
+- src/personalclaw/documents/pptx_parser.py (272 lines) + pptx_shapes.py invert layout/geometry/bullet levels
+- web/src/ui/content/deckModelEdit.ts:14 mirrors MAX_BULLET_LEVEL from the server and its test asserts it 'offers exactly the depths PowerPoint can express, counted the way a person counts' (1-based for the user, 0-based in the file)
+- web/src/ui/content/SlideDeck.tsx:20 records the geometry contract: a title dragged somewhere odd in PowerPoint 'has to be recoverable, and the editor says so'
+- part of the 71-test sheets/decks run and the 137-test web run
+
+**Driven in the UI:** Not drivable (no pptx artifact can be created — see DFE-1).
+
+**Notes:** The 1-based-for-the-user vs 0-based-in-the-file split is the kind of detail that usually leaks into the UI; here it is a named constant mirrored from the server with a test that counts 'the way a person counts'.
 
 ## Recorded history
 

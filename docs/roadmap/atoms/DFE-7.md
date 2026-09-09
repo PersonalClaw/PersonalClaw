@@ -30,9 +30,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/documents/writers/xlsx_writer.py:6 opens with the contract 'A formula is written as a formula, and a literal is written as a literal'; :86-93 writes cell.formula through the formula path and PINS a value-only cell back to the string type, with the reason inline — 'the model said value, not formula, and a label a user typed' should not become one
+- src/personalclaw/documents/xlsx_parser.py (275 lines) reads per-cell number format, fill, alignment, column widths and merges; :184 explains why an ISO-looking string is NOT written back as a date ('the same sniffing' problem)
+- web/src/ui/content/SheetGrid.tsx + sheetModelEdit.ts + sheetGridContract.test.tsx (one assertion notes Excel opens the wrong shape as #NAME?)
+- 71 tests pass in tests/test_sheets.py + tests/test_decks.py
+
+**Driven in the UI:** Not drivable (no xlsx artifact can be created — see DFE-1).
+
+**Notes:** The done_when's premise is quoted in the writer's own docstring: today "=SUM(A1)" was written as a string. The fix is present with the inverse hazard handled too — openpyxl types anything starting with '=' as a formula, so a value-only cell has to be pinned BACK to a string, which is the half a naive fix would miss.
 
 ## Recorded history
 

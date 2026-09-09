@@ -43,7 +43,9 @@
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 12 (DAS) — DRIVEN in a real browser",
-    "evidence": ["part of the 561-passed durability run"],
+    "evidence": [
+      "part of the 561-passed durability run"
+    ],
     "ui_validated": "The boot-started snapshot service and its retention are live and legible at #/settings/durability: a 'Schedule' section with an 'Automatic backups' switch (checked) explaining 'Take a nightly snapshot and an hourly incremental export in the background', and — the atom's restore half — a 'Monthly restore drill' switch (checked) whose copy reads 'Once a month, restore the newest snapshot into a temporary directory and verify it — a backup nobody has restored is a hope, not a backup. Never touches live data.'",
     "notes": "That drill copy is the best single sentence I have read in this product. It states the reason the feature exists AND its safety property in one line, which is what makes a default-on background job trustworthy rather than alarming. Confirmed on the surface being real and correctly defaulted; I did not wait a month to watch a drill fire."
   },
@@ -72,7 +74,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 12 (DAS) — observed",
-    "evidence": ["part of the 561-passed durability run"],
+    "evidence": [
+      "part of the 561-passed durability run"
+    ],
     "notes": "PARTIAL: git-sync and dir-sync transports need a configured remote to move anything. Nothing is configured in this home, so the transports are observed only through their suites."
   },
   "DAS-7": {
@@ -89,14 +93,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 12 (DAS) — observed, audited against ARCC's encryption-at-rest objective",
-    "evidence": ["part of the 561-passed durability run"],
+    "evidence": [
+      "part of the 561-passed durability run"
+    ],
     "notes": "PARTIAL: rsync-sync and s3-sync need real remotes and credentials, so neither transport nor its end-to-end encryption could be exercised here. But the ARCC comparison is worth recording. Its Encryption at Rest guidance requires AWS-managed or customer-managed KMS keys and states EXPLICITLY that it 'refers to server-side encryption (rather than client-side)'. This atom does client-side END-TO-END encryption, which is the opposite architecture — and for a self-hosted app pushing to a remote the user does not control, it is strictly STRONGER than the guidance's mechanism, because the remote operator never holds the key. So ARCC's mechanism is inapplicable while its stated objective — 'even if unauthorized access occurs, the data remains unreadable without the decryption key' — is met by a stronger means. Recording that distinction rather than either citing ARCC as satisfied or as violated."
   },
   "DAS-9": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 12 (DAS) — DRIVEN in a real browser",
-    "evidence": ["part of the 561-passed durability run"],
+    "evidence": [
+      "part of the 561-passed durability run"
+    ],
     "ui_validated": "The Time travel section renders live in the Backups panel with an explicit scope contract: 'A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets.'",
     "notes": "That contract is the interesting part, and it connects to DAS-8's encryption question from the other direction: rather than encrypting the edit history for sync, the design EXCLUDES it from sync, export and backup entirely. A scope reduction instead of a key-management problem — the cheaper and more auditable answer. The adaptive-debounce and rollback mechanics themselves need accumulated edit history to exercise, which this home does not have."
   },
@@ -104,7 +112,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 12 (DAS) — observed",
-    "evidence": ["tests/test_durability_dsar_routes.py passes (part of the 561-passed run)"],
+    "evidence": [
+      "tests/test_durability_dsar_routes.py passes (part of the 561-passed run)"
+    ],
     "notes": "PARTIAL: DSAR portability endpoints have a route rail that passes, but a portability export's real test is that the exported bundle is complete and readable — which means running an export over a populated home and inspecting the result. This home holds one knowledge item, one inbox note and one task, so an export here would prove the plumbing rather than the portability. Deliberately not confirming plumbing as portability."
   },
   "MRI-1": {
@@ -143,14 +153,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 11 (MRI) — observed",
-    "evidence": ["part of the 146-passed inbound run"],
+    "evidence": [
+      "part of the 146-passed inbound run"
+    ],
     "notes": "PARTIAL: the atom is a GUIDE (docs/guides/use-from-your-ide.md covering token creation and setup). I did not read it end to end or follow its steps, and a guide's real test is whether a stranger can follow it — which is OU-11's kind of validation, not something I can settle by reading. Recording it unvalidated rather than confirming a document I skimmed."
   },
   "MRI-5": {
     "verdict": "unverifiable",
     "date": "2026-09-08",
     "by": "audit cycle 11 (MRI) — observed",
-    "evidence": ["the surface it would drive is confirmed by MRI-1, MRI-2 and MRI-3 above"],
+    "evidence": [
+      "the surface it would drive is confirmed by MRI-1, MRI-2 and MRI-3 above"
+    ],
     "notes": "UNVERIFIABLE here, and the first atom in this audit to earn that verdict rather than 'partial'. Its own title is 'V2 owner validation: drive the surface from a real MCP-enabled client' — the deliverable IS an owner driving it from a real IDE. That cannot be done by me from inside this session at all, as opposed to merely being blocked by a missing provider or absent data. Distinguishing 'unverifiable' from 'partial' matters: a partial might be closed by configuring something, this one requires a person at an IDE."
   },
   "DSC-1": {
@@ -167,7 +181,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["the design-rail corpus passes (841 tests, 65 files)"],
+    "evidence": [
+      "the design-rail corpus passes (841 tests, 65 files)"
+    ],
     "notes": "PARTIAL: the Playwright visual-regression and axe e2e harness runs under Playwright, not vitest, and its snapshots are platform-qualified (Darwin dev vs Linux CI). I ran the vitest rails, not the browser harness, so the visual-regression half is unvalidated this cycle. Naming that rather than letting a green vitest run stand in for it."
   },
   "DSC-3": {
@@ -195,21 +211,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["the ui/ rails pass in full — 1636 tests across 151 files, zero skipped"],
+    "evidence": [
+      "the ui/ rails pass in full — 1636 tests across 151 files, zero skipped"
+    ],
     "notes": "PARTIAL: the canonical form-field family and its size convergence are confirmed at the rail level, but I did not visually compare the converged fields across surfaces. The forms I DID drive this session (onboarding name, note capture, knowledge note, new task) all behaved consistently — gated submits, labelled inputs, chip-style tag entry — which is corroborating rather than conclusive."
   },
   "DSC-6": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["part of the 1636-passed ui run"],
+    "evidence": [
+      "part of the 1636-passed ui run"
+    ],
     "notes": "PARTIAL, with one live observation: the Knowledge surface I drove for KL rendered a `searchbox \"Search knowledge\"` — an accessible search role with a real name, consistent with a SearchField primitive rather than a raw input. One instance is not the migration; the sweep across every search/query site is unvalidated."
   },
   "DSC-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["part of the 841-passed design run"],
+    "evidence": [
+      "part of the 841-passed design run"
+    ],
     "notes": "PARTIAL: type-scale normalization is a pixel property. Its rails pass, but confirming an off-ramp sweep landed means comparing rendered type across surfaces, which is the visual-regression harness's job (DSC-2) and I did not run it."
   },
   "DSC-8": {
@@ -227,7 +249,9 @@
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["part of the 841 + 1636 passing rails"],
+    "evidence": [
+      "part of the 841 + 1636 passing rails"
+    ],
     "notes": "An owner taste-call convergence batch is by nature adjudicated rather than derived — the G1–G9 rulings and the follow-on raw-button waves are recorded decisions, and their rails pass. This is also one of the two atoms whose scope vocabulary (cy51 cycles, G-batches) taught the consolidation generator a new token family; before that, WF2KNO-era scanning left it with no resolvable record at all."
   },
   "DSC-10": {
@@ -244,7 +268,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 10 (DSC) — observed",
-    "evidence": ["part of the passing rails"],
+    "evidence": [
+      "part of the passing rails"
+    ],
     "notes": "PARTIAL BY ITS OWN TITLE — 'Deferred tail (environment-blocked): authenticated seeded…'. Like AG-11, an atom that declares itself environment-blocked cannot be validated as unblocked; that is its recorded state, not a gap I found. Worth noting the authenticated half is the same blocker RUA-3 hit: provisioning a credential needs a TTY."
   },
   "DSC-12": {
@@ -260,14 +286,18 @@
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_guardrails_model_call.py passes (part of 333 tests passing across eleven AG modules)"],
+    "evidence": [
+      "tests/test_guardrails_model_call.py passes (part of 333 tests passing across eleven AG modules)"
+    ],
     "notes": "The model-call chokepoint and breaker are pre-model-call machinery, so their own suite is the right instrument. Confirmed on that rather than on the plan's log."
   },
   "AG-2": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_guardrails_budgets.py and tests/test_guardrails_flags.py pass (part of the 333-passed run)"],
+    "evidence": [
+      "tests/test_guardrails_budgets.py and tests/test_guardrails_flags.py pass (part of the 333-passed run)"
+    ],
     "notes": "Budgets, outbound scan and GuardrailsConfig are enforcement paths with no screen of their own."
   },
   "AG-3": {
@@ -295,21 +325,27 @@
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["part of the 333-passed run"],
+    "evidence": [
+      "part of the 333-passed run"
+    ],
     "notes": "Confirmed with a caveat about my own prior knowledge rather than fresh measurement: the workspace roadmap notes record AG-5 as landed with five non-test callers, which is the wiring property that matters (a SafetyProfile threaded into dispatch seams but called nowhere would be inert). I did not re-count the callers this cycle, so that specific number is carried from the roadmap rather than re-observed — flagging it because this audit's whole premise is not trusting recorded claims."
   },
   "AG-6": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_guardrails_ladder.py and tests/test_guardrails_autonomy.py pass (part of the 333-passed run)"],
+    "evidence": [
+      "tests/test_guardrails_ladder.py and tests/test_guardrails_autonomy.py pass (part of the 333-passed run)"
+    ],
     "notes": "The earned-autonomy rung ladder core is a state machine over accumulated behaviour; its suite is the right instrument and it passes."
   },
   "AG-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["part of the 333-passed run"],
+    "evidence": [
+      "part of the 333-passed run"
+    ],
     "notes": "PARTIAL: action-type declarations plus a manifest autonomy block need an APP declaring them. No app installed in this home — the same blocker that held INU-7 and INU-8."
   },
   "AG-8": {
@@ -326,28 +362,36 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["part of the 333-passed run"],
+    "evidence": [
+      "part of the 333-passed run"
+    ],
     "notes": "PARTIAL, and cross-repo by its own title: the apps-repo guardrails follow-ons live in PersonalClawApps, which this audit has not touched. dag.json also lists AG-9 among the startable atoms in the workspace roadmap's next-up list, so its status is worth the owner's eye independently of my verdict."
   },
   "AG-10": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_guardrails_budgets.py and tests/test_guardrails_ceiling.py pass (part of the 333-passed run)"],
+    "evidence": [
+      "tests/test_guardrails_budgets.py and tests/test_guardrails_ceiling.py pass (part of the 333-passed run)"
+    ],
     "notes": "Run-scope budget enforcement with per-trigger fields is exactly the kind of ceiling a test proves better than a UI run — the interesting cases are the ones that REFUSE."
   },
   "AG-11": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["part of the 333-passed run"],
+    "evidence": [
+      "part of the 333-passed run"
+    ],
     "notes": "PARTIAL by its own title — 'deferred profile/trust enforcement behaviors AWAITING ENGINE CONSUMERS'. An atom that is explicitly waiting for its consumers cannot be validated as consumed; that is its recorded state, not a gap I found."
   },
   "AG-12": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_baseline_denylist_integrity.py passes (part of the 333-passed run)"],
+    "evidence": [
+      "tests/test_baseline_denylist_integrity.py passes (part of the 333-passed run)"
+    ],
     "notes": "A RESTORATION claim at a specific seam — the third dispatch seam regaining the denylist. Like WF2TAS-12's retirement, this is the decidable-by-looking class, and its integrity rail passes."
   },
   "AG-13": {
@@ -365,7 +409,9 @@
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 9 (AG) — observed",
-    "evidence": ["tests/test_guardrails_ceiling.py passes (part of the 333-passed run)"],
+    "evidence": [
+      "tests/test_guardrails_ceiling.py passes (part of the 333-passed run)"
+    ],
     "notes": "Loop ceilings — a LoopStopReason enum plus a wall-clock deadline — are refusal behaviours. A passing ceiling suite is stronger evidence than any single happy-path observation could be."
   },
   "PR2-1": {
@@ -394,14 +440,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "evidence": [
+      "tests/test_mid_turn_steer.py passes (part of the 152-passed run)"
+    ],
     "notes": "PARTIAL: queue, cancel-and-replace and the ACP path are all MID-TURN behaviours — they need a turn in flight to interrupt, which needs a model. The three policies are exactly the kind of thing a suite proves better than a happy-path UI run, and it passes."
   },
   "PR2-4": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["part of the 152-passed run"],
+    "evidence": [
+      "part of the 152-passed run"
+    ],
     "notes": "PARTIAL: confirm-gated fixes need a deficit to fix. The simulators exist for exactly this reason but I did not invoke them — a simulator run proves the simulator, and I would rather record the gap than dress it up."
   },
   "PR2-5": {
@@ -417,21 +467,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "evidence": [
+      "tests/test_mid_turn_steer.py passes (part of the 152-passed run)"
+    ],
     "notes": "PARTIAL: `steer` is the third mid-turn policy, so it inherits PR2-3's blocker — no turn to steer without a model. The ACP capability gate needs an authenticated ACP client, which the roadmap already records as owner-gated."
   },
   "PR2-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["part of the 152-passed run"],
+    "evidence": [
+      "part of the 152-passed run"
+    ],
     "notes": "PARTIAL: would-execute rendering on the trust surface needs an automation configured to render a would-execute preview FOR. None exists here."
   },
   "PR2-8": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["the remediation rails pass as part of the 152-passed run"],
+    "evidence": [
+      "the remediation rails pass as part of the 152-passed run"
+    ],
     "notes": "PARTIAL: re-homing the remediation engine onto AUTOMATION-SUBSTRATE adapters is a cross-plan structural claim — its evidence is which module owns which seam, and confirming it properly means auditing the Automation plan alongside it. Deferred to that plan's cycle rather than half-judged here."
   },
   "PR2-9": {
@@ -448,14 +504,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "evidence": [
+      "tests/test_mid_turn_steer.py passes (part of the 152-passed run)"
+    ],
     "notes": "PARTIAL: the ACP mid-turn steer DELIVERY path needs a live ACP client mid-turn — two blockers stacked (no model, no authenticated ACP client)."
   },
   "PR2-11": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 8 (PR2) — observed",
-    "evidence": ["part of the 152-passed run"],
+    "evidence": [
+      "part of the 152-passed run"
+    ],
     "notes": "PARTIAL: retiring duplicate heartbeat maintenance jobs into the remediation engine is a retirement claim, which WF2TAS-12 taught me is decidable by looking — but only if I can name the retired jobs precisely. The atom's title truncates in dag.json and I did not resolve the full list, so I am recording it unaudited rather than guessing at which jobs should be absent. Next cycle should read the atom's full scope first."
   },
   "WF2TAS-1": {
@@ -491,35 +551,45 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["tests/test_workflows_surfacing.py passes (part of the 392-passed run)"],
+    "evidence": [
+      "tests/test_workflows_surfacing.py passes (part of the 392-passed run)"
+    ],
     "notes": "PARTIAL: surface_mode and trigger-phrase matching need a workflow DEF carrying those fields plus a live conversation to match against."
   },
   "WF2TAS-5": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["tests/test_workflows_surfacing_channels.py passes (part of the 392-passed run)"],
+    "evidence": [
+      "tests/test_workflows_surfacing_channels.py passes (part of the 392-passed run)"
+    ],
     "notes": "PARTIAL: cadence and workspace-fingerprint resolution are time- and context-dependent channels; neither is exercisable from one UI session."
   },
   "WF2TAS-6": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["part of the 392-passed run"],
+    "evidence": [
+      "part of the 392-passed run"
+    ],
     "notes": "PARTIAL: frontier/next projections, hand-offs and blueprints need a pool of tasks with real dependency structure. I created one task; the Tasks surface does expose a 'Dependency graph' view tab for exactly this, so it becomes drivable with a few linked tasks."
   },
   "WF2TAS-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["part of the 392-passed run"],
+    "evidence": [
+      "part of the 392-passed run"
+    ],
     "notes": "PARTIAL: def-side surfacing fields on DefMetadata plus one adapter per surface are contract-level additions with no standalone screen."
   },
   "WF2TAS-8": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["tests/test_workflows_surfacing_wiring.py passes (part of the 392-passed run)"],
+    "evidence": [
+      "tests/test_workflows_surfacing_wiring.py passes (part of the 392-passed run)"
+    ],
     "notes": "PARTIAL: this atom exists precisely to make surfacing REACHABLE, so its own test module is the right instrument and it passes. Driving it needs an authored def."
   },
   "WF2TAS-9": {
@@ -536,14 +606,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["tests/test_workflows_task_write.py and tests/test_tasks_api.py pass (part of the 392-passed run)"],
+    "evidence": [
+      "tests/test_workflows_task_write.py and tests/test_tasks_api.py pass (part of the 392-passed run)"
+    ],
     "notes": "PARTIAL: the lease write path and the confirmation-resolve endpoint are engine seams. The task-projection half is the same one WF2TAS-1 leaves open for want of a run."
   },
   "WF2TAS-11": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 7 (WF2TAS) — observed",
-    "evidence": ["part of the 392-passed run"],
+    "evidence": [
+      "part of the 392-passed run"
+    ],
     "notes": "PARTIAL: engine call sites for the Task write and the verified-done/confirmation seams fire during a run. No run, no observation."
   },
   "WF2TAS-12": {
@@ -559,7 +633,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["part of a 210-passed run across five WF2KNO modules"],
+    "evidence": [
+      "part of a 210-passed run across five WF2KNO modules"
+    ],
     "notes": "PARTIAL: taxonomy, logical identity and claim semantics are store-level invariants with no user-facing surface of their own. Observed only through the suite."
   },
   "WF2KNO-2": {
@@ -607,7 +683,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["tests/test_knowledge_longrun_validation.py passes (part of the 210-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_longrun_validation.py passes (part of the 210-passed run)"
+    ],
     "notes": "PARTIAL: a bundled template slate validated over a long run is precisely the clause a single UI session cannot settle. Its validation rail passes."
   },
   "WF2KNO-7": {
@@ -625,21 +703,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["part of the 210-passed run"],
+    "evidence": [
+      "part of the 210-passed run"
+    ],
     "notes": "PARTIAL: routing gap-healing drafts INTO the Learning-Flywheel proposal queue needs a gap to heal and a model to draft. Both absent."
   },
   "WF2KNO-9": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["part of the 210-passed run"],
+    "evidence": [
+      "part of the 210-passed run"
+    ],
     "notes": "PARTIAL, and the atom says so itself — it is the PROVIDER-BLOCKED template slate (market-monitor, trending-research and siblings). Those templates are blocked on external providers by design, so 'unvalidated here' is the expected state rather than a gap."
   },
   "WF2KNO-10": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["tests/test_knowledge_contradiction.py passes (part of the 210-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_contradiction.py passes (part of the 210-passed run)"
+    ],
     "notes": "PARTIAL: the atom's whole point is wiring the fast-model contradiction pass to a LIVE model. No model provider is configured, so this is the most directly model-blocked atom in the plan — it cannot be confirmed without one."
   },
   "WF2KNO-11": {
@@ -656,7 +740,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 6 (WF2KNO) — observed",
-    "evidence": ["part of the 210-passed run; the 'Reports' surface exists in the live Knowledge header"],
+    "evidence": [
+      "part of the 210-passed run; the 'Reports' surface exists in the live Knowledge header"
+    ],
     "notes": "PARTIAL: scheduled research reports crossed over source-scope x context-scope x cadence is a matrix of scheduled, model-driven runs. Neither the schedule nor the model is present."
   },
   "KL-1": {
@@ -673,14 +759,18 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: the list surface now exists (one item, created above) but I did not toggle read-state or favorite, so the display and the filters they drive are unexercised. Now cheap for a later cycle — the library is no longer empty."
   },
   "KL-3": {
     "verdict": "confirmed",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — DRIVEN in a real browser",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "ui_validated": "Typed 'audit-probe' into the note form's 'Add a tag, Enter' box and pressed Enter: it became a chip carrying its own 'Remove audit-probe' control (so tag entry AND removal are both reachable). After saving and RELOADING, the tag is still attached to the item and renders as a `button \"audit-probe\"` — a clickable affordance, which is the taxonomy's filter surface rather than a decorative label.",
     "notes": "Tag entry sits inside the CREATE flow, which is the strongest place for it: an item cannot be filed untagged by accident of a two-step UI."
   },
@@ -698,21 +788,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["tests/test_knowledge_dedup.py passes (part of the 234-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_dedup.py passes (part of the 234-passed run)"
+    ],
     "notes": "PARTIAL: find_duplicates and merge_items need NEAR-DUPLICATES. With a single item there is nothing to pair, and authoring two deliberately-similar documents would be measuring my fixture rather than the product's judgement."
   },
   "KL-6": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["the dedup backend rail passes; the frontend depends on it having pairs to surface"],
+    "evidence": [
+      "the dedup backend rail passes; the frontend depends on it having pairs to surface"
+    ],
     "notes": "PARTIAL for the same reason as KL-5 — a near-duplicate surfacing UI has nothing to surface here."
   },
   "KL-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: the reading view is now reachable (an item exists) but I did not open it, so the editorial type scale, progress tracking and in-reader highlighting are unexercised. Cheap next cycle."
   },
   "KL-8": {
@@ -729,56 +825,72 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["tests/test_knowledge_chunking.py passes (part of the 234-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_chunking.py passes (part of the 234-passed run)"
+    ],
     "notes": "PARTIAL: I deliberately wrote the probe document WITH STRUCTURE (an H1, a paragraph, an H2, a second section) so a structural chunker would have shape to work with — but I did not inspect the chunks table, so the chunking itself is observed only through its test."
   },
   "KL-10": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: a vector arm searching chunks needs EMBEDDINGS, which need an embedding provider. None configured — the same model-provider blocker that held RUA-3, INU-4, INU-6 and MGAV-7."
   },
   "KL-11": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: an ANN index with a cached probe and fail-soft behaviour needs vectors to index. Same blocker as KL-10. The fail-soft half is the interesting clause and would be worth driving deliberately once vectors exist."
   },
   "KL-12": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: a resumable batched backfill demonstrates itself over a corpus large enough to batch. One item."
   },
   "KL-13": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: write-time kNN over chunk vectors needs both vectors and more than one item. Blocked twice over."
   },
   "KL-14": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["tests/test_knowledge_maintenance.py passes (part of the 234-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_maintenance.py passes (part of the 234-passed run)"
+    ],
     "notes": "PARTIAL: the deferred graph-maintenance host is a background behaviour keyed on a dirty flag and a drained queue — not observable from a single UI action."
   },
   "KL-15": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["tests/test_knowledge_embed_batching.py passes (part of the 234-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_embed_batching.py passes (part of the 234-passed run)"
+    ],
     "notes": "PARTIAL: provider batching with bounded retry needs a provider to batch against. The bounded-retry-with-backoff clause is exactly the kind of thing a test proves better than a happy-path UI run, and its test passes."
   },
   "KL-16": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: the document outline needs the reading view open on a structured document. The probe document has two headings precisely so this is drivable next cycle; I did not open it."
   },
   "KL-17": {
@@ -795,7 +907,9 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 5 (KL) — observed",
-    "evidence": ["covered by the 234-passed KL run"],
+    "evidence": [
+      "covered by the 234-passed KL run"
+    ],
     "notes": "PARTIAL: returning the matched PASSAGE rather than the whole item is a retrieval-shape claim, and retrieval needs the vector arm. Same blocker as KL-10."
   },
   "MGAV-1": {
@@ -812,21 +926,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["the MGAV suite covering recall passes as part of the 246-passed run"],
+    "evidence": [
+      "the MGAV suite covering recall passes as part of the 246-passed run"
+    ],
     "notes": "PARTIAL: a graph recall arm with backlink boost and evidence tags only demonstrates itself over a populated store answering a real query. This home has zero facts and no model provider, so the arm cannot be exercised. The Inspect tab DOES expose the right instrument for it — 'Preview the memory context that would be injected into a prompt for a given query' with a query box and Preview button — so a future cycle with data can drive this exactly."
   },
   "MGAV-3": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "evidence": [
+      "covered by the passing MGAV modules in the 246-passed run"
+    ],
     "notes": "PARTIAL: an ambient push-context reflex fires from runtime activity and records volunteer events. Nothing in a freshly-driven home generates that traffic, so it is unexercised rather than unmet."
   },
   "MGAV-4": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["tests/test_knowledge_vault.py passes (part of the 246-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_vault.py passes (part of the 246-passed run)"
+    ],
     "notes": "PARTIAL: the alias pre-pass sits in the knowledge INGESTION entry path, so exercising it means ingesting a document. Not done this cycle."
   },
   "MGAV-5": {
@@ -844,21 +964,27 @@
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["tests/test_knowledge_vault.py passes (part of the 246-passed run)"],
+    "evidence": [
+      "tests/test_knowledge_vault.py passes (part of the 246-passed run)"
+    ],
     "notes": "PARTIAL: a two-way readable vault needs its mode configured and a directory to project wikilinks into. Not configured in the validation home, so sync and projection are unexercised."
   },
   "MGAV-7": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "evidence": [
+      "covered by the passing MGAV modules in the 246-passed run"
+    ],
     "notes": "PARTIAL: memory citations in chat and the admit-ignorance clause are both MODEL behaviours — they appear in an assistant turn. No model provider is configured, the same blocker that held RUA-3, INU-4 and INU-6. This is now the most frequent single cause of a partial verdict in this audit."
   },
   "MGAV-8": {
     "verdict": "partial",
     "date": "2026-09-08",
     "by": "audit cycle 4 (MGAV) — observed",
-    "evidence": ["covered by the passing MGAV modules in the 246-passed run"],
+    "evidence": [
+      "covered by the passing MGAV modules in the 246-passed run"
+    ],
     "notes": "PARTIAL: bounded always-injected registers are observable through the Inspect tab's context preview, but only once there is something to inject. Zero facts here."
   },
   "MGAV-9": {
@@ -1101,5 +1227,124 @@
       "all 6 pass: `pytest tests/test_version_consistency.py` -> 6 passed"
     ],
     "notes": "Audited because it was the ONLY `done` atom in the whole catalog carrying zero recorded evidence — no commit names it, no prose names it by id, and its scope cites a bracketed log tag ([2026-07-31][README version]) rather than a task number, so no token pattern resolved it. The record turned out to be real and precise; the atom's status is accurate. This is the useful negative result: absence of an id mention is not absence of work."
+  },
+  "DFE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/content/registerBuiltins.ts:207 registers { id: 'docx', label: 'Word', icon: FileText, tone: '#2b579a', kinds: ['docx'], exts: ['docx'] }",
+      "web/src/pages/artifacts/ArtifactCard.tsx:150-158 splits isThumbnail (ctype.id === 'image') from isKindTile (ctype.binary && !isThumbnail), and its comment names the exact defect it replaced: one flag `!!ctype.binary` 'pointed an image element at the /raw bytes of Word documents, spreadsheets, decks, pdfs and videos alike and rendered a broken-image glyph for every one of them'",
+      "web/src/pages/artifacts/artifactSurface.test.tsx:72 asserts the label is not 'Widget', with the regression window in the assertion message: 'a Word document read \"Widget\" from v0.1.0 to 0.1.3'",
+      "137 web tests pass across the 9 DFE surfaces (vitest); 456 python tests across the 14 document/artifact modules"
+    ],
+    "ui_validated": "Drove #/artifacts. The 'Artifact kind' tablist carries Word, Spreadsheet, Slides, PDF and Video alongside the text kinds — the office kinds ARE registered and filterable, and nothing reads 'Widget'. The cards themselves could not be seen: the library is empty and there is no user route to fill it with a binary artifact (see the note).",
+    "notes": "The done_when says a docx 'reads Word document not Widget'; the shipped label is 'Word'. Not a miss — artifactSurface.test.tsx encodes the real property (not 'Widget') rather than the literal string, and 'Word' beside a Word-blue FileText icon is the better label. The kind-tile fix is confirmed by code + test, NOT by driving it, because no docx artifact can be created: the empty state offers 'save a file as an artifact from the Files page', and that route refuses binaries (correctly) at the viewer, which is the only place the action is offered. Filed as #2748. Confirmed rather than partial because every done_when clause has both an implementation and an assertion; what is missing is a way for a user to REACH the surface, which is the sibling issue's subject.",
+    "follow_ups": [
+      "issue #2748 (empty state points at a route that dead-ends for binary kinds)"
+    ]
+  },
+  "DFE-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/documents/model.py (435 lines) carries Run/ParagraphStyle/PageSetup/Cell; from_markup.py:145 parse_inline + :89 _scan build Runs from **bold**/*italic*/`code`/[t](url)",
+      "tests/test_markdown_inline_runs.py:1 states the atom's own contract ('_strip_inline is gone') and :196 pins MEASURED outputs of origin/main's _strip_inline as the compatibility proof — the old behaviour was captured by RUNNING it before deletion, not by reasoning about it",
+      "grep for _strip_inline across src/ returns nothing: deleted, not left beside the new path (clean break holds)",
+      "tests/test_document_model_runs.py + test_documents.py green in the 456-test run"
+    ],
+    "notes": "The __post_init__ derivation both ways (runs-only Block answers .text, cells-only table answers .rows) is what makes this additive rather than a fork of the model. The compatibility technique is worth copying: measure the old function's real outputs into the test BEFORE deleting it, so the round-trip proof is against observed behaviour rather than a remembered contract."
+  },
+  "DFE-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/documents/docx_parser.py (1239 lines) walks the body element's own children — its docstring names the failure it avoids: python-docx exposes doc.paragraphs and doc.tables as two independent sequences, so any parser iterating them in turn 'emits every paragraph before every table and silently reorders the document'",
+      "LossReport + LossItem present; the docstring makes the absence of an item a bug: 'A construct the model cannot express and that produces no item is a bug in this module, not an acceptable simplification'",
+      "tests/test_docx_parser.py, test_docx_roundtrip.py, test_docx_run_fidelity.py, test_docx_word_authored.py (the Word-authored fixture), test_docx_writer_coverage.py all green",
+      "knowledge/readers.py:240-251 ordering comment is updated ('Losing POSITION was always a…'), so the stale-comment clause of the scope holds",
+      "MEASURED absence of the caps: grep for MAX/_CAP/_safe_decompress/zipfile/infolist across src/personalclaw/documents/ returns NOTHING",
+      "MEASURED cost: a 56,457-byte .docx holding 200,000 one-character paragraphs parses to 200,001 blocks in 153.4s (0.77 ms/block), peak 77 MB by tracemalloc (Python allocations only — real RSS is higher)"
+    ],
+    "ui_validated": "Not drivable: GET /api/artifacts/{slug}/model has no reachable UI without an office artifact, and none can be created (see DFE-1).",
+    "notes": "Order preservation, the LossReport and the round-trip proof all hold and are well tested. The clause that does NOT hold is the scope's 'untrusted-input caps'. The plan states it as a soul guardrail at DOCUMENT-FIDELITY-EDITOR.md:287-289 — reuse doc_parser.py's _safe_decompress/_read_zip_entry posture (_MAX_ZIP_ENTRY = 50 MB, checked against the ACTUAL decompressed output) 'and cap parsed block count'. Neither reached documents/: the parsers hand raw bytes to python-docx/openpyxl/python-pptx, and the only bound in the path is the 16 MiB request cap, which bounds the COMPRESSED size. Filed as #2747 with the measurement. Two things I checked before filing, which sharpen the finding rather than soften it: (1) ONE huge text node IS refused — by lxml's own 10 MB text-node limit, incidental library protection this repo does not own — while many small blocks evade it entirely, which is exactly the case the guardrail's block-count clause named; (2) the XXE half of ARCC's Secure XML Processing guidance is genuinely closed, so I did not file it: python-docx and python-pptx both pin resolve_entities=False, and feeding the xlsx parser a worksheet part declaring <!ENTITY xxe SYSTEM \"file:///tmp/…\"> refused it with 'undefined entity' and the marker never reached the model. It is the DoS half of that same guidance that is open.",
+    "follow_ups": [
+      "issue #2747 (no zip-bomb/block-count cap on the office parsers)"
+    ]
+  },
+  "DFE-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/artifacts/handlers.py:526 api_artifact_raw_write orders its guards deliberately and says why: authorization, then the size refusal from HEADERS ALONE, then format, then artifact, then precondition — 'the body is touched last', and the cap sits before the artifact lookup 'so an over-cap upload costs no disk read at all'",
+      "models.py:23 MAX_BINARY_CONTENT_BYTES = 16 MiB; :63 BINARY_KINDS = {image,video,docx,xlsx,pptx,pdf}; kind_for_mime maps mime→kind and returns '' for anything outside the allowlist (415)",
+      "If-Match is REQUIRED (428 when absent), because 'a whole-document save is exactly the write that can silently destroy another tab's work'",
+      "tests/test_artifact_binary_write_api.py names a test per done_when clause: stale If-Match refused 409 and nothing written; oversized body refused WITHOUT the body being read; the cap also refused through the real router; chunked body refused 411; a pdf body refused for a docx artifact; unstorable Content-Type 415; an accepted write bumps one version and logs one audit row; a refused write logs a denial and no ok row; GET /model returns the model + loss report; THE MODEL RESPONSE CARRIES NO OOXML; a model write renders server-side and the edit survives",
+      "handlers.py:601-614 keeps a redundant post-read length check and explains it: aiohttp will not deliver more than the declared length, so it cannot normally fire — 'it is here because the cap must not depend on that being true, and the provider TRUNCATES rather than refusing'"
+    ],
+    "ui_validated": "Not drivable as a user: these are endpoints whose only consumer is the document editor, which cannot be reached (see DFE-1). The precondition test at :294 asserts enforcement INSIDE the provider lock, which is the part a UI drive could not prove anyway.",
+    "notes": "The strongest atom in the plan. Two details worth keeping: the oversized-body test asserts the INSTRUMENT (that the body was not read) rather than just the status code, and the no-OOXML test makes 'the browser never sees OOXML' a checked property rather than an intention. ARCC's Secure File Uploads guidance says not to trust Content-Type and to detect type from the file; this path does trust the header for the type, but the exploit that requirement guards is closed by different means — the mime allowlist admits no active type (no text/html), the declared kind must match the artifact's server-side kind, and the read path serves stored mime with X-Content-Type-Options: nosniff (handlers.py:347). Malware scanning and S3-only storage are Amazon-internal mechanisms with no meaning for a self-hosted local app."
+  },
+  "DFE-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "web/src/ui/content/contentTypes.ts:44 EditCapability.render?: ComponentType<DocumentEditorProps> — the renderer slot is additive and optional, and the comment says <ContentSurface> renders THIS instead of Monaco",
+      "src/personalclaw/config/loader.py:1495 document_editing: bool = field(default False); :3503 reads it from dashboard_data with False as the fallback",
+      "tests/test_document_editing_gate.py: the flag is off by default, is in the PATCH allowlist, and survives load + to_dict (the config round-trip contract)",
+      "web/src/ui/content/DocumentEditor.tsx + documentEditorContract.test.tsx + documentEditorSlot.test.tsx green (part of the 137 web tests)"
+    ],
+    "ui_validated": "Drove #/settings/documents: heading 'Documents' with the subtitle 'How generated Word, Excel and PowerPoint files behave. Download-only by default — editing one re-creates it, which is a trade worth choosing deliberately', and a single switch 'Edit documents in place'. Toggled it ON, then forced a FULL page load (new snapshot ref generation, not a hash change) — it came back checked. Persistence proved by reload, not by a file scan.",
+    "notes": "The config half and the lossy-edit contract are confirmed as a user, and the contract is unusually well stated in the UI: the hint says saving RE-CREATES the file, names what a document model cannot hold (comments, footnotes, embedded objects, exact styling), promises the report before the first edit AND in the save confirmation, points at Details › Versions for the pre-edit copy, and says the server refuses a document save outright with the flag off. What could NOT be validated is the clause that matters most — 'a user bolds a word, saves, and the downloaded file opens bold in Word' — because no office artifact can be created through any UI route (#2748), so the editor never mounts. It has a test (test_docx_run_fidelity.py) and a two-tab 409 test; it has no observed user drive. Partial on that basis, deliberately: a read-back test is not the same evidence as a user's file opening bold in Word.",
+    "follow_ups": [
+      "issue #2748 (empty state points at a route that dead-ends for binary kinds)"
+    ]
+  },
+  "DFE-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/documents/writers/docx_writer.py:203 _apply_page + :240 _apply_header_footer + :261 _add_page_number_field; docx_parser.py inverts them",
+      "tests/test_document_layout.py green in the 456-test run",
+      "web/src/ui/content/DocumentLayout.tsx:9 states the §6 contract in the module docstring: 'The preview is a labelled APPROXIMATION. No rasterizer exists in this project…'",
+      "web/src/ui/content/documentLayout.test.tsx:253 asserts it 'says it is an approximation, in words, beside the shape' — the label is a checked property, not a comment"
+    ],
+    "ui_validated": "Not drivable: the layout controls live inside the document editor, which cannot be reached (see DFE-1/#2748).",
+    "notes": "Every clause has an implementation and a test, including the honest-reporting one (a header the model cannot represent is reported rather than dropped) and the labelled-approximation one. Partial only because 'the editor's controls reflect the loaded document's real values (not defaults)' is a statement about what a user sees on a loaded document, and no document can be loaded in this build without an agent-generated artifact. Code and tests say it holds; I did not see it.",
+    "follow_ups": [
+      "issue #2748 (empty state points at a route that dead-ends for binary kinds)"
+    ]
+  },
+  "DFE-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/documents/writers/xlsx_writer.py:6 opens with the contract 'A formula is written as a formula, and a literal is written as a literal'; :86-93 writes cell.formula through the formula path and PINS a value-only cell back to the string type, with the reason inline — 'the model said value, not formula, and a label a user typed' should not become one",
+      "src/personalclaw/documents/xlsx_parser.py (275 lines) reads per-cell number format, fill, alignment, column widths and merges; :184 explains why an ISO-looking string is NOT written back as a date ('the same sniffing' problem)",
+      "web/src/ui/content/SheetGrid.tsx + sheetModelEdit.ts + sheetGridContract.test.tsx (one assertion notes Excel opens the wrong shape as #NAME?)",
+      "71 tests pass in tests/test_sheets.py + tests/test_decks.py"
+    ],
+    "ui_validated": "Not drivable (no xlsx artifact can be created — see DFE-1).",
+    "notes": "The done_when's premise is quoted in the writer's own docstring: today \"=SUM(A1)\" was written as a string. The fix is present with the inverse hazard handled too — openpyxl types anything starting with '=' as a formula, so a value-only cell has to be pinned BACK to a string, which is the half a naive fix would miss."
+  },
+  "DFE-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 13 (DFE) — DRIVEN in a real browser",
+    "evidence": [
+      "src/personalclaw/documents/writers/pptx_writer.py:8 'A bullet's depth is written, not assumed. This writer used to pin level = 0'; :87 and :91 set frame.paragraphs[0].level and para.level from the model",
+      "src/personalclaw/documents/pptx_parser.py (272 lines) + pptx_shapes.py invert layout/geometry/bullet levels",
+      "web/src/ui/content/deckModelEdit.ts:14 mirrors MAX_BULLET_LEVEL from the server and its test asserts it 'offers exactly the depths PowerPoint can express, counted the way a person counts' (1-based for the user, 0-based in the file)",
+      "web/src/ui/content/SlideDeck.tsx:20 records the geometry contract: a title dragged somewhere odd in PowerPoint 'has to be recoverable, and the editor says so'",
+      "part of the 71-test sheets/decks run and the 137-test web run"
+    ],
+    "ui_validated": "Not drivable (no pptx artifact can be created — see DFE-1).",
+    "notes": "The 1-based-for-the-user vs 0-based-in-the-file split is the kind of detail that usually leaks into the UI; here it is a named constant mirrored from the server with a test that counts 'the way a person counts'."
   }
 }

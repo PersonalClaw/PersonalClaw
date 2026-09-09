@@ -29,9 +29,26 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- web/src/ui/content/registerBuiltins.ts:207 registers { id: 'docx', label: 'Word', icon: FileText, tone: '#2b579a', kinds: ['docx'], exts: ['docx'] }
+- web/src/pages/artifacts/ArtifactCard.tsx:150-158 splits isThumbnail (ctype.id === 'image') from isKindTile (ctype.binary && !isThumbnail), and its comment names the exact defect it replaced: one flag `!!ctype.binary` 'pointed an image element at the /raw bytes of Word documents, spreadsheets, decks, pdfs and videos alike and rendered a broken-image glyph for every one of them'
+- web/src/pages/artifacts/artifactSurface.test.tsx:72 asserts the label is not 'Widget', with the regression window in the assertion message: 'a Word document read "Widget" from v0.1.0 to 0.1.3'
+- 137 web tests pass across the 9 DFE surfaces (vitest); 456 python tests across the 14 document/artifact modules
+
+**Driven in the UI:** Drove #/artifacts. The 'Artifact kind' tablist carries Word, Spreadsheet, Slides, PDF and Video alongside the text kinds — the office kinds ARE registered and filterable, and nothing reads 'Widget'. The cards themselves could not be seen: the library is empty and there is no user route to fill it with a binary artifact (see the note).
+
+**Notes:** The done_when says a docx 'reads Word document not Widget'; the shipped label is 'Word'. Not a miss — artifactSurface.test.tsx encodes the real property (not 'Widget') rather than the literal string, and 'Word' beside a Word-blue FileText icon is the better label. The kind-tile fix is confirmed by code + test, NOT by driving it, because no docx artifact can be created: the empty state offers 'save a file as an artifact from the Files page', and that route refuses binaries (correctly) at the viewer, which is the only place the action is offered. Filed as #2748. Confirmed rather than partial because every done_when clause has both an implementation and an assertion; what is missing is a way for a user to REACH the surface, which is the sibling issue's subject.
+
+**Follow-ups filed:**
+
+- issue #2748 (empty state points at a route that dead-ends for binary kinds)
 
 ## Recorded history
 

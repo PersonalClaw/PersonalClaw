@@ -30,9 +30,26 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 13 (DFE) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- src/personalclaw/documents/writers/docx_writer.py:203 _apply_page + :240 _apply_header_footer + :261 _add_page_number_field; docx_parser.py inverts them
+- tests/test_document_layout.py green in the 456-test run
+- web/src/ui/content/DocumentLayout.tsx:9 states the §6 contract in the module docstring: 'The preview is a labelled APPROXIMATION. No rasterizer exists in this project…'
+- web/src/ui/content/documentLayout.test.tsx:253 asserts it 'says it is an approximation, in words, beside the shape' — the label is a checked property, not a comment
+
+**Driven in the UI:** Not drivable: the layout controls live inside the document editor, which cannot be reached (see DFE-1/#2748).
+
+**Notes:** Every clause has an implementation and a test, including the honest-reporting one (a header the model cannot represent is reported rather than dropped) and the labelled-approximation one. Partial only because 'the editor's controls reflect the loaded document's real values (not defaults)' is a statement about what a user sees on a loaded document, and no document can be loaded in this build without an agent-generated artifact. Code and tests say it holds; I did not see it.
+
+**Follow-ups filed:**
+
+- issue #2748 (empty state points at a route that dead-ends for binary kinds)
 
 ## Recorded history
 
