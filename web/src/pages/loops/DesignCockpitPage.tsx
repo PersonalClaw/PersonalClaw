@@ -293,7 +293,9 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
             {canAct('pause') && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
             {canAct('resume') && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
             {canAct('stop') && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
-            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" onClick={() => setNudgeOpen((v) => !v)} />}
+            {/* `ariaExpanded`, not `active` — see the same control in `LoopCockpitPage`: it reveals
+                an adjacent composer rather than turning a setting on. */}
+            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen((v) => !v)} />}
             {/* Agentic build — open a chat to build/mix components for this design system
                 on the canvas (D4). Loop-aware via the seed regardless of a project. */}
             {onBuildWithChat && <HeaderControl icon={MessageSquare} label="Build with chat" variant="secondary" onClick={() => onBuildWithChat(loop)} />}
