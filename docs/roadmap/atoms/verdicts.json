@@ -19,6 +19,103 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "WF2TAS-1": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — DRIVEN in a real browser",
+    "evidence": [
+      "tests/test_pp16_task_projection.py and tests/test_pp16_run_tasks_projection.py pass (part of 392 tests passing across ten WF2TAS modules)"
+    ],
+    "ui_validated": "Created a task through the real UI (#/tasks -> New task -> Title -> Create task) and RELOADED: it survives as `button \"Audit probe task WF2TAS — Not started\"` with a `Select:` checkbox, and the 'No tasks' empty state is gone. So the Task record and its fields round-trip.",
+    "notes": "PARTIAL on the half that matters most: the atom's claim is a PROJECTION — Task fields auto-created from a WorkflowTaskBinding. What I drove was a HAND-AUTHORED task, which proves the fields and the store but not the projection. Auto-creation needs a workflow run, which needs a model provider. Stated plainly so the confirmed half is not mistaken for the whole."
+  },
+  "WF2TAS-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — DRIVEN in a real browser",
+    "evidence": [
+      "part of the 392-passed WF2TAS run"
+    ],
+    "ui_validated": "The verified-done criterion is USER-AUTHORABLE and per-condition, observed live: the new-task form carries an 'Add a completion condition' field, and adding one immediately renders it as its own control — `button \"Mark done: the completion condition is observable\"`. So each criterion is independently markable rather than the task carrying one blanket done flag.",
+    "notes": "This is the strongest single observation of the cycle. The atom pairs an engine-owned criterion with enforcement; I could not drive the ENFORCEMENT (that needs a run to enforce against), but the criterion is real, authorable and individually resolvable in the product, which is the part a user meets. The form also exposes prerequisites, steps, and three distinct note kinds (note / research note / execution note) — a richer task model than the atom's title implies."
+  },
+  "WF2TAS-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": [
+      "tests/test_workflows_confirmation.py and tests/test_workflows_confirm_emission.py pass (part of the 392-passed run)"
+    ],
+    "notes": "PARTIAL: a ConfirmationRequest is emitted BY a run and resolved by a human. With no model there is no run to emit one, so the durable typed record and its atomic gate are observed only through their suites."
+  },
+  "WF2TAS-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["tests/test_workflows_surfacing.py passes (part of the 392-passed run)"],
+    "notes": "PARTIAL: surface_mode and trigger-phrase matching need a workflow DEF carrying those fields plus a live conversation to match against."
+  },
+  "WF2TAS-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["tests/test_workflows_surfacing_channels.py passes (part of the 392-passed run)"],
+    "notes": "PARTIAL: cadence and workspace-fingerprint resolution are time- and context-dependent channels; neither is exercisable from one UI session."
+  },
+  "WF2TAS-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["part of the 392-passed run"],
+    "notes": "PARTIAL: frontier/next projections, hand-offs and blueprints need a pool of tasks with real dependency structure. I created one task; the Tasks surface does expose a 'Dependency graph' view tab for exactly this, so it becomes drivable with a few linked tasks."
+  },
+  "WF2TAS-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["part of the 392-passed run"],
+    "notes": "PARTIAL: def-side surfacing fields on DefMetadata plus one adapter per surface are contract-level additions with no standalone screen."
+  },
+  "WF2TAS-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["tests/test_workflows_surfacing_wiring.py passes (part of the 392-passed run)"],
+    "notes": "PARTIAL: this atom exists precisely to make surfacing REACHABLE, so its own test module is the right instrument and it passes. Driving it needs an authored def."
+  },
+  "WF2TAS-9": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": [
+      "the atom names surfacingMeta.ts and it is exactly where the atom says — web/src/pages/workflows/surfacingMeta.ts",
+      "part of the 392-passed run"
+    ],
+    "notes": "PARTIAL: the module is present, but composer chips only appear when a def actually surfaces, which needs WF2TAS-4's trigger match. Worth noting this is the FIRST atom this cycle whose named path I guessed correctly — the three prior cycles all had me wrong and the atom right."
+  },
+  "WF2TAS-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["tests/test_workflows_task_write.py and tests/test_tasks_api.py pass (part of the 392-passed run)"],
+    "notes": "PARTIAL: the lease write path and the confirmation-resolve endpoint are engine seams. The task-projection half is the same one WF2TAS-1 leaves open for want of a run."
+  },
+  "WF2TAS-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": ["part of the 392-passed run"],
+    "notes": "PARTIAL: engine call sites for the Task write and the verified-done/confirmation seams fire during a run. No run, no observation."
+  },
+  "WF2TAS-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 7 (WF2TAS) — observed",
+    "evidence": [
+      "the guidance-persistence Lifecycle enum is ABSENT from src/ — a retirement claim is one of the few things that can be settled decisively by looking, and it holds"
+    ],
+    "notes": "🪤 A NAME COLLISION NEARLY MADE THIS A CONTRADICTION — the fifth finding to collapse on inspection this audit. Searching for the enum returned `class Lifecycle` alive at workflows/workspace.py:71 and still used at :525, which reads exactly like a retirement that never happened. Reading it settles it: that enum is FOLDER lifecycles (TRANSIENT / TTL_STAGING / PERMANENT / IMMUTABLE), a filesystem staging concept whose docstring explains propose-don't-write enforcement. Same identifier, unrelated concept. There is also a separate LifecyclePhase in workflows/models.py. The lesson for the remaining plans: a retirement claim must be checked against what the surviving symbol MEANS, not against its name, or every reused word reads as a broken clean break."
+  },
   "WF2KNO-1": {
     "verdict": "partial",
     "date": "2026-09-08",

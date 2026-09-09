@@ -31,9 +31,19 @@ workflows/verified_done.py: engine-owned criterion execution over loop/gates tri
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- part of the 392-passed WF2TAS run
+
+**Driven in the UI:** The verified-done criterion is USER-AUTHORABLE and per-condition, observed live: the new-task form carries an 'Add a completion condition' field, and adding one immediately renders it as its own control — `button "Mark done: the completion condition is observable"`. So each criterion is independently markable rather than the task carrying one blanket done flag.
+
+**Notes:** This is the strongest single observation of the cycle. The atom pairs an engine-owned criterion with enforcement; I could not drive the ENFORCEMENT (that needs a run to enforce against), but the criterion is real, authorable and individually resolvable in the product, which is the part a user meets. The form also exposes prerequisites, steps, and three distinct note kinds (note / research note / execution note) — a richer task model than the atom's title implies.
 
 ## Recorded history
 

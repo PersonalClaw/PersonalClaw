@@ -32,9 +32,17 @@ DefMetadata gains typed surface_mode/cadence_days/escalation/packs/hands_off_to/
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- part of the 392-passed run
+
+**Notes:** PARTIAL: def-side surfacing fields on DefMetadata plus one adapter per surface are contract-level additions with no standalone screen.
 
 ## Recorded history
 

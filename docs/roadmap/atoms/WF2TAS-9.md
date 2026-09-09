@@ -30,9 +30,18 @@ surfacingMeta.ts mirrors workflowMeta discipline reading backend-computed state;
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- the atom names surfacingMeta.ts and it is exactly where the atom says — web/src/pages/workflows/surfacingMeta.ts
+- part of the 392-passed run
+
+**Notes:** PARTIAL: the module is present, but composer chips only appear when a def actually surfaces, which needs WF2TAS-4's trigger match. Worth noting this is the FIRST atom this cycle whose named path I guessed correctly — the three prior cycles all had me wrong and the atom right.
 
 ## Recorded history
 

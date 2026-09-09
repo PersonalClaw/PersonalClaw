@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 16 | `done_when` checked against the code and it holds |
-| `partial` | 45 | some `done_when` clauses hold, others do not |
+| `confirmed` | 18 | `done_when` checked against the code and it holds |
+| `partial` | 55 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 623 | not yet checked |
+| `unaudited` | 611 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -977,18 +977,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2TAS-1`](WF2TAS-1.md) | `done` | `unaudited` | Projection core: WorkflowTaskBinding + Task fields + auto-materialization |
-| [`WF2TAS-2`](WF2TAS-2.md) | `done` | `unaudited` | Verified done + enforcement: engine-owned criterion, actor matrix, cascade-fail, stuck-work sweep |
-| [`WF2TAS-3`](WF2TAS-3.md) | `done` | `unaudited` | ConfirmationRequest + gates: durable typed record, atomic single-use resolution, require_hitl, per-stage mute/tool-profiles |
-| [`WF2TAS-4`](WF2TAS-4.md) | `done` | `unaudited` | Surfacing core: surface_mode enum, trigger-phrase match_text, negative triggers, metadata split, one-source-two-wrappers |
-| [`WF2TAS-5`](WF2TAS-5.md) | `done` | `unaudited` | Surfacing channels + resolution: cadence, workspace-fingerprint packs, scope resolution, param pre-fill, requirements preflight, doctor |
-| [`WF2TAS-6`](WF2TAS-6.md) | `done` | `unaudited` | Pool + hand-offs + blueprints: frontier/next projections, evented unblock, TTL'd lease decisions, task lifecycle events, blueprint sessions |
-| [`WF2TAS-7`](WF2TAS-7.md) | `done` | `unaudited` | Def-side surfacing fields on DefMetadata + one adapter per record type |
-| [`WF2TAS-8`](WF2TAS-8.md) | `done` | `unaudited` | Backend wiring making surfacing reachable: author_def metadata param, list_defs_surfacing route, TaskComplete fired |
-| [`WF2TAS-9`](WF2TAS-9.md) | `done` | `unaudited` | FE surfacing surfaces: surfacingMeta.ts, composer chips, validated deep-links, templates-list freshness/scope/pack rendering |
-| [`WF2TAS-10`](WF2TAS-10.md) | `done` | `unaudited` | Lease write path + confirmation resolve endpoint + task-projection events on both channels |
-| [`WF2TAS-11`](WF2TAS-11.md) | `done` | `unaudited` | Engine call sites + Task write + verified-done/confirmation emission + DagView composition + config four-point (+fifth) wiring |
-| [`WF2TAS-12`](WF2TAS-12.md) | `done` | `unaudited` | Retire the guidance-persistence Lifecycle enum; rail the def→SurfacingMeta conversion point |
+| [`WF2TAS-1`](WF2TAS-1.md) | `done` | `partial` | Projection core: WorkflowTaskBinding + Task fields + auto-materialization |
+| [`WF2TAS-2`](WF2TAS-2.md) | `done` | `confirmed` | Verified done + enforcement: engine-owned criterion, actor matrix, cascade-fail, stuck-work sweep |
+| [`WF2TAS-3`](WF2TAS-3.md) | `done` | `partial` | ConfirmationRequest + gates: durable typed record, atomic single-use resolution, require_hitl, per-stage mute/tool-profiles |
+| [`WF2TAS-4`](WF2TAS-4.md) | `done` | `partial` | Surfacing core: surface_mode enum, trigger-phrase match_text, negative triggers, metadata split, one-source-two-wrappers |
+| [`WF2TAS-5`](WF2TAS-5.md) | `done` | `partial` | Surfacing channels + resolution: cadence, workspace-fingerprint packs, scope resolution, param pre-fill, requirements preflight, doctor |
+| [`WF2TAS-6`](WF2TAS-6.md) | `done` | `partial` | Pool + hand-offs + blueprints: frontier/next projections, evented unblock, TTL'd lease decisions, task lifecycle events, blueprint sessions |
+| [`WF2TAS-7`](WF2TAS-7.md) | `done` | `partial` | Def-side surfacing fields on DefMetadata + one adapter per record type |
+| [`WF2TAS-8`](WF2TAS-8.md) | `done` | `partial` | Backend wiring making surfacing reachable: author_def metadata param, list_defs_surfacing route, TaskComplete fired |
+| [`WF2TAS-9`](WF2TAS-9.md) | `done` | `partial` | FE surfacing surfaces: surfacingMeta.ts, composer chips, validated deep-links, templates-list freshness/scope/pack rendering |
+| [`WF2TAS-10`](WF2TAS-10.md) | `done` | `partial` | Lease write path + confirmation resolve endpoint + task-projection events on both channels |
+| [`WF2TAS-11`](WF2TAS-11.md) | `done` | `partial` | Engine call sites + Task write + verified-done/confirmation emission + DagView composition + config four-point (+fifth) wiring |
+| [`WF2TAS-12`](WF2TAS-12.md) | `done` | `confirmed` | Retire the guidance-persistence Lifecycle enum; rail the def→SurfacingMeta conversion point |
 
 ### `WF2UNI` — WORKFLOWS-V2-UNIVERSAL-PLANNING (13/14 done)
 

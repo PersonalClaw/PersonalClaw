@@ -31,9 +31,17 @@ sidecar lease file with single_flight CAS (0 multi-winner across 8 processes); P
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- tests/test_workflows_task_write.py and tests/test_tasks_api.py pass (part of the 392-passed run)
+
+**Notes:** PARTIAL: the lease write path and the confirmation-resolve endpoint are engine seams. The task-projection half is the same one WF2TAS-1 leaves open for want of a run.
 
 ## Recorded history
 

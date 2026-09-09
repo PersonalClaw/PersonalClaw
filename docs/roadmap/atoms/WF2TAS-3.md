@@ -30,9 +30,17 @@ workflows/confirmation.py: one durable record, per-type expiry policy, four-verb
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- tests/test_workflows_confirmation.py and tests/test_workflows_confirm_emission.py pass (part of the 392-passed run)
+
+**Notes:** PARTIAL: a ConfirmationRequest is emitted BY a run and resolved by a human. With no model there is no run to emit one, so the durable typed record and its atomic gate are observed only through their suites.
 
 ## Recorded history
 

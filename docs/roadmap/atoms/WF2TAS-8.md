@@ -30,9 +30,17 @@ author_def gains metadata param (write via DefMetadata.from_dict().to_dict()); G
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- tests/test_workflows_surfacing_wiring.py passes (part of the 392-passed run)
+
+**Notes:** PARTIAL: this atom exists precisely to make surfacing REACHABLE, so its own test module is the right instrument and it passes. Driving it needs an authored def.
 
 ## Recorded history
 

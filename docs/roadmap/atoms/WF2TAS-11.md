@@ -35,9 +35,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- part of the 392-passed run
+
+**Notes:** PARTIAL: engine call sites for the Task write and the verified-done/confirmation seams fire during a run. No run, no observation.
 
 ## Recorded history
 

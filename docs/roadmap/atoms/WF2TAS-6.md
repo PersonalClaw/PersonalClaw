@@ -31,9 +31,17 @@ workflows/pool.py: frontier/next projections over all tasks, evented auto-unbloc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- part of the 392-passed run
+
+**Notes:** PARTIAL: frontier/next projections, hand-offs and blueprints need a pool of tasks with real dependency structure. I created one task; the Tasks surface does expose a 'Dependency graph' view tab for exactly this, so it becomes drivable with a few linked tasks.
 
 ## Recorded history
 

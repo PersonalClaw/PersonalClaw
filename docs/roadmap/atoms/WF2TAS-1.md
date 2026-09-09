@@ -31,9 +31,19 @@ tasks/models.py gains WorkflowTaskBinding, TaskStatus.SKIPPED and six projection
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- tests/test_pp16_task_projection.py and tests/test_pp16_run_tasks_projection.py pass (part of 392 tests passing across ten WF2TAS modules)
+
+**Driven in the UI:** Created a task through the real UI (#/tasks -> New task -> Title -> Create task) and RELOADED: it survives as `button "Audit probe task WF2TAS — Not started"` with a `Select:` checkbox, and the 'No tasks' empty state is gone. So the Task record and its fields round-trip.
+
+**Notes:** PARTIAL on the half that matters most: the atom's claim is a PROJECTION — Task fields auto-created from a WorkflowTaskBinding. What I drove was a HAND-AUTHORED task, which proves the fields and the store but not the projection. Auto-creation needs a workflow run, which needs a model provider. Stated plainly so the confirmed half is not mistaken for the whole.
 
 ## Recorded history
 

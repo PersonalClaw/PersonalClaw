@@ -32,9 +32,17 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-08
+
+**Checked by:** audit cycle 7 (WF2TAS) — observed
+
+**Code evidence:**
+
+- the guidance-persistence Lifecycle enum is ABSENT from src/ — a retirement claim is one of the few things that can be settled decisively by looking, and it holds
+
+**Notes:** 🪤 A NAME COLLISION NEARLY MADE THIS A CONTRADICTION — the fifth finding to collapse on inspection this audit. Searching for the enum returned `class Lifecycle` alive at workflows/workspace.py:71 and still used at :525, which reads exactly like a retirement that never happened. Reading it settles it: that enum is FOLDER lifecycles (TRANSIENT / TTL_STAGING / PERMANENT / IMMUTABLE), a filesystem staging concept whose docstring explains propose-don't-write enforcement. Same identifier, unrelated concept. There is also a separate LifecyclePhase in workflows/models.py. The lesson for the remaining plans: a retirement claim must be checked against what the surviving symbol MEANS, not against its name, or every reused word reads as a broken clean break.
 
 ## Recorded history
 
