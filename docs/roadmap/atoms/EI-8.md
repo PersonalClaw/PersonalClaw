@@ -30,9 +30,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- `turn_checkpoints.py` ships with `tests/test_turn_checkpoints.py`, `test_rewind_to_turn_api.py` and `test_chat_rewind.py`, all green
+- 🔑 THE SECRECY FLOOR IS WRITE-SIDE, NOT READ-SIDE, AND IT EXCEEDS THE CLAUSE ON PURPOSE: `.env` and its siblings are 'never copied into the store — NOT FILTERED ON THE WAY OUT, NEVER WRITTEN IN THE FIRST PLACE', because 'the store lives under the home, is covered by snapshots and exports, and A CAPTURED CREDENTIAL WOULD OUTLIVE THE FILE THE USER DELETED'
+- 🔴 AND THE SKIP IS DISCLOSED RATHER THAN SILENT: the turn manifest records `skipped="secret"` — 'the PATH, never the bytes' — so the preview warns 'not captured' instead of silently restoring nothing. A silent no-op would let a user believe a rewind restored a file the store never held
+- 🔑 IT ALSO NAMES THE GAP IT CLOSES, MEASURED: `is_sensitive_path` 'is home-anchored, SO IT DOES NOT SEE A WORKSPACE `.env`' — the existing helper would have missed exactly the file most likely to sit in a worktree
+- the glob list reaches past the clause to private keys, PKCS#12, JKS and keystores; caps are enforced on the way IN, pruning oldest turns rather than rejecting the write
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: a rewind needs a turn that changed files, which needs a bound model.
+
+**Notes:** Two-phase (preview, then confirm) is the right shape for a destructive restore, and the preview is what carries the 'not captured' warning — so the secrecy floor and the confirmation step reinforce each other rather than trading off.
 
 ## Recorded history
 

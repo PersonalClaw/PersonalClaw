@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- the runner-catalog suite covers the lease/idle-release/reconnect surface and is green inside the 358
+- 🔑 THE RECOVERY SWEEP'S DISCRIMINATION IS THE CLAUSE THAT MATTERS AND IT IS THE RIGHT ONE: reattach to a still-alive tmux worker (resumed, journal-flagged) while 'only GENUINELY DEAD sessions are tombstoned'. A sweep that tombstoned on gateway restart alone would kill live work; one that never tombstoned would leak leases forever
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: killing the gateway mid-run is not something to do to the live validation home.
+
+**Notes:** Confirmed on the suite rather than on a real kill-and-recover. That is the honest limit of what this cycle observed for the durability half.
 
 ## Recorded history
 

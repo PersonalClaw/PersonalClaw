@@ -28,9 +28,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- `sandbox_providers/` ships with `base.py`, `none.py`, `docker.py`, `lima.py`, `registry.py`, `tool_gateway.py` and `pclaw_tool.py`; the provider, cgroup-config and cgroup-scope suites are green
+- 🔑 THE SPEC IS DENY-BY-DEFAULT AT THE MOUNT LAYER, AND SAYS WHY: `allowed_write_paths` is mounted read-write and 'anything else is outside the boundary and a write to it fails BECAUSE THE PATH IS NOT MOUNTED' — absence of a mount rather than a check that could be forgotten. `grant_paths` is the same shape: 'NOT mounted unless listed, so an ungranted sandbox cannot see — let alone delete — them'
+- 🔑 AND THE ENVIRONMENT IS REPLACED RATHER THAN FILTERED: `env` is 'the ONLY environment the container receives; the host's environment is never copied in'. A filter has to enumerate what to remove; a replacement does not
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not a browser surface: a provider seam and resource ceilings.
+
+**Notes:** The ceilings are expressed as native container limits rather than as advice — 'a fork bomb hits `pids.max` and dies contained'.
 
 ## Recorded history
 

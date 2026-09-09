@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- `sandbox_providers/lima.py` ships with its suite; `tests/test_terminal_sandbox_picker.py` covers the picker; the probe suite covers the greyed-out-with-reason flip
+- 🔴 THE VM HALF WAS NOT OBSERVED: the interactive case skips with 'limactl / Running instance unavailable'. So the path-translation and in-VM execution clauses are unit-shaped here, not driven
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: no Lima instance on this host.
+
+**Notes:** Partial for the same honest reason as EI-2 — a VM tier cannot be observed without a VM. The provider-unavailable path IS observed, and it is the one a user without Lima actually meets.
 
 ## Recorded history
 

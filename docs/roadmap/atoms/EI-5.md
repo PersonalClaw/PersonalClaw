@@ -28,9 +28,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- 🔑 I DROVE IT AND ALL FOUR CATALOGED RUNNERS RENDER — Claude Code, Codex, Gemini CLI, Kiro — each with its `acp:` id, under copy that bounds the probe: 'Health is measured by asking each CLI for its own version — NOTHING ELSE IS SPAWNED'
+- 🔑 THIS IS THE CYCLE'S BEST ARCC MAPPING, AND IT IS IN THE PRODUCT. Each row carries an adapter PROVENANCE verdict rather than presenting the four as equivalently trustworthy: Claude Code — 'resolves on disk but has no recorded provenance — provision it through PersonalClaw so its integrity is on file'; Codex — 'resolves via `npx -y @agentclientprotocol/codex-acp`, which fetches at launch — AN NPX RUN CANNOT BE PINNED OR CHECKSUM-VERIFIED'; Gemini CLI — 'launches its own binary — no npm ACP adapter in the launch path'. That is ARCC's supply-chain finding transposed: a dependency fetched at launch from a public registry cannot be pinned or verified
+- 🔴 EVERY ROW READS 'Capabilities unknown — no handshake recorded yet' — UNMEASURED RENDERS AS UNKNOWN, four times, live
+- 🏅 AND THE FRONTEND SUITE STATES THE RULE MORE SHARPLY THAN ANYWHERE ELSE IN THIS CATALOGUE: '`latency_ms: null` must not become "0 ms" — a zero reads as "the handshake was instant", WHICH IS A FABRICATED MEASUREMENT'. Same for an unparseable version and a never-recorded capability matrix. 16/16
+- the probe error reaches the screen VERBATIM, and the reason is the ET-8 rule again: a row reading 'unavailable' while the API carried "'gemini' not found on PATH (looked for: gemini); set GEMINI_CLI_EXECUTABLE to override" 'has thrown away the only part of the message that tells you which binary to install'
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Fully driven on :10011: Settings → Agent defaults, all four runner rows with their provenance verdicts and unknown-capability states read off the live page.
+
+**Notes:** 🏅 The best atom of the cycle. A capability catalogue that grades its own supply chain per entry, and refuses to invent a number for anything it did not measure.
 
 ## Recorded history
 

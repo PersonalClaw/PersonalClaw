@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- 🔑 I RAN THE ATOM'S OWN FALSIFICATION AND IT IS BETTER THAN THE CLAUSE PROMISED. Injecting an unmapped `asyncio.create_subprocess_exec` into a module reddened `test_every_spawn_site_is_classified` naming the FILE, THE FUNCTION, THE API AND THE LINE: `investigate.py::_audit_probe_unmapped_spawn::asyncio.create_subprocess_exec  (investigate.py:86)` — and it tells the contributor the two legal answers ('ceiling-wrapped (agent-influenced → route through create_subprocess_limited/spawn_shim_argv) or operator-exempt'). Removed: 3/3, tree byte-identical
+- 🔑 THIS IS A CENSUS RAIL, NOT A BEHAVIOUR TEST — it enumerates every spawn site in the tree and requires each to be classified, so a new spawn site cannot be added silently. The strongest anti-drift shape available, and the same idea PP-1's template census used
+- `test_ceiling_wrapped_and_operator_exempt_are_disjoint` stops a site being listed in both buckets to dodge the check
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not a browser surface: a CI audit over the source tree.
+
+**Notes:** An operator-exempt bucket is the right escape hatch: without one the rail would be defeated by the first legitimate operator-only spawn, and with a disjointness test it cannot be used to launder an agent-influenced one.
 
 ## Recorded history
 

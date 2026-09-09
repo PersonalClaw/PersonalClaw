@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- `sandbox_providers/tool_gateway.py` and `pclaw_tool.py` ship, with `tests/test_sandbox_tool_gateway.py` green
+- 🔑 THE SECOND-OPINION HANDOFF IS ACCEPTED ONLY ON EVIDENCE, WHICH IS THE WHOLE ATOM: a different cataloged runner's one-shot is 'accepted ONLY WHEN THE DISK RE-DIFF CONFIRMS THE EDITS', and it is SEL-audited. An accepted-because-it-claimed-success handoff would let a second model's report stand in for its work
+- requiring a DIFFERENT runner is the point of a second opinion — the same runner twice is one opinion bought twice, the same reasoning AR-9's council template gives for its distinct roles
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: needs a stalled loop and two bound runners.
+
+**Notes:** The sandbox-internal tool gateway is what makes the second opinion possible without widening the sandbox — the inner runner reaches core tools through one mediated path rather than through a hole in the boundary.
 
 ## Recorded history
 

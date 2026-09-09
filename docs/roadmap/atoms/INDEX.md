@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 364 | `done_when` checked against the code and it holds |
-| `partial` | 224 | some `done_when` clauses hold, others do not |
+| `confirmed` | 374 | `done_when` checked against the code and it holds |
+| `partial` | 226 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 8 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 82 | not yet checked |
+| `unaudited` | 70 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -375,18 +375,18 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`EI-1`](EI-1.md) | `done` | `unaudited` | SandboxProvider seam + `none` provider + ResourceCeilings foundation |
-| [`EI-2`](EI-2.md) | `done` | `unaudited` | `docker` provider + engine/workspace-block adoption + cgroup v2 tier |
-| [`EI-3`](EI-3.md) | `done` | `unaudited` | Spawn-audit CI test + wrap remaining agent-influenced spawn seams |
-| [`EI-4`](EI-4.md) | `done` | `unaudited` | Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker |
-| [`EI-5`](EI-5.md) | `done` | `unaudited` | BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings→Agents evidence |
-| [`EI-6`](EI-6.md) | `done` | `unaudited` | Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions |
-| [`EI-7`](EI-7.md) | `done` | `unaudited` | Second-opinion handoff + ProposerBackend + sandbox-internal tool gateway |
-| [`EI-8`](EI-8.md) | `done` | `unaudited` | Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview |
-| [`EI-9`](EI-9.md) | `done` | `unaudited` | Reviewer-comment triage primitive (line-anchored findings → accepted-subset dispatch) |
-| [`EI-10`](EI-10.md) | `done` | `unaudited` | Secrets vault UX + presence-only API + grant-to-sandbox toggles |
-| [`EI-11`](EI-11.md) | `done` | `unaudited` | Security docs correction — credential-hiding vs confinement (D0, land first) |
-| [`EI-12`](EI-12.md) | `done` | `unaudited` | App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD) |
+| [`EI-1`](EI-1.md) | `done` | `confirmed` | SandboxProvider seam + `none` provider + ResourceCeilings foundation |
+| [`EI-2`](EI-2.md) | `done` | `partial` | `docker` provider + engine/workspace-block adoption + cgroup v2 tier |
+| [`EI-3`](EI-3.md) | `done` | `confirmed` | Spawn-audit CI test + wrap remaining agent-influenced spawn seams |
+| [`EI-4`](EI-4.md) | `done` | `partial` | Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker |
+| [`EI-5`](EI-5.md) | `done` | `confirmed` | BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings→Agents evidence |
+| [`EI-6`](EI-6.md) | `done` | `confirmed` | Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions |
+| [`EI-7`](EI-7.md) | `done` | `confirmed` | Second-opinion handoff + ProposerBackend + sandbox-internal tool gateway |
+| [`EI-8`](EI-8.md) | `done` | `confirmed` | Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview |
+| [`EI-9`](EI-9.md) | `done` | `confirmed` | Reviewer-comment triage primitive (line-anchored findings → accepted-subset dispatch) |
+| [`EI-10`](EI-10.md) | `done` | `confirmed` | Secrets vault UX + presence-only API + grant-to-sandbox toggles |
+| [`EI-11`](EI-11.md) | `done` | `confirmed` | Security docs correction — credential-hiding vs confinement (D0, land first) |
+| [`EI-12`](EI-12.md) | `done` | `confirmed` | App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD) |
 
 ### `EIAT` — EMAIL-INBOX-AND-TRIGGERS (6/6 done)
 

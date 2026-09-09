@@ -7519,5 +7519,167 @@
     ],
     "ui_validated": "Not a browser surface: a schema field plus a CLI validator, which was run.",
     "notes": "This atom is what makes SH-4's recorded dependency self-referential — the registry half is done, so the release-signing block is purely the owner key act."
+  },
+  "EI-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "`sandbox_providers/` ships with `base.py`, `none.py`, `docker.py`, `lima.py`, `registry.py`, `tool_gateway.py` and `pclaw_tool.py`; the provider, cgroup-config and cgroup-scope suites are green",
+      "🔑 THE SPEC IS DENY-BY-DEFAULT AT THE MOUNT LAYER, AND SAYS WHY: `allowed_write_paths` is mounted read-write and 'anything else is outside the boundary and a write to it fails BECAUSE THE PATH IS NOT MOUNTED' — absence of a mount rather than a check that could be forgotten. `grant_paths` is the same shape: 'NOT mounted unless listed, so an ungranted sandbox cannot see — let alone delete — them'",
+      "🔑 AND THE ENVIRONMENT IS REPLACED RATHER THAN FILTERED: `env` is 'the ONLY environment the container receives; the host's environment is never copied in'. A filter has to enumerate what to remove; a replacement does not",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a provider seam and resource ceilings.",
+    "notes": "The ceilings are expressed as native container limits rather than as advice — 'a fork bomb hits `pids.max` and dies contained'."
+  },
+  "EI-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "the argv builder composes real isolation: `--user uid:gid` ('UID alignment WITHOUT chown -R: mount writes are host-user owned'), `--pids-limit`, `--memory`, `--workdir`, and per-path bind mounts; 27 cases green",
+      "🔑 ONLY WHAT IT ACTUALLY ENFORCES IS CLAIMED — the egress comment is the plan's own doctrine applied to itself: 'only `off` is enforced docker-side (`none`); finer egress tiers are ADVISORY here and belong to the host egress rail (net/policy), recorded as such in SandboxSpec'. The contract's docstring repeats it, so a consumer reading the field is told which tiers a container boundary answers for",
+      "🔴 THIS HOST IS THE ATOM'S OWN no-Docker FIXTURE and the fallback held: the two container-boundary cases skip with 'docker CLI/daemon unavailable' while the rest pass, which is the clause 'a no-Docker machine parks needs-input with a typed reason (no silent host down…)'",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: no Docker daemon on this host.",
+    "notes": "Partial on SC1's load-bearing half — 'a write outside allowed_write_paths is blocked by the boundary' needs a real container and was NOT observed. The argv that would produce that boundary was read and unit-tested; the boundary itself was not. Recorded as unobserved rather than inferred, the same treatment SH-2's macOS keychain half got."
+  },
+  "EI-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "🔑 I RAN THE ATOM'S OWN FALSIFICATION AND IT IS BETTER THAN THE CLAUSE PROMISED. Injecting an unmapped `asyncio.create_subprocess_exec` into a module reddened `test_every_spawn_site_is_classified` naming the FILE, THE FUNCTION, THE API AND THE LINE: `investigate.py::_audit_probe_unmapped_spawn::asyncio.create_subprocess_exec  (investigate.py:86)` — and it tells the contributor the two legal answers ('ceiling-wrapped (agent-influenced → route through create_subprocess_limited/spawn_shim_argv) or operator-exempt'). Removed: 3/3, tree byte-identical",
+      "🔑 THIS IS A CENSUS RAIL, NOT A BEHAVIOUR TEST — it enumerates every spawn site in the tree and requires each to be classified, so a new spawn site cannot be added silently. The strongest anti-drift shape available, and the same idea PP-1's template census used",
+      "`test_ceiling_wrapped_and_operator_exempt_are_disjoint` stops a site being listed in both buckets to dodge the check",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not a browser surface: a CI audit over the source tree.",
+    "notes": "An operator-exempt bucket is the right escape hatch: without one the rail would be defeated by the first legitimate operator-only spawn, and with a disjointness test it cannot be used to launder an agent-influenced one."
+  },
+  "EI-4": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "`sandbox_providers/lima.py` ships with its suite; `tests/test_terminal_sandbox_picker.py` covers the picker; the probe suite covers the greyed-out-with-reason flip",
+      "🔴 THE VM HALF WAS NOT OBSERVED: the interactive case skips with 'limactl / Running instance unavailable'. So the path-translation and in-VM execution clauses are unit-shaped here, not driven",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: no Lima instance on this host.",
+    "notes": "Partial for the same honest reason as EI-2 — a VM tier cannot be observed without a VM. The provider-unavailable path IS observed, and it is the one a user without Lima actually meets."
+  },
+  "EI-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "🔑 I DROVE IT AND ALL FOUR CATALOGED RUNNERS RENDER — Claude Code, Codex, Gemini CLI, Kiro — each with its `acp:` id, under copy that bounds the probe: 'Health is measured by asking each CLI for its own version — NOTHING ELSE IS SPAWNED'",
+      "🔑 THIS IS THE CYCLE'S BEST ARCC MAPPING, AND IT IS IN THE PRODUCT. Each row carries an adapter PROVENANCE verdict rather than presenting the four as equivalently trustworthy: Claude Code — 'resolves on disk but has no recorded provenance — provision it through PersonalClaw so its integrity is on file'; Codex — 'resolves via `npx -y @agentclientprotocol/codex-acp`, which fetches at launch — AN NPX RUN CANNOT BE PINNED OR CHECKSUM-VERIFIED'; Gemini CLI — 'launches its own binary — no npm ACP adapter in the launch path'. That is ARCC's supply-chain finding transposed: a dependency fetched at launch from a public registry cannot be pinned or verified",
+      "🔴 EVERY ROW READS 'Capabilities unknown — no handshake recorded yet' — UNMEASURED RENDERS AS UNKNOWN, four times, live",
+      "🏅 AND THE FRONTEND SUITE STATES THE RULE MORE SHARPLY THAN ANYWHERE ELSE IN THIS CATALOGUE: '`latency_ms: null` must not become \"0 ms\" — a zero reads as \"the handshake was instant\", WHICH IS A FABRICATED MEASUREMENT'. Same for an unparseable version and a never-recorded capability matrix. 16/16",
+      "the probe error reaches the screen VERBATIM, and the reason is the ET-8 rule again: a row reading 'unavailable' while the API carried \"'gemini' not found on PATH (looked for: gemini); set GEMINI_CLI_EXECUTABLE to override\" 'has thrown away the only part of the message that tells you which binary to install'",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Fully driven on :10011: Settings → Agent defaults, all four runner rows with their provenance verdicts and unknown-capability states read off the live page.",
+    "notes": "🏅 The best atom of the cycle. A capability catalogue that grades its own supply chain per entry, and refuses to invent a number for anything it did not measure."
+  },
+  "EI-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "the runner-catalog suite covers the lease/idle-release/reconnect surface and is green inside the 358",
+      "🔑 THE RECOVERY SWEEP'S DISCRIMINATION IS THE CLAUSE THAT MATTERS AND IT IS THE RIGHT ONE: reattach to a still-alive tmux worker (resumed, journal-flagged) while 'only GENUINELY DEAD sessions are tombstoned'. A sweep that tombstoned on gateway restart alone would kill live work; one that never tombstoned would leak leases forever",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: killing the gateway mid-run is not something to do to the live validation home.",
+    "notes": "Confirmed on the suite rather than on a real kill-and-recover. That is the honest limit of what this cycle observed for the durability half."
+  },
+  "EI-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "`sandbox_providers/tool_gateway.py` and `pclaw_tool.py` ship, with `tests/test_sandbox_tool_gateway.py` green",
+      "🔑 THE SECOND-OPINION HANDOFF IS ACCEPTED ONLY ON EVIDENCE, WHICH IS THE WHOLE ATOM: a different cataloged runner's one-shot is 'accepted ONLY WHEN THE DISK RE-DIFF CONFIRMS THE EDITS', and it is SEL-audited. An accepted-because-it-claimed-success handoff would let a second model's report stand in for its work",
+      "requiring a DIFFERENT runner is the point of a second opinion — the same runner twice is one opinion bought twice, the same reasoning AR-9's council template gives for its distinct roles",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs a stalled loop and two bound runners.",
+    "notes": "The sandbox-internal tool gateway is what makes the second opinion possible without widening the sandbox — the inner runner reaches core tools through one mediated path rather than through a hole in the boundary."
+  },
+  "EI-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "`turn_checkpoints.py` ships with `tests/test_turn_checkpoints.py`, `test_rewind_to_turn_api.py` and `test_chat_rewind.py`, all green",
+      "🔑 THE SECRECY FLOOR IS WRITE-SIDE, NOT READ-SIDE, AND IT EXCEEDS THE CLAUSE ON PURPOSE: `.env` and its siblings are 'never copied into the store — NOT FILTERED ON THE WAY OUT, NEVER WRITTEN IN THE FIRST PLACE', because 'the store lives under the home, is covered by snapshots and exports, and A CAPTURED CREDENTIAL WOULD OUTLIVE THE FILE THE USER DELETED'",
+      "🔴 AND THE SKIP IS DISCLOSED RATHER THAN SILENT: the turn manifest records `skipped=\"secret\"` — 'the PATH, never the bytes' — so the preview warns 'not captured' instead of silently restoring nothing. A silent no-op would let a user believe a rewind restored a file the store never held",
+      "🔑 IT ALSO NAMES THE GAP IT CLOSES, MEASURED: `is_sensitive_path` 'is home-anchored, SO IT DOES NOT SEE A WORKSPACE `.env`' — the existing helper would have missed exactly the file most likely to sit in a worktree",
+      "the glob list reaches past the clause to private keys, PKCS#12, JKS and keystores; caps are enforced on the way IN, pruning oldest turns rather than rejecting the write",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: a rewind needs a turn that changed files, which needs a bound model.",
+    "notes": "Two-phase (preview, then confirm) is the right shape for a destructive restore, and the preview is what carries the 'not captured' warning — so the secrecy floor and the confirmation step reinforce each other rather than trading off."
+  },
+  "EI-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "`tests/test_review_triage.py` green inside the 358",
+      "🔑 THE ANCHOR VALIDATION IS THE PRIMITIVE'S REAL WORK: findings are validated against the REAL diff before being offered, so a line-anchored finding pointing at a line that moved cannot be dispatched as if it still applied",
+      "the accepted subset dispatches to the ORIGINATING worker while rejected findings land in the calibration record — so a rejection is training data rather than a discard",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Not driven: needs a workflow review stage to emit findings.",
+    "notes": "Accepting 2 of 5 as the shipped shape (rather than accept-all or reject-all) is what makes this a triage primitive instead of a review gate."
+  },
+  "EI-10": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "🔑 I DROVE IT AND THE PRESENCE-ONLY RULE IS STATED AS AN ABSOLUTE, NAMING THE API TOO: 'Values are write-only: once stored, a secret can be replaced or removed, but NEVER READ BACK — not by this page and not by any API'",
+      "🏅 THE INHERIT-FROM-HOST ROWS DO BETTER THAN RENDER DISTINCTLY — THEY STATE THE LIMIT OF THE VAULT'S OWN AUTHORITY. Four credential-shaped variables, each chipped 'from host environment', under: 'The vault holds NO COPY of these values and CANNOT change or remove them — edit them where the gateway is launched. Store one above to take ownership.' A vault that listed inherited variables without saying that would imply control it does not have",
+      "the global scope reports '0 available to every project on this instance' rather than an empty list with no statement",
+      "`tests/test_secrets_vault.py` green; the grant-to-sandbox path is the same `env`-replacement contract EI-1 pins, so an ungranted sibling is absent because it was never composed in",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "Fully driven on :10011: Settings → Secrets, including the write-only statement, the global count and the four inherited rows. No value was displayed anywhere, which is the property under test.",
+    "notes": "The audit read the page and did not go looking for the values behind those four rows — the surface does not offer them, and that is the atom working."
+  },
+  "EI-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "🔑 THE CORRECTION LANDED IN THE CODE'S OWN WORDS, WHICH IS WHERE IT MATTERS MOST: `sandbox.py`'s docstring says it 'HIDES sensitive credential paths … using platform-native isolation' and that it 'falls back gracefully to NO SANDBOX when the OS mechanism is unavailable (logged as warning)'. Credential-hiding is claimed; confinement is not",
+      "the threat model matches — the OS child sandbox is entered as a 'credential-env denylist so secrets never reach a sandboxed child', not as containment",
+      "🏅 AND THE APP-NETWORK CLAIM IS THE SHARPEST DISCLOSURE IN THE PROJECT. `limitations.md` puts the network claim OUTSIDE the enforced-permission list, labelled advisory: 'PersonalClaw does not confine an app's outbound traffic: this app's code can reach the network either way. THE DECLARATION IS DISCLOSURE, NOT CONTAINMENT.' It is shown 'whether or not the app declares `network`, so an app that declares `network: false` is NOT presented as one the platform has blocked'",
+      "🔴 that last clause is the absent-vs-declared-false class in its consent form: a `false` that the platform does not enforce must not read as a `false` the platform imposed",
+      "the docker provider's egress comment is the same discipline inside the code — only `off` is claimed at the container layer, and the finer tiers name where enforcement actually lives",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "The app-consent wording was verified against the enforcement docs; the Store's rendering of it was driven in the APE cycle.",
+    "notes": "🏅 A plan atom whose entire deliverable is REMOVING overclaims is unusual and it is the one that makes the other eleven trustworthy. Everything else here confines something; this one makes sure the docs only say what those eleven actually do."
+  },
+  "EI-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser",
+    "evidence": [
+      "🪤 A CONTRADICTION WITHDRAWN — THE SEVENTH TO COLLAPSE ON READING FURTHER. `limitations.md` §3 says app dependencies install into the SHARED venv the gateway runs from, with no per-app site-packages, which looked incompatible with this atom's clause that 'an app pinning a conflicting core dependency does not affect the gateway'. It is not: the clause is satisfied by a REFUSAL, not by isolation — `_reject_core_dependency_conflicts` refuses, before a single byte is installed, any app requirement that pip would have to resolve by MOVING a core dependency 'under a live process that has already imported those modules'",
+      "🔴 AND IT IS FAIL-CLOSED ON PURPOSE: a requirement naming a core dependency that 'cannot be PROVEN harmless is refused, not installed' — an unparseable specifier included",
+      "🔑 THE EXTRAS CARVE-OUT IS MEASURED RATHER THAN ASSUMED, and the measurement is the justification: extras are excluded from the core pin set because '19 of the 20 first-party apps that declare `pythonDependencies` pin exactly those', so treating an extra as core 'would refuse almost every provider app in the Store'",
+      "the env-isolation clause rests on EI-1's replacement contract (the container receives ONLY the composed env), and the Store's network claim is the EI-11 disclosure above",
+      "358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011"
+    ],
+    "ui_validated": "The consent wording was read against enforcement; app installs were not driven here.",
+    "notes": "The shared venv is a real limitation, disclosed in `limitations.md` rather than hidden, and the conflict refusal is the narrow guarantee that limitation still permits. Stating both is what makes the pair honest — either alone would mislead."
   }
 }

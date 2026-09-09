@@ -33,9 +33,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- `tests/test_review_triage.py` green inside the 358
+- 🔑 THE ANCHOR VALIDATION IS THE PRIMITIVE'S REAL WORK: findings are validated against the REAL diff before being offered, so a line-anchored finding pointing at a line that moved cannot be dispatched as if it still applied
+- the accepted subset dispatches to the ORIGINATING worker while rejected findings land in the calibration record — so a rejection is training data rather than a discard
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: needs a workflow review stage to emit findings.
+
+**Notes:** Accepting 2 of 5 as the shipped shape (rather than accept-all or reject-all) is what makes this a triage primitive instead of a review gate.
 
 ## Recorded history
 

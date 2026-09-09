@@ -31,9 +31,22 @@ SC1: a stage `sandbox: docker` runs its process tree in a UID-aligned bind-mount
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 65 (EI) — the spawn-site census falsified (an unmapped spawn named to file:line); the runner provenance rows driven in a real browser
+
+**Code evidence:**
+
+- the argv builder composes real isolation: `--user uid:gid` ('UID alignment WITHOUT chown -R: mount writes are host-user owned'), `--pids-limit`, `--memory`, `--workdir`, and per-path bind mounts; 27 cases green
+- 🔑 ONLY WHAT IT ACTUALLY ENFORCES IS CLAIMED — the egress comment is the plan's own doctrine applied to itself: 'only `off` is enforced docker-side (`none`); finer egress tiers are ADVISORY here and belong to the host egress rail (net/policy), recorded as such in SandboxSpec'. The contract's docstring repeats it, so a consumer reading the field is told which tiers a container boundary answers for
+- 🔴 THIS HOST IS THE ATOM'S OWN no-Docker FIXTURE and the fallback held: the two container-boundary cases skip with 'docker CLI/daemon unavailable' while the rest pass, which is the clause 'a no-Docker machine parks needs-input with a typed reason (no silent host down…)'
+- 358 passed / 3 skipped across 17 sandbox, runner, vault, checkpoint and triage suites; 16/16 on the runner-health frontend suite; the Secrets vault and Agent-defaults pages driven on :10011
+
+**Driven in the UI:** Not driven: no Docker daemon on this host.
+
+**Notes:** Partial on SC1's load-bearing half — 'a write outside allowed_write_paths is blocked by the boundary' needs a real container and was NOT observed. The argv that would produce that boundary was read and unit-tested; the boundary itself was not. Recorded as unobserved rather than inferred, the same treatment SH-2's macOS keychain half got.
 
 ## Recorded history
 
