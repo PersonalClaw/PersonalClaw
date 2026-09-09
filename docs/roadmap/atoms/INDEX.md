@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 18 | `done_when` checked against the code and it holds |
-| `partial` | 55 | some `done_when` clauses hold, others do not |
+| `confirmed` | 20 | `done_when` checked against the code and it holds |
+| `partial` | 64 | some `done_when` clauses hold, others do not |
 | `contradicted` | 0 | the recorded status disagrees with the code |
 | `unverifiable` | 0 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 611 | not yet checked |
+| `unaudited` | 600 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -776,17 +776,17 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PR2-1`](PR2-1.md) | `done` | `unaudited` | Doctor tiered-probe framework + per-capability probe packs + read-only Settings tab |
-| [`PR2-2`](PR2-2.md) | `done` | `unaudited` | Platform-wide no-model degraded contract, registry, chip + honesty lint |
-| [`PR2-3`](PR2-3.md) | `done` | `unaudited` | Mid-turn message handling — queue + cancel-and-replace + ActiveJobTracker |
-| [`PR2-4`](PR2-4.md) | `done` | `unaudited` | Confirm-gated fixes + surfacing/memory-pipeline simulators + structured crash capture |
-| [`PR2-5`](PR2-5.md) | `done` | `unaudited` | Health-scored self-remediation engine (deficit scoring, capped plan) on the heartbeat |
-| [`PR2-6`](PR2-6.md) | `done` | `unaudited` | Third mid-turn policy `steer` + ACP capability gate + composer affordance |
-| [`PR2-7`](PR2-7.md) | `done` | `unaudited` | Automation would-execute rendering on the trust surface (§3.3) |
-| [`PR2-8`](PR2-8.md) | `done` | `unaudited` | Re-home remediation engine onto AUTOMATION-SUBSTRATE adaptive-clock trigger + runs-inbox digest (§4.3/§4.4) |
-| [`PR2-9`](PR2-9.md) | `done` | `unaudited` | Richer memory-pipeline alarm + flywheel/knowledge degraded floors (§3.2 richer, §5.2) |
-| [`PR2-10`](PR2-10.md) | `done` | `unaudited` | ACP mid-turn steer delivery path (§6.2 remainder) |
-| [`PR2-11`](PR2-11.md) | `done` | `unaudited` | Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4) |
+| [`PR2-1`](PR2-1.md) | `done` | `confirmed` | Doctor tiered-probe framework + per-capability probe packs + read-only Settings tab |
+| [`PR2-2`](PR2-2.md) | `done` | `confirmed` | Platform-wide no-model degraded contract, registry, chip + honesty lint |
+| [`PR2-3`](PR2-3.md) | `done` | `partial` | Mid-turn message handling — queue + cancel-and-replace + ActiveJobTracker |
+| [`PR2-4`](PR2-4.md) | `done` | `partial` | Confirm-gated fixes + surfacing/memory-pipeline simulators + structured crash capture |
+| [`PR2-5`](PR2-5.md) | `done` | `partial` | Health-scored self-remediation engine (deficit scoring, capped plan) on the heartbeat |
+| [`PR2-6`](PR2-6.md) | `done` | `partial` | Third mid-turn policy `steer` + ACP capability gate + composer affordance |
+| [`PR2-7`](PR2-7.md) | `done` | `partial` | Automation would-execute rendering on the trust surface (§3.3) |
+| [`PR2-8`](PR2-8.md) | `done` | `partial` | Re-home remediation engine onto AUTOMATION-SUBSTRATE adaptive-clock trigger + runs-inbox digest (§4.3/§4.4) |
+| [`PR2-9`](PR2-9.md) | `done` | `partial` | Richer memory-pipeline alarm + flywheel/knowledge degraded floors (§3.2 richer, §5.2) |
+| [`PR2-10`](PR2-10.md) | `done` | `partial` | ACP mid-turn steer delivery path (§6.2 remainder) |
+| [`PR2-11`](PR2-11.md) | `done` | `partial` | Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4) |
 
 ### `PT` — PERSONALITY-THEMES (6/6 done)
 

@@ -19,6 +19,96 @@
     },
     "rule": "A verdict is a claim about evidence, not a vote. `confirmed` requires naming what was checked; an atom whose evidence is only a path that pre-existed the work is `partial` at best — see tools/audit_landed_atoms.py on why path-only evidence scores TRIVIAL."
   },
+  "PR2-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — RAN the real CLI",
+    "evidence": [
+      "tests/test_resilience_doctor.py passes (part of 152 tests passing across six PR2 modules)",
+      "`personalclaw doctor` against the validation home produces a genuinely tiered report: Dependencies / Project / Agent / Configuration / MCP Tools / Runtime / Vector Memory / Speech-to-Text / Provider Health / Connectivity, each capability carrying its own status glyph (✅ present, ⏹ not configured, 🔐 credential file mode, 🕐 timezone source)",
+      "every not-configured line names its own REMEDY rather than just reporting absence — 'pick an embedding model in Settings → Models', 'install an STT app or bind one in Settings → Models'"
+    ],
+    "notes": "Confirmed by running it, not by reading its test. Two observations recorded rather than filed, because both are plausibly deliberate and need the owner's judgement. (1) The headline is '✅ PersonalClaw is ready!' while Configuration reports 'chat model: (none bound)' — arguably right (the box IS ready; binding a model is a separate step the UI advertises), but a reader could take 'ready' as 'can think'. (2) Connectivity reports 'gateway: ✅ running (uptime 49h 42m)' for a home whose own gateway I started two hours earlier: it probes the CONFIGURED dashboard URL (port 10000) rather than the running instance, so with a runtime --port override it can attribute another instance's gateway to this home. Faithful to config, potentially misleading across homes. Neither is a defect I would file without a ruling."
+  },
+  "PR2-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — DRIVEN in a real browser, in the live degraded state",
+    "evidence": [
+      "tests/test_resilience_degraded.py and tests/test_resilience_degraded_lint.py pass (part of the 152-passed run)",
+      "web/src/ui/DegradedChip.tsx:118 is the chip's own copy — `setupLand ? 'Set up a model'`"
+    ],
+    "ui_validated": "This home has no model, so the degraded contract was the LIVE condition all session — the header's 'Set up a model' control I had been seeing on every page for seven cycles IS this chip. Clicking it opens a `dialog \"Degraded surfaces\"` that: states the condition plainly ('Running without a model'), offers the fix as a real link to #/settings/models, and then enumerates each affected surface with WHAT STILL WORKS separated from what pauses — Chat is unavailable and says 'PersonalClaw never fakes a reply'; Inbox enrichment keeps keyword and name-mention alerts, ingestion, dedup and mute, pausing only auto-classify/draft/digest; Memory extraction keeps deterministic preference-facet capture and records every pass in the staging log so captures WAIT rather than being dropped; Knowledge ingest shows '1 queued'.",
+    "notes": "The strongest atom I have audited so far, and the queue count is why. 'Knowledge ingest — 1 queued' is EXACTLY the one document I created two cycles ago for KL-1, sitting waiting for embeddings — so the degraded registry is tracking real deferred work rather than rendering a static warning. The per-surface paused-vs-broken distinction is the substance of the contract: it is what stops a user concluding the product is broken when it is merely unbound. Note this is the same DegradedChip.tsx whose aria-expanded sits nineteen lines below its handler, which produced a false positive in an earlier a11y census this session — the chip is correct on both counts."
+  },
+  "PR2-3": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "notes": "PARTIAL: queue, cancel-and-replace and the ACP path are all MID-TURN behaviours — they need a turn in flight to interrupt, which needs a model. The three policies are exactly the kind of thing a suite proves better than a happy-path UI run, and it passes."
+  },
+  "PR2-4": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["part of the 152-passed run"],
+    "notes": "PARTIAL: confirm-gated fixes need a deficit to fix. The simulators exist for exactly this reason but I did not invoke them — a simulator run proves the simulator, and I would rather record the gap than dress it up."
+  },
+  "PR2-5": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": [
+      "tests/test_resilience_remediation.py and tests/test_resilience_remediation_trigger.py pass (part of the 152-passed run)"
+    ],
+    "notes": "PARTIAL: the health-scored self-remediation engine scores deficits and acts on them. This home HAS real deficits (no model, no embeddings, no STT), so it is a good future target — but observing the engine act means watching it run on a cadence, not clicking anything."
+  },
+  "PR2-6": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "notes": "PARTIAL: `steer` is the third mid-turn policy, so it inherits PR2-3's blocker — no turn to steer without a model. The ACP capability gate needs an authenticated ACP client, which the roadmap already records as owner-gated."
+  },
+  "PR2-7": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["part of the 152-passed run"],
+    "notes": "PARTIAL: would-execute rendering on the trust surface needs an automation configured to render a would-execute preview FOR. None exists here."
+  },
+  "PR2-8": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["the remediation rails pass as part of the 152-passed run"],
+    "notes": "PARTIAL: re-homing the remediation engine onto AUTOMATION-SUBSTRATE adapters is a cross-plan structural claim — its evidence is which module owns which seam, and confirming it properly means auditing the Automation plan alongside it. Deferred to that plan's cycle rather than half-judged here."
+  },
+  "PR2-9": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": [
+      "part of the 152-passed run",
+      "the degraded dialog I drove for PR2-2 renders the memory-pipeline entry with its own explanation, so the surface this atom enriches is live"
+    ],
+    "notes": "PARTIAL: a RICHER memory-pipeline alarm needs the pipeline to have run enough to alarm about. The flywheel and knowledge degraded entries are present in the dialog; whether they carry the atom's richer content cannot be judged with one queued item and no model."
+  },
+  "PR2-10": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["tests/test_mid_turn_steer.py passes (part of the 152-passed run)"],
+    "notes": "PARTIAL: the ACP mid-turn steer DELIVERY path needs a live ACP client mid-turn — two blockers stacked (no model, no authenticated ACP client)."
+  },
+  "PR2-11": {
+    "verdict": "partial",
+    "date": "2026-09-08",
+    "by": "audit cycle 8 (PR2) — observed",
+    "evidence": ["part of the 152-passed run"],
+    "notes": "PARTIAL: retiring duplicate heartbeat maintenance jobs into the remediation engine is a retirement claim, which WF2TAS-12 taught me is decidable by looking — but only if I can name the retired jobs precisely. The atom's title truncates in dag.json and I did not resolve the full list, so I am recording it unaudited rather than guessing at which jobs should be absent. Next cycle should read the atom's full scope first."
+  },
   "WF2TAS-1": {
     "verdict": "partial",
     "date": "2026-09-08",
