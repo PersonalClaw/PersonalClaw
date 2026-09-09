@@ -31,9 +31,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `contradicted`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔴 MEASURED: `isInertOutcome` — the FE consumer of the backend's inert/suppressed vocabulary — exists in EXACTLY THREE PLACES, ALL INSIDE web/src/pages/schedule/: ScheduleDetail.tsx, scheduleMeta.ts, and inertReason.test.ts
+- 🔴 and that directory has NO ROUTE and NO PRODUCTION IMPORTER (App.tsx registers only `triggers`; the sole non-schedule references are five test files under web/src/ui/). So the fold consumer is stranded in dead code
+- MEASURED on the live surface: #/triggers shows no 'suppressed' text at all, and there is no Show-archived / include-archived / reveal affordance anywhere under pages/triggers/. The only `suppressed` handling there is WeekGridView's per-SLOT shading, which is a different thing — a recurrence preview, not the runs-inbox row fold
+- no runs-inbox consumer of the archive split exists: the `archived` references in the frontend belong to sessions, knowledge and projects, none to triggers
+- 🔑 THE BACKEND HALF NAMED THIS EXACT FUNCTION AS ITS COMPLETION. Audited two cycles ago in the engine plan: SCHEDULE_STATUS_TO_OUTCOME splices all six INERT_OUTCOMES in by construction so a quiet-hours skip folds away instead of reading as a red failure, and its comment says that was 'the exact confusion isInertOutcome was written to prevent ONE LAYER LATER'. That layer is unrouted
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Driven in the UI:** Drove #/triggers looking for the fold. Nothing reveals suppressed or archived rows on demand.
+
+**Notes:** 🔴 THE CAMPAIGN'S FIRST CONTRADICTED VERDICT, and it is a chain rather than a single miss. The clause is entirely about FE wiring — 'backend archive split already present, this wires the FE toggle' — and the wiring exists only inside the directory WF2AUT-5 failed to delete. So the two atoms compose into one defect: the replacement left a directory behind, and the fold consumer was in it. A user therefore cannot reveal a suppressed fire on demand, which is the affordance the backend's by-construction inert mapping was built to make legible. Filed as an issue with the full chain.
 
 ## Recorded history
 

@@ -33,9 +33,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 dashboard/handlers/triggers.py:1370-1402 A SIX-STEP ORDERED GATE, each with its status code AND its reason — the strongest inbound-auth design in the campaign
+- 1. incident kill switch → 503, with the scope explained ('an always-registered dashboard route, not one of the five EXTERNAL_ACCESS_SURFACES', so the per-integration switch is the client's own disabled flag plus revocation)
+- 2. token → client against the SHA-256-HASH registry, honouring disabled and the 'webhook' surface binding — and 🔑 A FALLBACK IS DELIBERATELY REFUSED: 'There is deliberately NO surface-token fallback (unlike /mcp): the Done-when requires a SCOPED token, WHICH AN UN-SCOPED OPERATOR TOKEN IS NOT'
+- 3. 🔑 scope pin → 403 + SEL, and the subtle case is covered: check_bindings refuses a DISAGREEING pin, and 'the explicit equality below also refuses an ABSENT pin, so A SCOPE-LESS CLIENT CANNOT FIRE AN ARBITRARY WEBHOOK (fail-closed)'. A violation 'is a security event — logged and audited, NEVER A SILENT SUBSTITUTION'
+- 4. rate cap → 429 per client, 'so one noisy integration cannot starve another'
+- 5. 🔑 RESOLVE LAST, AND THE ORDERING IS ITSELF THE CONTROL: 404 for an unknown id OR a non-webhook kind 'rather than confirming a non-webhook trigger's existence', and 'Done AFTER auth+scope, SO A MISSCOPED CALLER LEARNS NOTHING ABOUT WHICH TRIGGERS EXIST'
+- 6. fence + fire-and-forget 202 — the body is capped and fenced 'so it reaches the agent as data and NEVER INSTRUCTIONS', and the 202 is argued ('a webhook sender must not block on an LLM turn')
+- and the scope boundary is honest rather than overclaimed: network reachability 'is governed by the dashboard server's own binding and by the DEFERRED OWNER E4 remote-exposure decision, not by this handler'
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** Two things generalise. The refused fallback is the same instinct as the learning plan's derived actor — an authorization gate whose subject can be supplied by a weaker credential is decorative — and here the weaker credential is the operator's own token, which is the tempting one to accept. And step 5's placement is enumeration prevention achieved by ORDER rather than by a message: the same 404 text is safe last and leaky first.
 
 ## Recorded history
 

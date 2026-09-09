@@ -32,9 +32,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: on_render is defined at pull_on_view.py:174 and CALLED at :246 in the same module's render path — the clause's 'currently zero production callers' is closed
+- the TTL-serve-cache decision is the call site's own return value (`decision = on_render(trigger, now=now, base_dir=base_dir)`), so a view past its TTL refreshes and one inside it serves cache through one branch rather than two code paths
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** A one-line atom whose whole content was reachability, and the fix is one call. Worth recording because the gateway-must-not-import-as-loop constraint the clause also names is what makes the call site's LOCATION the design decision rather than an implementation detail.
 
 ## Recorded history
 

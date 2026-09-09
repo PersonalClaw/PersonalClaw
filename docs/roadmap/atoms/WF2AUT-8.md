@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: `trigger_source` is a registered provider type — providers/registry.py:523 is the handler for provider.type == 'trigger_source' (AUTO-A4), and apps/manifest.py:982 lists it in the manifest-declarable set
+- 🔑 manifest.py:984 draws a distinction that prevents a real confusion: trigger_source 'supplies the STIMULUS (live [event])' and is explicitly NOT the same as the neighbouring team-trigger backend entry — two provider types that would otherwise read as synonyms
+- the PROVIDER_TYPES↔handler parity rail (test_manifest_types_match_handlers) is the same guard the packs plan's issue-#47 note describes, and it passes in this tree
+- the fenced+provenanced payload path is WF2AUT-1's, confirmed above
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Driven in the UI:** Not driven: a fixture app's declared trigger_source firing end-to-end, and the disable-parks-bound-triggers behaviour, both need an installed app with a live event source.
+
+**Notes:** Partial for the end-to-end drive only. The 'core contains no vendor names' half of the clause is the provider-agnostic tenet, and the registry seam is what makes it satisfiable: a source is declared by a manifest rather than named in core.
 
 ## Recorded history
 

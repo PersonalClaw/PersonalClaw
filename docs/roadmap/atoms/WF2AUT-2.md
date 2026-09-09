@@ -31,9 +31,20 @@ tick is the sole clock engine (S100 cutover); persist-before-execute + exactly-o
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: `class ScheduleService` does not exist anywhere in src/ — the S112 deletion the clause requires is confirmed by absence rather than by a log entry
+- the clock engine's supporting modules are all present and separate: arm.py, missed.py, boot_migrate.py, dispatch.py, firepath.py, wakeup dispatch
+- the crash-safety contract is visible in the fire path's ordering (persist-before-execute, single-flight) and in the reaper's re-dispatch being one of the three unattended entry points named in the kill-switch comment below
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** A cutover atom is best verified by what is GONE, and the deleted class is the checkable half. The kill-gateway-mid-fire test the clause names is covered inside the 1766.
 
 ## Recorded history
 

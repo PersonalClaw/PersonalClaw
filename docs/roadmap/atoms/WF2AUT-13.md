@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: drain_decision is defined at dispatch.py:244 and CALLED from loop.py:633 — the spool drain now acts on a decision instead of acking unconditionally
+- 🔴 loop.py:611-619 records the inertness precisely, and this variant is new: 'DrainAction, drain_decision and classify_handler_outcome were written, documented and unit [tested]' while a comment referred to 'the poison pill drain_decision names' — 'NAMING THE FUNCTION IT NEVER CALLED'. A comment citing the mechanism is what made the gap invisible to a reader
+- MEASURED: SKIP_CYCLE was DELETED rather than left declared, and dispatch.py:229 gives the reason — 'A cycle skip needs a trigger_id to [attribute it]' — so the member went away for want of an honest payload rather than being kept as an unreachable enum case
+- every DrainAction member is acted on (consume/hold/give-up/skip-duplicate) with a durable retry budget, and the clause's hardest rule — 'a failure AFTER the boundary is never retried' — is what the explicit side-effect boundary exists to make expressible
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** The deletion is the part worth keeping. An enum member with no honest payload is the same defect as a declared-and-unread config key, and the usual response is to keep it 'for completeness'. Deleting it means the exhaustiveness rails elsewhere in this codebase cannot be satisfied by a case that can never fire.
 
 ## Recorded history
 

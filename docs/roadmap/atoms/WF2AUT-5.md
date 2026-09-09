@@ -32,9 +32,23 @@ Automations page replaces pages/schedule+triggers; runs inbox renders typed outc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: the router registers exactly ONE route for this surface — App.tsx:78 declares `{ id: 'triggers', label: 'Triggers' }` and :143 dispatches it to TriggersSection. There is no `schedule` route and no `automations` route
+- the unification itself HAPPENED and was driven in an earlier cycle of this campaign: #/triggers renders the single live surface with a List/Week segmented control (the clause's Week tab), the five system clock triggers that used to be the schedule page's content, a search box and a Filter & sort popover
+- the Week grid is a real recurrence view and its suppression handling is argued: WeekGridView.tsx:20 keeps suppressed slots visible because 'a grid that omitted suppressed slots would display a schedule the user [does not have]', :117 explains the shading to the user, and :216 labels the mixed state 'Partly suppressed'
+- 🔴 MEASURED: web/src/pages/schedule/ WAS NOT DELETED. ScheduleDetail.tsx and ScheduleForm.tsx survive with NO route and NO production importer — the only references outside that directory are five test files under web/src/ui/
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Driven in the UI:** Drove #/automations (falls through to the dashboard — no such route) and #/triggers (the live unified surface, driven fully in an earlier cycle). The runs-inbox half is covered under WF2AUT-10.
+
+**Notes:** 🔴 PARTIAL FOR THE WORD 'REPLACES'. The clause is 'Automations page replaces pages/schedule+triggers'. One live surface exists, so the unification is real — but the replaced directory was left on disk, which is the repo's own clean-break tenet ('when you replace a mechanism, delete the old one in the same change'). Two dead components that still pass their own tests are the FE instance of the shape the learning plan's wiring rail describes: the modules keep passing forever while the behaviour they exist for stops happening. And the residue is not harmless — it is exactly what strands WF2AUT-10 below. The page is also named Triggers rather than Automations, the fourth naming/placement drift this campaign has recorded, which on its own would be a note rather than a finding.
 
 ## Recorded history
 

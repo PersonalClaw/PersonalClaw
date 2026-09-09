@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 184 | `done_when` checked against the code and it holds |
-| `partial` | 144 | some `done_when` clauses hold, others do not |
-| `contradicted` | 2 | the recorded status disagrees with the code |
+| `confirmed` | 194 | `done_when` checked against the code and it holds |
+| `partial` | 147 | some `done_when` clauses hold, others do not |
+| `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 352 | not yet checked |
+| `unaudited` | 338 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -899,20 +899,20 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`WF2AUT-1`](WF2AUT-1.md) | `done` | `unaudited` | Substrate foundation: event bus + six-rule fencing hardening + trigger-store unification + lossless cron migration |
-| [`WF2AUT-2`](WF2AUT-2.md) | `done` | `unaudited` | Clock-engine cutover: crash-safe scheduler + wakeup dispatch + missed-fire/catch_up + boot sweep + ScheduleService deleted |
-| [`WF2AUT-3`](WF2AUT-3.md) | `done` | `unaudited` | Records, health & safety: two-weight run records + typed outcomes + parking/autopause + budgets/caps/retention + capability allowlists + secrets |
-| [`WF2AUT-4`](WF2AUT-4.md) | `done` | `unaudited` | Lifecycle-hook/heartbeat/commitment conversion + new-kinds-wave-1 runtimes + quiet windows + duty-gate seam |
-| [`WF2AUT-5`](WF2AUT-5.md) | `done` | `unaudited` | FE Automations page + runs inbox + durable approvals + delivery contract + Week tab + doctor + snapshot coverage |
-| [`WF2AUT-6`](WF2AUT-6.md) | `done` | `unaudited` | Wire the view kind's on_render runtime to a production render surface |
-| [`WF2AUT-7`](WF2AUT-7.md) | `done` | `unaudited` | web_watch headless-Chromium escalation tier + knowledge-store digest routing |
-| [`WF2AUT-8`](WF2AUT-8.md) | `done` | `unaudited` | trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources |
-| [`WF2AUT-9`](WF2AUT-9.md) | `done` | `unaudited` | §3.5 skip_if_active liveness guard + acting_on resource claim on mutating triggers |
-| [`WF2AUT-10`](WF2AUT-10.md) | `done` | `unaudited` | §5 did/suppressed fold affordance FE consumer |
-| [`WF2AUT-11`](WF2AUT-11.md) | `done` | `unaudited` | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) |
-| [`WF2AUT-12`](WF2AUT-12.md) | `done` | `unaudited` | webhook kind fire endpoint + scoped token verification |
-| [`WF2AUT-13`](WF2AUT-13.md) | `done` | `unaudited` | §3.3 cursor rule call site: the spool drain acts on drain_decision instead of acking unconditionally |
-| [`WF2AUT-14`](WF2AUT-14.md) | `done` | `unaudited` | Resume-target substrate: ratify shipped resume-targets + file the orphaned scope |
+| [`WF2AUT-1`](WF2AUT-1.md) | `done` | `confirmed` | Substrate foundation: event bus + six-rule fencing hardening + trigger-store unification + lossless cron migration |
+| [`WF2AUT-2`](WF2AUT-2.md) | `done` | `confirmed` | Clock-engine cutover: crash-safe scheduler + wakeup dispatch + missed-fire/catch_up + boot sweep + ScheduleService deleted |
+| [`WF2AUT-3`](WF2AUT-3.md) | `done` | `confirmed` | Records, health & safety: two-weight run records + typed outcomes + parking/autopause + budgets/caps/retention + capability allowlists + secrets |
+| [`WF2AUT-4`](WF2AUT-4.md) | `done` | `confirmed` | Lifecycle-hook/heartbeat/commitment conversion + new-kinds-wave-1 runtimes + quiet windows + duty-gate seam |
+| [`WF2AUT-5`](WF2AUT-5.md) | `done` | `partial` | FE Automations page + runs inbox + durable approvals + delivery contract + Week tab + doctor + snapshot coverage |
+| [`WF2AUT-6`](WF2AUT-6.md) | `done` | `confirmed` | Wire the view kind's on_render runtime to a production render surface |
+| [`WF2AUT-7`](WF2AUT-7.md) | `done` | `confirmed` | web_watch headless-Chromium escalation tier + knowledge-store digest routing |
+| [`WF2AUT-8`](WF2AUT-8.md) | `done` | `partial` | trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources |
+| [`WF2AUT-9`](WF2AUT-9.md) | `done` | `confirmed` | §3.5 skip_if_active liveness guard + acting_on resource claim on mutating triggers |
+| [`WF2AUT-10`](WF2AUT-10.md) | `done` | `contradicted` | §5 did/suppressed fold affordance FE consumer |
+| [`WF2AUT-11`](WF2AUT-11.md) | `done` | `confirmed` | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) |
+| [`WF2AUT-12`](WF2AUT-12.md) | `done` | `confirmed` | webhook kind fire endpoint + scoped token verification |
+| [`WF2AUT-13`](WF2AUT-13.md) | `done` | `confirmed` | §3.3 cursor rule call site: the spool drain acts on drain_decision instead of acking unconditionally |
+| [`WF2AUT-14`](WF2AUT-14.md) | `done` | `partial` | Resume-target substrate: ratify shipped resume-targets + file the orphaned scope |
 
 ### `WF2KNO` — WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS (12/12 done)
 

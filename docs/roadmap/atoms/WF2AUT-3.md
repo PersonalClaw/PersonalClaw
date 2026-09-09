@@ -31,9 +31,24 @@ ledger-only vs full runs with materiality classification; every suppressed fire 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑🔴 THE KILL SWITCH WAS MEASURED BROKEN BEFORE IT WAS FIXED, AND THIS IS THE WORST INSTANCE OF THIS CAMPAIGN'S CLASS. firepath.py:300-305: 'MEASURED: `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it "Suspend/resume all unattended work" … but the unified engine — THE SOLE PATH THAT FIRES CLOCK TRIGGERS SINCE S100 — never read the flag. Driven before writing this: switch thrown, tick() still returned fires: [clock:nightly] with outcome=ran. So THE ONE CONTROL AN OPERATOR REACHES FOR DURING AN INCIDENT WAS THE ONE THAT KEPT RUNNING UNATTENDED WORK, WHILE REPORTING ITSELF ACTIVE'
+- 🔑 ITS PLACEMENT IS ARGUED TWICE. Ordered FIRST, ahead of the injection screen, because 'a gate ordered after screen would make "is the payload clean" a precondition for honouring a kill switch'. And centralised rather than per-loop, because there are three unattended entry points (clock loop, file-watch poll, reaper re-dispatch) and 'only the file-watch one checked — a per-loop check is a control that must be re-added correctly at every future call site, WHICH IS PRECISELY HOW THIS GAP OPENED'
+- it also declines to second-guess its dependency: incident_active() is deliberately fail-OPEN ('an unreadable flag file must not halt all automation on a filesystem hiccup') and this gate inherits that rather than hardening it locally
+- 🔑🔴 PATHGUARD WAS ALSO MEASURED BROKEN FIRST, WITH A TABLE. pathguard.py:1-18: `paths` had been a first-class CAPABILITY_KEY since S69, fail-closed, and rendered as a fence in the UI — but capability_allows compared it with _matches_entry, 'STRING MATCHING, built for tool names like mcp__github__*. PATHS ARE NOT STRINGS FOR SECURITY PURPOSES.' Driven against the real function with allowlist ['/Users/me/notes/*']: it ALLOWED '/Users/me/notes/../../.ssh/id_rsa' and '/Users/me/notes/../.aws/credentials'
+- the table also catches a near-miss that would bite a different allowlist: with ['/Users/me/notes'], denying '/Users/me/notesEVIL' was 'correct only by accident of this entry'
+- the fence set is layered rather than single: handoff.py:39 names 'capability fence, PathGuard and the denylist' as the fail-closed controls together
+- calendar.py:485/:517 states the inverse rule for a third-party gate — 'a broken third-party gate must not become a global kill switch' — so a provider raising degrades rather than halting everything
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** Two measured-before-fix defects in one atom, and both are the shape this audit keeps finding: a control that was present, fail-closed, UI-rendered, and did not do its job. PathGuard is the FOURTH independent occurrence of post-realpath containment in this codebase (the skill-resource reader, voice profiles, the uploads store, now this) — and the paths it was letting through are the exact two families this session's own constraints forbid reading, which is a fair measure of the stake.
 
 ## Recorded history
 

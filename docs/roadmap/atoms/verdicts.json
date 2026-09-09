@@ -3873,5 +3873,192 @@
       "test_skill_format_compat 20/20; test_version_consistency 6/6"
     ],
     "notes": "The clause's bar is 'a person with org access can cut a release from the doc alone', and the thing that actually meets that bar is the symptom→cause table rather than the procedure: a procedure tells a releaser what to do when everything works, and the table is what answers the case where it did not. Cross-check with the CI plan audited last cycle: the runbook's 'needs your approval' on both environments corroborates from the maintainer's side what release.yml shows from the pipeline's — separate environments per publisher tuple, each with a required reviewer."
+  },
+  "WF2AUT-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "the triggers package is 18,168 lines across ~40 modules with the event bus, fencing, store and migration seams each in their own file",
+      "the six-rule fencing hardening is real in security.py: strip_role_tokens (:1472), provenance attributes carried on the fence (:1406-1410, source_type + transformation_path), the screening path (:1147), and the SSRF rule verified below under WF2AUT-7",
+      ":1410 records a subtle failure the provenance chain must avoid — collapsing 'transformation_path into literal text and destroying the provenance chain'",
+      "triggers.json as the single store behind /api/triggers, with boot_migrate.py + migrate.py + a verify-migration path as separate modules",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "The fencing rules are the substrate every later atom leans on: WF2AUT-8's app-declared sources, WF2AUT-12's webhook body and WF2AUT-7's watch payloads all reach the agent through it. Auditing them here rather than per-consumer is what the plan's own ordering intends."
+  },
+  "WF2AUT-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: `class ScheduleService` does not exist anywhere in src/ — the S112 deletion the clause requires is confirmed by absence rather than by a log entry",
+      "the clock engine's supporting modules are all present and separate: arm.py, missed.py, boot_migrate.py, dispatch.py, firepath.py, wakeup dispatch",
+      "the crash-safety contract is visible in the fire path's ordering (persist-before-execute, single-flight) and in the reaper's re-dispatch being one of the three unattended entry points named in the kill-switch comment below",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "A cutover atom is best verified by what is GONE, and the deleted class is the checkable half. The kill-gateway-mid-fire test the clause names is covered inside the 1766."
+  },
+  "WF2AUT-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑🔴 THE KILL SWITCH WAS MEASURED BROKEN BEFORE IT WAS FIXED, AND THIS IS THE WORST INSTANCE OF THIS CAMPAIGN'S CLASS. firepath.py:300-305: 'MEASURED: `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it \"Suspend/resume all unattended work\" … but the unified engine — THE SOLE PATH THAT FIRES CLOCK TRIGGERS SINCE S100 — never read the flag. Driven before writing this: switch thrown, tick() still returned fires: [clock:nightly] with outcome=ran. So THE ONE CONTROL AN OPERATOR REACHES FOR DURING AN INCIDENT WAS THE ONE THAT KEPT RUNNING UNATTENDED WORK, WHILE REPORTING ITSELF ACTIVE'",
+      "🔑 ITS PLACEMENT IS ARGUED TWICE. Ordered FIRST, ahead of the injection screen, because 'a gate ordered after screen would make \"is the payload clean\" a precondition for honouring a kill switch'. And centralised rather than per-loop, because there are three unattended entry points (clock loop, file-watch poll, reaper re-dispatch) and 'only the file-watch one checked — a per-loop check is a control that must be re-added correctly at every future call site, WHICH IS PRECISELY HOW THIS GAP OPENED'",
+      "it also declines to second-guess its dependency: incident_active() is deliberately fail-OPEN ('an unreadable flag file must not halt all automation on a filesystem hiccup') and this gate inherits that rather than hardening it locally",
+      "🔑🔴 PATHGUARD WAS ALSO MEASURED BROKEN FIRST, WITH A TABLE. pathguard.py:1-18: `paths` had been a first-class CAPABILITY_KEY since S69, fail-closed, and rendered as a fence in the UI — but capability_allows compared it with _matches_entry, 'STRING MATCHING, built for tool names like mcp__github__*. PATHS ARE NOT STRINGS FOR SECURITY PURPOSES.' Driven against the real function with allowlist ['/Users/me/notes/*']: it ALLOWED '/Users/me/notes/../../.ssh/id_rsa' and '/Users/me/notes/../.aws/credentials'",
+      "the table also catches a near-miss that would bite a different allowlist: with ['/Users/me/notes'], denying '/Users/me/notesEVIL' was 'correct only by accident of this entry'",
+      "the fence set is layered rather than single: handoff.py:39 names 'capability fence, PathGuard and the denylist' as the fail-closed controls together",
+      "calendar.py:485/:517 states the inverse rule for a third-party gate — 'a broken third-party gate must not become a global kill switch' — so a provider raising degrades rather than halting everything",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "Two measured-before-fix defects in one atom, and both are the shape this audit keeps finding: a control that was present, fail-closed, UI-rendered, and did not do its job. PathGuard is the FOURTH independent occurrence of post-realpath containment in this codebase (the skill-resource reader, voice profiles, the uploads store, now this) — and the paths it was letting through are the exact two families this session's own constraints forbid reading, which is a fair measure of the stake."
+  },
+  "WF2AUT-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "the wave-1 runtimes each ship as their own module: file_poll.py, file_watch.py, web_poll.py, pull_on_view.py, idle_poll.py, plus lifecycle_fire.py for the hook events",
+      "idle_poll.py:393 anchors the KIND_RUNTIMES contract — 'The one runtime KIND_RUNTIMES names for idle' — and states the reuse rather than duplicating dispatch ('Deliberately reuses wakeup.dispatch_fires')",
+      "quiet windows are in the fire path rather than in each runtime (the catch_up|skip decision the clause names), and the duty_gate provider type is registered with its handler",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "The conversion half is the interesting design: heartbeat sub-tasks and commitments become ORDINARY trigger kinds rather than parallel schedulers, so quiet windows, the kill switch and the ledger apply to them without each subsystem re-implementing a gate. That is the same consolidation argument the capture-hygiene module made in the learning plan."
+  },
+  "WF2AUT-5": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: the router registers exactly ONE route for this surface — App.tsx:78 declares `{ id: 'triggers', label: 'Triggers' }` and :143 dispatches it to TriggersSection. There is no `schedule` route and no `automations` route",
+      "the unification itself HAPPENED and was driven in an earlier cycle of this campaign: #/triggers renders the single live surface with a List/Week segmented control (the clause's Week tab), the five system clock triggers that used to be the schedule page's content, a search box and a Filter & sort popover",
+      "the Week grid is a real recurrence view and its suppression handling is argued: WeekGridView.tsx:20 keeps suppressed slots visible because 'a grid that omitted suppressed slots would display a schedule the user [does not have]', :117 explains the shading to the user, and :216 labels the mixed state 'Partly suppressed'",
+      "🔴 MEASURED: web/src/pages/schedule/ WAS NOT DELETED. ScheduleDetail.tsx and ScheduleForm.tsx survive with NO route and NO production importer — the only references outside that directory are five test files under web/src/ui/",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "ui_validated": "Drove #/automations (falls through to the dashboard — no such route) and #/triggers (the live unified surface, driven fully in an earlier cycle). The runs-inbox half is covered under WF2AUT-10.",
+    "notes": "🔴 PARTIAL FOR THE WORD 'REPLACES'. The clause is 'Automations page replaces pages/schedule+triggers'. One live surface exists, so the unification is real — but the replaced directory was left on disk, which is the repo's own clean-break tenet ('when you replace a mechanism, delete the old one in the same change'). Two dead components that still pass their own tests are the FE instance of the shape the learning plan's wiring rail describes: the modules keep passing forever while the behaviour they exist for stops happening. And the residue is not harmless — it is exactly what strands WF2AUT-10 below. The page is also named Triggers rather than Automations, the fourth naming/placement drift this campaign has recorded, which on its own would be a note rather than a finding."
+  },
+  "WF2AUT-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: on_render is defined at pull_on_view.py:174 and CALLED at :246 in the same module's render path — the clause's 'currently zero production callers' is closed",
+      "the TTL-serve-cache decision is the call site's own return value (`decision = on_render(trigger, now=now, base_dir=base_dir)`), so a view past its TTL refreshes and one inside it serves cache through one branch rather than two code paths",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "A one-line atom whose whole content was reachability, and the fix is one call. Worth recording because the gateway-must-not-import-as-loop constraint the clause also names is what makes the call site's LOCATION the design decision rather than an implementation detail."
+  },
+  "WF2AUT-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "🎯 web_poll.py:22-27 THE CHOKEPOINT RULE, AND BOTH TIERS ARE GUARDED: 'Fetching goes through the egress chokepoint — NEVER urllib/httpx directly. The plain tier is net.fetch; the opt-in headless tier is web.render.render_url. BOTH apply host classification, private-IP denial and the redirect-hop re-check'",
+      "🔑 THE DNS-REBINDING OBJECTIVE IS MET IN THE HARDEST PLACE, AND THE REASON IS STATED: 'render_url runs net.guard.evaluate BEFORE IT NAVIGATES, PRECISELY BECAUSE A BROWSER DOES ITS OWN DNS AND WOULD OTHERWISE BYPASS THE PIN'",
+      "the threat is named with the canonical address, twice (:26 and :605): 'A watch pointed at http://169.254.169.254/ is an SSRF against the machine's own metadata service, and both tiers refuse it; RE-IMPLEMENTING A FETCH HERE WOULD BYPASS EVERY ONE OF THOSE CONTROLS'",
+      ":606-610 the policy is passed EXPLICITLY rather than defaulted, and the reason is that the default would silently drop operator config: 'Passing it explicitly is what makes an operator deny_hosts and a narrowed ceiling apply to a poll — net.fetch's own default is a bare STRICT that layers neither'",
+      "the daily request budget is enforced with a ledger-visible refusal rather than a silent skip, argued from the cost to someone else's server ('a poll_interval of 60 on a handful of watches is a few thousand requests a day')",
+      "🔴 AND A REAL PRE-EXISTING BUG IS FIXED AND EXPLAINED (:615-621): net.fetch is a coroutine and web_poll runs on a worker thread with no loop, so without the _await_maybe bridge 'status/body read as 0/empty and EVERY default-fetcher web_watch SILENTLY NO-OPED'. The reason the suite could not see it is the lesson: 'the suite was blind because TESTS INJECT A SYNC fetcher'",
+      "the escalation trigger is a real signal rather than a retry count: a page answering 200 with an empty JS shell makes extract_items find nothing on a real success, and escalate_headless defaults OFF 'so existing watches are byte-unchanged'",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "🎯 THE MOST DIRECTLY APPLICABLE ARCC GUIDANCE OF THE CAMPAIGN, AND THIS ATOM MEETS ALL FOUR OBJECTIVES. The SSRF-mitigation doc asks for (1) allowlist plus refusal of private/local/metadata addresses, naming 169.254.169.254 explicitly, (2) DNS-rebinding protection by checking the RESOLVED address, (3) no automatic redirect following, validate every hop, and (4) log all outgoing requests. Both tiers do 1 and 3; the ledger-visible budget and escalation rows do 4; and 2 is met in the case the guidance does not anticipate — a headless BROWSER that resolves DNS itself, where a guard placed anywhere but before navigation is decorative. Most implementations would guard the plain fetch and let the browser tier through, which is exactly the bypass this module names."
+  },
+  "WF2AUT-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: `trigger_source` is a registered provider type — providers/registry.py:523 is the handler for provider.type == 'trigger_source' (AUTO-A4), and apps/manifest.py:982 lists it in the manifest-declarable set",
+      "🔑 manifest.py:984 draws a distinction that prevents a real confusion: trigger_source 'supplies the STIMULUS (live [event])' and is explicitly NOT the same as the neighbouring team-trigger backend entry — two provider types that would otherwise read as synonyms",
+      "the PROVIDER_TYPES↔handler parity rail (test_manifest_types_match_handlers) is the same guard the packs plan's issue-#47 note describes, and it passes in this tree",
+      "the fenced+provenanced payload path is WF2AUT-1's, confirmed above",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "ui_validated": "Not driven: a fixture app's declared trigger_source firing end-to-end, and the disable-parks-bound-triggers behaviour, both need an installed app with a live event source.",
+    "notes": "Partial for the end-to-end drive only. The 'core contains no vendor names' half of the clause is the provider-agnostic tenet, and the registry seam is what makes it satisfiable: a source is declared by a manifest rather than named in core."
+  },
+  "WF2AUT-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "liveness.py owns the fire-time heuristics for skip_if_active, and claims.py owns the acting_on resource claim — two modules, matching the clause's two halves",
+      "🔑 liveness.py:29 STATES THE ANTI-INERTNESS RULE FOR ITS OWN SUB-KEYS: 'Each recognized skip_if_active key is EVALUATED here — A DECLARED-BUT-UNREAD SUB-KEY WOULD BE THE [inert surface]'. A module that knows its declared options are the thing most likely to rot",
+      ":22 the fire path 'must not crash on a hand-edited skip_if_active block' — the store is user-editable JSON, so a malformed block degrades rather than killing the tick",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "The design point worth keeping is that a busy target yields a TYPED DEFERRED ledger row rather than a silent skip — the same zero-silent-drops rule WF2AUT-3 enforces for suppressions, applied to a liveness deferral so 'it did not run' and 'it ran and did nothing' stay distinguishable."
+  },
+  "WF2AUT-10": {
+    "verdict": "contradicted",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "🔴 MEASURED: `isInertOutcome` — the FE consumer of the backend's inert/suppressed vocabulary — exists in EXACTLY THREE PLACES, ALL INSIDE web/src/pages/schedule/: ScheduleDetail.tsx, scheduleMeta.ts, and inertReason.test.ts",
+      "🔴 and that directory has NO ROUTE and NO PRODUCTION IMPORTER (App.tsx registers only `triggers`; the sole non-schedule references are five test files under web/src/ui/). So the fold consumer is stranded in dead code",
+      "MEASURED on the live surface: #/triggers shows no 'suppressed' text at all, and there is no Show-archived / include-archived / reveal affordance anywhere under pages/triggers/. The only `suppressed` handling there is WeekGridView's per-SLOT shading, which is a different thing — a recurrence preview, not the runs-inbox row fold",
+      "no runs-inbox consumer of the archive split exists: the `archived` references in the frontend belong to sessions, knowledge and projects, none to triggers",
+      "🔑 THE BACKEND HALF NAMED THIS EXACT FUNCTION AS ITS COMPLETION. Audited two cycles ago in the engine plan: SCHEDULE_STATUS_TO_OUTCOME splices all six INERT_OUTCOMES in by construction so a quiet-hours skip folds away instead of reading as a red failure, and its comment says that was 'the exact confusion isInertOutcome was written to prevent ONE LAYER LATER'. That layer is unrouted",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "ui_validated": "Drove #/triggers looking for the fold. Nothing reveals suppressed or archived rows on demand.",
+    "notes": "🔴 THE CAMPAIGN'S FIRST CONTRADICTED VERDICT, and it is a chain rather than a single miss. The clause is entirely about FE wiring — 'backend archive split already present, this wires the FE toggle' — and the wiring exists only inside the directory WF2AUT-5 failed to delete. So the two atoms compose into one defect: the replacement left a directory behind, and the fold consumer was in it. A user therefore cannot reveal a suppressed fire on demand, which is the affordance the backend's by-construction inert mapping was built to make legible. Filed as an issue with the full chain."
+  },
+  "WF2AUT-11": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: src/personalclaw/autonudge.py does NOT exist — the clause's deletion is confirmed by absence",
+      "idle_poll.py:393 is the surviving runtime and states its identity as 'The one runtime KIND_RUNTIMES names for idle', reusing wakeup.dispatch_fires rather than carrying a second dispatcher",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "An absorption atom, and the checkable half is again what is GONE. Reusing the shared dispatch is what makes the absorption real rather than a rename: a kind:idle fire now passes the same kill switch, quiet windows and ledger as every other kind, which a private ticker never did."
+  },
+  "WF2AUT-12": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 dashboard/handlers/triggers.py:1370-1402 A SIX-STEP ORDERED GATE, each with its status code AND its reason — the strongest inbound-auth design in the campaign",
+      "1. incident kill switch → 503, with the scope explained ('an always-registered dashboard route, not one of the five EXTERNAL_ACCESS_SURFACES', so the per-integration switch is the client's own disabled flag plus revocation)",
+      "2. token → client against the SHA-256-HASH registry, honouring disabled and the 'webhook' surface binding — and 🔑 A FALLBACK IS DELIBERATELY REFUSED: 'There is deliberately NO surface-token fallback (unlike /mcp): the Done-when requires a SCOPED token, WHICH AN UN-SCOPED OPERATOR TOKEN IS NOT'",
+      "3. 🔑 scope pin → 403 + SEL, and the subtle case is covered: check_bindings refuses a DISAGREEING pin, and 'the explicit equality below also refuses an ABSENT pin, so A SCOPE-LESS CLIENT CANNOT FIRE AN ARBITRARY WEBHOOK (fail-closed)'. A violation 'is a security event — logged and audited, NEVER A SILENT SUBSTITUTION'",
+      "4. rate cap → 429 per client, 'so one noisy integration cannot starve another'",
+      "5. 🔑 RESOLVE LAST, AND THE ORDERING IS ITSELF THE CONTROL: 404 for an unknown id OR a non-webhook kind 'rather than confirming a non-webhook trigger's existence', and 'Done AFTER auth+scope, SO A MISSCOPED CALLER LEARNS NOTHING ABOUT WHICH TRIGGERS EXIST'",
+      "6. fence + fire-and-forget 202 — the body is capped and fenced 'so it reaches the agent as data and NEVER INSTRUCTIONS', and the 202 is argued ('a webhook sender must not block on an LLM turn')",
+      "and the scope boundary is honest rather than overclaimed: network reachability 'is governed by the dashboard server's own binding and by the DEFERRED OWNER E4 remote-exposure decision, not by this handler'",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "Two things generalise. The refused fallback is the same instinct as the learning plan's derived actor — an authorization gate whose subject can be supplied by a weaker credential is decorative — and here the weaker credential is the operator's own token, which is the tempting one to accept. And step 5's placement is enumeration prevention achieved by ORDER rather than by a message: the same 404 text is safe last and leaky first."
+  },
+  "WF2AUT-13": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "MEASURED: drain_decision is defined at dispatch.py:244 and CALLED from loop.py:633 — the spool drain now acts on a decision instead of acking unconditionally",
+      "🔴 loop.py:611-619 records the inertness precisely, and this variant is new: 'DrainAction, drain_decision and classify_handler_outcome were written, documented and unit [tested]' while a comment referred to 'the poison pill drain_decision names' — 'NAMING THE FUNCTION IT NEVER CALLED'. A comment citing the mechanism is what made the gap invisible to a reader",
+      "MEASURED: SKIP_CYCLE was DELETED rather than left declared, and dispatch.py:229 gives the reason — 'A cycle skip needs a trigger_id to [attribute it]' — so the member went away for want of an honest payload rather than being kept as an unreachable enum case",
+      "every DrainAction member is acted on (consume/hold/give-up/skip-duplicate) with a durable retry budget, and the clause's hardest rule — 'a failure AFTER the boundary is never retried' — is what the explicit side-effect boundary exists to make expressible",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "The deletion is the part worth keeping. An enum member with no honest payload is the same defect as a declared-and-unread config key, and the usual response is to keep it 'for completeness'. Deleting it means the exhaustiveness rails elsewhere in this codebase cannot be satisfied by a case that can never fire."
+  },
+  "WF2AUT-14": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 34 (WF2AUT) — DRIVEN in a real browser",
+    "evidence": [
+      "the resume-target surface exists and is consumed: handoff.py, arm.py and the missed-fire path all participate, and the loops plan's WF2LOO-9 consumer was confirmed live in an earlier cycle of this campaign",
+      "the substrate contract is documented in the plan file as ratified-as-filed, which is what the clause asks for",
+      "1766 tests pass across the trigger suites — the largest suite count of any plan audited"
+    ],
+    "notes": "Partial because the clause's second half — 'the orphaned remainder … is enumerated and implemented OR EXPLICITLY DESCOPED WITH REASONS' — is a bookkeeping claim about a delta between an original scope and what shipped, and I did not reconstruct that delta independently. Verifying it properly means diffing the plan's pre-08-28 scope against the shipped surface, which is a plan-archaeology exercise rather than a code observation, and this protocol's governing rule is to observe rather than to trust the enumeration. Recording the limit rather than accepting the claim."
   }
 }

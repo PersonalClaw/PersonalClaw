@@ -29,9 +29,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the resume-target surface exists and is consumed: handoff.py, arm.py and the missed-fire path all participate, and the loops plan's WF2LOO-9 consumer was confirmed live in an earlier cycle of this campaign
+- the substrate contract is documented in the plan file as ratified-as-filed, which is what the clause asks for
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** Partial because the clause's second half — 'the orphaned remainder … is enumerated and implemented OR EXPLICITLY DESCOPED WITH REASONS' — is a bookkeeping claim about a delta between an original scope and what shipped, and I did not reconstruct that delta independently. Verifying it properly means diffing the plan's pre-08-28 scope against the shipped surface, which is a plan-archaeology exercise rather than a code observation, and this protocol's governing rule is to observe rather than to trust the enumeration. Recording the limit rather than accepting the claim.
 
 ## Recorded history
 

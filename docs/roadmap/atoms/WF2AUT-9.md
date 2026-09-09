@@ -31,9 +31,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- liveness.py owns the fire-time heuristics for skip_if_active, and claims.py owns the acting_on resource claim — two modules, matching the clause's two halves
+- 🔑 liveness.py:29 STATES THE ANTI-INERTNESS RULE FOR ITS OWN SUB-KEYS: 'Each recognized skip_if_active key is EVALUATED here — A DECLARED-BUT-UNREAD SUB-KEY WOULD BE THE [inert surface]'. A module that knows its declared options are the thing most likely to rot
+- :22 the fire path 'must not crash on a hand-edited skip_if_active block' — the store is user-editable JSON, so a malformed block degrades rather than killing the tick
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** The design point worth keeping is that a busy target yields a TYPED DEFERRED ledger row rather than a silent skip — the same zero-silent-drops rule WF2AUT-3 enforces for suppressions, applied to a liveness deferral so 'it did not run' and 'it ran and did nothing' stay distinguishable.
 
 ## Recorded history
 

@@ -31,9 +31,19 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- MEASURED: src/personalclaw/autonudge.py does NOT exist — the clause's deletion is confirmed by absence
+- idle_poll.py:393 is the surviving runtime and states its identity as 'The one runtime KIND_RUNTIMES names for idle', reusing wakeup.dispatch_fires rather than carrying a second dispatcher
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** An absorption atom, and the checkable half is again what is GONE. Reusing the shared dispatch is what makes the absorption real rather than a rename: a kind:idle fire now passes the same kill switch, quiet windows and ledger as every other kind, which a private ticker never did.
 
 ## Recorded history
 

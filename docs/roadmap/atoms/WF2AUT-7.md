@@ -31,9 +31,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🎯 web_poll.py:22-27 THE CHOKEPOINT RULE, AND BOTH TIERS ARE GUARDED: 'Fetching goes through the egress chokepoint — NEVER urllib/httpx directly. The plain tier is net.fetch; the opt-in headless tier is web.render.render_url. BOTH apply host classification, private-IP denial and the redirect-hop re-check'
+- 🔑 THE DNS-REBINDING OBJECTIVE IS MET IN THE HARDEST PLACE, AND THE REASON IS STATED: 'render_url runs net.guard.evaluate BEFORE IT NAVIGATES, PRECISELY BECAUSE A BROWSER DOES ITS OWN DNS AND WOULD OTHERWISE BYPASS THE PIN'
+- the threat is named with the canonical address, twice (:26 and :605): 'A watch pointed at http://169.254.169.254/ is an SSRF against the machine's own metadata service, and both tiers refuse it; RE-IMPLEMENTING A FETCH HERE WOULD BYPASS EVERY ONE OF THOSE CONTROLS'
+- :606-610 the policy is passed EXPLICITLY rather than defaulted, and the reason is that the default would silently drop operator config: 'Passing it explicitly is what makes an operator deny_hosts and a narrowed ceiling apply to a poll — net.fetch's own default is a bare STRICT that layers neither'
+- the daily request budget is enforced with a ledger-visible refusal rather than a silent skip, argued from the cost to someone else's server ('a poll_interval of 60 on a handful of watches is a few thousand requests a day')
+- 🔴 AND A REAL PRE-EXISTING BUG IS FIXED AND EXPLAINED (:615-621): net.fetch is a coroutine and web_poll runs on a worker thread with no loop, so without the _await_maybe bridge 'status/body read as 0/empty and EVERY default-fetcher web_watch SILENTLY NO-OPED'. The reason the suite could not see it is the lesson: 'the suite was blind because TESTS INJECT A SYNC fetcher'
+- the escalation trigger is a real signal rather than a retry count: a page answering 200 with an empty JS shell makes extract_items find nothing on a real success, and escalate_headless defaults OFF 'so existing watches are byte-unchanged'
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** 🎯 THE MOST DIRECTLY APPLICABLE ARCC GUIDANCE OF THE CAMPAIGN, AND THIS ATOM MEETS ALL FOUR OBJECTIVES. The SSRF-mitigation doc asks for (1) allowlist plus refusal of private/local/metadata addresses, naming 169.254.169.254 explicitly, (2) DNS-rebinding protection by checking the RESOLVED address, (3) no automatic redirect following, validate every hop, and (4) log all outgoing requests. Both tiers do 1 and 3; the ledger-visible budget and escalation rows do 4; and 2 is met in the case the guidance does not anticipate — a headless BROWSER that resolves DNS itself, where a guard placed anywhere but before navigation is decorative. Most implementations would guard the plain fetch and let the browser tier through, which is exactly the bypass this module names.
 
 ## Recorded history
 

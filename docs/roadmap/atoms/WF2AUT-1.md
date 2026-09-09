@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the triggers package is 18,168 lines across ~40 modules with the event bus, fencing, store and migration seams each in their own file
+- the six-rule fencing hardening is real in security.py: strip_role_tokens (:1472), provenance attributes carried on the fence (:1406-1410, source_type + transformation_path), the screening path (:1147), and the SSRF rule verified below under WF2AUT-7
+- :1410 records a subtle failure the provenance chain must avoid — collapsing 'transformation_path into literal text and destroying the provenance chain'
+- triggers.json as the single store behind /api/triggers, with boot_migrate.py + migrate.py + a verify-migration path as separate modules
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** The fencing rules are the substrate every later atom leans on: WF2AUT-8's app-declared sources, WF2AUT-12's webhook body and WF2AUT-7's watch payloads all reach the agent through it. Auditing them here rather than per-consumer is what the plan's own ordering intends.
 
 ## Recorded history
 

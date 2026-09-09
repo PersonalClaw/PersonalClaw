@@ -31,9 +31,20 @@ hook lifecycle events fire with agent-scoping preserved; heartbeat sub-tasks as 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 34 (WF2AUT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- the wave-1 runtimes each ship as their own module: file_poll.py, file_watch.py, web_poll.py, pull_on_view.py, idle_poll.py, plus lifecycle_fire.py for the hook events
+- idle_poll.py:393 anchors the KIND_RUNTIMES contract — 'The one runtime KIND_RUNTIMES names for idle' — and states the reuse rather than duplicating dispatch ('Deliberately reuses wakeup.dispatch_fires')
+- quiet windows are in the fire path rather than in each runtime (the catch_up|skip decision the clause names), and the duty_gate provider type is registered with its handler
+- 1766 tests pass across the trigger suites — the largest suite count of any plan audited
+
+**Notes:** The conversion half is the interesting design: heartbeat sub-tasks and commitments become ORDINARY trigger kinds rather than parallel schedulers, so quiet windows, the kill switch and the ledger apply to them without each subsystem re-implementing a gate. That is the same consolidation argument the capture-hygiene module made in the learning plan.
 
 ## Recorded history
 
