@@ -31,9 +31,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- MEASURED in the apps repo: .github/workflows/ci.yml declares all THREE jobs the clause names — manifest-validate (:26, validating every app.json through core's personalclaw.apps.manifest), tests (:77, core installed from git and run PER-BUNDLE), boundary (:231, SDK-only import lint) — plus three added since: quality-declarations, live-writes-posture, prompt-cache-posture
+- 🔑 THE BOUNDARY LINT IS A REAL AST WALK, NOT A REGEX (:245-272): it parses each module, checks every Import and level-0 ImportFrom, and requires parts[1] == 'sdk' for any personalclaw module. It deliberately skips test_ files. And its failure message names the REMEDY rather than only the violation — 'promote the needed symbol to an sdk submodule instead of REACHING AROUND IT'
+- core ci.yml's rails job (:532) mounts the residue sweep UNGUARDED as the clause requires, and states why it needs no home: 'the residue sweep is a static import-boundary check and the suite runs under the no-global-home contract'
+- 🔑 THE RAILS JOB CARRIES A SECOND, SHARPER CI FINDING IN ITS OWN COMMENT: `make gates` is 'the one surface that reports all six ratchets together … IT RAN IN NO WORKFLOW: every gate reached CI only through its own pytest counterpart, so a green build never showed the table an operator actually reads, AND A GATE WITH NO PYTEST TWIN REACHED CI NOT AT ALL'. Now run as scripts/gate_report.py rather than `make gates`, deliberately, 'so the failure names the gate instead of "make: *** [gates] Error 1"'
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** 🪤 PRECISION NOTE, and a withdrawn finding. The clause also requires 'scripts/validate_manifests.py + check_sdk_boundary.py exist'. MEASURED: neither file exists anywhere in the apps repo OR in core. But the WORK exists — both checks run inline as heredoc `run:` blocks in the jobs above, and the repo does extract scripts when they grow (.github/scripts/check_live_writes_posture.py is one). So the capability is confirmed and only the two named artifacts are absent: a placement drift in the plan text, not a missing check. Recorded rather than filed, the same shape as the routing plan's 'Settings→Models tab' that turned out to be a top-level section.
 
 ## Recorded history
 

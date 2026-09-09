@@ -30,9 +30,22 @@ known-red groups fixed-or-xfail'd per C2 (xfail_strict untouched, one filed issu
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- MEASURED: ci.yml declares all four job ids the clause requires — lint (:54), test (:218), web (:257), rails (:532) — plus three added since: browse-live, harness, client. Growth past the atom
+- concurrency with cancel-in-progress: true is at :46-48, and :32 records the sizing reason behind it ('runner concurrency in the 4–6 range and `test` at ~45 min')
+- :121 notes a consequence the group creates rather than only the setting: 'Since the concurrency group above collapsed the `pull_request` and `push` runs for a…' — the interaction is documented where it bites
+- full.yml carries the matrix skeleton with per-matrix python pinning (uv sync --locked --extra dev --python ${{ matrix.python }})
+- README carries six badge references
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** The clause's final proof — 'a deliberate lint error + test failure turn the run red' — is a one-time historical validation I cannot redo without pushing a deliberately-red commit, which the loop forbids. Confirmed on everything structural.
 
 ## Recorded history
 

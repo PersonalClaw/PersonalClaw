@@ -30,9 +30,21 @@ four isolation root causes fixed in-code with no reruns (conftest._reset_sel_sin
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- MEASURED: all four named isolation fixtures exist in tests/conftest.py — _reset_sel_singleton (:283), _isolate_single_flight_locks (:306), the _tmp_home ordering (:106, which states the constraint), and frozen_clock
+- 🔑 BOTH PRODUCT BUGS THE RUNNER SURFACED ARE FIXED AT SOURCE AND EACH EXPLAINS ITSELF. sandbox.py:297-313 — the probe now 'Mirrors the SEQUENCE the real launcher uses: unshare(NEWUSER) first, then a SEPARATE unshare(NEWNS)', because hardened kernels (Ubuntu 23.10+, GitHub runners with apparmor_restrict_unprivileged_userns=1) permit the ATOMIC combined call but DENY a standalone NEWNS once already in an unprivileged user namespace. The combined-flag probe therefore gave a FALSE POSITIVE, detect_backend() chose the namespace backend, and the launcher 'died at runtime with unshare(NEWNS) failed: errno 1 — BREAKING EVERY SANDBOXED SCRIPT (hooks, scheduled scripts) in restricted containers/CI'
+- the second: apps/backend_runtime.py:426 uses `ps -Awwo pid=,ppid=,command=` — the doubled w is unlimited output width, so a long command line is matched rather than truncated
+- the clause's negative half is also observable: no pytest job carries a global PERSONALCLAW_HOME, and the rails job states the replacement contract ('the suite runs under the no-global-home contract')
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** The unshare probe is the best generalisable lesson in this plan: A CAPABILITY PROBE THAT DOES NOT REPLICATE THE REAL CALL SEQUENCE MEASURES A DIFFERENT CAPABILITY. The atomic form and the two-step form are the same syscall with the same flags and different permissions, and only the sequence the launcher actually uses answers the question the caller is asking. 'The two-step probe fails HONESTLY there' is the right framing — the fix made the probe able to say no.
 
 ## Recorded history
 

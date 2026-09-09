@@ -36,9 +36,24 @@ This atom sits in a cross-plan cycle, so no execution order can satisfy it as de
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- 🔑 NO PUBLISHING TOKEN EXISTS TO LEAK: release.yml:77 and :111 grant `id-token: write  # OIDC for Trusted Publishing`, and there is NO password/token input on either publish job. The clause's 'no token secrets' is satisfied by absence, which is the only way it can be satisfied
+- the two publish jobs sit in SEPARATE environments — `environment: release` (:75) and `environment: release-client` (:109) — the per-unique-publisher-tuple requirement, and the plan's log records both carry a required-reviewer gate
+- GHCR images authenticate with the ephemeral workflow token, stated at :127: 'Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (NO EXTRA SECRET)', used at :155
+- 🔑 attest (:313-326) uses actions/attest-build-provenance with id-token + attestations write, and the comment names the property that makes it viable for a solo maintainer: 'Build-provenance attestations on the wheel (ZERO KEY MANAGEMENT — GitHub OIDC)'
+- the build job asserts the packaging contract rather than assuming it (:24): 'the wheel contains static/dist/index.html + JS assets'
+- SBOM ships in the same pipeline (:59-64, syft SPDX-JSON over the built dist, artifact-name personalclaw-sbom.spdx.json)
+- THE ONE STORED SECRET IS OPTIONAL AND DEGRADES: WEBSITE_DISPATCH_TOKEN (:296-306) is absent-tolerant — 'without it this logs and moves on', with an explicit empty check printing 'No WEBSITE_DISPATCH_TOKEN configured — skipping the website nudge'
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** 🎯 THE STRONGEST ARCC ALIGNMENT OF THE CAMPAIGN, and the guidance's own conclusion is the design decision. The IAM-user control returned by ARCC argues that a role 'has no long-term credentials … temporary security credentials that are automatically rotated', and states the general principle outright: 'LONG-LIVED ACCESS KEYS REPRESENT AN INHERENT SECURITY RISK REGARDLESS OF HOW FREQUENTLY THEY ARE ROTATED.' Trusted Publishing is exactly that objective in a different cloud — an OIDC-federated, short-lived, per-run identity instead of a stored PyPI API token, so the credential cannot be exfiltrated from a secret store because it is never at rest. Both the pipeline's other two trust points reach the same shape independently: GHCR uses the per-run GITHUB_TOKEN and provenance uses OIDC with zero keys. Three publishing identities, no long-lived secret among them.
 
 ## Recorded history
 

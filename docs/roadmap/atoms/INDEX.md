@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 166 | `done_when` checked against the code and it holds |
+| `confirmed` | 174 | `done_when` checked against the code and it holds |
 | `partial` | 142 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 372 | not yet checked |
+| `unaudited` | 364 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -231,14 +231,14 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`CRE-1`](CRE-1.md) | `done` | `unaudited` | Formatting standard + whole-tree lint/type green (S1 premise correction) |
-| [`CRE-2`](CRE-2.md) | `done` | `unaudited` | Red-test triage + core ci.yml/full.yml + README badges (S1) |
-| [`CRE-3`](CRE-3.md) | `done` | `unaudited` | Apps-repo CI + core rails mount (S2) |
-| [`CRE-4`](CRE-4.md) | `done` | `unaudited` | Release pipeline release.yml (S3) |
-| [`CRE-5`](CRE-5.md) | `done` | `unaudited` | Supply chain: uv.lock, Dependabot, audits, SBOM, coverage badge (S4) |
-| [`CRE-6`](CRE-6.md) | `done` | `unaudited` | Test-isolation root-cause + first-CI environment fixes (S1 amendment) |
-| [`CRE-7`](CRE-7.md) | `todo` | `unaudited` | Owner real-world provisioning remainder |
-| [`CRE-8`](CRE-8.md) | `done` | `unaudited` | Stop the suite writing to the developer's real ~/.personalclaw, and add the rail that fails when it does |
+| [`CRE-1`](CRE-1.md) | `done` | `confirmed` | Formatting standard + whole-tree lint/type green (S1 premise correction) |
+| [`CRE-2`](CRE-2.md) | `done` | `confirmed` | Red-test triage + core ci.yml/full.yml + README badges (S1) |
+| [`CRE-3`](CRE-3.md) | `done` | `confirmed` | Apps-repo CI + core rails mount (S2) |
+| [`CRE-4`](CRE-4.md) | `done` | `confirmed` | Release pipeline release.yml (S3) |
+| [`CRE-5`](CRE-5.md) | `done` | `confirmed` | Supply chain: uv.lock, Dependabot, audits, SBOM, coverage badge (S4) |
+| [`CRE-6`](CRE-6.md) | `done` | `confirmed` | Test-isolation root-cause + first-CI environment fixes (S1 amendment) |
+| [`CRE-7`](CRE-7.md) | `todo` | `confirmed` | Owner real-world provisioning remainder |
+| [`CRE-8`](CRE-8.md) | `done` | `confirmed` | Stop the suite writing to the developer's real ~/.personalclaw, and add the rail that fails when it does |
 
 ### `DAS` — DURABILITY-AND-SYNC (10/10 done)
 

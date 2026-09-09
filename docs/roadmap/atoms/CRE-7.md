@@ -32,9 +32,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- the `todo` status is ACCURATE, and it is accurate in both directions the protocol requires — the work is absent AND it is genuinely owner-gated with no agent code change available
+- MEASURED: the main branch has no readable required-status-check protection, matching 'optional main branch protection decided' being still open
+- the plan's execution log (:262) enumerates precisely this remainder and distinguishes it from the owner tasks already DONE: completed are 'all 3 org repos public; release/release-client environments with required-reviewer gate; PyPI Trusted Publishing pending publishers for both packages; Dependabot alerts on'; remaining are 'GHCR packages → public after first image push; coverage-badge gist/site home; branch protection on main (optional)'
+- the plan file also records that its own status was audited before: ':24 … Status corrected 2026-08-04 by code audit'
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** A `todo` atom is confirmable, and this is the cleanest instance so far: two of its three items are conditional on a real-world event that has not happened (the first image push), and the third is explicitly optional and a judgment the owner holds. Nothing here is blocked on code. Worth noting the plan status `in_progress` is therefore CORRECT at the dag level while the workspace notes summarise the plan as done — the notes are summarising the launch-track outcome, not this atom.
 
 ## Recorded history
 

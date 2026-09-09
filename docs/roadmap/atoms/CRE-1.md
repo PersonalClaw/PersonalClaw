@@ -28,9 +28,20 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- setup.cfg [flake8] is committed with EXACTLY the contract the clause names: max-line-length 100, extend-ignore E203,W503,E704, and non-source excludes
+- 🔑 the three ignores are not a preference list — each names its black interaction: 'E203 — whitespace before ":" (black's slice style)', 'W503 — line break before binary operator (black wraps before operators)', 'E704 — statement on same line as def (black keeps stub-style one-liners)'. And the division of labour is stated in one line: 'black owns formatting (line-length=100); flake8 enforces CORRECTNESS only'
+- MEASURED IN THIS SESSION, TWICE: make lint exits 0 — black 2386 files unchanged, isort clean, flake8 silent, mypy 'Success: no issues found in 1134 source files'. Observed on two separate cycles rather than read from a log
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** The residue counts the clause cites (flake8 588→0, mypy 152→0) are historical and not re-checkable; what IS checkable is the end state, and it holds on a real run. The stated split — formatter owns format, linter owns correctness — is why the ignore list can be short and stable rather than growing every time black reflows something.
 
 ## Recorded history
 

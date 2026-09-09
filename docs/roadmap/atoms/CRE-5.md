@@ -31,9 +31,21 @@ uv.lock committed (171 pkgs) and CI installs via uv sync --locked (+ make lock t
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- MEASURED: uv.lock is committed, and CI installs FROM it — `uv sync --locked` appears in SEVEN ci.yml jobs (:71, :235, :350, :397, :513, :545, :586) and in full.yml with per-matrix python. `--locked` is the flag that makes drift a failure rather than a silent resolve
+- dependabot.yml exists in BOTH repos, as the clause requires (core .github/dependabot.yml and PersonalClawApps/.github/dependabot.yml)
+- 🔑 THE pip-audit STEP CARRIES ITS OWN INERT-CONTROL POST-MORTEM (full.yml:90-96), and it is the CI instance of this campaign's recurring class: installing with `--system` failed on the PEP-668 externally-managed runner, so 'the whole step then errored out under `bash -e` BEFORE pip-audit EVER RAN, SILENTLY DISABLING THE SCAN'. Now it builds a uv-managed venv first. Report-only by design ('|| true'), which is stated rather than implied
+- SBOM (syft SPDX-JSON) in release.yml; coverage badge and npm audit in full.yml
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** The lock's package count has grown past the clause's 171 and is not directly comparable now. The pip-audit note is the part worth keeping: a security scan that raises before it runs is indistinguishable from a passing one in a report-only step, so the failure mode was a green build with no audit at all. That is the same shape as the routing fold's unreachable rebuild and the pack's unread staged trigger — a control present in configuration and absent in execution.
 
 ## Recorded history
 

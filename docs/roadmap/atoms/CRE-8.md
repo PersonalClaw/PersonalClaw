@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 31 (CRE) — CI/release, observed against the real workflows
+
+**Code evidence:**
+
+- 🔑 OBSERVED FIRING GREEN IN MY OWN RUNS, REPEATEDLY, THIS SESSION: every pytest invocation this campaign printed 'real-home rail: /Users/golani/.personalclaw unchanged by this run'. That is the atom's behaviour witnessed in a live session rather than inferred from its tests
+- conftest.py:64 _isolate_real_home_writers redirects BOTH seams the clause names (config.loader.config_dir and sel._default_dir), and :76 explains why it is one fixture rather than thirteen patches
+- 🔑 THE FIXTURE STATES WHAT IT CANNOT REACH, AND THAT PART WAS FIXED AT SOURCE — MEASURED: 'The rail below caught 147 REAL-HOME ENTRIES still landing in subagents/ after this fixture was in place', because a module-level constant froze config_dir() at import, 'BEFORE ANY FIXTURE EXISTS'. Three constants became call-time resolvers, and one of them (schedule._DEFAULT_DIR) 'mkdir'd the real home MERELY BY IMPORTING THE MODULE'. It then tells the next reader where to look: 'If a new leak appears here, check for that shape first'
+- 🔑 THE NON-DELEGATION IS THE SUBTLEST CONTROL (:132-135): guarded_config_dir returns the tmp dir WITHOUT delegating first, because 'config_dir() mkdirs whatever it resolves, so delegating would CREATE ~/.personalclaw on a machine that has none (the rail's own "absent home" case) before we could redirect it'. A guard that would have created the thing it protects against
+- the pass-throughs the clause requires are explicit: caller_chose_a_home() honours an explicit $PERSONALCLAW_HOME (including one pointed deliberately at the real home) AND a repointed Path.home, so the real-home REFUSAL rails still test what they mean to test
+- the ordering is load-bearing and stated (:106-109): declared BEFORE _reset_sel_singleton so it tears down LAST, because the singleton is cleared around every test and the fresh construction 'must still find the redirected _default_dir, OR THE LEAK COMES STRAIGHT BACK'
+- make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago
+
+**Notes:** This is the atom that made the whole audit campaign safe to run, and I have been consuming its guarantee for thirty cycles without auditing it. Two properties are worth carrying forward. First, a fixture cannot reach an import-time constant, so a home frozen at import needs a source fix — and the rail's 147-entry measurement is what made that distinction visible rather than theoretical. Second, the guard deliberately does not delegate to the function it guards, because that function has a side effect; a wrapper that consults the original before overriding it would have created the real home on a clean machine.
 
 ## Recorded history
 

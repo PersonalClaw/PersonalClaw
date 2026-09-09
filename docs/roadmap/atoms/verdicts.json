@@ -3582,5 +3582,114 @@
       "951 tests pass across the 30 learning suites"
     ],
     "notes": "This is an anti-inertness fix atom stated in its own title — MemoryScope.WORKSPACE 'stops being inert' — and the shape is the one this campaign keeps finding: an enum member declared, persisted nowhere, honored by no reader. What makes it confirmed rather than partial is that the suite tests the ISOLATION (invisible elsewhere) and the NON-isolation (a global lesson still reaches everyone) and the fail-closed default, which together are what 'scope' has to mean."
+  },
+  "CRE-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "setup.cfg [flake8] is committed with EXACTLY the contract the clause names: max-line-length 100, extend-ignore E203,W503,E704, and non-source excludes",
+      "🔑 the three ignores are not a preference list — each names its black interaction: 'E203 — whitespace before \":\" (black's slice style)', 'W503 — line break before binary operator (black wraps before operators)', 'E704 — statement on same line as def (black keeps stub-style one-liners)'. And the division of labour is stated in one line: 'black owns formatting (line-length=100); flake8 enforces CORRECTNESS only'",
+      "MEASURED IN THIS SESSION, TWICE: make lint exits 0 — black 2386 files unchanged, isort clean, flake8 silent, mypy 'Success: no issues found in 1134 source files'. Observed on two separate cycles rather than read from a log",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "The residue counts the clause cites (flake8 588→0, mypy 152→0) are historical and not re-checkable; what IS checkable is the end state, and it holds on a real run. The stated split — formatter owns format, linter owns correctness — is why the ignore list can be short and stable rather than growing every time black reflows something."
+  },
+  "CRE-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "MEASURED: ci.yml declares all four job ids the clause requires — lint (:54), test (:218), web (:257), rails (:532) — plus three added since: browse-live, harness, client. Growth past the atom",
+      "concurrency with cancel-in-progress: true is at :46-48, and :32 records the sizing reason behind it ('runner concurrency in the 4–6 range and `test` at ~45 min')",
+      ":121 notes a consequence the group creates rather than only the setting: 'Since the concurrency group above collapsed the `pull_request` and `push` runs for a…' — the interaction is documented where it bites",
+      "full.yml carries the matrix skeleton with per-matrix python pinning (uv sync --locked --extra dev --python ${{ matrix.python }})",
+      "README carries six badge references",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "The clause's final proof — 'a deliberate lint error + test failure turn the run red' — is a one-time historical validation I cannot redo without pushing a deliberately-red commit, which the loop forbids. Confirmed on everything structural."
+  },
+  "CRE-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "MEASURED in the apps repo: .github/workflows/ci.yml declares all THREE jobs the clause names — manifest-validate (:26, validating every app.json through core's personalclaw.apps.manifest), tests (:77, core installed from git and run PER-BUNDLE), boundary (:231, SDK-only import lint) — plus three added since: quality-declarations, live-writes-posture, prompt-cache-posture",
+      "🔑 THE BOUNDARY LINT IS A REAL AST WALK, NOT A REGEX (:245-272): it parses each module, checks every Import and level-0 ImportFrom, and requires parts[1] == 'sdk' for any personalclaw module. It deliberately skips test_ files. And its failure message names the REMEDY rather than only the violation — 'promote the needed symbol to an sdk submodule instead of REACHING AROUND IT'",
+      "core ci.yml's rails job (:532) mounts the residue sweep UNGUARDED as the clause requires, and states why it needs no home: 'the residue sweep is a static import-boundary check and the suite runs under the no-global-home contract'",
+      "🔑 THE RAILS JOB CARRIES A SECOND, SHARPER CI FINDING IN ITS OWN COMMENT: `make gates` is 'the one surface that reports all six ratchets together … IT RAN IN NO WORKFLOW: every gate reached CI only through its own pytest counterpart, so a green build never showed the table an operator actually reads, AND A GATE WITH NO PYTEST TWIN REACHED CI NOT AT ALL'. Now run as scripts/gate_report.py rather than `make gates`, deliberately, 'so the failure names the gate instead of \"make: *** [gates] Error 1\"'",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "🪤 PRECISION NOTE, and a withdrawn finding. The clause also requires 'scripts/validate_manifests.py + check_sdk_boundary.py exist'. MEASURED: neither file exists anywhere in the apps repo OR in core. But the WORK exists — both checks run inline as heredoc `run:` blocks in the jobs above, and the repo does extract scripts when they grow (.github/scripts/check_live_writes_posture.py is one). So the capability is confirmed and only the two named artifacts are absent: a placement drift in the plan text, not a missing check. Recorded rather than filed, the same shape as the routing plan's 'Settings→Models tab' that turned out to be a top-level section."
+  },
+  "CRE-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "🔑 NO PUBLISHING TOKEN EXISTS TO LEAK: release.yml:77 and :111 grant `id-token: write  # OIDC for Trusted Publishing`, and there is NO password/token input on either publish job. The clause's 'no token secrets' is satisfied by absence, which is the only way it can be satisfied",
+      "the two publish jobs sit in SEPARATE environments — `environment: release` (:75) and `environment: release-client` (:109) — the per-unique-publisher-tuple requirement, and the plan's log records both carry a required-reviewer gate",
+      "GHCR images authenticate with the ephemeral workflow token, stated at :127: 'Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (NO EXTRA SECRET)', used at :155",
+      "🔑 attest (:313-326) uses actions/attest-build-provenance with id-token + attestations write, and the comment names the property that makes it viable for a solo maintainer: 'Build-provenance attestations on the wheel (ZERO KEY MANAGEMENT — GitHub OIDC)'",
+      "the build job asserts the packaging contract rather than assuming it (:24): 'the wheel contains static/dist/index.html + JS assets'",
+      "SBOM ships in the same pipeline (:59-64, syft SPDX-JSON over the built dist, artifact-name personalclaw-sbom.spdx.json)",
+      "THE ONE STORED SECRET IS OPTIONAL AND DEGRADES: WEBSITE_DISPATCH_TOKEN (:296-306) is absent-tolerant — 'without it this logs and moves on', with an explicit empty check printing 'No WEBSITE_DISPATCH_TOKEN configured — skipping the website nudge'",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "🎯 THE STRONGEST ARCC ALIGNMENT OF THE CAMPAIGN, and the guidance's own conclusion is the design decision. The IAM-user control returned by ARCC argues that a role 'has no long-term credentials … temporary security credentials that are automatically rotated', and states the general principle outright: 'LONG-LIVED ACCESS KEYS REPRESENT AN INHERENT SECURITY RISK REGARDLESS OF HOW FREQUENTLY THEY ARE ROTATED.' Trusted Publishing is exactly that objective in a different cloud — an OIDC-federated, short-lived, per-run identity instead of a stored PyPI API token, so the credential cannot be exfiltrated from a secret store because it is never at rest. Both the pipeline's other two trust points reach the same shape independently: GHCR uses the per-run GITHUB_TOKEN and provenance uses OIDC with zero keys. Three publishing identities, no long-lived secret among them."
+  },
+  "CRE-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "MEASURED: uv.lock is committed, and CI installs FROM it — `uv sync --locked` appears in SEVEN ci.yml jobs (:71, :235, :350, :397, :513, :545, :586) and in full.yml with per-matrix python. `--locked` is the flag that makes drift a failure rather than a silent resolve",
+      "dependabot.yml exists in BOTH repos, as the clause requires (core .github/dependabot.yml and PersonalClawApps/.github/dependabot.yml)",
+      "🔑 THE pip-audit STEP CARRIES ITS OWN INERT-CONTROL POST-MORTEM (full.yml:90-96), and it is the CI instance of this campaign's recurring class: installing with `--system` failed on the PEP-668 externally-managed runner, so 'the whole step then errored out under `bash -e` BEFORE pip-audit EVER RAN, SILENTLY DISABLING THE SCAN'. Now it builds a uv-managed venv first. Report-only by design ('|| true'), which is stated rather than implied",
+      "SBOM (syft SPDX-JSON) in release.yml; coverage badge and npm audit in full.yml",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "The lock's package count has grown past the clause's 171 and is not directly comparable now. The pip-audit note is the part worth keeping: a security scan that raises before it runs is indistinguishable from a passing one in a report-only step, so the failure mode was a green build with no audit at all. That is the same shape as the routing fold's unreachable rebuild and the pack's unread staged trigger — a control present in configuration and absent in execution."
+  },
+  "CRE-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "MEASURED: all four named isolation fixtures exist in tests/conftest.py — _reset_sel_singleton (:283), _isolate_single_flight_locks (:306), the _tmp_home ordering (:106, which states the constraint), and frozen_clock",
+      "🔑 BOTH PRODUCT BUGS THE RUNNER SURFACED ARE FIXED AT SOURCE AND EACH EXPLAINS ITSELF. sandbox.py:297-313 — the probe now 'Mirrors the SEQUENCE the real launcher uses: unshare(NEWUSER) first, then a SEPARATE unshare(NEWNS)', because hardened kernels (Ubuntu 23.10+, GitHub runners with apparmor_restrict_unprivileged_userns=1) permit the ATOMIC combined call but DENY a standalone NEWNS once already in an unprivileged user namespace. The combined-flag probe therefore gave a FALSE POSITIVE, detect_backend() chose the namespace backend, and the launcher 'died at runtime with unshare(NEWNS) failed: errno 1 — BREAKING EVERY SANDBOXED SCRIPT (hooks, scheduled scripts) in restricted containers/CI'",
+      "the second: apps/backend_runtime.py:426 uses `ps -Awwo pid=,ppid=,command=` — the doubled w is unlimited output width, so a long command line is matched rather than truncated",
+      "the clause's negative half is also observable: no pytest job carries a global PERSONALCLAW_HOME, and the rails job states the replacement contract ('the suite runs under the no-global-home contract')",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "The unshare probe is the best generalisable lesson in this plan: A CAPABILITY PROBE THAT DOES NOT REPLICATE THE REAL CALL SEQUENCE MEASURES A DIFFERENT CAPABILITY. The atomic form and the two-step form are the same syscall with the same flags and different permissions, and only the sequence the launcher actually uses answers the question the caller is asking. 'The two-step probe fails HONESTLY there' is the right framing — the fix made the probe able to say no."
+  },
+  "CRE-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "the `todo` status is ACCURATE, and it is accurate in both directions the protocol requires — the work is absent AND it is genuinely owner-gated with no agent code change available",
+      "MEASURED: the main branch has no readable required-status-check protection, matching 'optional main branch protection decided' being still open",
+      "the plan's execution log (:262) enumerates precisely this remainder and distinguishes it from the owner tasks already DONE: completed are 'all 3 org repos public; release/release-client environments with required-reviewer gate; PyPI Trusted Publishing pending publishers for both packages; Dependabot alerts on'; remaining are 'GHCR packages → public after first image push; coverage-badge gist/site home; branch protection on main (optional)'",
+      "the plan file also records that its own status was audited before: ':24 … Status corrected 2026-08-04 by code audit'",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "A `todo` atom is confirmable, and this is the cleanest instance so far: two of its three items are conditional on a real-world event that has not happened (the first image push), and the third is explicitly optional and a judgment the owner holds. Nothing here is blocked on code. Worth noting the plan status `in_progress` is therefore CORRECT at the dag level while the workspace notes summarise the plan as done — the notes are summarising the launch-track outcome, not this atom."
+  },
+  "CRE-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 31 (CRE) — CI/release, observed against the real workflows",
+    "evidence": [
+      "🔑 OBSERVED FIRING GREEN IN MY OWN RUNS, REPEATEDLY, THIS SESSION: every pytest invocation this campaign printed 'real-home rail: /Users/golani/.personalclaw unchanged by this run'. That is the atom's behaviour witnessed in a live session rather than inferred from its tests",
+      "conftest.py:64 _isolate_real_home_writers redirects BOTH seams the clause names (config.loader.config_dir and sel._default_dir), and :76 explains why it is one fixture rather than thirteen patches",
+      "🔑 THE FIXTURE STATES WHAT IT CANNOT REACH, AND THAT PART WAS FIXED AT SOURCE — MEASURED: 'The rail below caught 147 REAL-HOME ENTRIES still landing in subagents/ after this fixture was in place', because a module-level constant froze config_dir() at import, 'BEFORE ANY FIXTURE EXISTS'. Three constants became call-time resolvers, and one of them (schedule._DEFAULT_DIR) 'mkdir'd the real home MERELY BY IMPORTING THE MODULE'. It then tells the next reader where to look: 'If a new leak appears here, check for that shape first'",
+      "🔑 THE NON-DELEGATION IS THE SUBTLEST CONTROL (:132-135): guarded_config_dir returns the tmp dir WITHOUT delegating first, because 'config_dir() mkdirs whatever it resolves, so delegating would CREATE ~/.personalclaw on a machine that has none (the rail's own \"absent home\" case) before we could redirect it'. A guard that would have created the thing it protects against",
+      "the pass-throughs the clause requires are explicit: caller_chose_a_home() honours an explicit $PERSONALCLAW_HOME (including one pointed deliberately at the real home) AND a repointed Path.home, so the real-home REFUSAL rails still test what they mean to test",
+      "the ordering is load-bearing and stated (:106-109): declared BEFORE _reset_sel_singleton so it tears down LAST, because the singleton is cleared around every test and the fresh construction 'must still find the redirected _default_dir, OR THE LEAK COMES STRAIGHT BACK'",
+      "make lint observed exiting 0 twice this campaign; make test green at 31406 passed one cycle ago"
+    ],
+    "notes": "This is the atom that made the whole audit campaign safe to run, and I have been consuming its guarantee for thirty cycles without auditing it. Two properties are worth carrying forward. First, a fixture cannot reach an import-time constant, so a home frozen at import needs a source fix — and the rail's 147-entry measurement is what made that distinction visible rather than theoretical. Second, the guard deliberately does not delegate to the function it guards, because that function has a side effect; a wrapper that consults the original before overriding it would have created the real home on a clean machine."
   }
 }
