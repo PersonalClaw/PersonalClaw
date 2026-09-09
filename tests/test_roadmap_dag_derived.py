@@ -245,3 +245,67 @@ def test_regenerating_the_committed_file_is_a_no_op() -> None:
         text=True,
     )
     assert proc.returncode == 0, f"{proc.stdout}{proc.stderr}\n{REMEDY}"
+
+
+# ── The catalog's front page is derived too, and nothing read it ──────────────────────────
+#
+# `docs/roadmap/atomic/README.md` renders entirely from `plans[]` + the derived `dag` block, but
+# its renderer lived in `tools/write_atomic_plans.py`, whose entry point requires the original
+# `workflow-output.json` decomposition — absent from the repo. So it could not be re-run and it
+# froze at authoring time. Measured on `2ec3ae86e`, every headline figure was wrong:
+#
+#     claimed  640 atoms · 356 done · 284 remaining · 876 edges · 2 cycles · 1 unresolved
+#     actual   684 atoms · 650 done ·  34 remaining · 850 edges · 1 cycle  · 0 unresolved
+#
+# Read literally the page said the project was 44% done when it was 95% done. Two sibling rails
+# already existed — `test_roadmap_atomic_status_sync.py` for the per-plan `<CODE>.md` tables and
+# the block ratchet above — and between them they covered every derived surface EXCEPT the one a
+# human opens first. `render_readme` now lives beside the block it describes, so this ratchet
+# covers both.
+def test_the_committed_front_page_matches_its_own_renderer(catalog: dict) -> None:
+    from tools.regen_dag_derived import README_PATH, render_readme
+
+    assert README_PATH.read_text(encoding="utf-8") == render_readme(catalog), REMEDY
+
+
+def test_the_front_page_ratchet_has_teeth(catalog: dict) -> None:
+    """Falsify it: a status flip must change the rendered page, or the test above proves nothing.
+
+    Without this, `render_readme` could ignore `plans[]` entirely and the assertion would still
+    pass on any catalog — the same vacuity trap the `--check` ratchet guards with its own
+    `no teeth` assertion.
+    """
+    from tools.regen_dag_derived import render_readme
+
+    before = render_readme(catalog)
+    mutated = json.loads(json.dumps(catalog))
+    victim = next(
+        a for p in mutated["plans"] for a in (p.get("atoms") or []) if a["status"] == "done"
+    )
+    victim["status"] = "todo"
+    after = render_readme(mutated)
+    assert after != before, "flipping an atom's status changed nothing on the page — no teeth"
+    assert "650 done" in before and "649 done" in after, "the done count must be the live one"
+
+
+def test_the_front_page_is_written_beside_the_catalog_it_was_given(tmp_path) -> None:
+    """A throwaway catalog gets a throwaway page — the real front page is never collateral.
+
+    `--readme` defaults to `README.md` BESIDE `--path`. A fixed default would make every
+    tmp_path regeneration in this module rewrite the committed page from mutated data.
+    """
+    from tools.regen_dag_derived import README_PATH
+
+    real_before = README_PATH.read_text(encoding="utf-8")
+    catalog = load(DAG_PATH)
+    # Force staleness with a STATUS FLIP, not by blanking the block: `resolved_edges` is authored
+    # data `derive()` refuses to invent, so `dag = {}` raises before the write path is reached.
+    next(a for p in catalog["plans"] for a in (p.get("atoms") or []) if a["status"] == "done")[
+        "status"
+    ] = "todo"
+    path = tmp_path / "dag.json"
+    dump(catalog, path)
+
+    assert main(["--path", str(path)]) == 0
+    assert (tmp_path / "README.md").exists(), "the page must land beside the catalog given"
+    assert README_PATH.read_text(encoding="utf-8") == real_before, "real page was overwritten"
