@@ -37,7 +37,7 @@ export function FeedbackPanel() {
   return (
     <div>
       <PanelHeader title="AI feedback"
-        hint="Every 👍/👎 you leave on an AI judgment (inbox triage, drafts, digests, loop findings) is attributed to the source that produced it — the bound prompt, judge, or rule. A source that keeps being wrong stops surfacing and asks to be reviewed. Everything here is deterministic counting; nothing leaves this machine." />
+        hint="Every 👍/👎 you leave on an AI judgment (inbox triage, drafts, digests, loop findings) is attributed to the source that produced it — the bound prompt, judge, or rule. A source that keeps being wrong asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing. Everything here is deterministic counting; nothing leaves this machine." />
 
       <Section title="Judgment sources"
         hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
