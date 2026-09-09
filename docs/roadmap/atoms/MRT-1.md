@@ -30,9 +30,26 @@ routing/classifier.py:classify_query(text,use_case) maps into the fixed 5-class 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 29 (MRT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- classifier.py:1-17 is pure, versioned and argued from cost: 'Routing must not spend an LLM call to decide which model to route to', so the class is a deterministic heuristic over length bands, code-fence signals, the use-case label and whether structured output was requested
+- 🔑 THE VERSION EXISTS FOR A STATED REASON: CLASSIFIER_VERSION lets the stats layer 'start fresh buckets when the vocabulary changes rather than polluting old ones' — a vocabulary change would otherwise silently mix two meanings in one bucket
+- the fallback is argued rather than defaulted: unclassifiable input becomes short_chat, 'the cheapest-model-safe default (routing a genuinely tiny/unknown request to the smallest model is never the wrong call)'
+- MEASURED: query_class is a FIRST-CLASS column on the audit row, not an `extra` — guardrails/audit.py:167-168 says so in as many words — and model_call.py:162-172 sets it from the pure classifier, :475 writes it onto the attempt record
+- DRIVEN: #/settings/routing renders the whole surface, and its Request-kind combobox holds EXACTLY the five-class vocabulary (Short chat / Code / Summarize / Extract structured / Long reasoning) — the fixed vocab observed at the UI rather than inferred from the constant
+- 🔑 DRIVEN, THE FRONTIER IS DEFINED IN ONE SENTENCE A USER CAN APPLY: 'A model is on the frontier when no other model beats it on all of quality, speed, and cost.' The dominance flag is not left as jargon
+- GET /api/models/telemetry is registered (dashboard/handlers/model_telemetry.py:256) and accepts use_case + query_class
+- 441 tests pass across the 15 routing suites; make lint clean
+
+**Driven in the UI:** Drove the page fully. The per-model rows (n, success/feedback, p50/p95, cost/call, on_frontier) are NOT observed: no model is bound in this home, so no attempt has ever been audited. Both empty states render, and they differ by axis — for Chat, 'Routing telemetry comes from unattended work — reasoning, background, loops and orchestration — because interactive requests deliberately stay outside the model-call guard'; for Reasoning, 'No routing telemetry recorded for this yet — it fills in as models handle this kind of request'. Two different reasons, two different sentences.
+
+**Notes:** 🔴 ONE NAMED MECHANISM DID NOT EXIST, AND THE CODE SAID SO BEFORE I DID. The clause requires the fold be 'rebuildable via --rebuild-routing-stats'. MEASURED: cli.py contained exactly ONE occurrence of the word rebuild and it was the `update` help line, so no such flag existed; routing/stats.py:182 called itself 'the --rebuild-routing-stats maintenance path' and routing/usage.py:62-64 noted plainly that 'that flag does not exist yet … no cli.py argument implements it'. stats.rebuild had ZERO non-test callers (two tests), and GET /api/models/telemetry calls load_stats only — so unlike the usage fold, which self-heals through usage.refresh on every read, a deleted routing_stats.json was unrecoverable while model_calls.jsonl still held every row needed to restore it. Consequence: a blank Routing & Efficiency view forever, and the learned policy's per-ref counts below its n>=5 floor so it silently stops proposing. FIXED THIS CYCLE (PR): `personalclaw doctor --rebuild-routing-stats`, wired to the already-tested function, following the existing `doctor --paths` shape. Partial rather than confirmed for the unobserved telemetry rows.
 
 ## Recorded history
 

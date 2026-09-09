@@ -29,9 +29,24 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 29 (MRT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- rates.py:1-7 states the ownership problem it closes: three consumers needed the same number and 'each of them either carried its own table or silently reported nothing, so "who owns the rate table" was open'
+- the five-tier precedence is TOTAL and EXPLICIT: overlay → local → app default → builtin → absent, each with its reason
+- 🔑 THE CLAUSE'S NO-RESTART REQUIREMENT IS MET BY DESIGN, NOT BY LUCK: the overlay is 'read fresh on every call (stat-keyed memo), so editing the file changes the answer with no restart-order dependency' — and the reason it must is stated: 'Prices drift; a personal tool must let its owner correct them without shipping a new app'
+- 🔑 THE BEST LINE IN THE PLAN, AND IT IS A CORRECTNESS RULE NOT A STYLE ONE: 'Absent is None, never 0.0. A fabricated zero would report an unpriced cloud model as *free*, which is the one wrong answer a spend meter must never give.' 0.0 is reserved for prices genuinely known to be zero — 'This is a real, known price, NOT an absence' — which is why the function returns an optional so callers MUST branch
+- local providers price 0.0 with the reason: 'its cost axis is latency/energy, not dollars' (SC #7)
+- every read is fail-open — 'A pricing lookup is observability, never load-bearing — it must not break a routing decision or a model call'
+- BrandedProviderSpec.pricing exists on the app-facing spec (sdk/provider_helpers.py:345) and is covered by the inert-surface ratchet (:369 names spec_pricing), so a declared-but-unread pricing map cannot ship quietly
+- 441 tests pass across the 15 routing suites; make lint clean
+
+**Notes:** The absent-is-None rule recurs at all three layers and the third is user-visible, which is what makes it real rather than a comment: rates.py returns None, usage.py keeps unpriced_calls separate because 'An unpriced model must never read as "$0 spent"' and treats a total containing them as a FLOOR, and the Usage page says it to the user — 'A model with no price row is shown honestly as "unpriced", never $0.00.' One invariant, stated three times, ending where a user can hold the product to it.
 
 ## Recorded history
 

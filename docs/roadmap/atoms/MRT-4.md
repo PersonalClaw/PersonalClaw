@@ -31,9 +31,27 @@ routing/policy.py:route_refs is a pure reorder called at resolve_provider_for_us
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 29 (MRT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 policy.py:3-6 THE CONTRACT IN ONE LINE: 'The router does not pick a model; it REORDERS the user\'s own bindings.' Candidates are exactly the refs active_models.json holds — 'this module never invents, adds, or drops one' — and the safety argument follows: 'the worst a bad ordering can do is try the user\'s second choice first'
+- 🔑 THE PURE-REORDER INVARIANT IS STRUCTURAL AND THEN RE-CHECKED. route_refs returns a permutation, 'built as a stable sort over the input indices precisely so dropping a ref is not expressible', and MEASURED at :555-563 it VERIFIES the result is a permutation and falls back to the bound order with a warning if not. The consequence of the alternative is named: a silent drop 'would remove a provider the user deliberately configured' and would break the unresolvable-pinned-ref-RAISES protection
+- deterministic and total: every ordering is a stable sort on an integer rank, so equal ranks keep active_models.json order — 'no dependence on dict iteration, clock, or set ordering'
+- fail-open everywhere, with the priority stated: 'A routing decision must never fail because a telemetry read did: routing changes order, never resolution semantics'
+- the precedence ladder matches the clause — mode off (the default) → identity; a pin hoists and SHORT-CIRCUITS the heuristic ('A user pin is mightier than any policy'); then an explicit table order whose basis records whether a user or a learned proposal decided it
+- routed provenance is a distinct field, not a reuse of degraded — guardrails/audit.py:170-179 spells out the difference ('routed_fallback answers "did the ROUTER\'s chosen [first candidate fail]"'), and tests/test_routing_policy.py:321 pins that the two stay distinct
+- CONFIG ROUND-TRIP THROUGH ALL FOUR POINTS: RoutingConfig dataclass + _meta (config/loader.py:1973), load(), and the _EDITABLE_CONFIG PATCH allowlist with per-field bounds (dashboard/handlers/core.py:613-617), plus the FE panel. loader.py:1979-1981 also states where per-use-case state deliberately does NOT live — 'NOT here but in use_case_settings/{uc}.json + routing_policy.json'
+- 🔑 DRIVEN AND PERSISTED: #/settings/routing exposes all three levers in plain language — Mode ('Off — use my order' / 'Prefer local' / 'Learn from results'), Pin ('No pin' / 'Always local' / 'Always cloud', labelled 'Overrules the mode for this use case'), and the order list. Selecting Prefer local on Reasoning survived a full page RELOAD and a FRESH navigation with no query params, and MEASURED on disk it wrote routing_mode: "heuristic" to extensions/use_case_settings/reasoning.json — exactly the store the docstring names
+- 441 tests pass across the 15 routing suites; make lint clean
+
+**Driven in the UI:** Drove the page and the write path end to end. NOT driven: the SC #3 failover scenario (kill ollama, watch a cloud-rescued call stamped routed_fallback within one breaker window) needs a live local provider and a bound cloud one. The provenance FIELDS and their distinctness from degraded are covered by a passing test instead.
+
+**Notes:** 🪤 A COLLAPSED FINDING, recorded plainly. I first read the persistence as unproven, because neither routing_policy.json nor use_case_settings/ existed at the paths I guessed and the panel is URL-backed, so a reload could have been fooled by a query param. Both halves were my error: a fresh navigation with an empty hash still showed the selection, and the store is under extensions/use_case_settings/. The design was right and my path guess was wrong. Also worth recording: the empty order list carries the best empty state on the page — 'Bind two — one local, one cloud — to give routing a choice to make' names the exact precondition for the feature to mean anything.
 
 ## Recorded history
 

@@ -31,9 +31,25 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 29 (MRT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- routing/usage.py folds the per-day usage read model and GET /api/usage is registered beside the per-turn ledger routes (dashboard/handlers/usage.py:9)
+- 🔑 estimated_share IS CONSERVATIVE BY CONSTRUCTION AND SAYS WHY: a ledger dollar is treated as an estimate because TurnUsage carries no 'estimated' flag — 'over-disclosing an estimate is safe; claiming absent precision is not' — and it is not decoration, since the fold keeps per-cell estimated_dollars so it drops below 1.0 the moment a writer marks a reported cost
+- unpriced_calls are structurally 0 dollars, so 'a total containing them is a FLOOR. An unpriced model must never read as "$0 spent"'
+- 🔑 THE FOLD EARNS ITS PLACE BESIDE THE LEDGER FOR A MEASURED REASON: refresh() merges the refold OVER the persisted fold 'so days that have aged out of the capped JSONL survive (the ledger trims at 2×50000): per cell it keeps whichever saw more calls, which is correct because trimming can only remove rows from a completed day, never add them'
+- DRIVEN: #/settings/usage renders Today/7 days/30 days, cost + tokens + turns totals, and four sections — By day and purpose, By model, By source, Cache savings — each with its own honest empty state
+- 🔑 DRIVEN, THE HEADER STATES THREE INVARIANTS THE CODE ENFORCES: the double-counting refusal ('Unattended model calls are recorded in a separate log that cannot be merged with these without double-counting; the "By day and purpose" section states how much is excluded'), the scope boundary ('Observation only: nothing here caps or throttles a turn (that\'s Guardrails)'), and the unpriced rule verbatim
+- 441 tests pass across the 15 routing suites; make lint clean
+
+**Driven in the UI:** Drove the page. All figures are zero because no model is bound, so no turn has ever been recorded — the totals and per-section rows are unobserved rather than doubted.
+
+**Notes:** Partial for the monthly recap: usage_recap(month) rendering verbatim-predictably and delivering ONE digest-mode notification honoring quiet hours and mute through the rules engine plus the system cron is not observable without a month of usage and a fired cron. Everything else in the clause is confirmed, and the double-counting sentence is the part worth keeping — a product that refuses to add two numbers because the sum would be wrong, and then tells the user what it left out, is rarer than it should be.
 
 ## Recorded history
 

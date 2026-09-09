@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 154 | `done_when` checked against the code and it holds |
-| `partial` | 135 | some `done_when` clauses hold, others do not |
+| `confirmed` | 157 | `done_when` checked against the code and it holds |
+| `partial` | 137 | some `done_when` clauses hold, others do not |
 | `contradicted` | 2 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 391 | not yet checked |
+| `unaudited` | 386 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -597,11 +597,11 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MRT-1`](MRT-1.md) | `done` | `unaudited` | Query classifier + telemetry read model + Pareto/Efficiency view |
-| [`MRT-2`](MRT-2.md) | `done` | `unaudited` | Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing) |
-| [`MRT-3`](MRT-3.md) | `done` | `unaudited` | Usage/spend read model — fold, /api/usage, Usage UI, monthly recap |
-| [`MRT-4`](MRT-4.md) | `done` | `unaudited` | Heuristic router + policy table + RoutingConfig |
-| [`MRT-5`](MRT-5.md) | `done` | `unaudited` | Learned policy + cost-aware ordering + propose-don't-write proposals |
+| [`MRT-1`](MRT-1.md) | `done` | `partial` | Query classifier + telemetry read model + Pareto/Efficiency view |
+| [`MRT-2`](MRT-2.md) | `done` | `confirmed` | Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing) |
+| [`MRT-3`](MRT-3.md) | `done` | `partial` | Usage/spend read model — fold, /api/usage, Usage UI, monthly recap |
+| [`MRT-4`](MRT-4.md) | `done` | `confirmed` | Heuristic router + policy table + RoutingConfig |
+| [`MRT-5`](MRT-5.md) | `done` | `confirmed` | Learned policy + cost-aware ordering + propose-don't-write proposals |
 
 ### `MUCV` — MODEL-USE-CASES-V2 (8/8 done)
 

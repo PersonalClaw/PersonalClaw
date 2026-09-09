@@ -34,9 +34,26 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 29 (MRT) — DRIVEN in a real browser
+
+**Code evidence:**
+
+- 🔑 proposals.py:1-8 THE JUSTIFICATION IS A CONSENT ARGUMENT, NOT A UX ONE: routing_policy.json is the user's table, and 'a telemetry fold quietly rewriting lever 3 would mean THE MACHINE CHANGED WHICH PROVIDER SEES THE USER\'S CONTENT without anyone deciding to'. So a measured quality gap enqueues a proposal with its evidence and waits
+- 🔑 PROPOSE-DON'T-WRITE IS ASSERTED ON BYTES, AND THE HARNESS PROVES ITSELF: tests/test_routing_proposals.py:4-7 records that 'Asserting "the table grew no new key" would pass for' a changed existing value, so the tests read the raw bytes before and after — and test_the_byte_harness_can_see_a_real_write 'proves the comparison is not vacuous'. A vacuity floor on a byte comparison
+- accept is the only writer and is reached only from a human decision; reject writes no table at all, only a suppression
+- the cooldown is durable for a stated reason: the store holds the queue AND the rejection ledger, 'because a cooldown that lived in memory would reset on every gateway restart and therefore would not be a cooldown'
+- untrusted text is FENCED in the proposal record 'so a poisoned record can\'t direct a model that later renders it' — prompt injection considered on the render path of an evidence blob
+- 🔑 THE SEL ORDERING IS ARGUED, AND IT DELIBERATELY SUBORDINATES THE AUDIT LINE TO THE USER: accept writes the table THEN logs one SEL row, and 'If the SEL write raises, the acceptance STANDS … raising would report a failure for a change that applied, and rolling back would throw away a decision a human made in order to protect an audit line' (proposals.py:396-400, same posture as policy._sel_policy_change)
+- MEASURED: the degradation clause has named tests that pass — test_deleting_the_fold_degrades_to_the_heuristic and test_a_corrupt_fold_degrades_rather_than_raising (tests/test_routing_learned_wiring.py:109,121)
+- DRIVEN: the 'Proposed routing changes' section renders with its guarantee stated to the user — 'Nothing proposed. When measurements show one of your models clearly beating another for a request kind, the change is proposed here — routing never rewrites your table on its own.'
+- a deliberate NON-abstraction, stated: the shape is borrowed from skills.proposals but 'Nothing is imported from there — a skill proposal and a routing proposal share a posture, not a schema'
+- 441 tests pass across the 15 routing suites; make lint clean
+
+**Notes:** 🎯 THE ARCC CONTRAST IS THE INTERESTING PART OF THIS CYCLE. ARCC returned Chronicle (BSC-adjacent host telemetry), whose one transferable objective is that activity telemetry must be captured and preserved and its collection agent must not be disabled — the audit trail's existence is not optional. This plan agrees on capture (the ModelCallGuard seam is the only writer, and query_class is a first-class column rather than an extra) and then DELIBERATELY DIVERGES on precedence: if the SEL write fails, the user's accepted change stands and the audit failure is logged. That is the opposite ordering to a fleet-security posture, and it is right here for the reason the code gives — a central security team's trail is load-bearing evidence about someone else, while a single-user tool's audit line must not be able to discard its owner's own decision. Worth recording as a considered divergence rather than pretending alignment. The scoring floor (n>=5), the 60/40 weights and the cloud_quality_margin are present in learned.py; observing a proposal actually enqueue needs real measurements and therefore a bound model.
 
 ## Recorded history
 

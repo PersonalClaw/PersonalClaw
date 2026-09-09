@@ -3311,5 +3311,90 @@
     ],
     "ui_validated": "Drove the full page and a real install. Two clauses not satisfied: the staged-trigger surfacing (see notes) and the export→wipe→import sweep on a SECOND home, which I did not run — the equivalent is covered by test_round_trip_on_a_fresh_home_lands_the_trigger_disabled.",
     "notes": "🔴 PARTIAL, and the reason is the finding of the cycle, filed as an issue. The install toast promises 'Its triggers are disabled and its roster is staged UNTIL YOU ENABLE THEM'. MEASURED: packs/staged/<pack>/triggers/*.json is written by import_.py:988 and read by NOTHING — packs/staged has exactly one reader in the tree (packs/roster.py, for the roster), and no route, tool or FE touches the triggers subtree. #/triggers shows 5, its All chip reads 5, and its filter popover offers only kind lenses, so there is no status view to reveal it either. staged_triggers is on the backend record and in to_dict() but absent from the FE's InstalledPackRec. So the pack's recurring half is serialized to disk and permanently dormant, and the success message points at an action with no implementation. The SAFETY posture is right and should not change (import_.py:31 argues it well); the missing piece is the second step. Everything else in this atom is confirmed and the fingerprint module is the best-instrumented in the plan."
+  },
+  "MRT-1": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 29 (MRT) — DRIVEN in a real browser",
+    "evidence": [
+      "classifier.py:1-17 is pure, versioned and argued from cost: 'Routing must not spend an LLM call to decide which model to route to', so the class is a deterministic heuristic over length bands, code-fence signals, the use-case label and whether structured output was requested",
+      "🔑 THE VERSION EXISTS FOR A STATED REASON: CLASSIFIER_VERSION lets the stats layer 'start fresh buckets when the vocabulary changes rather than polluting old ones' — a vocabulary change would otherwise silently mix two meanings in one bucket",
+      "the fallback is argued rather than defaulted: unclassifiable input becomes short_chat, 'the cheapest-model-safe default (routing a genuinely tiny/unknown request to the smallest model is never the wrong call)'",
+      "MEASURED: query_class is a FIRST-CLASS column on the audit row, not an `extra` — guardrails/audit.py:167-168 says so in as many words — and model_call.py:162-172 sets it from the pure classifier, :475 writes it onto the attempt record",
+      "DRIVEN: #/settings/routing renders the whole surface, and its Request-kind combobox holds EXACTLY the five-class vocabulary (Short chat / Code / Summarize / Extract structured / Long reasoning) — the fixed vocab observed at the UI rather than inferred from the constant",
+      "🔑 DRIVEN, THE FRONTIER IS DEFINED IN ONE SENTENCE A USER CAN APPLY: 'A model is on the frontier when no other model beats it on all of quality, speed, and cost.' The dominance flag is not left as jargon",
+      "GET /api/models/telemetry is registered (dashboard/handlers/model_telemetry.py:256) and accepts use_case + query_class",
+      "441 tests pass across the 15 routing suites; make lint clean"
+    ],
+    "ui_validated": "Drove the page fully. The per-model rows (n, success/feedback, p50/p95, cost/call, on_frontier) are NOT observed: no model is bound in this home, so no attempt has ever been audited. Both empty states render, and they differ by axis — for Chat, 'Routing telemetry comes from unattended work — reasoning, background, loops and orchestration — because interactive requests deliberately stay outside the model-call guard'; for Reasoning, 'No routing telemetry recorded for this yet — it fills in as models handle this kind of request'. Two different reasons, two different sentences.",
+    "notes": "🔴 ONE NAMED MECHANISM DID NOT EXIST, AND THE CODE SAID SO BEFORE I DID. The clause requires the fold be 'rebuildable via --rebuild-routing-stats'. MEASURED: cli.py contained exactly ONE occurrence of the word rebuild and it was the `update` help line, so no such flag existed; routing/stats.py:182 called itself 'the --rebuild-routing-stats maintenance path' and routing/usage.py:62-64 noted plainly that 'that flag does not exist yet … no cli.py argument implements it'. stats.rebuild had ZERO non-test callers (two tests), and GET /api/models/telemetry calls load_stats only — so unlike the usage fold, which self-heals through usage.refresh on every read, a deleted routing_stats.json was unrecoverable while model_calls.jsonl still held every row needed to restore it. Consequence: a blank Routing & Efficiency view forever, and the learned policy's per-ref counts below its n>=5 floor so it silently stops proposing. FIXED THIS CYCLE (PR): `personalclaw doctor --rebuild-routing-stats`, wired to the already-tested function, following the existing `doctor --paths` shape. Partial rather than confirmed for the unobserved telemetry rows."
+  },
+  "MRT-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 29 (MRT) — DRIVEN in a real browser",
+    "evidence": [
+      "rates.py:1-7 states the ownership problem it closes: three consumers needed the same number and 'each of them either carried its own table or silently reported nothing, so \"who owns the rate table\" was open'",
+      "the five-tier precedence is TOTAL and EXPLICIT: overlay → local → app default → builtin → absent, each with its reason",
+      "🔑 THE CLAUSE'S NO-RESTART REQUIREMENT IS MET BY DESIGN, NOT BY LUCK: the overlay is 'read fresh on every call (stat-keyed memo), so editing the file changes the answer with no restart-order dependency' — and the reason it must is stated: 'Prices drift; a personal tool must let its owner correct them without shipping a new app'",
+      "🔑 THE BEST LINE IN THE PLAN, AND IT IS A CORRECTNESS RULE NOT A STYLE ONE: 'Absent is None, never 0.0. A fabricated zero would report an unpriced cloud model as *free*, which is the one wrong answer a spend meter must never give.' 0.0 is reserved for prices genuinely known to be zero — 'This is a real, known price, NOT an absence' — which is why the function returns an optional so callers MUST branch",
+      "local providers price 0.0 with the reason: 'its cost axis is latency/energy, not dollars' (SC #7)",
+      "every read is fail-open — 'A pricing lookup is observability, never load-bearing — it must not break a routing decision or a model call'",
+      "BrandedProviderSpec.pricing exists on the app-facing spec (sdk/provider_helpers.py:345) and is covered by the inert-surface ratchet (:369 names spec_pricing), so a declared-but-unread pricing map cannot ship quietly",
+      "441 tests pass across the 15 routing suites; make lint clean"
+    ],
+    "notes": "The absent-is-None rule recurs at all three layers and the third is user-visible, which is what makes it real rather than a comment: rates.py returns None, usage.py keeps unpriced_calls separate because 'An unpriced model must never read as \"$0 spent\"' and treats a total containing them as a FLOOR, and the Usage page says it to the user — 'A model with no price row is shown honestly as \"unpriced\", never $0.00.' One invariant, stated three times, ending where a user can hold the product to it."
+  },
+  "MRT-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 29 (MRT) — DRIVEN in a real browser",
+    "evidence": [
+      "routing/usage.py folds the per-day usage read model and GET /api/usage is registered beside the per-turn ledger routes (dashboard/handlers/usage.py:9)",
+      "🔑 estimated_share IS CONSERVATIVE BY CONSTRUCTION AND SAYS WHY: a ledger dollar is treated as an estimate because TurnUsage carries no 'estimated' flag — 'over-disclosing an estimate is safe; claiming absent precision is not' — and it is not decoration, since the fold keeps per-cell estimated_dollars so it drops below 1.0 the moment a writer marks a reported cost",
+      "unpriced_calls are structurally 0 dollars, so 'a total containing them is a FLOOR. An unpriced model must never read as \"$0 spent\"'",
+      "🔑 THE FOLD EARNS ITS PLACE BESIDE THE LEDGER FOR A MEASURED REASON: refresh() merges the refold OVER the persisted fold 'so days that have aged out of the capped JSONL survive (the ledger trims at 2×50000): per cell it keeps whichever saw more calls, which is correct because trimming can only remove rows from a completed day, never add them'",
+      "DRIVEN: #/settings/usage renders Today/7 days/30 days, cost + tokens + turns totals, and four sections — By day and purpose, By model, By source, Cache savings — each with its own honest empty state",
+      "🔑 DRIVEN, THE HEADER STATES THREE INVARIANTS THE CODE ENFORCES: the double-counting refusal ('Unattended model calls are recorded in a separate log that cannot be merged with these without double-counting; the \"By day and purpose\" section states how much is excluded'), the scope boundary ('Observation only: nothing here caps or throttles a turn (that\\'s Guardrails)'), and the unpriced rule verbatim",
+      "441 tests pass across the 15 routing suites; make lint clean"
+    ],
+    "ui_validated": "Drove the page. All figures are zero because no model is bound, so no turn has ever been recorded — the totals and per-section rows are unobserved rather than doubted.",
+    "notes": "Partial for the monthly recap: usage_recap(month) rendering verbatim-predictably and delivering ONE digest-mode notification honoring quiet hours and mute through the rules engine plus the system cron is not observable without a month of usage and a fired cron. Everything else in the clause is confirmed, and the double-counting sentence is the part worth keeping — a product that refuses to add two numbers because the sum would be wrong, and then tells the user what it left out, is rarer than it should be."
+  },
+  "MRT-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 29 (MRT) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 policy.py:3-6 THE CONTRACT IN ONE LINE: 'The router does not pick a model; it REORDERS the user\\'s own bindings.' Candidates are exactly the refs active_models.json holds — 'this module never invents, adds, or drops one' — and the safety argument follows: 'the worst a bad ordering can do is try the user\\'s second choice first'",
+      "🔑 THE PURE-REORDER INVARIANT IS STRUCTURAL AND THEN RE-CHECKED. route_refs returns a permutation, 'built as a stable sort over the input indices precisely so dropping a ref is not expressible', and MEASURED at :555-563 it VERIFIES the result is a permutation and falls back to the bound order with a warning if not. The consequence of the alternative is named: a silent drop 'would remove a provider the user deliberately configured' and would break the unresolvable-pinned-ref-RAISES protection",
+      "deterministic and total: every ordering is a stable sort on an integer rank, so equal ranks keep active_models.json order — 'no dependence on dict iteration, clock, or set ordering'",
+      "fail-open everywhere, with the priority stated: 'A routing decision must never fail because a telemetry read did: routing changes order, never resolution semantics'",
+      "the precedence ladder matches the clause — mode off (the default) → identity; a pin hoists and SHORT-CIRCUITS the heuristic ('A user pin is mightier than any policy'); then an explicit table order whose basis records whether a user or a learned proposal decided it",
+      "routed provenance is a distinct field, not a reuse of degraded — guardrails/audit.py:170-179 spells out the difference ('routed_fallback answers \"did the ROUTER\\'s chosen [first candidate fail]\"'), and tests/test_routing_policy.py:321 pins that the two stay distinct",
+      "CONFIG ROUND-TRIP THROUGH ALL FOUR POINTS: RoutingConfig dataclass + _meta (config/loader.py:1973), load(), and the _EDITABLE_CONFIG PATCH allowlist with per-field bounds (dashboard/handlers/core.py:613-617), plus the FE panel. loader.py:1979-1981 also states where per-use-case state deliberately does NOT live — 'NOT here but in use_case_settings/{uc}.json + routing_policy.json'",
+      "🔑 DRIVEN AND PERSISTED: #/settings/routing exposes all three levers in plain language — Mode ('Off — use my order' / 'Prefer local' / 'Learn from results'), Pin ('No pin' / 'Always local' / 'Always cloud', labelled 'Overrules the mode for this use case'), and the order list. Selecting Prefer local on Reasoning survived a full page RELOAD and a FRESH navigation with no query params, and MEASURED on disk it wrote routing_mode: \"heuristic\" to extensions/use_case_settings/reasoning.json — exactly the store the docstring names",
+      "441 tests pass across the 15 routing suites; make lint clean"
+    ],
+    "ui_validated": "Drove the page and the write path end to end. NOT driven: the SC #3 failover scenario (kill ollama, watch a cloud-rescued call stamped routed_fallback within one breaker window) needs a live local provider and a bound cloud one. The provenance FIELDS and their distinctness from degraded are covered by a passing test instead.",
+    "notes": "🪤 A COLLAPSED FINDING, recorded plainly. I first read the persistence as unproven, because neither routing_policy.json nor use_case_settings/ existed at the paths I guessed and the panel is URL-backed, so a reload could have been fooled by a query param. Both halves were my error: a fresh navigation with an empty hash still showed the selection, and the store is under extensions/use_case_settings/. The design was right and my path guess was wrong. Also worth recording: the empty order list carries the best empty state on the page — 'Bind two — one local, one cloud — to give routing a choice to make' names the exact precondition for the feature to mean anything."
+  },
+  "MRT-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 29 (MRT) — DRIVEN in a real browser",
+    "evidence": [
+      "🔑 proposals.py:1-8 THE JUSTIFICATION IS A CONSENT ARGUMENT, NOT A UX ONE: routing_policy.json is the user's table, and 'a telemetry fold quietly rewriting lever 3 would mean THE MACHINE CHANGED WHICH PROVIDER SEES THE USER\\'S CONTENT without anyone deciding to'. So a measured quality gap enqueues a proposal with its evidence and waits",
+      "🔑 PROPOSE-DON'T-WRITE IS ASSERTED ON BYTES, AND THE HARNESS PROVES ITSELF: tests/test_routing_proposals.py:4-7 records that 'Asserting \"the table grew no new key\" would pass for' a changed existing value, so the tests read the raw bytes before and after — and test_the_byte_harness_can_see_a_real_write 'proves the comparison is not vacuous'. A vacuity floor on a byte comparison",
+      "accept is the only writer and is reached only from a human decision; reject writes no table at all, only a suppression",
+      "the cooldown is durable for a stated reason: the store holds the queue AND the rejection ledger, 'because a cooldown that lived in memory would reset on every gateway restart and therefore would not be a cooldown'",
+      "untrusted text is FENCED in the proposal record 'so a poisoned record can\\'t direct a model that later renders it' — prompt injection considered on the render path of an evidence blob",
+      "🔑 THE SEL ORDERING IS ARGUED, AND IT DELIBERATELY SUBORDINATES THE AUDIT LINE TO THE USER: accept writes the table THEN logs one SEL row, and 'If the SEL write raises, the acceptance STANDS … raising would report a failure for a change that applied, and rolling back would throw away a decision a human made in order to protect an audit line' (proposals.py:396-400, same posture as policy._sel_policy_change)",
+      "MEASURED: the degradation clause has named tests that pass — test_deleting_the_fold_degrades_to_the_heuristic and test_a_corrupt_fold_degrades_rather_than_raising (tests/test_routing_learned_wiring.py:109,121)",
+      "DRIVEN: the 'Proposed routing changes' section renders with its guarantee stated to the user — 'Nothing proposed. When measurements show one of your models clearly beating another for a request kind, the change is proposed here — routing never rewrites your table on its own.'",
+      "a deliberate NON-abstraction, stated: the shape is borrowed from skills.proposals but 'Nothing is imported from there — a skill proposal and a routing proposal share a posture, not a schema'",
+      "441 tests pass across the 15 routing suites; make lint clean"
+    ],
+    "notes": "🎯 THE ARCC CONTRAST IS THE INTERESTING PART OF THIS CYCLE. ARCC returned Chronicle (BSC-adjacent host telemetry), whose one transferable objective is that activity telemetry must be captured and preserved and its collection agent must not be disabled — the audit trail's existence is not optional. This plan agrees on capture (the ModelCallGuard seam is the only writer, and query_class is a first-class column rather than an extra) and then DELIBERATELY DIVERGES on precedence: if the SEL write fails, the user's accepted change stands and the audit failure is logged. That is the opposite ordering to a fleet-security posture, and it is right here for the reason the code gives — a central security team's trail is load-bearing evidence about someone else, while a single-user tool's audit line must not be able to discard its owner's own decision. Worth recording as a considered divergence rather than pretending alignment. The scoring floor (n>=5), the 60/40 weights and the cloud_quality_margin are present in learned.py; observing a proposal actually enqueue needs real measurements and therefore a bound model."
   }
 }
