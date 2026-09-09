@@ -29,9 +29,20 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- 🔑 MEASURED, AND THE REASONING IS WHY THIS ATOM IS NOT OBVIOUS (context.py:1075-1081). Moving the date line to the tail for cache stability would normally make it the FIRST casualty: 'parts is joined and hard-truncated at _MAX_CONTEXT_CHARS below, and truncation cuts from the END, so a tail-positioned date would be the FIRST thing a large context loses (silently regressing what day is it for the heaviest users)'
+- so the block is assembled and truncated FIRST and the date appended AFTER — 'so it always survives' — with the timestamp rendered at assembly time (:1084) so it reflects the moment the context was built
+- the local timezone is used deliberately rather than the host's, because a server host is 'often UTC … and makes today ambiguous'
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Notes:** 🔑 THE MOST INSTRUCTIVE INTERACTION IN THE PLAN: two independently-correct mechanisms (tail-position for cache stability, truncate-from-the-end for context bounds) compose into a silent regression, and the fix is an ordering constraint rather than a change to either. It would have failed only for the largest contexts — exactly the users who least tolerate it and are least likely to be in a test fixture.
 
 ## Recorded history
 

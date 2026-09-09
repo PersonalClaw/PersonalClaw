@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 240 | `done_when` checked against the code and it holds |
+| `confirmed` | 249 | `done_when` checked against the code and it holds |
 | `partial` | 163 | some `done_when` clauses hold, others do not |
 | `contradicted` | 3 | the recorded status disagrees with the code |
 | `unverifiable` | 2 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 276 | not yet checked |
+| `unaudited` | 267 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -671,15 +671,15 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`PCS-1`](PCS-1.md) | `done` | `unaudited` | §C2 wire-order repair: stability-ordered system messages (F1 fix) |
-| [`PCS-2`](PCS-2.md) | `done` | `unaudited` | §C3 date-line relocation with truncation-immunity (F2 fix) |
-| [`PCS-3`](PCS-3.md) | `done` | `unaudited` | Neutral cache-marker module + middleware wiring + OpenAI AUTOMATIC |
-| [`PCS-4`](PCS-4.md) | `done` | `unaudited` | Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test |
-| [`PCS-5`](PCS-5.md) | `done` | `unaudited` | prompt_cache_enabled config through all five wiring points + FE control |
-| [`PCS-6`](PCS-6.md) | `done` | `unaudited` | The missing producer: read Anthropic cache-usage fields into LLMEvent (F3) |
-| [`PCS-7`](PCS-7.md) | `done` | `unaudited` | Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface) |
-| [`PCS-8`](PCS-8.md) | `done` | `unaudited` | Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint) |
-| [`PCS-9`](PCS-9.md) | `blocked` | `unaudited` | V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs) |
+| [`PCS-1`](PCS-1.md) | `done` | `confirmed` | §C2 wire-order repair: stability-ordered system messages (F1 fix) |
+| [`PCS-2`](PCS-2.md) | `done` | `confirmed` | §C3 date-line relocation with truncation-immunity (F2 fix) |
+| [`PCS-3`](PCS-3.md) | `done` | `confirmed` | Neutral cache-marker module + middleware wiring + OpenAI AUTOMATIC |
+| [`PCS-4`](PCS-4.md) | `done` | `confirmed` | Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test |
+| [`PCS-5`](PCS-5.md) | `done` | `confirmed` | prompt_cache_enabled config through all five wiring points + FE control |
+| [`PCS-6`](PCS-6.md) | `done` | `confirmed` | The missing producer: read Anthropic cache-usage fields into LLMEvent (F3) |
+| [`PCS-7`](PCS-7.md) | `done` | `confirmed` | Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface) |
+| [`PCS-8`](PCS-8.md) | `done` | `confirmed` | Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint) |
+| [`PCS-9`](PCS-9.md) | `blocked` | `confirmed` | V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs) |
 
 ### `PEP` — PRODUCT-EXPERIENCE-PARITY (20/20 done)
 

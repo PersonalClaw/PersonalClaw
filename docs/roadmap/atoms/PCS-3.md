@@ -31,9 +31,21 @@ llm/prompt_cache.py ships PromptCache enum, CACHE_HINT_KEY, mark_cacheable_prefi
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- MEASURED: llm/prompt_cache.py ships PromptCache (NONE/AUTOMATIC/EXPLICIT), CACHE_HINT_KEY and the marker helper, and the module is verifiably vendor-free — test_the_neutral_marker_module_stays_vendor_free asserts no vendor pattern and no 'ephemeral' string appears in it
+- 🔑 THE PROVIDER-BOUNDARY CLAIM IS STRUCTURAL, NOT ASPIRATIONAL (:5-7): 'this module deliberately contains ZERO wire strings and no provider SDK import, so importing it never violates Property 11 (Provider SDK Lazy Import)'. The neutrality is what makes the module safe to import anywhere
+- 🔑 THE GRADED SHAPE IS ARGUED BY PRECEDENT RATHER THAN INVENTED (:9-12): it 'mirrors StructuredOutput' because 'a per-request marker is a GRADED behavior (some families need one, some need none), so it rides on a provider as its own value rather than a boolean flag'. NONE is called 'the correct, safe default for any provider that has not opted in'
+- AUTOMATIC's docstring names its own dependency: the stable-prefix ordering from PCS-1 'is what makes this work; there is nothing for the loop to mark'
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Notes:** Reusing an existing graded-capability shape rather than adding a boolean is the same discipline CATO showed by reusing the feedback module's cap convention. A boolean would have forced AUTOMATIC and EXPLICIT to be distinguished somewhere else, which is how a second dialect starts.
 
 ## Recorded history
 

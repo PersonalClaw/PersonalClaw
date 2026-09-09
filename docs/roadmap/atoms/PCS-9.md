@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- MEASURED as genuinely environment-gated, not unfinished: the atom is the only one in the plan carrying status `blocked`, and its blocked_reason names a concrete, checkable obstacle rather than a vague one — no Bedrock inference-profile id resolves to a price row, so a real run would render 'saved unpriced' until the rate-id normalisation lands
+- every mechanism V2 would exercise is confirmed by the other eight atoms and their 78 + 39 passing tests; what is missing is a live provider, credentials and a multi-turn run, none of which this environment can supply
+- the split itself was an owner ruling (2026-08-28) separating the shipped-numbers half (PCS-7) from live verification, which is why PCS-7 is confirmable while this is not
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Driven in the UI:** Cannot be driven here by construction — that is the atom's content.
+
+**Notes:** Confirming a `blocked` atom means confirming the BLOCK, and this is the second time in the campaign that has been the right verdict (the first was a genuinely owner-gated todo). The distinction worth keeping: this reason names a specific missing capability with a named fix (price-row id normalisation), so a later reader can tell whether the block still holds. A blocked_reason that only said 'needs real credentials' would be unfalsifiable and would outlive its cause.
 
 ## Recorded history
 

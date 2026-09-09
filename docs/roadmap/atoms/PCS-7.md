@@ -31,9 +31,22 @@ Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- 🔑 THE DENOMINATOR IS PROVEN, NOT ASSERTED (stats.py:159-170). cache_hit_pct documents that the three buckets are DISJOINT — input_tokens EXCLUDES the cached tokens — and cites TWO independent pieces of evidence: the adapter assigns input_tokens verbatim from usage.input_tokens while the cache counts come from separate SDK fields, and pricing.py bills the three additively. 'No arithmetic ever relates the three'
+- 🔑 THE NO-SECOND-STORE CLAUSE IS ENFORCED BY PLACEMENT: it is 'deliberately a module-level function, not a Stats method', because putting it on the singleton 'would invite a second, turn-scoped store beside the process-lifetime counters … and those counters stay the only tally'. There is a dedicated test file for exactly this (test_cache_counters_single_store.py)
+- honest-zero holds on both fragments (chat_runner.py:636-638): cache_hit_pct=None omits the 'NN% hit' piece — 'never print 0% hit' — and cache_saved_usd=None renders 'saved unpriced', never a zero
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Driven in the UI:** Not driven: a cache hit needs a real Anthropic turn. The composed line and its FE reader are pinned against each other by the 78 tests plus CATO-6's reader suite.
+
+**Notes:** 🔑 THE BEST-EVIDENCED ARITHMETIC DECISION IN THE CAMPAIGN. A hit-rate is the kind of number nobody re-derives, so a denominator that double-counted or under-counted would have been believed indefinitely; citing the two places that prove disjointness is what makes it checkable by the next reader instead of trusted. The negative-saved-USD case is also deliberately not hidden, which matters because a cache write costs MORE than an uncached prompt on the first turn.
 
 ## Recorded history
 

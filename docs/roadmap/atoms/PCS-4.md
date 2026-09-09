@@ -32,9 +32,21 @@ Hinted span translated to cache_control {type: ephemeral} on its last block, inc
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- 🔑 FALSIFIED AGAINST THE REAL TREE, which is this atom's own acceptance clause ('fails on a temporarily injected violation'). Wrote one core module containing a cache_control/ephemeral literal: the sweep FAILED naming it — 'vendor cache syntax escaped the provider edge into: [_pcs_probe.py] — translate at the adapter, keep core neutral' — AND the vacuity test caught it independently. Removed it; green again
+- MEASURED: cache_control appears in exactly one core file (llm/anthropic.py), which is the allowlist's single entry
+- 🔑 THE RAIL HAS A VACUITY FLOOR AND SAYS WHY: test_the_sweep_is_not_vacuous asserts the patterns still match the one permitted file, because 'a rename of Anthropic's marker would leave a rail that matches nothing and passes forever'
+- the wire-translation suite covers the shapes that actually break: the marker lands on the LAST block not the first, a block-shaped system= is produced, a hinted span never mutates the caller's dicts, a hint on the volatile note is ignored, and neither the neutral hint key nor the generation marker ever reaches the wire
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Notes:** 🔑 FOURTH SELF-FALSIFYING RAIL IN THIS CAMPAIGN (after the skills-suppression census, the provider-boundary residue sweep and the pairing-mechanism census), and the vacuity reasoning is stated in nearly the same words each time. That consistency is now strong enough to read as a house rule rather than four coincidences.
 
 ## Recorded history
 

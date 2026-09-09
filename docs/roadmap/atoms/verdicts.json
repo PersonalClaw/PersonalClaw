@@ -4887,5 +4887,122 @@
     ],
     "ui_validated": "Drove the panel, the period control and the reload. The partial marker and the populated tables need a period mixing priced and unpriced models, which needs a bound model.",
     "notes": "🔑 THE BEST HONEST-NUMBERS REASONING IN THE CAMPAIGN, and it is a RECORDED FIX of a prior defect (headlineCost, :50-68). Measured with a seeded ledger: four models, three priced, cost_usd 11.3496, priced False — and the headline stat rendered the bare word 'unpriced' while its own table listed $6.02 + $4.59 + $0.7398 directly below. The resolution names the distinction exactly: the backend's taint rule is right, but 'NOT COMPLETE IS NOT NOT KNOWABLE' — the ledger had computed a real floor. So three branches: the exact number when everything is priced, an explicit ≥floor when some of it is, and the bare word only when there is no floor to state, because '≥$0.00 would be true and useless'. It also cites the panel's own existing 'Floor — … Real spend is higher than the figure above' copy 250 lines down as evidence a figure was already presupposed there."
+  },
+  "PCS-1": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "MEASURED: the volatile marker is real and consumed where the clause says — _VOLATILE_HINT_KEY is defined in llm/prompt_cache.py and read by agents/native/runtime.py and llm/anthropic.py, so the per-turn note is tagged at the producer and honoured at the adapter",
+      "🔑 THE MARKER'S PURPOSE IS STATED AT ITS DEFINITION (prompt_cache.py:47-50): 'PCS-1 stamps [this] on the per-turn VOLATILE note … We never anchor the cache hint on that message — its content is not part of the stable, cacheable prefix.' A cache hint on a message that changes every turn would guarantee a miss every turn",
+      "the untagged-only path is pinned as byte-identical to today's kwargs (test_unhinted_request_kwargs_are_byte_identical_to_today), which is the clause's no-regression half",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "ui_validated": "Not driven: wire ordering is only observable in a real provider request. The byte-identity and content-equivalence claims are pinned by the 78 passing tests.",
+    "notes": "The atom's line reference (runtime.py:712) points at a path that no longer exists — the module is agents/native/runtime.py. Ordinary drift, recorded so a later reader does not read it as missing work; the deliverable is present under the current path."
+  },
+  "PCS-2": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "🔑 MEASURED, AND THE REASONING IS WHY THIS ATOM IS NOT OBVIOUS (context.py:1075-1081). Moving the date line to the tail for cache stability would normally make it the FIRST casualty: 'parts is joined and hard-truncated at _MAX_CONTEXT_CHARS below, and truncation cuts from the END, so a tail-positioned date would be the FIRST thing a large context loses (silently regressing what day is it for the heaviest users)'",
+      "so the block is assembled and truncated FIRST and the date appended AFTER — 'so it always survives' — with the timestamp rendered at assembly time (:1084) so it reflects the moment the context was built",
+      "the local timezone is used deliberately rather than the host's, because a server host is 'often UTC … and makes today ambiguous'",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "notes": "🔑 THE MOST INSTRUCTIVE INTERACTION IN THE PLAN: two independently-correct mechanisms (tail-position for cache stability, truncate-from-the-end for context bounds) compose into a silent regression, and the fix is an ordering constraint rather than a change to either. It would have failed only for the largest contexts — exactly the users who least tolerate it and are least likely to be in a test fixture."
+  },
+  "PCS-3": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "MEASURED: llm/prompt_cache.py ships PromptCache (NONE/AUTOMATIC/EXPLICIT), CACHE_HINT_KEY and the marker helper, and the module is verifiably vendor-free — test_the_neutral_marker_module_stays_vendor_free asserts no vendor pattern and no 'ephemeral' string appears in it",
+      "🔑 THE PROVIDER-BOUNDARY CLAIM IS STRUCTURAL, NOT ASPIRATIONAL (:5-7): 'this module deliberately contains ZERO wire strings and no provider SDK import, so importing it never violates Property 11 (Provider SDK Lazy Import)'. The neutrality is what makes the module safe to import anywhere",
+      "🔑 THE GRADED SHAPE IS ARGUED BY PRECEDENT RATHER THAN INVENTED (:9-12): it 'mirrors StructuredOutput' because 'a per-request marker is a GRADED behavior (some families need one, some need none), so it rides on a provider as its own value rather than a boolean flag'. NONE is called 'the correct, safe default for any provider that has not opted in'",
+      "AUTOMATIC's docstring names its own dependency: the stable-prefix ordering from PCS-1 'is what makes this work; there is nothing for the loop to mark'",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "notes": "Reusing an existing graded-capability shape rather than adding a boolean is the same discipline CATO showed by reusing the feedback module's cap convention. A boolean would have forced AUTOMATIC and EXPLICIT to be distinguished somewhere else, which is how a second dialect starts."
+  },
+  "PCS-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "🔑 FALSIFIED AGAINST THE REAL TREE, which is this atom's own acceptance clause ('fails on a temporarily injected violation'). Wrote one core module containing a cache_control/ephemeral literal: the sweep FAILED naming it — 'vendor cache syntax escaped the provider edge into: [_pcs_probe.py] — translate at the adapter, keep core neutral' — AND the vacuity test caught it independently. Removed it; green again",
+      "MEASURED: cache_control appears in exactly one core file (llm/anthropic.py), which is the allowlist's single entry",
+      "🔑 THE RAIL HAS A VACUITY FLOOR AND SAYS WHY: test_the_sweep_is_not_vacuous asserts the patterns still match the one permitted file, because 'a rename of Anthropic's marker would leave a rail that matches nothing and passes forever'",
+      "the wire-translation suite covers the shapes that actually break: the marker lands on the LAST block not the first, a block-shaped system= is produced, a hinted span never mutates the caller's dicts, a hint on the volatile note is ignored, and neither the neutral hint key nor the generation marker ever reaches the wire",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "notes": "🔑 FOURTH SELF-FALSIFYING RAIL IN THIS CAMPAIGN (after the skills-suppression census, the provider-boundary residue sweep and the pairing-mechanism census), and the vacuity reasoning is stated in nearly the same words each time. That consistency is now strong enough to read as a house rule rather than four coincidences."
+  },
+  "PCS-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "🔑 DRIVEN TO THREE POINTS: toggled 'Prompt caching' OFF in Settings → Models, a FULL PAGE RELOAD showed the switch unchecked, and config.json on disk carried agent.prompt_cache_enabled = False. Toggled back ON and confirmed True on disk, so the home is left as found",
+      "all five wiring points present: the dataclass field, load(), to_dict(), the PATCH allowlist (handlers/core.py:831) and the real FE control (ModelsPanel.tsx:418)",
+      "🔑 THE NO-DUAL-PATH GUARANTEE IS SURFACED TO THE USER, not just tested: the toggle's hint ends 'what the model is shown, and in what order, is identical either way.' That is the clause's own 'ordering repairs are NOT gated by the toggle' claim, written where a user debugging a provider will read it",
+      "the section hint frames the feature honestly — 'Providers without cache support are unaffected' — so a user on Ollama does not expect a change",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "ui_validated": "Toggle, reload, on-disk value, restored.",
+    "notes": "The hint's last clause is the useful part for a debugging user: it tells them turning caching off does NOT change what the model sees, so a behaviour difference they observe after toggling cannot be attributed to prompt content. A toggle that silently reordered the prompt would make every provider bug report ambiguous."
+  },
+  "PCS-6": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "MEASURED: _read_cache_usage (anthropic.py:84-98) reads both SDK fields via getattr and coerces defensively — 'a non-cached response, or an older SDK), a non-int value, or None all yield 0 and NEVER raise'",
+      "🔑 THE NEVER-RAISE REASON IS THE RIGHT ONE: 'a cache-usage read must never break a completed turn's terminal event.' The turn already succeeded; a telemetry read is the last thing that should be able to lose it",
+      "`return v if isinstance(v, int) else 0` — a type check rather than a truthiness or try/except, so a string or a float from a future SDK becomes 0 rather than propagating into arithmetic",
+      "test_anthropic_cache_usage.py 5/5 covers both the present-fields and absent-fields cases",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "notes": "The atom is titled 'the missing producer', and that framing is the audit-relevant part: the consumer surfaces (PCS-7's telemetry, CATO-6's turn line) were already written against fields nothing populated. A plan that ships a renderer before its producer is exactly the inert-surface shape this campaign keeps finding — here it was found and closed by the plan's own author."
+  },
+  "PCS-7": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "🔑 THE DENOMINATOR IS PROVEN, NOT ASSERTED (stats.py:159-170). cache_hit_pct documents that the three buckets are DISJOINT — input_tokens EXCLUDES the cached tokens — and cites TWO independent pieces of evidence: the adapter assigns input_tokens verbatim from usage.input_tokens while the cache counts come from separate SDK fields, and pricing.py bills the three additively. 'No arithmetic ever relates the three'",
+      "🔑 THE NO-SECOND-STORE CLAUSE IS ENFORCED BY PLACEMENT: it is 'deliberately a module-level function, not a Stats method', because putting it on the singleton 'would invite a second, turn-scoped store beside the process-lifetime counters … and those counters stay the only tally'. There is a dedicated test file for exactly this (test_cache_counters_single_store.py)",
+      "honest-zero holds on both fragments (chat_runner.py:636-638): cache_hit_pct=None omits the 'NN% hit' piece — 'never print 0% hit' — and cache_saved_usd=None renders 'saved unpriced', never a zero",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "ui_validated": "Not driven: a cache hit needs a real Anthropic turn. The composed line and its FE reader are pinned against each other by the 78 tests plus CATO-6's reader suite.",
+    "notes": "🔑 THE BEST-EVIDENCED ARITHMETIC DECISION IN THE CAMPAIGN. A hit-rate is the kind of number nobody re-derives, so a denominator that double-counted or under-counted would have been believed indefinitely; citing the two places that prove disjointness is what makes it checkable by the next reader instead of trusted. The negative-saved-USD case is also deliberately not hidden, which matters because a cache write costs MORE than an uncached prompt on the first turn."
+  },
+  "PCS-8": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "MEASURED cross-repo: bedrock-models declares EXPLICIT and owns the only cachePoint literal, with the boundary written at its definition (provider.py:83-94) — 'THIS APP IS THE ONLY PLACE cachePoint MAY BE NAMED. Core emits the NEUTRAL CACHE_HINT_KEY marker … [the core rail] FAILS THE BUILD if cachePoint' escapes. Its shape cites the Converse API reference rather than being guessed. 39/39 app tests pass",
+      "EXPLICIT also declared by anthropic-models and claude-subscription; AUTOMATIC by openai-models, openrouter-models, deepseek-models and google-models; ollama-models declares NONE, which is the clause's own else-branch ('EXPLICIT only if server-side prefix caching is actually enabled else NONE')",
+      "🔑 ONE DIVERGENCE FROM THE CLAUSE, AND THE CODE IS MORE CORRECT THAN THE PLAN. The clause pairs 'openai-compatible/openrouter-models AUTOMATIC'; openrouter does declare AUTOMATIC, but openai-compatible declares NONE with the reason stated: it is 'the BRING-YOUR-OWN-ENDPOINT shell: default_base_url=\"\" … so whether the upstream caches is unknowable at declaration time. Pointed at api.openai.com it caches; pointed at a local llama.cpp or a bare proxy it does not. A substantiated AUTOMATIC belongs on the vendor-specific apps (openai-models, deepseek-models, ...), not on the shell'",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "ui_validated": "Not driven: the clause's own validation is a real Bedrock-Anthropic multi-turn run, which needs Bedrock credentials and is the same environment gate PCS-9 records.",
+    "notes": "🔑 SIXTH STALE-CLAUSE INSTANCE OF THE CAMPAIGN AND THE FIRST WHERE THE CODE IMPROVES ON THE PLAN rather than merely renaming it. The other five were drift (a moved constant, four wrong identifiers, a grep that no longer matched); this one is a declaration the implementation REFUSED to make because it would have claimed a capability the upstream may not have, and it re-homed that declaration to the four apps where it is substantiated. The verdict is confirmed on the clause's INTENT — every app declares a posture it can justify — with the divergence recorded rather than glossed."
+  },
+  "PCS-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven",
+    "evidence": [
+      "MEASURED as genuinely environment-gated, not unfinished: the atom is the only one in the plan carrying status `blocked`, and its blocked_reason names a concrete, checkable obstacle rather than a vague one — no Bedrock inference-profile id resolves to a price row, so a real run would render 'saved unpriced' until the rate-id normalisation lands",
+      "every mechanism V2 would exercise is confirmed by the other eight atoms and their 78 + 39 passing tests; what is missing is a live provider, credentials and a multi-turn run, none of which this environment can supply",
+      "the split itself was an owner ruling (2026-08-28) separating the shipped-numbers half (PCS-7) from live verification, which is why PCS-7 is confirmable while this is not",
+      "78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39"
+    ],
+    "ui_validated": "Cannot be driven here by construction — that is the atom's content.",
+    "notes": "Confirming a `blocked` atom means confirming the BLOCK, and this is the second time in the campaign that has been the right verdict (the first was a genuinely owner-gated todo). The distinction worth keeping: this reason names a specific missing capability with a named fix (price-row id normalisation), so a later reader can tell whether the block still holds. A blocked_reason that only said 'needs real credentials' would be unfalsifiable and would outlive its cause."
   }
 }

@@ -31,9 +31,23 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- 🔑 DRIVEN TO THREE POINTS: toggled 'Prompt caching' OFF in Settings → Models, a FULL PAGE RELOAD showed the switch unchecked, and config.json on disk carried agent.prompt_cache_enabled = False. Toggled back ON and confirmed True on disk, so the home is left as found
+- all five wiring points present: the dataclass field, load(), to_dict(), the PATCH allowlist (handlers/core.py:831) and the real FE control (ModelsPanel.tsx:418)
+- 🔑 THE NO-DUAL-PATH GUARANTEE IS SURFACED TO THE USER, not just tested: the toggle's hint ends 'what the model is shown, and in what order, is identical either way.' That is the clause's own 'ordering repairs are NOT gated by the toggle' claim, written where a user debugging a provider will read it
+- the section hint frames the feature honestly — 'Providers without cache support are unaffected' — so a user on Ollama does not expect a change
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Driven in the UI:** Toggle, reload, on-disk value, restored.
+
+**Notes:** The hint's last clause is the useful part for a debugging user: it tells them turning caching off does NOT change what the model sees, so a behaviour difference they observe after toggling cannot be attributed to prompt content. A toggle that silently reordered the prompt would make every provider bug report ambiguous.
 
 ## Recorded history
 

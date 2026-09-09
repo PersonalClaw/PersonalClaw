@@ -32,9 +32,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- MEASURED cross-repo: bedrock-models declares EXPLICIT and owns the only cachePoint literal, with the boundary written at its definition (provider.py:83-94) — 'THIS APP IS THE ONLY PLACE cachePoint MAY BE NAMED. Core emits the NEUTRAL CACHE_HINT_KEY marker … [the core rail] FAILS THE BUILD if cachePoint' escapes. Its shape cites the Converse API reference rather than being guessed. 39/39 app tests pass
+- EXPLICIT also declared by anthropic-models and claude-subscription; AUTOMATIC by openai-models, openrouter-models, deepseek-models and google-models; ollama-models declares NONE, which is the clause's own else-branch ('EXPLICIT only if server-side prefix caching is actually enabled else NONE')
+- 🔑 ONE DIVERGENCE FROM THE CLAUSE, AND THE CODE IS MORE CORRECT THAN THE PLAN. The clause pairs 'openai-compatible/openrouter-models AUTOMATIC'; openrouter does declare AUTOMATIC, but openai-compatible declares NONE with the reason stated: it is 'the BRING-YOUR-OWN-ENDPOINT shell: default_base_url="" … so whether the upstream caches is unknowable at declaration time. Pointed at api.openai.com it caches; pointed at a local llama.cpp or a bare proxy it does not. A substantiated AUTOMATIC belongs on the vendor-specific apps (openai-models, deepseek-models, ...), not on the shell'
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Driven in the UI:** Not driven: the clause's own validation is a real Bedrock-Anthropic multi-turn run, which needs Bedrock credentials and is the same environment gate PCS-9 records.
+
+**Notes:** 🔑 SIXTH STALE-CLAUSE INSTANCE OF THE CAMPAIGN AND THE FIRST WHERE THE CODE IMPROVES ON THE PLAN rather than merely renaming it. The other five were drift (a moved constant, four wrong identifiers, a grep that no longer matched); this one is a declaration the implementation REFUSED to make because it would have claimed a capability the upstream may not have, and it re-homed that declaration to the four apps where it is substantiated. The verdict is confirmed on the clause's INTENT — every app declares a posture it can justify — with the divergence recorded rather than glossed.
 
 ## Recorded history
 

@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- MEASURED: _read_cache_usage (anthropic.py:84-98) reads both SDK fields via getattr and coerces defensively — 'a non-cached response, or an older SDK), a non-int value, or None all yield 0 and NEVER raise'
+- 🔑 THE NEVER-RAISE REASON IS THE RIGHT ONE: 'a cache-usage read must never break a completed turn's terminal event.' The turn already succeeded; a telemetry read is the last thing that should be able to lose it
+- `return v if isinstance(v, int) else 0` — a type check rather than a truthiness or try/except, so a string or a float from a future SDK becomes 0 rather than propagating into arithmetic
+- test_anthropic_cache_usage.py 5/5 covers both the present-fields and absent-fields cases
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Notes:** The atom is titled 'the missing producer', and that framing is the audit-relevant part: the consumer surfaces (PCS-7's telemetry, CATO-6's turn line) were already written against fields nothing populated. A plan that ships a renderer before its producer is exactly the inert-surface shape this campaign keeps finding — here it was found and closed by the plan's own author.
 
 ## Recorded history
 

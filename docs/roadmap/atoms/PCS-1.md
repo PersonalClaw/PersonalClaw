@@ -29,9 +29,22 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 43 (PCS) — vendor rail falsified against the real tree; toggle driven
+
+**Code evidence:**
+
+- MEASURED: the volatile marker is real and consumed where the clause says — _VOLATILE_HINT_KEY is defined in llm/prompt_cache.py and read by agents/native/runtime.py and llm/anthropic.py, so the per-turn note is tagged at the producer and honoured at the adapter
+- 🔑 THE MARKER'S PURPOSE IS STATED AT ITS DEFINITION (prompt_cache.py:47-50): 'PCS-1 stamps [this] on the per-turn VOLATILE note … We never anchor the cache hint on that message — its content is not part of the stable, cacheable prefix.' A cache hint on a message that changes every turn would guarantee a miss every turn
+- the untagged-only path is pinned as byte-identical to today's kwargs (test_unhinted_request_kwargs_are_byte_identical_to_today), which is the clause's no-regression half
+- 78 across marker/wire-translation/cache-usage/single-store/pricing-savings/citation-rail; bedrock-models app 39/39
+
+**Driven in the UI:** Not driven: wire ordering is only observable in a real provider request. The byte-identity and content-equivalence claims are pinned by the 78 passing tests.
+
+**Notes:** The atom's line reference (runtime.py:712) points at a path that no longer exists — the module is agents/native/runtime.py. Ordinary drift, recorded so a later reader does not read it as missing work; the deliverable is present under the current path.
 
 ## Recorded history
 
