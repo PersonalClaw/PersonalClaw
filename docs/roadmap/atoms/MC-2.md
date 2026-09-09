@@ -31,9 +31,23 @@ A roaming-IP phone keeps its device session valid per the plan-54 contract; the 
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- 🔑 ARCC'S SESSION GUIDANCE APPLIES DIRECTLY HERE AND THE BOUNDED-LIFETIME REQUIREMENT IS MET DELIBERATELY: a paired device gets the 30-day browser TTL rather than the system's 1-year cap, and the code says why — 'a phone in a drawer should not hold a live session for a year'. ARCC's threat statement names a stolen device explicitly, so choosing well below your own ceiling is the control it asks for
+- 🔑 REVOCATION CANNOT DRIFT FROM THE SESSION, BY CONSTRUCTION: the device registry is 'a VIEW over sessions.json, which is why revoke and the session is gone cannot drift apart'. A separate device table could report revoked while the session stayed live — this shape makes that unrepresentable
+- 🔑 AND A SESSION THAT CANNOT BE ATTRIBUTED IS DESTROYED RATHER THAN LEFT LIVE-BUT-INVISIBLE: at `devices.py:289` a session with no attachable device 'cannot be listed or revoked' so the code refuses and calls `revoke_nonce`. That closes the gap where a live session sits outside the revocable set
+- the plan-54 boundary held — no new claim was added to `token_auth.py`; the device session is the existing one, and `last_seen` is stamped through a throttled in-memory map so the common request is 'a dict lookup and never a file read'
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable end to end: a roaming-IP phone keeping its session, and revocation killing it on the next request, both need a second device. The Devices list is reachable from the companion footer ('Paired devices'), observed while driving MC-3.
+
+**Notes:** 🔑 ONE HONEST GAP AGAINST ARCC WORTH STATING RATHER THAN GLOSSING: the standard asks for BOTH an absolute lifetime and an IDLE timeout, and only the absolute one is bounded here — `last_seen` is recorded for display, not enforced as an expiry. That is defensible for this threat model (a single-owner tool whose published threat model puts physical device access explicitly out of scope) and it has a compensating control in owner-initiated revocation, but it is a real difference from the guidance and not a case of the guidance not applying.
 
 ## Recorded history
 

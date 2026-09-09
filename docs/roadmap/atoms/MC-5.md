@@ -33,9 +33,25 @@ VAPID keypair generated via `personalclaw push init` (keys in credential store),
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- 🔑 THE PAYLOAD CONTRACT IS THE SECURITY PROMISE AND IT IS ENFORCED, NOT DOCUMENTED — the module says so: `PAYLOAD_KEYS = frozenset({'kind', 'item_id'})`, 'Asserted, not documented', with ONE constructor (`content_free_payload`) and ONE gate (`assert_content_free`) so the payload 'is a shape the module BUILDS rather than trusted to each caller's discipline'
+- 🔑 THE REASON IS THE RIGHT ONE AND IT NAMES THE ADVERSARY: a payload carrying a tool's arguments 'would make every one of those hosts a [confidant]' — the push services and any relay in the path. Data minimisation as a design constraint rather than as advice
+- 🔑 AND THE SHARPEST LINE IN THE PLAN EXPLAINS WHY THERE IS NO HUMAN-READABLE BODY: 'the alternative is composing a sentence, and a sentence is content.' A notification title cannot be content-free, so there is none
+- 🔑 FALSIFIED: disabling the key-set check reddens FIVE tests, including `test_a_content_laden_payload_never_reaches_the_wire` and four gate cases (two extra-key, two missing-key). Restored; 46/46
+- the gate checks the key set BOTH ways, with the reason given — 'a missing key is as much a contract break as an extra one, because a sender that forgot `item_id` would ship a push the phone cannot route'
+- the VAPID keypair lives in the credential store rather than in config, which is this repo's stated contract for secrets
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable: a locked-phone notification needs a real device and a real push service. The gate, the constructor and the wire test were exercised directly, which is where the security claim lives.
+
+**Notes:** 🔑 THE BEST DATA-MINIMISATION DESIGN IN THE CAMPAIGN. Two properties together: the safe payload has exactly one constructor, and the unsafe payload raises at a gate every sender crosses. Either alone would be a convention; together they make 'a push never carries content' a property of the module.
 
 ## Recorded history
 

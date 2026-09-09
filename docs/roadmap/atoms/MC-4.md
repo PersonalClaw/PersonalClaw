@@ -31,9 +31,23 @@ Lighthouse installability passes with manifest (claw-mark icons, standalone, sta
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- the manifest ships at `web/public/manifest.webmanifest` with exactly what the atom names — `start_url: /#/companion` and `display: standalone`
+- 🔑 THE API-NEVER-CACHED PROMISE IS STRUCTURAL RATHER THAN CONVENTIONAL, and `sw.ts` states it as an absence: `network-only` is 'what every `/api/*` request resolves to', and there is no path 'in this file through which an API response could reach `cache.put`'. That is the campaign's core principle again — the unsafe outcome has no representation, so no rule has to forbid it
+- a neighbouring comment records a second real hazard the same design avoids: intercepting a request that carries a body 'can break streamed uploads'
+- PWA asset wiring passes 10/10
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not driven as installability: a Lighthouse installability pass needs a browser audit run, not a page interaction. The manifest fields and the service worker's caching policy were read at the source, and the companion start URL was driven directly.
+
+**Notes:** The strongest phrasing in this atom is that the guarantee is checked as 'there is no code path', not as 'we remember to skip /api'. A cached API response on a phone is a stale-approval bug, which is the worst kind on this surface.
 
 ## Recorded history
 

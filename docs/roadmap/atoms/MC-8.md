@@ -31,9 +31,22 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- the pairing routes are CONSUMED rather than redefined, as the atom requires, and the pairing core was separately audited earlier in this campaign: single-use codes stored only as hashes, consumed before the sender is allowed, constant-time comparison, and a short TTL
+- the code TTL surfaces to the caller as data rather than as prose: the start response carries `expires_at` and `expires_in` from `pairing.PAIR_CODE_TTL_SECS`
+- `test_companion_single_pairing_mechanism.py` passes inside the 106 — a rail against a SECOND pairing mechanism appearing, which is the failure mode a QR screen invites
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable end to end: scanning a QR and exchanging it for a device session needs a camera and a second device. The Devices surface the screen lives on was reached from the companion footer.
+
+**Notes:** The single-mechanism rail is the thing worth keeping. A QR pairing screen is exactly where a project grows a parallel code path with weaker properties than the one it already had, and a test that reds when a second mechanism appears is the right shape of defence.
 
 ## Recorded history
 

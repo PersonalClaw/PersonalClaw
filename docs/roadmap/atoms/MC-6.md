@@ -32,9 +32,24 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- 🔑 ALL FIVE SECTIONS DRIVEN AT A PHONE VIEWPORT AND PRESENT: `Approvals`, `Running` (loops), `Tasks (3)` with real rows, `Inbox`, and `Recent (14)` notifications with a per-item 'Mark read' control
+- 🔑 THE SUBSET IS DISCLOSED RATHER THAN SILENT: 'Showing 6 of 14. Open the full dashboard for the rest.' A phone surface that truncated without saying so would read as missing notifications
+- the push state is reported honestly with its remedy: 'No push keypair yet. Run `personalclaw push init` on the gateway.' — not a dead toggle, and not silence
+- every empty section carries written copy rather than a blank: 'Nothing running / Loops you start appear here while they run', 'Inbox clear'
+- the footer offers the two escapes a phone surface needs — 'Open the full dashboard' and 'Paired devices'
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** The whole route at 390x844, every section, the truncation notice and the footer. NOT driven: pause/nudge/stop on a running loop (nothing is running), inbox-resolve (the inbox is clear), and the service worker's kind-to-sound/badge mapping, which needs a delivered push.
+
+**Notes:** 🪤 A SELF-OBSERVATION worth recording: one of the fourteen notifications is 'Audit probe note INU-9' — this campaign's own artifact from an earlier cycle, still in the validation home. Benign, and a useful reminder that the audit leaves traces in the home it drives; it is also incidental evidence that the notifications section renders real persisted state rather than a fixture.
 
 ## Recorded history
 

@@ -29,9 +29,21 @@ _Nothing depends on this atom._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- `docs/guides/remote-access.md` ships, and the doctor probe is real: `cli_doctor.py` imports the shared `tailnet_ip()` helper and prints `remote: ✅ tailnet <ip> — open <url> on your phone`
+- 🔑 THE PROBE AND THE PRINTED URL COME FROM ONE HELPER, with the reason stated at the call site — the line reuses the shared detection 'so this line and the doctor [agree]'. A doctor that detected the interface one way and composed the URL another could print a URL that does not resolve
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable: 'a reader on cell data reaches their dashboard via tailnet' needs a second device on a real tailnet. The doctor half is a CLI line whose inputs were read at the source.
+
+**Notes:** Partial for the cell-data clause, which is a two-device observation. The bind-host warning half is the security-relevant one and is the same posture audited elsewhere in this campaign: a non-loopback bind without auth is a warned configuration rather than a silent one.
 
 ## Recorded history
 

@@ -31,9 +31,24 @@ ntfy-app integration works as the documented default; the optional stateless ope
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `confirmed`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- 🔑 THE NO-CONTENT CLAIM IS TESTED AT THE WIRE, NOT AT THE LOG: `test_the_relay_body_is_the_envelope_and_nothing_else` and `test_a_content_laden_payload_never_reaches_the_wire`. Auditing a relay's logs proves what one relay recorded; asserting the request body proves what any relay COULD record
+- 🔑 THE RELAY REFUSES A PLAINTEXT URL — `test_the_relay_refuses_a_plaintext_url`. An ids-only payload over cleartext still leaks the fact and timing of an approval to the network path, so transport security is part of the same promise
+- the platform vocabulary is CLOSED (`test_the_platform_vocabulary_is_closed`) and only sender fields are stored (`test_only_the_sender_fields_are_stored`) — the registry keeps what it needs to send and nothing else
+- a relay backend with no URL delivers NOTHING rather than falling back to another transport (`test_a_relay_backend_without_a_url_delivers_nothing`), and the two transports are asserted to stay apart under the backend switch
+- delivery fans out over every registered device, so revoking one does not silently stop the others
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable: a real relay instance and a real device are the preconditions. The envelope contract was exercised against the transport directly.
+
+**Notes:** 🔑 THE AUDIT-FIXTURE UPGRADE IS THE LESSON HERE. The atom asked for a fixture confirming relay logs contain no content; what shipped asserts the REQUEST BODY instead, which is strictly stronger — a log is one relay's choice about what to record, while the body is what every relay in the path receives.
 
 ## Recorded history
 

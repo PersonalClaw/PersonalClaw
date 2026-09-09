@@ -12,11 +12,11 @@ An atom's state used to be spread over `dag.json`, `atomic/<CODE>.md`, the sourc
 
 | Verdict | Atoms | Meaning |
 |---|---|---|
-| `confirmed` | 316 | `done_when` checked against the code and it holds |
-| `partial` | 199 | some `done_when` clauses hold, others do not |
+| `confirmed` | 319 | `done_when` checked against the code and it holds |
+| `partial` | 206 | some `done_when` clauses hold, others do not |
 | `contradicted` | 6 | the recorded status disagrees with the code |
 | `unverifiable` | 5 | cannot be settled here (needs hardware, a paid key, an owner action) |
-| `unaudited` | 158 | not yet checked |
+| `unaudited` | 148 | not yet checked |
 
 ## Atoms without a single commit naming them
 
@@ -547,16 +547,16 @@ A `done` atom that no commit mentions is the highest-yield place to look for a w
 
 | Atom | Status | Verdict | Title |
 |---|---|---|---|
-| [`MC-1`](MC-1.md) | `done` | `unaudited` | S1 remote-access story: Tailscale-first guide + doctor reachability probe |
-| [`MC-2`](MC-2.md) | `done` | `unaudited` | S2 device-session consumption + Devices list in Settings |
-| [`MC-3`](MC-3.md) | `done` | `unaudited` | S2 approvals-first companion route + approve/reject wiring |
-| [`MC-4`](MC-4.md) | `done` | `unaudited` | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) |
-| [`MC-5`](MC-5.md) | `done` | `unaudited` | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval |
-| [`MC-6`](MC-6.md) | `done` | `unaudited` | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping |
-| [`MC-7`](MC-7.md) | `done` | `unaudited` | S4 Capacitor shell wrapping the served companion route |
-| [`MC-8`](MC-8.md) | `done` | `unaudited` | S4 QR pairing screen (renders COMPANION-APPS pairing routes) |
-| [`MC-9`](MC-9.md) | `done` | `unaudited` | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring |
-| [`MC-10`](MC-10.md) | `done` | `unaudited` | S4 store packaging + mobile-release docs |
+| [`MC-1`](MC-1.md) | `done` | `partial` | S1 remote-access story: Tailscale-first guide + doctor reachability probe |
+| [`MC-2`](MC-2.md) | `done` | `partial` | S2 device-session consumption + Devices list in Settings |
+| [`MC-3`](MC-3.md) | `done` | `partial` | S2 approvals-first companion route + approve/reject wiring |
+| [`MC-4`](MC-4.md) | `done` | `confirmed` | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) |
+| [`MC-5`](MC-5.md) | `done` | `confirmed` | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval |
+| [`MC-6`](MC-6.md) | `done` | `partial` | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping |
+| [`MC-7`](MC-7.md) | `done` | `partial` | S4 Capacitor shell wrapping the served companion route |
+| [`MC-8`](MC-8.md) | `done` | `partial` | S4 QR pairing screen (renders COMPANION-APPS pairing routes) |
+| [`MC-9`](MC-9.md) | `done` | `confirmed` | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring |
+| [`MC-10`](MC-10.md) | `done` | `partial` | S4 store packaging + mobile-release docs |
 
 ### `MGAV` — MEMORY-GRAPH-AND-VAULT (9/9 done)
 

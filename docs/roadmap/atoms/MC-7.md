@@ -32,9 +32,22 @@ A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the s
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- the shell exists as its own directory with the repo-location decision made — `mobile/capacitor.config.json` plus `mobile/assets`, and `mobile/store/` for the platform metadata
+- the no-forked-UI property is the load-bearing one and it holds by construction: the shell wraps the SERVED companion URL, so there is no second implementation of the companion to drift from the first
+- the shell suite passes inside the 106
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** Not drivable: 'builds for iOS+Android and renders the live companion' needs Xcode, an Android toolchain and a device or simulator.
+
+**Notes:** Partial on the build-and-render clause, which is a toolchain observation. The architectural choice — wrap the served route rather than fork the UI — is the part that keeps a companion from becoming a second product, and it is verifiable from the config.
 
 ## Recorded history
 

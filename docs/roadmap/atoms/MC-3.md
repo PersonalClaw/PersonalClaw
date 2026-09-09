@@ -29,9 +29,21 @@ _None — this atom has no declared dependency._
 
 ## Verification
 
-**Audit verdict:** `unaudited`
+**Audit verdict:** `partial`
 
-_No one has checked this atom's `done_when` against the code yet._ A verdict is recorded in [`verdicts.json`](verdicts.json), never by editing this file.
+**Checked on:** 2026-09-09
+
+**Checked by:** audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified
+
+**Code evidence:**
+
+- 🔑 DRIVEN AT A REAL PHONE VIEWPORT (390x844): `#/companion` renders with an `Approvals` section, and the empty state is written rather than blank — 'Nothing waiting on you'
+- the raw-fallback intent is visible in the surface's shape: the section renders from the approvals endpoint and does not depend on the decision-brief plan, which is what the atom asked for ('do not block on plan 43')
+- device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)
+
+**Driven in the UI:** The route, the section and its empty state were driven at a phone viewport. NOT driven: the approve/reject round-trip, which needs a PENDING approval — and that needs a real tool call from a bound model, which this home has none of.
+
+**Notes:** Partial precisely on the round-trip. Worth recording that the empty state is the honest one: a companion whose approvals list rendered blank would be indistinguishable from a companion whose fetch failed.
 
 ## Recorded history
 

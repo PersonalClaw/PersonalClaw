@@ -6473,5 +6473,142 @@
     ],
     "ui_validated": "Not applicable: the deliverable is an announcement.",
     "notes": "Partial rather than blocked-and-unverifiable, because the gate is decomposable and two thirds of it observes as satisfied. A `blocked` atom whose blocker is a checklist is worth auditing item by item — otherwise 'blocked' hides how close it is."
+  },
+  "MC-1": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "`docs/guides/remote-access.md` ships, and the doctor probe is real: `cli_doctor.py` imports the shared `tailnet_ip()` helper and prints `remote: ✅ tailnet <ip> — open <url> on your phone`",
+      "🔑 THE PROBE AND THE PRINTED URL COME FROM ONE HELPER, with the reason stated at the call site — the line reuses the shared detection 'so this line and the doctor [agree]'. A doctor that detected the interface one way and composed the URL another could print a URL that does not resolve",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable: 'a reader on cell data reaches their dashboard via tailnet' needs a second device on a real tailnet. The doctor half is a CLI line whose inputs were read at the source.",
+    "notes": "Partial for the cell-data clause, which is a two-device observation. The bind-host warning half is the security-relevant one and is the same posture audited elsewhere in this campaign: a non-loopback bind without auth is a warned configuration rather than a silent one."
+  },
+  "MC-2": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "🔑 ARCC'S SESSION GUIDANCE APPLIES DIRECTLY HERE AND THE BOUNDED-LIFETIME REQUIREMENT IS MET DELIBERATELY: a paired device gets the 30-day browser TTL rather than the system's 1-year cap, and the code says why — 'a phone in a drawer should not hold a live session for a year'. ARCC's threat statement names a stolen device explicitly, so choosing well below your own ceiling is the control it asks for",
+      "🔑 REVOCATION CANNOT DRIFT FROM THE SESSION, BY CONSTRUCTION: the device registry is 'a VIEW over sessions.json, which is why revoke and the session is gone cannot drift apart'. A separate device table could report revoked while the session stayed live — this shape makes that unrepresentable",
+      "🔑 AND A SESSION THAT CANNOT BE ATTRIBUTED IS DESTROYED RATHER THAN LEFT LIVE-BUT-INVISIBLE: at `devices.py:289` a session with no attachable device 'cannot be listed or revoked' so the code refuses and calls `revoke_nonce`. That closes the gap where a live session sits outside the revocable set",
+      "the plan-54 boundary held — no new claim was added to `token_auth.py`; the device session is the existing one, and `last_seen` is stamped through a throttled in-memory map so the common request is 'a dict lookup and never a file read'",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable end to end: a roaming-IP phone keeping its session, and revocation killing it on the next request, both need a second device. The Devices list is reachable from the companion footer ('Paired devices'), observed while driving MC-3.",
+    "notes": "🔑 ONE HONEST GAP AGAINST ARCC WORTH STATING RATHER THAN GLOSSING: the standard asks for BOTH an absolute lifetime and an IDLE timeout, and only the absolute one is bounded here — `last_seen` is recorded for display, not enforced as an expiry. That is defensible for this threat model (a single-owner tool whose published threat model puts physical device access explicitly out of scope) and it has a compensating control in owner-initiated revocation, but it is a real difference from the guidance and not a case of the guidance not applying."
+  },
+  "MC-3": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "🔑 DRIVEN AT A REAL PHONE VIEWPORT (390x844): `#/companion` renders with an `Approvals` section, and the empty state is written rather than blank — 'Nothing waiting on you'",
+      "the raw-fallback intent is visible in the surface's shape: the section renders from the approvals endpoint and does not depend on the decision-brief plan, which is what the atom asked for ('do not block on plan 43')",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "The route, the section and its empty state were driven at a phone viewport. NOT driven: the approve/reject round-trip, which needs a PENDING approval — and that needs a real tool call from a bound model, which this home has none of.",
+    "notes": "Partial precisely on the round-trip. Worth recording that the empty state is the honest one: a companion whose approvals list rendered blank would be indistinguishable from a companion whose fetch failed."
+  },
+  "MC-4": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "the manifest ships at `web/public/manifest.webmanifest` with exactly what the atom names — `start_url: /#/companion` and `display: standalone`",
+      "🔑 THE API-NEVER-CACHED PROMISE IS STRUCTURAL RATHER THAN CONVENTIONAL, and `sw.ts` states it as an absence: `network-only` is 'what every `/api/*` request resolves to', and there is no path 'in this file through which an API response could reach `cache.put`'. That is the campaign's core principle again — the unsafe outcome has no representation, so no rule has to forbid it",
+      "a neighbouring comment records a second real hazard the same design avoids: intercepting a request that carries a body 'can break streamed uploads'",
+      "PWA asset wiring passes 10/10",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not driven as installability: a Lighthouse installability pass needs a browser audit run, not a page interaction. The manifest fields and the service worker's caching policy were read at the source, and the companion start URL was driven directly.",
+    "notes": "The strongest phrasing in this atom is that the guarantee is checked as 'there is no code path', not as 'we remember to skip /api'. A cached API response on a phone is a stale-approval bug, which is the worst kind on this surface."
+  },
+  "MC-5": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "🔑 THE PAYLOAD CONTRACT IS THE SECURITY PROMISE AND IT IS ENFORCED, NOT DOCUMENTED — the module says so: `PAYLOAD_KEYS = frozenset({'kind', 'item_id'})`, 'Asserted, not documented', with ONE constructor (`content_free_payload`) and ONE gate (`assert_content_free`) so the payload 'is a shape the module BUILDS rather than trusted to each caller's discipline'",
+      "🔑 THE REASON IS THE RIGHT ONE AND IT NAMES THE ADVERSARY: a payload carrying a tool's arguments 'would make every one of those hosts a [confidant]' — the push services and any relay in the path. Data minimisation as a design constraint rather than as advice",
+      "🔑 AND THE SHARPEST LINE IN THE PLAN EXPLAINS WHY THERE IS NO HUMAN-READABLE BODY: 'the alternative is composing a sentence, and a sentence is content.' A notification title cannot be content-free, so there is none",
+      "🔑 FALSIFIED: disabling the key-set check reddens FIVE tests, including `test_a_content_laden_payload_never_reaches_the_wire` and four gate cases (two extra-key, two missing-key). Restored; 46/46",
+      "the gate checks the key set BOTH ways, with the reason given — 'a missing key is as much a contract break as an extra one, because a sender that forgot `item_id` would ship a push the phone cannot route'",
+      "the VAPID keypair lives in the credential store rather than in config, which is this repo's stated contract for secrets",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable: a locked-phone notification needs a real device and a real push service. The gate, the constructor and the wire test were exercised directly, which is where the security claim lives.",
+    "notes": "🔑 THE BEST DATA-MINIMISATION DESIGN IN THE CAMPAIGN. Two properties together: the safe payload has exactly one constructor, and the unsafe payload raises at a gate every sender crosses. Either alone would be a convention; together they make 'a push never carries content' a property of the module."
+  },
+  "MC-6": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "🔑 ALL FIVE SECTIONS DRIVEN AT A PHONE VIEWPORT AND PRESENT: `Approvals`, `Running` (loops), `Tasks (3)` with real rows, `Inbox`, and `Recent (14)` notifications with a per-item 'Mark read' control",
+      "🔑 THE SUBSET IS DISCLOSED RATHER THAN SILENT: 'Showing 6 of 14. Open the full dashboard for the rest.' A phone surface that truncated without saying so would read as missing notifications",
+      "the push state is reported honestly with its remedy: 'No push keypair yet. Run `personalclaw push init` on the gateway.' — not a dead toggle, and not silence",
+      "every empty section carries written copy rather than a blank: 'Nothing running / Loops you start appear here while they run', 'Inbox clear'",
+      "the footer offers the two escapes a phone surface needs — 'Open the full dashboard' and 'Paired devices'",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "The whole route at 390x844, every section, the truncation notice and the footer. NOT driven: pause/nudge/stop on a running loop (nothing is running), inbox-resolve (the inbox is clear), and the service worker's kind-to-sound/badge mapping, which needs a delivered push.",
+    "notes": "🪤 A SELF-OBSERVATION worth recording: one of the fourteen notifications is 'Audit probe note INU-9' — this campaign's own artifact from an earlier cycle, still in the validation home. Benign, and a useful reminder that the audit leaves traces in the home it drives; it is also incidental evidence that the notifications section renders real persisted state rather than a fixture."
+  },
+  "MC-7": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "the shell exists as its own directory with the repo-location decision made — `mobile/capacitor.config.json` plus `mobile/assets`, and `mobile/store/` for the platform metadata",
+      "the no-forked-UI property is the load-bearing one and it holds by construction: the shell wraps the SERVED companion URL, so there is no second implementation of the companion to drift from the first",
+      "the shell suite passes inside the 106",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable: 'builds for iOS+Android and renders the live companion' needs Xcode, an Android toolchain and a device or simulator.",
+    "notes": "Partial on the build-and-render clause, which is a toolchain observation. The architectural choice — wrap the served route rather than fork the UI — is the part that keeps a companion from becoming a second product, and it is verifiable from the config."
+  },
+  "MC-8": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "the pairing routes are CONSUMED rather than redefined, as the atom requires, and the pairing core was separately audited earlier in this campaign: single-use codes stored only as hashes, consumed before the sender is allowed, constant-time comparison, and a short TTL",
+      "the code TTL surfaces to the caller as data rather than as prose: the start response carries `expires_at` and `expires_in` from `pairing.PAIR_CODE_TTL_SECS`",
+      "`test_companion_single_pairing_mechanism.py` passes inside the 106 — a rail against a SECOND pairing mechanism appearing, which is the failure mode a QR screen invites",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable end to end: scanning a QR and exchanging it for a device session needs a camera and a second device. The Devices surface the screen lives on was reached from the companion footer.",
+    "notes": "The single-mechanism rail is the thing worth keeping. A QR pairing screen is exactly where a project grows a parallel code path with weaker properties than the one it already had, and a test that reds when a second mechanism appears is the right shape of defence."
+  },
+  "MC-9": {
+    "verdict": "confirmed",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "🔑 THE NO-CONTENT CLAIM IS TESTED AT THE WIRE, NOT AT THE LOG: `test_the_relay_body_is_the_envelope_and_nothing_else` and `test_a_content_laden_payload_never_reaches_the_wire`. Auditing a relay's logs proves what one relay recorded; asserting the request body proves what any relay COULD record",
+      "🔑 THE RELAY REFUSES A PLAINTEXT URL — `test_the_relay_refuses_a_plaintext_url`. An ids-only payload over cleartext still leaks the fact and timing of an approval to the network path, so transport security is part of the same promise",
+      "the platform vocabulary is CLOSED (`test_the_platform_vocabulary_is_closed`) and only sender fields are stored (`test_only_the_sender_fields_are_stored`) — the registry keeps what it needs to send and nothing else",
+      "a relay backend with no URL delivers NOTHING rather than falling back to another transport (`test_a_relay_backend_without_a_url_delivers_nothing`), and the two transports are asserted to stay apart under the backend switch",
+      "delivery fans out over every registered device, so revoking one does not silently stop the others",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable: a real relay instance and a real device are the preconditions. The envelope contract was exercised against the transport directly.",
+    "notes": "🔑 THE AUDIT-FIXTURE UPGRADE IS THE LESSON HERE. The atom asked for a fixture confirming relay logs contain no content; what shipped asserts the REQUEST BODY instead, which is strictly stronger — a log is one relay's choice about what to record, while the body is what every relay in the path receives."
+  },
+  "MC-10": {
+    "verdict": "partial",
+    "date": "2026-09-09",
+    "by": "audit cycle 57 (MC) — the companion route driven at a 390x844 phone viewport; the content-free push gate falsified",
+    "evidence": [
+      "`docs/maintainers/mobile-release.md` ships, and the store metadata is real rather than described: `mobile/store/PrivacyInfo.xcprivacy` carries `NSPrivacyTracking`, `NSPrivacyTrackingDomains`, `NSPrivacyCollectedDataTypes` and `NSPrivacyAccessedAPITypes`",
+      "🔑 THE TRUTHFUL-DECLARATION CLAUSE IS THE INTERESTING ONE AND IT IS SUPPORTED BY THE REST OF THE PLAN: a no-data-collection declaration is only honest if the app genuinely collects nothing, and MC-5/MC-9 are what make that true — an ids-only payload and a registry storing only sender fields. The privacy manifest is a claim the architecture can back",
+      "icons and splash assets ship under `mobile/assets`",
+      "device-session + push + relay + shell + companion-discovery + single-pairing suites 106/106; PWA symlink 10/10 (falsified: disabling the payload key check reds 5, including the never-reaches-the-wire test)"
+    ],
+    "ui_validated": "Not drivable: producing an installable TestFlight or internal-track build needs signing identities and the platform toolchains, and the atom assigns the actual submissions to the owner.",
+    "notes": "Partial on the build-and-submit clause by the atom's own division of labour. Worth noting the ordering that makes this atom safe: the privacy declaration comes AFTER the payload contract rather than before it, so the store claim describes a property the code already has instead of a promise the code must later keep."
   }
 }
