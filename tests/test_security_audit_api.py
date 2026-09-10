@@ -101,7 +101,14 @@ async def test_cursor_pages_are_disjoint_under_concurrent_appends():
         assert status == 200
         first = [e["event_id"] for e in page1["events"]]
         assert first == list(reversed(written))[:5], "page 1 is the 5 newest, newest first"
-        assert page1["next_cursor"] == first[-1]
+        # The cursor is an opaque `<byte offset>.<event_id>` anchor, not a bare id. The offset is
+        # what makes the next page an O(page) read from where this one stopped instead of a
+        # re-scan from the tail — the change that made the whole log reachable (#593). The id
+        # half is what lets the server prove the offset still points at the record the client
+        # was handed, so a cursor stale from a prune fails closed.
+        offset, _, anchor_id = page1["next_cursor"].partition(".")
+        assert offset.isdigit() and int(offset) > 0, page1["next_cursor"]
+        assert anchor_id == first[-1], "the anchor names the last row of the page"
 
         # A concurrent writer lands 5 NEW events between the two page fetches.
         _write(5, prefix="late")
@@ -127,16 +134,122 @@ async def test_next_cursor_empty_at_end_of_log():
     assert page["next_cursor"] == ""
 
 
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "nosuchevent",  # a bare id — the pre-#593 token shape, and any junk
+        "999999999.e0000",  # an offset past the end of the file
+        "7.e0000",  # an offset that is not a line start (mid-record)
+        "0.notthisone",  # a real line start, but naming a different record
+    ],
+)
 @pytest.mark.asyncio
-async def test_expired_cursor_is_refused_not_restarted():
-    """An anchor no longer in the log fails CLOSED. Restarting from the newest record
-    would silently re-serve the entire trail as if it were a fresh page."""
+async def test_expired_cursor_is_refused_not_restarted(cursor):
+    """An anchor that no longer holds fails CLOSED. Restarting from the newest record would
+    silently re-serve the entire trail as if it were a fresh page — and BOTH halves of the token
+    have to be checked, or a stale offset resumes at whatever record now happens to live there."""
     _write(3)
     async with _client() as client:
-        status, body = await _get(client, "/api/security/audit?cursor=nosuchevent")
-    assert status == 400
+        status, body = await _get(client, f"/api/security/audit?cursor={cursor}")
+    assert status == 400, body
     assert body["error"]["code"] == "invalid_cursor"
     assert "events" not in body
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_stale_from_a_prune_is_refused(home):
+    """The concrete case the id half exists for. ``prune()`` rewrites the file, so every byte
+    offset shifts; the anchor still points at a line start, just not the client's record."""
+    _write(30)
+    async with _client() as client:
+        _, page1 = await _get(client, "/api/security/audit?limit=5")
+        cursor = page1["next_cursor"]
+        # Drop the oldest 10 records the way a prune does — same file, every offset moved.
+        path = home / "security_events.jsonl"
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+        path.write_text("\n".join(lines[10:]) + "\n")
+        status, body = await _get(client, f"/api/security/audit?limit=5&cursor={cursor}")
+    assert status == 400, body
+    assert body["error"]["code"] == "invalid_cursor"
+
+
+# ── Reachability: the budget is not a wall (issue #593) ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_whole_log_is_reachable_past_the_scan_budget(monkeypatch):
+    """THE #593 rail. Every record must be reachable by paging, however long the log is.
+
+    This used to be false by construction: the scan bound was ``scan_cap=_MAX_ENTRIES`` applied to
+    the WHOLE log, so records older than the newest 50,000 were unreachable at any page depth.
+    Measured on a real 63,653-entry log: 13,653 rows (21.4%) could not be read at all, and the
+    walk to that wall cost 525s across 250 pages because each page re-read the entire tail.
+
+    The budget is shrunk here so the test crosses it in milliseconds; the shape is identical.
+    """
+    monkeypatch.setattr("personalclaw.sel._AUDIT_PAGE_SCAN_BUDGET", 7)
+    written = _write(60)
+
+    seen: list[str] = []
+    cursor = ""
+    async with _client() as client:
+        for _request in range(200):  # a ceiling, so a non-advancing cursor fails loudly
+            url = f"/api/security/audit?limit=5{f'&cursor={cursor}' if cursor else ''}"
+            status, page = await _get(client, url)
+            assert status == 200, page
+            seen.extend(e["event_id"] for e in page["events"])
+            cursor = page["next_cursor"]
+            if not cursor:
+                break
+        else:
+            pytest.fail(f"paging did not terminate; reached {len(seen)} of {len(written)}")
+
+    assert len(seen) == len(set(seen)), "a row was served twice"
+    assert seen == list(reversed(written)), "the pages must tile the log exactly, newest first"
+
+
+@pytest.mark.asyncio
+async def test_a_budget_stop_hands_back_a_usable_anchor(monkeypatch):
+    """A page that runs out of budget before filling up says so AND says where it stopped.
+
+    ``truncated`` without a cursor is the old defect restated: "there is more, and you cannot
+    have it". The pairing is the contract — a sparse filter deep in a long log is exactly the
+    query that hits this, and it must make progress rather than report an empty log.
+    """
+    monkeypatch.setattr("personalclaw.sel._AUDIT_PAGE_SCAN_BUDGET", 5)
+    _write(40, prefix="noise", outcome="ok")
+    rare = _write(1, prefix="rare", outcome="denied")[0]
+
+    async with _client() as client:
+        _, page = await _get(client, "/api/security/audit?limit=5&outcome=denied")
+        assert page["count"] == 1 and page["events"][0]["event_id"] == rare, "the newest match"
+        assert page["truncated"] is True, "40 older records remain and the budget bit"
+        assert page["next_cursor"], "truncated must always be paired with somewhere to go"
+
+        # And the walk terminates on the START of the log, not on the budget.
+        total, cursor, requests = page["count"], page["next_cursor"], 1
+        while cursor and requests < 200:
+            _, page = await _get(
+                client, f"/api/security/audit?limit=5&outcome=denied&cursor={cursor}"
+            )
+            total += page["count"]
+            cursor = page["next_cursor"]
+            requests += 1
+        assert not cursor, "paging did not terminate"
+        assert page["truncated"] is False, "the last page reached the log's start, not a budget"
+    assert total == 1, "exactly the one matching record, found across budgeted pages"
+
+
+@pytest.mark.asyncio
+async def test_the_first_page_reads_only_what_it_serves():
+    """The other half of #593's cost: page 1 used to read the newest 50,000 lines before choosing
+    a single row (2.1s on a 63,653-entry log). ``scanned`` is the observable — it must be about
+    the page size, not about the log size."""
+    _write(400)
+    async with _client() as client:
+        _, page = await _get(client, "/api/security/audit?limit=10")
+    assert page["count"] == 10
+    assert page["scanned"] <= 12, f"read {page['scanned']} lines to serve 10 rows"
 
 
 # ── Authorization ────────────────────────────────────────────────────────────
@@ -338,6 +451,63 @@ async def test_each_filter_narrows():
             status, body = await _get(client, f"/api/security/audit?{query}")
             assert status == 200, body
             assert body["count"] == expected, f"{query} -> {body['count']}, want {expected}"
+
+
+@pytest.mark.asyncio
+async def test_the_pills_can_select_the_bulk_of_the_log():
+    """Issue #535. Measured on a live 1,040-entry log, ``outcome=ok`` was 1,021 rows (98.2%) and
+    matched NEITHER shipped pill, so the two filters together reached 6 rows — 0.6%. An operator
+    could narrow to what went wrong and never to what happened, and on an audit surface "no
+    matching events" reads as "nothing happened".
+    """
+    _write(50, prefix="ok", outcome="ok")
+    _write(3, prefix="d", outcome="denied")
+    _write(2, prefix="f", outcome="hook_error")
+
+    async with _client() as client:
+        _, page = await _get(client, "/api/security/audit?limit=1")
+        families = {f["key"]: f for f in page["outcome_families"]}
+        assert "ok" in families, "the success vocabulary must be OFFERED, not merely classified"
+
+        counts = {}
+        for key, family in families.items():
+            joined = ",".join(family["values"])
+            _, hit = await _get(client, f"/api/security/audit?limit=200&outcome={joined}")
+            counts[key] = hit["count"]
+
+    assert counts["ok"] == 50, counts
+    assert counts["denied"] == 3, counts
+    assert counts["failed"] == 2, "hook_error is a failure — the token match keeps the prefix"
+    assert sum(counts.values()) == 55, f"every row is selectable by some pill: {counts}"
+
+
+@pytest.mark.asyncio
+async def test_every_family_ships_a_tone_and_every_row_is_stamped_with_one():
+    """The tone and the pill are ONE decision, made server-side.
+
+    The panel used to hold its own ``outcome -> colour`` map and it had drifted: ``not_found`` is a
+    member of the ``failed`` family and had no entry, so a record the Failed pill calls a failure
+    rendered in neutral grey. Asserted per row, because that is the surface an operator reads.
+    """
+    _write(1, prefix="nf", outcome="not_found")
+    _write(1, prefix="okk", outcome="ok")
+    _write(1, prefix="nc", outcome="needs_confirm")
+    _write(1, prefix="unk", outcome="halted_on_budget")
+
+    async with _client() as client:
+        _, page = await _get(client, "/api/security/audit?limit=10")
+
+    for family in page["outcome_families"]:
+        assert family["tone"], f"{family['key']} shipped no tone"
+    tone = {e["outcome"]: e["outcome_tone"] for e in page["events"]}
+    assert tone == {
+        "not_found": "danger",  # was neutral grey while the Failed pill called it a failure
+        "ok": "success",
+        "needs_confirm": "warning",
+        # Unclassified stays neutral. Guessing here is how the log would assert a verdict
+        # nobody decided.
+        "halted_on_budget": "neutral",
+    }, tone
 
 
 @pytest.mark.asyncio

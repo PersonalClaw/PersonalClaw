@@ -191,11 +191,16 @@ async def api_security_audit(request: web.Request) -> web.Response:
             # The panel used to keep its own two-word list and missed most of what the
             # writers emit (see sel.AUDIT_OUTCOME_FAMILIES); shipping them means a word
             # added to a family reaches the UI without anyone editing the dashboard.
+            # `tone` travels with them for the same reason: the panel's own outcome->colour
+            # map had drifted from this table (`not_found` is a `failed` member and had no
+            # entry, so a failure rendered neutral), and each ROW now carries the tone the
+            # same matcher assigned it.
             "outcome_families": [
                 {
                     "key": f["key"],
                     "label": f["label"],
-                    "values": list(f["values"]),  # type: ignore[call-overload]
+                    "tone": f["tone"],
+                    "values": list(f["values"]),
                 }
                 for f in AUDIT_OUTCOME_FAMILIES
             ],
