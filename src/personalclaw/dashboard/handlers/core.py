@@ -1155,6 +1155,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # than the one the user typed. Neither knob blocks a download or a load.
     "local_models.memory_reserve_gb": {"type": "float", "min": 0.0, "max": 64.0},
     "local_models.hide_unrunnable_models": {"type": "bool"},
+    # LMMV-4: the HF-token whoami cache TTL (0 = re-check every read) and the per-capability
+    # selftest timeout. Both bounded to the same windows the loader clamps to, so a UI edit is
+    # rejected rather than silently clamped and can never mean a different number than typed.
+    "local_models.whoami_ttl_s": {"type": "int", "min": 0, "max": 86400},
+    "local_models.selftest_timeout_s": {"type": "int", "min": 5, "max": 600},
     # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.

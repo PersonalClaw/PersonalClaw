@@ -527,8 +527,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
 - `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
+- `DELETE /api/models/hf-token` — clear the managed token (SOURCE 1). SEL-audited by name.
+- `PUT /api/models/hf-token` — write the token to SOURCE 1 (the credential store).
+- `GET /api/models/hf-token/status` — per-source ``{present, valid, username, masked, active}``.
 - `GET /api/models/loaded` — every resident model + the memory-pressure snapshot.
+- `GET /api/models/local/{provider}/health` — NEVER 500s (LMMV §6).
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
+- `POST /api/models/local/{provider}/selftest` — a real per-capability inference (LMMV §6).
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).

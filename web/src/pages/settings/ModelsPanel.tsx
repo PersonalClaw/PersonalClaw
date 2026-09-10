@@ -4,9 +4,12 @@ import {
   Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
   Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
-  Trash2, Gavel, type LucideIcon,
+  Trash2, Gavel, FlaskConical, KeyRound, type LucideIcon,
 } from 'lucide-react'
-import { api, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth } from '../../lib/api'
+import {
+  api, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
+  type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
+} from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
@@ -16,6 +19,8 @@ import { Button } from '../../ui/Button'
 import { Meter } from '../../ui/Meter'
 import { WavyProgress } from '../../ui/WavyProgress'
 import { SearchField } from '../../ui/SearchField'
+import { TextInput } from '../../ui/forms'
+import { StatusPill } from '../../ui/StatusPill'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
@@ -264,8 +269,157 @@ export function ModelsPanel() {
           )
         })}
       </Section>
+      <HfTokenSection />
       <LoadedModelsSection />
       <PromptCacheSection />
+    </div>
+  )
+}
+
+/** HuggingFace token cascade (LMMV §5). Shows the three sources — the saved credential, the
+ *  process environment, and a `huggingface-cli login` file — each with HuggingFace's own
+ *  whoami verdict (valid + username, or not), a MASKED preview (the value never crosses the
+ *  wire), and an "active" badge on the first valid one. The set/clear field writes SOURCE 1
+ *  (the credential store); a set/clear is SEL-audited server-side and re-checks the whole
+ *  cascade. Invalidates the models cache too, so a gated model's pre-warn chip clears the
+ *  moment a valid token lands. */
+const HF_SOURCE_LABEL: Record<HfTokenSource['source'], string> = {
+  credential_store: 'Saved token',
+  env: 'Environment (HF_TOKEN)',
+  hf_cli_file: 'huggingface-cli login',
+}
+
+function HfTokenSection() {
+  const { data, error: loadErr, refresh } = useQuery('settings:hf-token', () =>
+    api.hfTokenStatus().then((d) => d.sources), { persist: false })
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // A failed read must not render as "no token configured" — an unreachable gateway and a
+  // genuinely empty cascade look identical, and one is a lie about the machine's credentials.
+  if (!data && loadErr) return <LoadError what="HuggingFace token" error={loadErr} onRetry={refresh} />
+  if (!data) return <FormSkeleton sections={1} what="HuggingFace token" />
+
+  const stored = data.find((s) => s.source === 'credential_store')
+
+  const afterWrite = () => {
+    // Repaint the cascade AND the models list — a gated model's `token_ready` pre-warn is
+    // computed from exactly this token, so both must revalidate against the new state.
+    invalidateKeys('settings:hf-token'); invalidateKeys('settings:models'); refresh()
+  }
+  const save = async () => {
+    if (!value.trim()) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('save the HuggingFace token', () => api.setHfToken(value.trim())))) return
+      setValue('')
+      afterWrite()
+    } finally { setBusy(false) }
+  }
+  const clear = async () => {
+    const ok = await confirm({
+      title: 'Clear the saved HuggingFace token?',
+      body: 'Removes it from the credential store. Gated models will need a token again before they can download.',
+      confirmLabel: 'Clear',
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('clear the HuggingFace token', () => api.clearHfToken()))) return
+      afterWrite()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="HuggingFace token" hint="Gated models (e.g. pyannote diarization) need a HuggingFace token with the model's license accepted. PersonalClaw checks each source below and uses the first one HuggingFace confirms is valid.">
+      <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
+        {data.map((s) => (
+          <div key={s.source} className="flex items-center gap-2">
+            <span data-type="label-s" className="w-44 shrink-0 text-on-surface">{HF_SOURCE_LABEL[s.source] ?? s.source}</span>
+            {!s.present ? (
+              <span data-type="caption" className="text-on-surface-low">not set</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span data-type="caption" className="font-mono text-on-surface-low">{s.masked}</span>
+                {s.valid ? (
+                  <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-ok)' }}>
+                    <Check size={11} /> {s.username ? `valid — ${s.username}` : 'valid'}
+                  </span>
+                ) : (
+                  <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-warning)' }}>
+                    <AlertTriangle size={11} /> not valid
+                  </span>
+                )}
+                {s.active && (
+                  <span data-type="caption" className="rounded-pill px-1.5 py-0.5" style={accentChip}>active</span>
+                )}
+              </span>
+            )}
+          </div>
+        ))}
+        <div className="mt-1 flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <TextInput type="password" value={value} onChange={setValue}
+              placeholder="hf_…  paste a token to save"
+              ariaLabel="HuggingFace token" size="md" mono />
+          </div>
+          <Button variant="tonal" size="sm" loading={busy} disabled={!value.trim()} disabledReason="Paste a token first" onClick={save}>Save</Button>
+          {stored?.present && <Button variant="tonal" size="sm" loading={busy} onClick={clear}>Clear</Button>}
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+/** A per-model "Test" affordance (LMMV §6): runs the provider's health check + a real
+ *  per-capability inference on click and shows the TYPED result inline. User-click only — a
+ *  selftest can page a model into RAM, so it is never fired automatically. Rendered under a
+ *  downloaded LOCAL model row; a broken runtime contract surfaces its typed reason here. */
+function ModelTestButton({ provider, model }: { provider: string; model: string }) {
+  const [busy, setBusy] = useState(false)
+  const [health, setHealth] = useState<LocalModelHealth | null>(null)
+  const [result, setResult] = useState<LocalModelSelftest | null>(null)
+  const [err, setErr] = useState('')
+
+  const run = async () => {
+    setBusy(true); setErr('')
+    try {
+      const [h, s] = await Promise.all([
+        api.localModelHealth(provider).catch(() => null),
+        api.localModelSelftest(provider, model),
+      ])
+      setHealth(h); setResult(s)
+    } catch (e) {
+      setErr(String((e as Error)?.message || e))
+    } finally { setBusy(false) }
+  }
+
+  const caps = result ? Object.entries(result.capabilities) : []
+  return (
+    <div className="flex flex-col gap-1 px-3 pb-2">
+      <button type="button" onClick={run} disabled={busy}
+        data-type="caption"
+        className="inline-flex w-fit items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low transition-colors hover:bg-surface-highest disabled:opacity-60"
+        title="Run a real inference to check this model actually works on this machine.">
+        <FlaskConical size={10} /> {busy ? 'testing…' : 'Test'}
+      </button>
+      {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+      {health && !health.ok && (
+        <span data-type="caption" style={{ color: 'var(--color-warning)' }}>Provider: {health.message}</span>
+      )}
+      {result && (caps.length === 0 ? (
+        <span data-type="caption" className="text-on-surface-low">{result.detail}</span>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {caps.map(([cap, r]) => (
+            <span key={cap} data-type="caption" className="inline-flex items-center gap-1"
+              style={{ color: r.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
+              {r.ok ? <Check size={10} /> : <X size={10} />}
+              {cap}: {r.ok ? r.detail : (r.reason || r.detail)} ({r.duration_ms} ms)
+            </span>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
@@ -706,30 +860,47 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
             // downloaded won't actually run — surface it so "configured" never
             // silently means "inert" (e.g. after deleting a bound model's weights).
             const notDownloaded = m.downloaded === false
+            // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
+            // present LOCAL model can run a real-inference selftest here.
+            const isLocal = m.downloaded !== undefined
+            // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
+            // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
+            // the cascade couldn't answer → no nag.
+            const needsToken = m.gated === true && m.token_ready === false
             return (
-              // A row, not a bare button: the Repair affordance is itself a button and
-              // can't nest inside one. The toggle lives on the flex-1 inner button; the
-              // chips + Repair sit beside it as siblings.
+              // A COLUMN: the controls row plus, below it, the inline Test result for a downloaded
+              // local model. (A row, not a bare button, because the Repair/Test affordances are
+              // themselves buttons and can't nest inside the toggle.)
               <div key={ref}
-                className="flex items-center gap-2.5 rounded-md pr-3 transition-colors hover:bg-surface-high"
+                className="flex flex-col rounded-md transition-colors hover:bg-surface-high"
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                <button type="button" onClick={() => toggle(ref)} disabled={saving}
-                  className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
-                  <span className="grid size-4 shrink-0 place-items-center rounded border"
-                    style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                    {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                  </span>
-                  <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
-                </button>
-                <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
-                {on && notDownloaded && (
-                  <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
-                    style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
-                    title="Bound but not downloaded — download it in Providers to activate.">
-                    <Download size={9} /> not downloaded
-                  </span>
-                )}
-                <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
+                <div className="flex items-center gap-2.5 pr-3">
+                  <button type="button" onClick={() => toggle(ref)} disabled={saving}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
+                    <span className="grid size-4 shrink-0 place-items-center rounded border"
+                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                    </span>
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
+                  </button>
+                  <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
+                  {needsToken && (
+                    <StatusPill tone="warn" className="shrink-0 inline-flex items-center gap-1"
+                      role="img" aria-label="This gated model needs a valid HuggingFace token"
+                      title="This gated model needs a valid HuggingFace token — add one under “HuggingFace token” below before downloading.">
+                      <KeyRound size={9} /> needs token
+                    </StatusPill>
+                  )}
+                  {on && notDownloaded && (
+                    <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+                      style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+                      title="Bound but not downloaded — download it in Providers to activate.">
+                      <Download size={9} /> not downloaded
+                    </span>
+                  )}
+                  <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
+                </div>
+                {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
               </div>
             )
               })}

@@ -291,6 +291,23 @@ class LocalModelProvider(ABC):
             return False, "unavailable"
         return (True, "ready") if ok else (False, "unavailable")
 
+    async def availability_detail(self) -> tuple[bool, str]:
+        """``(ok, message)`` — availability plus a human reason (LMMV §6).
+
+        The health endpoint's source of truth. The bool half is exactly
+        :meth:`is_available`'s answer (so the ``-> bool`` contract and the
+        ``is_local_model_provider`` duck-type are untouched); the string is a message the
+        surface renders instead of a bare red/green. This default wraps ``is_available`` with
+        a generic message and NEVER raises — an exception becomes ``(False, <cause>)`` — which
+        is what lets the ``/health`` route promise it never 500s. A provider that knows WHY it
+        is (un)available (a missing weight, a runtime hint, ``ready — <advice>``) overrides.
+        """
+        try:
+            ok = await self.is_available()
+        except Exception as exc:  # noqa: BLE001 — the health route must never surface a 500
+            return False, f"{type(exc).__name__}: {exc}"
+        return (True, "ready") if ok else (False, "not available on this machine")
+
     def _models_from_catalog(
         self,
         catalog_path: Path,

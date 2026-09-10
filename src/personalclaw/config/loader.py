@@ -891,6 +891,24 @@ class LocalModelsConfig:
             "On by default; turn it off to see the whole catalog.",
         ),
     )
+    whoami_ttl_s: int = field(
+        default=600,
+        metadata=_meta(
+            "HuggingFace token check interval",
+            "How long (seconds) a HuggingFace token's validity is cached after a successful "
+            "check, so listing models or pre-warning a gated download doesn't re-call "
+            "HuggingFace every time. 0 re-checks on every read.",
+        ),
+    )
+    selftest_timeout_s: int = field(
+        default=90,
+        metadata=_meta(
+            "Model selftest timeout",
+            "How long (seconds) a per-capability model selftest may run before it is stopped "
+            "and reported as timed out. A selftest runs a real inference on click, so this "
+            "bounds a model that hangs while loading.",
+        ),
+    )
 
 
 @dataclass
@@ -3682,6 +3700,19 @@ class AppConfig:
                 # leave the shipped default rather than dumping an unrunnable catalog on a
                 # small machine.
                 hide_unrunnable_models=bool(local_models_data.get("hide_unrunnable_models", True)),
+                # Clamped to a full day: 0 is a coherent "always re-check" choice; a negative
+                # value is not, and an absurd upper bound would pin a stale verdict for years.
+                # The PATCH allowlist enforces the same 0–86400 window; this clamp only exists
+                # so a hand-edited config.json still loads.
+                whoami_ttl_s=min(
+                    86400, max(0, _safe_int(local_models_data.get("whoami_ttl_s"), 600))
+                ),
+                # Floored at 5s (a real inference needs a moment) and capped at 10 minutes
+                # (past that a hung selftest should just fail) — the same window the PATCH
+                # allowlist enforces.
+                selftest_timeout_s=min(
+                    600, max(5, _safe_int(local_models_data.get("selftest_timeout_s"), 90))
+                ),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),

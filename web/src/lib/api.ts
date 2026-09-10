@@ -4082,6 +4082,10 @@ export interface AvailableModel {
   matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
   runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
   io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+  // Gated pre-warn (LMMV §5): only present on a GATED row, computed server-side from the HF
+  // token cascade. `false` = no valid token is configured, so the UI warns BEFORE Download;
+  // absent = the cascade could not answer (a network blip) and the UI simply does not pre-warn.
+  token_ready?: boolean
   // ── Will it run HERE? (LMMV-8) ──────────────────────────────────────────────────────────
   // Only rows from a LOCAL provider carry these; a hosted/remote row carries none of them.
   // So an ABSENT `fit` is not the same as `fit: 'unknown'`: absent means "this is not a
@@ -4135,6 +4139,23 @@ export interface ProviderModels {
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
+// One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
+// only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
+export interface HfTokenSource {
+  source: 'credential_store' | 'env' | 'hf_cli_file'
+  present: boolean; valid: boolean; username: string; masked: string; active: boolean
+}
+export interface HfTokenStatus { sources: HfTokenSource[]; cleared?: boolean }
+// A local provider's health (LMMV §6). The endpoint never 500s: an unavailable/raising
+// provider still returns a typed body. `message` is server-masked.
+export interface LocalModelHealth { provider: string; ok: boolean; message: string; latency_ms: number }
+// One capability's real-inference selftest result (LMMV §6). `reason` is a TYPED machine
+// string ('timeout', 'diarization_returned_nothing', 'selftest_error:AttributeError', …) so a
+// broken runtime contract reads as a specific failure, not a bare red.
+export interface SelftestCapability { ok: boolean; duration_ms: number; detail: string; reason?: string }
+export interface LocalModelSelftest {
+  provider: string; capabilities: Record<string, SelftestCapability>; detail?: string
+}
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
 // A background local-model download job — the ONE canonical wire shape
@@ -5705,6 +5726,23 @@ export const api = {
     post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
+  // HF token cascade (LMMV §5). Status is per-source, masked (the value never crosses the
+  // wire); set writes SOURCE 1 (the credential store) and clear removes it — both SEL-audited
+  // server-side. Set/clear return the refreshed status so the UI repaints from one source.
+  hfTokenStatus: () => get<HfTokenStatus>('/api/models/hf-token/status'),
+  setHfToken: (token: string) => put<HfTokenStatus>('/api/models/hf-token', { token }),
+  // DELETE that returns the refreshed status body (the shared `del` is void-only), so the UI
+  // repaints from the response instead of a second round-trip.
+  clearHfToken: () =>
+    fetch('/api/models/hf-token', { method: 'DELETE', headers: { ...SK } }).then(j<HfTokenStatus>),
+  // Per-provider health + real-inference selftest (LMMV §6). Health never 500s. Selftest runs
+  // a real inference per capability (user-click only) and returns typed reasons; a 409 means a
+  // selftest for this provider is already running.
+  localModelHealth: (provider: string) =>
+    get<LocalModelHealth>(`/api/models/local/${encodeURIComponent(provider)}/health`),
+  localModelSelftest: (provider: string, model?: string) =>
+    post<LocalModelSelftest>(
+      `/api/models/local/${encodeURIComponent(provider)}/selftest`, model ? { model } : {}),
   // What is occupying RAM right now (LMMV §7) — resident models with attribution, each
   // provider's readiness, and the system pressure snapshot. One fetch backs both the
   // Settings section and the dashboard's "On this machine" band.
