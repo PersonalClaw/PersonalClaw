@@ -9,6 +9,7 @@ import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
 import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField, KnowledgeStaleness } from '../../lib/api'
 import { ReadingView } from './ReadingView'
+import { readingTimeLabel } from './readingTime'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
@@ -513,6 +514,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           {typeof full.file_metadata?.slide_count === 'number' && <span>{full.file_metadata.slide_count} slide{full.file_metadata.slide_count === 1 ? '' : 's'}</span>}
           {typeof full.file_metadata?.row_count === 'number' && full.file_metadata.row_count > 0 && <span>{full.file_metadata.row_count} row{full.file_metadata.row_count === 1 ? '' : 's'}</span>}
           {full.word_count != null && full.word_count > 0 && <span>{full.word_count} words</span>}
+          {/* KL-16: the reading-time estimate rides the metadata too, not only the open reader —
+              a word count answers "how long", which a reader wants BEFORE deciding to open it. */}
+          {full.word_count != null && full.word_count > 0 && <span>{readingTimeLabel(full.word_count)}</span>}
           {full.updated_at && <span title="Last updated">{relTime(full.updated_at)}</span>}
         </div>
         {/* `min-w-0`, not `shrink-0`: the strip is itself a `flex-wrap` row of stages, so

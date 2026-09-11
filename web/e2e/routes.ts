@@ -85,6 +85,21 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
 // route stops resolving to the graph.
 export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
+  // The reading experience (KL-16), reached at `#/knowledge/item/<id>?read=1` — the sharable
+  // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
+  // not the other two tiers, and the reason is `routeManifestParity.test.ts`: ROUTES must mirror
+  // NAV exactly (this is not a nav id), and a NON_NAV_ROUTES entry's first segment must be a
+  // ROUTABLE-extra — but `knowledge` is a nav id, so that check would red. VIEW_ROUTES is the tier
+  // for a nav page's addressable sub-surface, and it is the one that buys BOTH an axe scan
+  // (a11y.spec) and a visual baseline (visual.spec), which is what KL-16's clause asks for.
+  //
+  // 🪤 The item id is deliberately NOT a real one, exactly like `app/not-a-real-app` above: the
+  // e2e home seeds no knowledge items (playwright.config.ts writes only a user name + the app-UI
+  // fixture), so any id resolves to the reader route's DETERMINISTIC missing-item branch
+  // (KnowledgeDetailPage: "This knowledge item no longer exists") — a shell-bearing, axe-clean
+  // baseline with a real h1 and a named back control. A seeded fixture item would make the
+  // snapshot depend on fixture state; the point is a stable surface the harness can always reach.
+  { route: 'knowledge/item/not-a-real-item?read=1', id: 'knowledge-reading', label: 'Knowledge › Reading', needsData: true },
 ]
 
 // ── Non-nav routable pages — the THIRD axis (PHF-7) ─────────────────────────

@@ -17,6 +17,7 @@ import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderAc
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem } from './knowledgeMeta'
+import { readingTimeLabel } from './readingTime'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
@@ -833,6 +834,11 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                                 </a>
                               )}
                               {it.file_size != null && it.file_size > 0 && <span>· {fmtBytes(it.file_size)}</span>}
+                              {/* KL-16: reading time on the row, so "how long is this" is answered
+                                  while SCANNING the list, not only after opening the reader. Short
+                                  like `file_size`, so it keeps a leading separator (see the note
+                                  below on why the summary span deliberately does not). */}
+                              {it.word_count != null && it.word_count > 0 && <span>· {readingTimeLabel(it.word_count)}</span>}
                               {/* No `· ` prefix: this span is `truncate` (white-space:nowrap) inside a
                                   `flex-wrap` row, so its intrinsic width always exceeds the space left on
                                   the label's line and it wraps to a line of its OWN before truncating.
