@@ -115,6 +115,20 @@ export function isInertOutcome(s?: string | null): boolean {
   return Boolean(s) && String(s).startsWith('skipped_')
 }
 
+/** The did/suppressed fold (WF2AUT-10). A run row is "suppressed" when its typed outcome is inert
+ *  (a `skipped_*` gate skip — quiet hours, dedupe, …) rather than a real fire; the runs-inbox hides
+ *  those by default and reveals them on demand so a quiet-hours skip does not clutter the history as
+ *  if it were a fire. Splits on the same `outcome ?? status` `isInertOutcome` reads elsewhere, so the
+ *  fold and the per-row neutral styling can never disagree about what "inert" means. */
+export function partitionRunsByFold<T extends { outcome?: string | null; status?: string | null }>(
+  runs: readonly T[],
+): { did: T[]; suppressed: T[] } {
+  const did: T[] = []
+  const suppressed: T[] = []
+  for (const r of runs) (isInertOutcome(r.outcome ?? r.status) ? suppressed : did).push(r)
+  return { did, suppressed }
+}
+
 // ── trigger lifecycle: health + state (S164) ──
 
 /** How a trigger's HEALTH rollup and lifecycle STATE render.
