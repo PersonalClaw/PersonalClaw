@@ -1251,6 +1251,7 @@ def _resolve_and_record(
             installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             bindings=[dict(b) for b in plan.bindings],
             roster=[dict(r) for r in plan.roster],
+            staged_triggers=list(plan.staged_triggers),
             pack_owned=list(plan.pack_owned),
             component_locks=pack_update.stamp_locks(plan, home, committed or {}),
         ),

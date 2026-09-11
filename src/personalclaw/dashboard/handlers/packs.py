@@ -18,6 +18,9 @@ AP-4 adds the four pack KINDS' entry points, each one thin over a core function:
 * ``POST /api/packs/{name}/roster/deploy`` — one-click team deploy (§4.2). Deploys the
   ``always`` tier ONLY; the response names the dormant tiers so the caller can show what was
   deliberately not hired.
+* ``POST /api/packs/{name}/triggers/deploy`` — the trigger sibling of the roster deploy (§3.1).
+  Adds a pack's staged triggers to Automations as DISABLED rows the user arms one at a time; it
+  never lands one enabled (a pack cannot arm automation, even through its enable path).
 * ``POST /api/packs/{name}/bindings`` — record one setup-interview answer (§3.4/§4.1). A
   ``folder`` binding must be an existing directory.
 * ``POST /api/packs/prompt-card`` — the prompt-card importer (§4.3). Files a proposal for
@@ -153,6 +156,30 @@ async def api_pack_roster_deploy(request: web.Request) -> web.Response:
             "pack_has_no_roster", message=f"pack {name!r} ships no roster", status=404
         )
     result = deploy_roster(name)
+    return web.json_response({"ok": True, "pack": name, **result})
+
+
+async def api_pack_triggers_deploy(request: web.Request) -> web.Response:
+    """Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
+
+    The trigger sibling of :func:`api_pack_roster_deploy`. Pack install stages triggers disabled
+    (a pack must never arm automation, §3.1); this makes them visible and manageable in
+    Automations (``#/triggers``) as ordinary DISABLED rows the user arms one at a time. Every
+    ``deployed`` id lands ``enabled=False``; ``skipped`` names any staged file too broken to run
+    (reported, never raised, and never armed).
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.packs.installed import load_installed
+    from personalclaw.packs.triggers import deploy_triggers, staged_trigger_ids
+
+    name = request.match_info.get("name", "")
+    if not any(p.name == name for p in load_installed()):
+        return json_error("pack_not_installed", message=f"pack not installed: {name}", status=404)
+    if not staged_trigger_ids(name, config_dir()):
+        return json_error(
+            "pack_has_no_triggers", message=f"pack {name!r} staged no triggers", status=404
+        )
+    result = deploy_triggers(name)
     return web.json_response({"ok": True, "pack": name, **result})
 
 
@@ -343,5 +370,6 @@ def register_pack_routes(app: web.Application) -> None:
     app.router.add_post("/api/packs/one-link", api_pack_one_link)
     app.router.add_post("/api/packs/{name}/finish-setup", api_pack_finish_setup)
     app.router.add_post("/api/packs/{name}/roster/deploy", api_pack_roster_deploy)
+    app.router.add_post("/api/packs/{name}/triggers/deploy", api_pack_triggers_deploy)
     app.router.add_post("/api/packs/{name}/bindings", api_pack_bindings)
     app.router.add_post("/api/packs/{name}/update", api_pack_update)

@@ -753,6 +753,21 @@ def test_bundled_install_route_drives_the_whole_flow(fresh_home):
     assert status == 200
     assert body["deployed"] == ["cfo"] and body["dormant"] == ["cfo-tax-analyst"]
 
+    # …and the pack's staged trigger is added to Automations through its own route — DISABLED,
+    # never armed on install. The sibling of the roster deploy above.
+    from personalclaw.triggers.store import TriggerStore
+
+    status, body = _call(
+        handlers.api_pack_triggers_deploy,
+        _json_request("POST", "/api/packs/personal-cfo/triggers/deploy", {}, name="personal-cfo"),
+    )
+    assert status == 200
+    # `deployed` carries the trigger's own id (the live-store key), which the pack authored as
+    # `pack-personal-cfo-spending-digest` — distinct from the staged FILENAME `cfo-spending-digest`.
+    assert body["deployed"] == ["pack-personal-cfo-spending-digest"] and body["skipped"] == []
+    loaded = TriggerStore(home).get("pack-personal-cfo-spending-digest")
+    assert loaded is not None and loaded.trigger.enabled is False
+
 
 def test_routes_use_the_shared_error_envelope(fresh_home):
     """Every refusal answers `{"error": {"code", "message"}}` with a stable snake code."""
@@ -769,6 +784,12 @@ def test_routes_use_the_shared_error_envelope(fresh_home):
         (
             handlers.api_pack_roster_deploy,
             _json_request("POST", "/api/packs/nope/roster/deploy", {}, name="nope"),
+            "pack_not_installed",
+            404,
+        ),
+        (
+            handlers.api_pack_triggers_deploy,
+            _json_request("POST", "/api/packs/nope/triggers/deploy", {}, name="nope"),
             "pack_not_installed",
             404,
         ),

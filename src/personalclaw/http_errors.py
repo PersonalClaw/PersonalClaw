@@ -198,6 +198,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "pack_build_failed": "Building the pack artifact failed.",
     "pack_update_refused": "The pack update was refused.",
     "pack_has_no_roster": "The pack declares no agent roster.",
+    "pack_has_no_triggers": "The pack staged no triggers.",
     "binding_key_required": "A binding key is required.",
     "binding_rejected": "The submitted binding was rejected.",
     "one_link_required": "A one-link target is required.",

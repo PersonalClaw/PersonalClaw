@@ -5179,10 +5179,24 @@ export interface InstalledPackRec {
   setup_skill: string
   setup_pending: boolean
   installed_at: string
+  // AP-7 §3.1: the ids of the pack's staged triggers, installed DISABLED. A non-empty list lets
+  // the pack row offer "Add triggers to Automations" (`packTriggersDeploy`), which lands them in
+  // the live store STILL disabled for the user to review and arm one at a time.
+  staged_triggers?: string[]
   // AP-7 §1: which paths the pack claims ongoing ownership of, and the per-component
   // `{source, computedHash}` drift lock an update compares against.
   pack_owned?: string[]
   component_locks?: Record<string, { source: string; computedHash: string; path: string }>
+}
+
+// The result of adding a pack's staged triggers to Automations (AP-7). Every `deployed` id lands
+// in the live store DISABLED — the user arms each in Automations (`#/triggers`); the deploy never
+// arms one. `skipped` names any staged file too broken to run (reported, never raised).
+export interface PackTriggersDeployRec {
+  ok: boolean
+  pack: string
+  deployed: string[]
+  skipped: string[]
 }
 
 // One Domain OS pack shipped in this build (AGENT-PACKS §4.1) — the pack store's catalog row.
@@ -5375,6 +5389,10 @@ export const api = {
   // the interview runs in chat under normal tool approval — never server-side).
   packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
   packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
+  // Add a pack's staged triggers to Automations, DISABLED (AP-7). The sibling of the roster
+  // deploy: it never lands one enabled (a pack cannot arm automation, even through its enable
+  // path) — the user reviews and arms each in Automations (`#/triggers`).
+  packTriggersDeploy: (name: string) => post<PackTriggersDeployRec>(`/api/packs/${encodeURIComponent(name)}/triggers/deploy`, {}),
   // ── Pack store + fingerprint discovery (AGENT-PACKS §4.1/§7/§1, AP-7) ──
   // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
   // integrity, leaves-first commit with rollback) at BUILTIN trust.
