@@ -4,6 +4,7 @@ import { StatusPill } from '../../ui/StatusPill'
 import { fvs } from '../../design/fontWeight'
 import { hasApiCode } from '../../lib/api'
 import { UNRECORDED_LABEL, provenanceRecorded, tokensUnrecorded } from '../../lib/unrecorded'
+import { repoDocUrl } from '../../lib/repoDocs'
 import { EvalsOff } from './EvalsOff'
 import type {
   BenchmarkArmAggregate, BenchmarkProviderBinding, BenchmarkReport, BenchmarkTaskRow,
@@ -13,8 +14,8 @@ import type {
 /** Canonical blob root for repo docs, from `pyproject.toml`'s `[project.urls] Source`.
  *
  *  The PATH is not hardcoded beside it — it comes from the report's own `protocol_doc`, so the
- *  methodology link can never point at a different document than the one the runner cited. */
-const DOC_BLOB_ROOT = 'https://github.com/PersonalClaw/PersonalClaw/blob/main/'
+ *  methodology link can never point at a different document than the one the runner cited. The
+ *  blob root is the shared `repoDocUrl` (see `lib/repoDocs`), one canonical value for the app. */
 
 /** The skill-impact benchmark: does an approved skill make the next run better? (LV-7)
  *
@@ -479,7 +480,7 @@ function MethodologyLink({ doc }: { doc: string }) {
   return (
     <a
       className="inline-flex w-fit items-center gap-1.5 text-on-surface-var text-[0.75rem] underline"
-      href={`${DOC_BLOB_ROOT}${doc}`}
+      href={repoDocUrl(doc)}
       target="_blank"
       rel="noreferrer"
     >

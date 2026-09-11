@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX, RefreshCw } from 'lucide-react'
+import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX, RefreshCw, FileText } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { TextArea, FieldError } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
 import { Combobox } from '../../ui/Combobox'
@@ -14,6 +15,7 @@ import { useActiveChatModelOptions } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
 import { accentChip, toneChipSkin } from '../../design/accent'
+import { repoDocUrl } from '../../lib/repoDocs'
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
@@ -333,6 +335,12 @@ export function DiscoveredAgentDetail({ agent, providerId }: { agent: Discovered
         <Lock size={13} /> {pm.label} — read-only
       </div>
       <p className="text-on-surface-low text-[0.8125rem]">This agent is defined and run by the {pm.label} runtime. It can't be edited here, but you can use it from the chat agent picker.</p>
+
+      <Section label="Capability parity">
+        <TextLink href={repoDocUrl('docs/agents/acp-parity.md')} external size="sm" icon={FileText}>
+          What’s at parity, host-compensated, or constrained for {pm.label}
+        </TextLink>
+      </Section>
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(pm.tone, 16)}><pm.icon size={13} /> {pm.label}</span>
