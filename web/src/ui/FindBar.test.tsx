@@ -179,3 +179,63 @@ describe('FindBar is surface-agnostic', () => {
     await waitFor(() => expect(within(container).getByRole('status').textContent).toBe('Match 1 of 1'))
   })
 })
+
+// ── Seeded open (SM-2): a bar handed an initialQuery finds its first match on its own ──
+//
+// A chat-history search result deep-links into a conversation with the term it matched;
+// the host mounts the bar with `initialQuery=<term>`, and the bar must come up already
+// scrolled to (and counting) the first match — WITHOUT the user typing or pressing ↓.
+// The empty-default case (⌘F, the reader) must stay exactly as before: empty field, no
+// auto-scroll.
+
+describe('FindBar seeded open', () => {
+  const rows = [
+    { heading: 'Kiln schedule', body: 'cone 6 target 1240C' },
+    { heading: 'Glaze notes', body: 'nothing to see' },
+    { heading: 'Target list', body: 'and another target' },
+  ]
+  const segmentsOf = (r: { heading: string; body: string }) => [r.heading, r.body]
+
+  function mountBar(props: { initialQuery?: string }) {
+    const nodes = rows.map(() => {
+      const el = document.createElement('div')
+      el.scrollIntoView = vi.fn()
+      return el
+    })
+    const scrollRef = createRef<HTMLDivElement>() as React.MutableRefObject<HTMLDivElement | null>
+    const { container } = render(
+      <FindBar items={rows} segmentsOf={segmentsOf} nodeOf={(_r, i) => nodes[i]}
+        scrollRef={scrollRef} label="Find in article" initialQuery={props.initialQuery} onClose={() => {}} />,
+    )
+    return { container, nodes }
+  }
+
+  it('seeds the field, counts the matches, and scrolls to the FIRST match unprompted', async () => {
+    const { container, nodes } = mountBar({ initialQuery: 'target' })
+    // The field is pre-filled from the seed — no keystroke happened.
+    expect((within(container).getByLabelText('Find in article') as HTMLInputElement).value).toBe('target')
+    // Rows 0 and 2 match; the seeded bar rests on match 1 of 2 and announces it.
+    await waitFor(() => expect(within(container).getByText('1/2')).toBeTruthy())
+    await waitFor(() => expect(within(container).getByRole('status').textContent).toBe('Match 1 of 2'))
+    // …and it brought the first matching row into view on its own — the whole point of SM-2.
+    await waitFor(() => expect(nodes[0].scrollIntoView).toHaveBeenCalled())
+    // It scrolled to the FIRST match specifically, not row 2 (which also matches).
+    expect(nodes[2].scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('without an initialQuery opens EMPTY and never auto-scrolls (unchanged for ⌘F / the reader)', async () => {
+    const { container, nodes } = mountBar({})
+    const input = within(container).getByLabelText('Find in article') as HTMLInputElement
+    expect(input.value).toBe('')
+    // Empty query ⇒ empty counter + silent status, exactly as before the seed prop existed.
+    expect(within(container).queryByText('1/2')).toBeNull()
+    // Give the debounce + any effects a chance to (wrongly) fire, then assert they did not.
+    await new Promise((r) => setTimeout(r, 250))
+    for (const n of nodes) expect(n.scrollIntoView).not.toHaveBeenCalled()
+    // And it still works when driven manually — the seed path did not break typing.
+    fireEvent.change(input, { target: { value: 'target' } })
+    await waitFor(() => expect(within(container).getByText('1/2')).toBeTruthy())
+    // Typing alone does NOT auto-scroll (that is ↓/Enter's job) — only a SEED scrolls.
+    expect(nodes[0].scrollIntoView).not.toHaveBeenCalled()
+  })
+})

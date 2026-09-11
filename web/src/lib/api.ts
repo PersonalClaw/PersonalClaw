@@ -5810,7 +5810,10 @@ export const api = {
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
   // (present on FTS-index hits; absent when the linear-scan fallback answered).
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
+  // Returns `{sessions, source}` VERBATIM — `source` ('index' | 'scan') reports which
+  // path answered, and the UI surfaces it (SM-2), so we keep it rather than drop it
+  // one line before the caller. `source` is absent when no search ran (empty/short q).
+  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
