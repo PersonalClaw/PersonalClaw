@@ -66,6 +66,7 @@ import { ChatActivityPanel } from './chat/ChatActivityPanel'
 import { AssistantActions, UserActions } from './chat/MessageActions'
 import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
+import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
@@ -2488,10 +2489,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
    *  handles the no-session case (it just sets local state), so this works on the
    *  new-chat screen before any session exists. */
   function applyTemplate(t: SessionTemplate) {
-    const patch: Partial<ComposerValue> = {}
-    if (t.agent) patch.agent = t.agent
-    if (t.model) patch.model = t.model
-    if (t.reasoning_effort) patch.reasoning = t.reasoning_effort as ReasoningEffort
+    // Selection patch = only the fields the starter carries (`sessionTemplatePatch`), so a
+    // starter saved with no model never resets the current pick to Auto. The prompt is applied
+    // separately because it feeds the composer INPUT (and enables Send), not the selection.
+    const patch = sessionTemplatePatch(t)
     if (Object.keys(patch).length) applySelection(patch)
     if (t.first_prompt) setInput(t.first_prompt)
     notify(`Started from "${t.name}".`, 'info')
