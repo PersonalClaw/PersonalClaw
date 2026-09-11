@@ -410,7 +410,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
  *  list. A retention rule the user can't inspect is indistinguishable from data loss,
  *  so the count is fetched from the existing dry-run preview — the same call the sweep
  *  makes, so the number shown IS the number that would move, not an estimate. */
-function AutoArchiveRow({ days, onCommit, saved }: {
+export function AutoArchiveRow({ days, onCommit, saved }: {
   days: number; /** `(value, label)` — this row has no `label` prop (its name lives in `ariaLabel`), so it supplies
    *  the literal. Accepting the argument without supplying one is the gap this fixes. */
   onCommit: (n: number, label?: string) => void; saved: boolean
