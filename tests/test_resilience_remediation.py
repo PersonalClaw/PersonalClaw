@@ -449,3 +449,103 @@ def test_reindex_embeddings_skips_cleanly_with_no_embedder(tmp_path, monkeypatch
 
     assert rem._job_reindex_embeddings() == "no embedder bound — skipped"
     assert store.count_items_missing_embedding() == 3
+
+
+# ── judgment lane: SpendMeter accrual under `doctor` + the max_cost_usd cap ─────
+#
+# The engine's docstring has always said it "charges the SpendMeter under run_key
+# `doctor` for judgment jobs", and the cap at the top of each judgment step reads
+# `run_totals("doctor").dollars`. Every existing test above uses the deterministic
+# ($0) lane, so NONE exercise the judgment lane: the accrual binding (set_current_run_key
+# around job.run) and the `max_cost_usd` break were both un-observed. These pin them
+# with a fake-metered judgment job — no live model — using the meter's own charge() API.
+
+
+def _isolated_meter(tmp_path, monkeypatch):
+    """A SpendMeter whose day-scope lives under tmp, wired in as the process meter so the
+    engine's get_meter() and the test share one instance (never touches the real home)."""
+    from personalclaw.guardrails import budgets
+
+    meter = budgets.SpendMeter(config_dir=tmp_path)
+    monkeypatch.setattr(budgets, "get_meter", lambda: meter)
+    return meter
+
+
+def test_judgment_job_spend_accrues_under_the_doctor_run_key(tmp_path, monkeypatch):
+    # A judgment job charging via the CURRENT run key (as the model chokepoint does) must
+    # land under `doctor` — proof the engine binds the run scope around job.run(). Drop that
+    # binding and current_run_key() is "" and the charge misses `doctor` (see falsification).
+    from personalclaw.guardrails.budgets import current_run_key
+
+    meter = _isolated_meter(tmp_path, monkeypatch)
+
+    def _judge():
+        meter.charge(1000, 0.60, run_key=current_run_key() or None)
+        return "judged"
+
+    rem.register_job(
+        RemediationJob(id="fix.j", title="Judge", run=_judge, fixes_deficit="a", lane="judgment")
+    )
+    monkeypatch.setattr(
+        rem,
+        "measure_deficits",
+        lambda: [Deficit(key="a", count=20, weight=1.0, max_penalty=20.0, job_id="fix.j")],
+    )
+    result = rem.run_remediation(target_score=90, max_cost_usd=1.0, now=1000.0)
+    assert result.jobs[0]["status"] == "ok"
+    assert meter.run_totals("doctor").dollars == pytest.approx(0.60)  # accrued under `doctor`
+
+
+def test_max_cost_usd_stops_the_judgment_lane_before_running(tmp_path, monkeypatch):
+    # Doctor spend already at/over the cap must stop the judgment lane BEFORE the next
+    # judgment job runs — the third stop condition, alongside target_score and exhausted.
+    meter = _isolated_meter(tmp_path, monkeypatch)
+    meter.charge(0, 0.60, run_key="doctor")  # already over a $0.50 cap
+
+    ran = {"n": 0}
+    rem.register_job(
+        RemediationJob(
+            id="fix.j",
+            title="Judge",
+            run=lambda: ran.__setitem__("n", ran["n"] + 1) or "judged",
+            fixes_deficit="a",
+            lane="judgment",
+        )
+    )
+    monkeypatch.setattr(
+        rem,
+        "measure_deficits",
+        lambda: [Deficit(key="a", count=20, weight=1.0, max_penalty=20.0, job_id="fix.j")],
+    )
+    result = rem.run_remediation(target_score=90, max_cost_usd=0.50, now=1000.0)
+    assert result.stopped_reason == "max_cost_usd $0.5 reached"
+    assert ran["n"] == 0  # the cap stopped it before it ran
+
+
+def test_deterministic_jobs_ignore_the_doctor_cost_cap(tmp_path, monkeypatch):
+    # The cap is judgment-lane only. A deterministic ($0) job runs even when the doctor run
+    # scope is already far over the cap — so a healthy deficit still gets fixed for free.
+    meter = _isolated_meter(tmp_path, monkeypatch)
+    meter.charge(0, 5.00, run_key="doctor")  # far over any cap
+
+    ran = {"n": 0}
+    rem.register_job(
+        RemediationJob(
+            id="fix.d",
+            title="Det",
+            run=lambda: ran.__setitem__("n", ran["n"] + 1) or "fixed",
+            fixes_deficit="a",
+            lane="deterministic",
+        )
+    )
+    calls = {"n": 0}
+
+    def _measure():
+        calls["n"] += 1
+        count = 20 if calls["n"] == 1 else 0
+        return [Deficit(key="a", count=count, weight=1.0, max_penalty=20.0, job_id="fix.d")]
+
+    monkeypatch.setattr(rem, "measure_deficits", _measure)
+    result = rem.run_remediation(target_score=90, max_cost_usd=0.50, now=1000.0)
+    assert ran["n"] == 1  # ran despite doctor spend over the cap (deterministic = free)
+    assert result.stopped_reason == "target_score reached"
