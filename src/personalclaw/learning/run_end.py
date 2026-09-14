@@ -29,6 +29,11 @@ What a terminal run contributes (§3.3):
 - **A procedural prior** per failed step (`record_procedural(tool="workflow:<template>/<step>",
   outcome="failed")`) — the existing ≥3-failure synthesis then surfaces the prior next time the
   template is planned, for free.
+- **A tier-migration proposal** (§3.5 / LEARN-R17) when the template's cross-run trajectory
+  variance says so: a low-variance agentic template earns a DISTILL-to-fixed proposal, a
+  repeatedly-failing fixed template earns a PROMOTE-to-agentic one. Pure ledger statistics with tier
+  DERIVED from the run's spec structure — no `WorkflowDef` field, no model call
+  (`learning.tier_migration`).
 """
 
 from __future__ import annotations
@@ -204,6 +209,86 @@ def _mine_positive_signals(run: Any, service: Any, *, journal: Any) -> int:
     return filed
 
 
+def _mine_tier_migration(run: Any, *, journal: Any) -> int:
+    """§3.5 (LEARN-R17): propose an execution-tier migration from cross-run trajectory variance.
+
+    The clause the plan recorded BLOCKED three times, now buildable because both absent inputs
+    exist: tier is DERIVED from the run's pinned spec structure (no new ``WorkflowDef`` field — that
+    would collide with PP-16), and the cross-run variance is the PP-7 trajectory projection this
+    gathers over the template's terminal siblings. Zero model calls, zero embedding — pure ledger
+    statistics per §3.5 — so unlike the mining passes it does not depend on ``service`` at all.
+
+    Best-effort like every other run-end producer: a failure here costs a draft, never the run's
+    terminal status. Returns how many drafts were filed (0 or 1).
+    """
+    try:
+        from personalclaw.learning import tier_migration as tm
+        from personalclaw.workflows import introspection
+        from personalclaw.workflows import store as store_mod
+        from personalclaw.workflows.models import TERMINAL_RUN_STATUSES
+    except Exception:
+        logger.debug("run-end: tier-migration unavailable", exc_info=True)
+        return 0
+
+    name = str(getattr(run, "workflow_name", "") or "")
+    if not name:
+        return 0
+
+    # Tier from STRUCTURE: the run's own pinned spec is the exact tree it executed, and its
+    # siblings share the template's shape. Reading one spec is cheap; an unreadable one yields
+    # UNKNOWN, which files nothing rather than guessing a tier.
+    try:
+        spec = store_mod.read_spec(str(getattr(run, "id", "") or ""))
+    except Exception:
+        logger.debug("run-end: tier-migration spec read failed", exc_info=True)
+        spec = None
+    tier = tm.classify_tier(spec)
+    if tier == tm.TIER_UNKNOWN:
+        return 0
+
+    try:
+        siblings, _total = store_mod.list_runs(workflow_name=name, limit=tm.SIBLING_SCAN_LIMIT)
+    except Exception:
+        logger.debug("run-end: tier-migration sibling read failed", exc_info=True)
+        return 0
+
+    history: list[tuple[str, bool]] = []
+    costs: list[float] = []
+    for sib in siblings or []:
+        # Only TERMINAL runs describe a completed path; an in-flight run's partial ledger would
+        # inflate the variance with a signature it has not finished writing.
+        if getattr(sib, "status", None) not in TERMINAL_RUN_STATUSES:
+            continue
+        sib_id = str(getattr(sib, "id", "") or "")
+        try:
+            events = journal.ledger(sib_id)
+        except Exception:
+            logger.debug("run-end: tier-migration ledger read failed for %s", sib_id, exc_info=True)
+            continue
+        signature = introspection.trajectory_signature(sib_id, events).signature
+        stats = introspection.run_stats(sib_id, events)
+        history.append((signature, stats.steps_failed > 0))
+        # Only PRICED, positive costs feed the savings projection — a floor (some step booked no
+        # cost) would understate the projected saving, and $0 says nothing.
+        if stats.priced and stats.cost_usd > 0:
+            costs.append(stats.cost_usd)
+
+    mean_cost = round(sum(costs) / len(costs), 6) if costs else 0.0
+    decision = tm.tier_migration(name, tier, history, mean_cost_usd=mean_cost)
+    if decision is None:
+        return 0
+
+    session_key = str(getattr(getattr(run, "origin", None), "session_key", "") or "")
+    evidence_refs = [str(getattr(s, "id", "") or "") for s in (siblings or [])][:10]
+    filed = tm.file_tier_migration(
+        decision,
+        session_key=session_key,
+        run_id=str(getattr(run, "id", "") or ""),
+        evidence_refs=evidence_refs,
+    )
+    return 1 if filed else 0
+
+
 def _file_similarity_draft(run: Any, found: Any, verdict: Any) -> bool:
     """File the "you have built this N times" draft as a PENDING template proposal."""
     from personalclaw.learning import proposals
@@ -242,7 +327,14 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
     ``filtered`` (failures the env/unknown deny-filter dropped), ``skipped`` (failures the quota
     or a prior decision suppressed).
     """
-    report = {"proposed": 0, "procedural": 0, "filtered": 0, "skipped": 0, "mined": 0}
+    report = {
+        "proposed": 0,
+        "procedural": 0,
+        "filtered": 0,
+        "skipped": 0,
+        "mined": 0,
+        "tier_migration": 0,
+    }
     if service is None or not getattr(service, "has_vector", False):
         return report
     if journal is None:
@@ -255,6 +347,10 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
     # nothing. This is the producer side of the similarity/inversion/trace detectors, which had no
     # caller at all before now.
     report["mined"] = _mine_positive_signals(run, service, journal=journal)
+    # The §3.5 tier-migration pass runs alongside the positive half and unconditionally: a
+    # low-variance SUCCESSFUL agentic template (the distill case) has no failures to gate on, so
+    # deferring it behind the `if not events` check below would hide exactly the case it exists for.
+    report["tier_migration"] = _mine_tier_migration(run, journal=journal)
     try:
         events = journal.ledger(run.id, kinds={journal.STEP_FAILED})
     except Exception:
