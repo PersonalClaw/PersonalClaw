@@ -177,6 +177,17 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
     expect(await screen.findByRole('button', { name: 'Resume Nightly sweep' })).toBeTruthy()
   })
 
+  it('stops a running loop through loop_routes, and it leaves the steerable list', async () => {
+    // The third loop_routes action the done-when names (pause / nudge / STOP). `stopped` is
+    // not a STEERABLE status, so the reconciling refetch drops the row off the phone — a
+    // stopped loop is not a decision anyone is waiting on.
+    fakeLoops([loop()])
+    render(<RunningLoopsSection />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop Nightly sweep' }))
+    await waitFor(() => expect(uLoopAction).toHaveBeenCalledWith('lp-1', 'stop'))
+    await waitFor(() => expect(screen.queryByText('Nightly sweep')).toBeNull())
+  })
+
   it('REVERTS the status when the pause fails, and says so', async () => {
     fakeLoops([loop()])
     uLoopAction.mockReset()
