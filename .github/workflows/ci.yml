@@ -252,7 +252,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends tmux
           tmux -V
       - name: pytest (full suite, xdist)
-        run: uv run pytest
+        # --no-cov: coverage is measured once, by full.yml's dedicated `coverage` job.
+        # Running --cov here too (inherited from addopts) intermittently OOM-truncated
+        # this job mid-suite (~12-16%, no summary, no assertion failure) — the original
+        # #2720 signature. This is the merge gate; its job is correctness, not coverage.
+        # -q cancels the addopts `--verbose` (net default → dot output): --verbose prints a
+        # full node-id line for all ~31k tests, which amplified the log stream enough to
+        # truncate the run mid-suite on CI (with the 100k-char id already fixed, this is the
+        # remaining volume lever). Local dev keeps --verbose from addopts. (#2720)
+        run: uv run pytest --no-cov -q
 
   web:
     runs-on: ubuntu-latest
