@@ -42,19 +42,21 @@ def _store_trigger(tmp_path, trigger_id, *, enabled=True, valid=True):
 
 
 class TestStatusSnapshot:
-    def test_the_trigger_count_comes_from_the_store(self, state: DashboardState, tmp_path) -> None:
-        """🔴 SUPERSEDED CONTRACT (S107). This asserted `cron_jobs == 2` off a `crons.list_jobs()`
-        mock. The S100/S101 cutover left `ScheduleService` holding nothing, so the metric the
-        dashboard renders as "triggers" reported 0 on a machine with automations — measured on a
-        home with three valid store triggers, two enabled. The count now reads the unified store.
+    def test_the_flat_cron_jobs_mirror_is_gone(self, state: DashboardState, tmp_path) -> None:
+        """🔴 SUPERSEDED, AGAIN (#773). status_snapshot once carried a flat `cron_jobs` =
+        `trigger_counts()["total"]`, the schedule STORE's count, which the dashboard rendered under
+        a "triggers" label. That label over-claimed: the Triggers page counts lifecycle hooks too,
+        which the store never held, so the rail said "5 triggers" where the page listed 7.
 
-        (The fixture's mock returns dict-shaped jobs, which have no `.id`, so the legacy fold-in
-        contributes nothing here — which is exactly why the old assertion could not have caught the
-        regression it was supposed to guard.)
+        The rail now reads the unified `triggers` count assembled by `api_status`
+        (`handlers.triggers.unified_trigger_count`); the schedule-store count still ships, as the
+        richer `cron` block. The flat mirror had no remaining reader and is dropped — so the field
+        is gone from the snapshot, and the store count is reached through `trigger_counts()`.
         """
         _store_trigger(tmp_path, "clock:a")
         _store_trigger(tmp_path, "clock:b", enabled=False)
-        assert state.status_snapshot()["cron_jobs"] == 2
+        assert "cron_jobs" not in state.status_snapshot()
+        assert state.trigger_counts()["total"] == 2
 
     def test_contains_core_fields(self, state: DashboardState) -> None:
         snap = state.status_snapshot()
@@ -81,13 +83,15 @@ class TestStatusSnapshot:
             "uptime",
             "start_time",
             "sessions",
-            "cron_jobs",
             "lessons",
             "subagents",
             "update_available",
             "no_crons",
         }
         assert required.issubset(snap.keys())
+        # `cron_jobs` was removed (#773): the flat schedule-store mirror had no reader once the
+        # dashboard rail moved to the unified `triggers` count (assembled by api_status, not here).
+        assert "cron_jobs" not in snap
 
     def test_the_snapshot_makes_no_unmeasured_claim(self, state: DashboardState) -> None:
         """`messages` was in the required set above, and was always 0.
