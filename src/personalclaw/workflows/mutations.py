@@ -816,18 +816,26 @@ def history_record(
     version: int,
     spec: dict[str, Any],
     preview: CascadePreview | None = None,
+    owner_username: str = "",
+    origin_harness: str = "",
 ) -> dict[str, Any]:
     """One audit-trail entry (WF2-R20 / safety-protocol #6).
 
     Carries the STRUCTURED ops rather than a textual diff: a later refiner needs to know
     what KIND of correction a human made, which a diff destroys. The spec hash lets a
     reader confirm the recorded ops produced the spec on disk.
+
+    `actor` is the mutation KIND (`chat`/`engine`/…) and is untouched. `owner_username`/
+    `origin_harness` are the TSE2-1 attribution axis (who/which-machine, not how): optional and
+    defaulting to "" so a pre-plan reader gets a byte-identical record but for the two empty keys.
     """
     from personalclaw.workflows.journal import hash_value
 
     return {
         "version": version,
         "actor": actor,
+        "owner_username": owner_username,
+        "origin_harness": origin_harness,
         "ops": [o.to_dict() for o in ops],
         "raw_ops": [o.raw for o in ops],
         "spec_hash": hash_value(spec),

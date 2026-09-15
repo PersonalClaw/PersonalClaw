@@ -161,10 +161,14 @@ async def test_control_the_replaced_shape_blows_the_same_bound():
 # From the kill-site census. A spawn earns its own session ONLY when the child can fork a
 # grandchild that inherits a live pipe. Everything else is git plumbing that never forks;
 # giving it a session buys nothing and widens the blast radius of a group signal.
+# RUM-4 retired the `git pull` spawn (the git kind rides release tags now; the
+# advance goes through `asyncio.to_thread(self_update.git_*)`, sync `subprocess.run`
+# under one seam, not a create_subprocess_exec here), and the dashboard dirty-tree
+# check moved to `asyncio.to_thread(self_update.git_tracked_changes)` — so the `pull`
+# group-leader and the `dirty` leaf spawn are gone from this module's census.
 _UPDATES_GROUP_LED = {
     "proc",  # git fetch      -> forks git-remote-https / ssh
     "pip_up",  # pip -U         -> forks build backends / compilers
-    "pull",  # git pull       -> forks fetch's remote helper + merge
     "pip_install",  # pip install -e -> forks build backends
 }
 _UPDATES_LEAF = {
@@ -172,7 +176,6 @@ _UPDATES_LEAF = {
     "remote",  # git rev-parse @{u}
     "show",  # git show <sha>:./pyproject.toml
     "diff",  # git diff <range> -- CHANGELOG.md
-    "dirty",  # git status --porcelain
 }
 
 
@@ -197,7 +200,7 @@ def _spawns_by_target(source: str, callee: str) -> dict[str, set[str]]:
 
 
 def test_only_the_censused_spawns_lead_their_own_group():
-    """Both directions: the four forking spawns opt in, the five leaves stay out."""
+    """Both directions: the three forking spawns opt in, the four leaves stay out."""
     src = (_SRC / "dashboard" / "handlers" / "updates.py").read_text()
     spawns = _spawns_by_target(src, "create_subprocess_exec")
 
@@ -240,7 +243,7 @@ def _timeout_kill_style(source: str) -> dict[str, str]:
 
 
 def test_updates_timeout_handlers_match_the_census_exactly():
-    """The four forking spawns kill their GROUP; the five leaves still kill by pid.
+    """The three forking spawns kill their GROUP; the four leaves still kill by pid.
 
     Bidirectional on purpose. A leaf drifting to ``group`` means someone blanket-swept
     and gave a non-forking child a session it doesn't need; a forking spawn drifting to

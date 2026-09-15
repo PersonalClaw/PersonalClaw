@@ -119,6 +119,12 @@ _MAX_INJECT_ATTEMPTS = 2
 # is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
 _AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
 
+# How often a staged auto-update waiter re-checks whether in-flight work has drained
+# (RUM-5). A staged apply HOLDS while a session/subagent is running and fires only once
+# the tree is idle; 30s is responsive without spinning — the wait is measured in the
+# lifetime of the work it defers to, not this cadence.
+_STAGED_APPLY_POLL_SECS = 30.0
+
 # Upper bound for a single autonudge-driven goal loop turn. Loop cycles run long
 # (subagent fan-out, 15-20 min), so this is generous — it only fires to free a
 # genuinely-wedged turn (e.g. an ACP turn that hung and never emitted turn-end).
@@ -366,6 +372,10 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        # A staged auto-update waiter that HOLDS until in-flight work drains,
+        # then applies. One at a time — a second available-update check reuses the
+        # live waiter rather than spawning a rival apply against the same tree.
+        self._staged_apply_task: "asyncio.Task[None] | None" = None
         self._last_autonomy_scan: float = 0.0  # §6.1 promotion-proposal scan throttle
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
@@ -3779,6 +3789,7 @@ class GatewayOrchestrator:
             self._web_watch_task,
             self._clock_task,
             self._reaper_task,
+            self._staged_apply_task,
         ):
             if _task is None:
                 continue
@@ -3818,7 +3829,16 @@ class GatewayOrchestrator:
     # ------------------------------------------------------------------
 
     async def _check_for_updates(self) -> None:
-        """Blocking update check — auto-applies if enabled, otherwise notifies."""
+        """Blocking update check — then acts on the opt-in ``updates.auto`` mode.
+
+        ``off`` (the default) is NOTIFY-ONLY: an available update raises the
+        ``update_available`` refresh and is never applied unattended. ``staged``
+        applies at the next safe point — it HOLDS while any session/subagent is in
+        flight (:meth:`DashboardState.active_work_snapshot`) and fires only once that drains,
+        landing solely on the resolved channel/pin release tag, never on ``main``
+        (the apply is :meth:`_auto_apply_update`, RUM-4). The check itself always
+        runs here; its own egress kill switch is ``updates.check_enabled`` (RUM-3).
+        """
         try:
             from personalclaw.dashboard.handlers import _do_update_check, _update_info
 
@@ -3828,9 +3848,9 @@ class GatewayOrchestrator:
                 from personalclaw.config import AppConfig
 
                 cfg = AppConfig.load()
-                if cfg.auto_update:
-                    logger.info("Auto-update enabled — applying update")
-                    await self._auto_apply_update()
+                if cfg.updates.auto == "staged":
+                    logger.info("Auto-update mode 'staged' — applying at the next safe point")
+                    await self._staged_auto_apply()
                 elif self.dashboard_state:
                     self.dashboard_state.push_refresh("update_available")
             else:
@@ -3838,124 +3858,170 @@ class GatewayOrchestrator:
         except Exception:
             logger.debug("Update check failed", exc_info=True)
 
-    async def _auto_apply_update(self) -> None:
-        """Auto-apply: fetch, reset to remote, rebuild, restart.
+    def _work_in_flight(self) -> bool:
+        """Whether a restart-interrupting unit is running: any not-done background
+        subagent or any live chat session. Answered in ONE place by reusing
+        :meth:`DashboardState.active_work_snapshot`, so the staged-apply gate and the
+        manual-restart confirm gate agree. Headless (no dashboard state) has no such
+        work to interrupt, so it reads idle."""
+        if self.dashboard_state is None:
+            return False
+        snap = self.dashboard_state.active_work_snapshot()
+        return snap["running_agents"] > 0 or snap["sessions"] > 0
 
-        Uses ``git fetch`` + ``git reset --hard`` instead of ``git pull``
-        so local tracked-file edits never cause merge conflicts.
-        Untracked files (task specs, notes) are untouched by reset.
+    async def _staged_auto_apply(self) -> None:
+        """Apply a staged update at the next safe point.
+
+        If in-flight work is present, DEFER: a single background waiter re-checks
+        and applies once it drains — this never blocks the caller (startup, the
+        boot-path check) while work is running. Otherwise apply immediately. Either
+        way the apply is :meth:`_auto_apply_update`, which resolves the channel/pin
+        release tag and never touches ``main`` (RUM-4).
+        """
+        if self._work_in_flight():
+            if self._staged_apply_task is not None and not self._staged_apply_task.done():
+                # A waiter is already holding — don't spawn a rival apply.
+                return
+            self._staged_apply_task = asyncio.create_task(self._await_idle_then_apply())
+            return
+        await self._auto_apply_update()
+
+    async def _await_idle_then_apply(self) -> None:
+        """Background waiter: hold while work is in flight, then apply once idle.
+
+        Polls :meth:`_work_in_flight` on ``_STAGED_APPLY_POLL_SECS``. Cancels
+        cleanly on shutdown and never applies after a shutdown request.
+        """
+        try:
+            while not shutdown_event.is_set() and self._work_in_flight():
+                await asyncio.sleep(_STAGED_APPLY_POLL_SECS)
+            if not shutdown_event.is_set():
+                await self._auto_apply_update()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Staged auto-update failed", exc_info=True)
+
+    async def _auto_apply_update(self) -> None:
+        """Auto-apply the resolved release: fetch, advance to the target, restart.
+
+        Release-based, never pull-from-main (RUM-4). The ``updates`` channel/pin
+        decides the target: every channel but ``nightly`` resolves a release TAG
+        and moves the checkout onto it (``git fetch --tags`` + ``git checkout
+        <tag>``); the git-only ``nightly`` channel is the ONE path that tracks the
+        current branch, and it advances by FAST-FORWARD only — never a silent
+        ``reset``. A stable/beta checkout that is already on (or past) the resolved
+        tag does nothing, so an unreleased ``main`` commit can no longer trigger an
+        unattended move.
+
+        SAFE-BY-DEFAULT: this UNATTENDED path never silently discards a user's
+        uncommitted tracked-file edits. If the working tree carries tracked
+        changes it REFUSES to advance and leaves the tree untouched — the
+        interactive surfaces do the same, and all share the
+        ``self_update.git_tracked_changes`` predicate so "is it safe to advance?"
+        is answered in exactly one place. Untracked files (task specs, notes) are
+        never at risk and never block an update.
         """
         proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
         if not proj:
             return
+        from personalclaw import __version__ as _cur_version
+        from personalclaw import self_update
+        from personalclaw.config import AppConfig
+
         try:
-            # Detect current branch
-            branch_proc = await asyncio.create_subprocess_exec(
-                "git",
-                "rev-parse",
-                "--abbrev-ref",
-                "HEAD",
-                cwd=proj,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            branch_out, _ = await asyncio.wait_for(branch_proc.communicate(), timeout=10)
-            if branch_proc.returncode != 0:
-                logger.error("Auto-update: could not determine current branch")
-                return
-            branch = branch_out.strip().decode() if branch_out else ""
-            # Detached HEAD is coerced to the release branch — a checkout that
-            # detached at a release tag still auto-updates back onto main.
-            if not branch or branch == "HEAD":
-                branch = "main"
+            cfg = AppConfig.load()
+            channel = cfg.updates.channel
+            pin = cfg.updates.pin
 
-            # Only auto-update on main — feature branches need manual update
-            if branch != "main":
-                logger.debug("Auto-update: skipping — on branch %s, not main", branch)
-                return
-
-            if self.dashboard_state:
-                self.dashboard_state.push_update_progress("pulling", "Fetching latest changes…")
-
-            fetch = await asyncio.create_subprocess_exec(
-                "git",
-                "fetch",
-                "origin",
-                branch,
-                cwd=proj,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(fetch.communicate(), timeout=60)
-
-            if fetch.returncode != 0:
+            # SAFE-BY-DEFAULT: refuse to advance over uncommitted tracked edits.
+            # ONE predicate, shared with the dashboard + CLI paths.
+            tracked = await asyncio.to_thread(self_update.git_tracked_changes, proj)
+            if tracked:
+                logger.warning(
+                    "Auto-update: refusing to apply — %d uncommitted tracked-file "
+                    "change(s) in %s. Commit or `git stash` them; the update applies "
+                    "on the next check.",
+                    len(tracked),
+                    proj,
+                )
                 if self.dashboard_state:
-                    self.dashboard_state.clear_update_progress()
+                    self.dashboard_state.push_update_progress(
+                        "error",
+                        "Update paused — commit or stash your local changes first.",
+                    )
                 return
 
-            # Check if there are actually new commits
-            diff_proc = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
-                "HEAD",
-                f"origin/{branch}",
-                "--quiet",
-                cwd=proj,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(diff_proc.wait(), timeout=10)
-            if diff_proc.returncode == 0:
-                # No diff — already up to date
+            if channel == "nightly":
+                # Nightly: track the current branch, advancing by fast-forward only.
+                branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
                 if self.dashboard_state:
-                    self.dashboard_state.clear_update_progress()
-                return
-
-            # Warn if local tracked-file edits will be discarded
-            status_proc = await asyncio.create_subprocess_exec(
-                "git",
-                "status",
-                "--porcelain",
-                cwd=proj,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            status_out, _ = await asyncio.wait_for(status_proc.communicate(), timeout=10)
-            if status_out and status_out.strip():
-                tracked = [
-                    ln
-                    for ln in status_out.decode(errors="replace").splitlines()
-                    if not ln.startswith("??")
-                ]
-                if tracked:
-                    logger.warning("Auto-update: discarding local tracked-file changes in %s", proj)
-
-            # Hard reset to remote — discards local tracked-file edits,
-            # untracked files (task specs, notes) are preserved.
-            reset = await asyncio.create_subprocess_exec(
-                "git",
-                "reset",
-                "--hard",
-                f"origin/{branch}",
-                cwd=proj,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(reset.wait(), timeout=10)
-            if reset.returncode != 0:
-                logger.error("Auto-update: git reset --hard failed (rc=%d)", reset.returncode)
+                    self.dashboard_state.push_update_progress("pulling", "Fetching latest changes…")
+                fetch = await asyncio.to_thread(self_update.git_fetch, proj, branch)
+                if fetch.returncode != 0:
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                if await asyncio.to_thread(self_update.git_is_up_to_date, proj, branch):
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
+                if ff.returncode != 0:
+                    logger.error(
+                        "Auto-update: fast-forward to origin/%s failed (rc=%d) — "
+                        "branch diverged; leaving tree untouched",
+                        branch,
+                        ff.returncode,
+                    )
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                logger.info("Auto-update: fast-forwarded %s, rebuilding", branch)
+            else:
+                # Ride the release tag resolved from the channel/pin. Skip when we
+                # are already on (or past) it — the whole point of retiring
+                # pull-from-main: an unreleased `main` commit never moves the tree.
+                target = await self_update.resolve_target(channel, pin)
+                if not target:
+                    logger.debug("Auto-update: no release resolved for channel=%s", channel)
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                tgt_norm = self_update.normalize_version(target)
+                already = self_update.version_tuple(tgt_norm) <= self_update.version_tuple(
+                    self_update.normalize_version(_cur_version)
+                )
+                if (not pin and already) or (
+                    pin and tgt_norm == self_update.normalize_version(_cur_version)
+                ):
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
                 if self.dashboard_state:
-                    self.dashboard_state.clear_update_progress()
-                return
-            logger.info("Auto-update: reset to origin/%s, rebuilding", branch)
+                    self.dashboard_state.push_update_progress("pulling", f"Checking out {target}…")
+                fetch = await asyncio.to_thread(self_update.git_fetch_tags, proj)
+                if fetch.returncode != 0:
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                checked = await asyncio.to_thread(self_update.git_checkout, proj, target)
+                if checked.returncode != 0:
+                    logger.error(
+                        "Auto-update: git checkout %s failed (rc=%d)",
+                        target,
+                        checked.returncode,
+                    )
+                    if self.dashboard_state:
+                        self.dashboard_state.clear_update_progress()
+                    return
+                logger.info("Auto-update: checked out %s, rebuilding", target)
 
             # pip install -e . picks up new dependencies into the RUNNING
             # interpreter's env (sys.executable) before the re-exec. Git ran
             # at the repo root; pip + the frontend build run at the package
             # root (nested in the monorepo layout).
-            from personalclaw.self_update import package_root
-
-            pkg_root = package_root(proj)
+            pkg_root = self_update.package_root(proj)
             if self.dashboard_state:
                 self.dashboard_state.push_update_progress("installing", "Installing package…")
             pip_install = await asyncio.create_subprocess_exec(

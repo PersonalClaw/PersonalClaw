@@ -207,10 +207,22 @@ async def fetch_latest_release() -> dict[str, object]:
     returns the cached view unchanged; a 200 refreshes and re-caches. The
     returned dict has ``{tag, name, body, etag, checked_at}`` (empty ``tag`` when
     nothing has ever been fetched and we're offline).
+
+    Honors the egress kill switch (RUM-3): when ``updates.check_enabled`` is
+    false the updater makes ZERO outbound calls, so this returns the last cached
+    view (or ``{}``) WITHOUT opening a network session — the same offline-tolerant
+    answer, reached before any HTTP. ``api.github.com`` is the product's one
+    unprompted destination; this is the switch that silences it.
     """
-    import aiohttp
+    from personalclaw.config.loader import AppConfig
 
     cache = read_release_cache()
+    if not AppConfig.load().updates.check_enabled:
+        logger.debug("update check disabled (updates.check_enabled=false); using cache")
+        return cache
+
+    import aiohttp
+
     etag = str(cache.get("etag") or "")
     headers = {
         "Accept": "application/vnd.github+json",
@@ -283,6 +295,197 @@ async def build_update_status(current: str) -> dict[str, object]:
         "release_name": str(release.get("name") or ""),
         "release_notes": str(release.get("body") or ""),
     }
+
+
+# ── Channel + pin resolver ──────────────────────────────────────────────────
+#
+# The full releases LIST is the source of truth for channel/pin resolution.
+# ``releases/latest`` (:func:`fetch_latest_release`) only ever names the newest
+# *non-prerelease*, so it cannot answer the ``beta`` channel — which must see
+# prereleases — nor a ``pin`` to any older release. This endpoint returns every
+# release, newest first; ``per_page=100`` is far more than a personal project
+# cuts. ETag-cached and offline-tolerant, exactly like the latest probe.
+_RELEASES_LIST_URL = "https://api.github.com/repos/PersonalClaw/PersonalClaw/releases?per_page=100"
+_LIST_CACHE_FILENAME = "update_releases.json"
+
+
+def _list_cache_path() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _LIST_CACHE_FILENAME
+
+
+def read_releases_cache() -> dict[str, object]:
+    """The last fetched releases-LIST view, or ``{}``. Never raises.
+
+    Kept in its own file (``update_releases.json``) so it never clobbers the
+    ``releases/latest`` cache :func:`read_release_cache` owns.
+    """
+    try:
+        return json.loads(_list_cache_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_releases_cache(data: dict[str, object]) -> None:
+    """Persist the releases-list view for the next (ETag-conditional) fetch."""
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        atomic_write(_list_cache_path(), json.dumps(data, indent=2) + "\n", fsync=True)
+    except Exception:
+        logger.debug("could not persist releases-list cache", exc_info=True)
+
+
+def _release_view(item: dict[str, object]) -> dict[str, object]:
+    """Reduce one GitHub release object to the fields the resolver needs."""
+    return {
+        "tag": str(item.get("tag_name") or ""),
+        "name": str(item.get("name") or ""),
+        "body": str(item.get("body") or ""),
+        "prerelease": bool(item.get("prerelease")),
+    }
+
+
+def _releases_from_cache(cache: dict[str, object]) -> list[dict[str, object]]:
+    """The list of release views inside a cache dict, or ``[]``."""
+    raw = cache.get("releases")
+    if not isinstance(raw, list):
+        return []
+    return [r for r in raw if isinstance(r, dict)]
+
+
+def _is_prerelease(release: dict[str, object]) -> bool:
+    """A release the ``stable`` channel must skip and ``beta`` must include.
+
+    Two independent signals, either sufficient: GitHub's own ``prerelease`` flag,
+    and a PEP 440 pre-release suffix on the tag (``v0.3.0-rc.1`` / ``-beta.N``) —
+    the tag convention §3.6 names. Taking both means a release flagged prerelease
+    with a plain tag, and a plainly-flagged release with a ``-rc``/``-beta`` tag,
+    are each kept out of stable and offered to beta.
+    """
+    if bool(release.get("prerelease")):
+        return True
+    return "-" in normalize_version(str(release.get("tag") or ""))
+
+
+def select_target(releases: list[dict[str, object]], channel: str, pin: str = "") -> str:
+    """The release tag a *channel*/*pin* selects from *releases* (pure, no I/O).
+
+    ``pin`` (a version, with or without a leading ``v``) OVERRIDES the channel:
+    the tag of the release whose version equals the pin, or ``""`` when no such
+    release exists. Otherwise the channel decides:
+
+    * ``stable`` — the newest **non-prerelease** release.
+    * ``beta`` — the newest release **including** prereleases.
+    * ``nightly`` — ``""``: nightly tracks the checked-out branch, not a release
+      tag (the git kind follows the branch — RUM-4), so there is no tag to name.
+
+    "Newest" is the highest :func:`version_tuple`, ties broken toward the stable
+    release (so a published ``v0.3.0`` beats its own ``v0.3.0-rc.1`` on ``beta``).
+    Returns ``""`` when no candidate matches. Never raises — every field access is
+    defensive, so a malformed cache degrades to ``""`` rather than an exception on
+    the update path. An unrecognized channel falls to the ``stable`` arm (safest).
+    """
+    pin = (pin or "").strip()
+    if pin:
+        want = normalize_version(pin)
+        for rel in releases:
+            tag = str(rel.get("tag") or "")
+            if tag and normalize_version(tag) == want:
+                return tag
+        return ""
+
+    if channel == "nightly":
+        return ""
+    if channel == "beta":
+        candidates = list(releases)
+    else:  # "stable" and any unrecognized channel -> the safe, non-prerelease line
+        candidates = [r for r in releases if not _is_prerelease(r)]
+
+    best_tag = ""
+    best_key: tuple[tuple[int, ...], bool] | None = None
+    for rel in candidates:
+        tag = str(rel.get("tag") or "")
+        if not tag:
+            continue
+        key = (version_tuple(tag), not _is_prerelease(rel))
+        if best_key is None or key > best_key:
+            best_key, best_tag = key, tag
+    return best_tag
+
+
+async def fetch_releases() -> list[dict[str, object]]:
+    """Return the full GitHub releases list, ETag-cached and offline-tolerant.
+
+    Mirrors :func:`fetch_latest_release` but hits ``/releases`` (the whole list),
+    which the channel/pin resolver needs. Sends ``If-None-Match`` with the cached
+    ETag: a 304 (or any network error) returns the cached list unchanged — empty
+    when nothing was ever fetched — a 200 refreshes and re-caches. Never raises.
+    """
+    import aiohttp
+
+    cache = read_releases_cache()
+    cached_list = _releases_from_cache(cache)
+    etag = str(cache.get("etag") or "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "personalclaw-update-check",
+    }
+    if etag:
+        headers["If-None-Match"] = etag
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(_RELEASES_LIST_URL, headers=headers) as resp:
+                if resp.status == 304:
+                    return cached_list  # unchanged since last check
+                if resp.status != 200:
+                    logger.debug("releases returned HTTP %s", resp.status)
+                    return cached_list
+                payload = await resp.json()
+                releases = [_release_view(it) for it in payload if isinstance(it, dict)]
+                view: dict[str, object] = {
+                    "releases": releases,
+                    "etag": resp.headers.get("ETag", "") or etag,
+                    "checked_at": time.time(),
+                }
+                write_releases_cache(view)
+                return releases
+    except Exception:
+        # Offline / DNS / TLS — degrade to the cached list without raising.
+        logger.debug("releases fetch: network error, using cache", exc_info=True)
+        return cached_list
+
+
+async def resolve_target(channel: str, pin: str = "") -> str:
+    """The release tag a *channel*/*pin* selects, from the ETag-cached list.
+
+    Fetches the releases list (offline-tolerant — a cached or empty list on any
+    network failure) and applies :func:`select_target`. Never raises; returns
+    ``""`` when nothing matches: offline with no cache, a ``pin`` naming no
+    release, or the branch-tracking ``nightly`` channel.
+    """
+    releases = await fetch_releases()
+    return select_target(releases, channel, pin)
+
+
+async def resolve_wheel_target(channel: str, pin: str = "") -> str:
+    """The release tag a WHEEL install (pip/pipx/uv) installs for *channel*/*pin*.
+
+    Identical to :func:`resolve_target`, with one wheel-specific policy: the
+    git-only ``nightly`` channel tracks a branch, and there is no published wheel
+    for a branch, so a wheel install rides the ``stable`` line instead of resolving
+    to ``""``. A ``pin`` is a pin on every install kind and OVERRIDES the channel
+    exactly as in :func:`resolve_target` (RUM-2), so ``nightly`` is only remapped to
+    ``stable`` when no pin is set. Never raises; returns ``""`` when nothing matches
+    (offline with no cache, or a ``pin`` naming no release).
+    """
+    if channel == "nightly" and not (pin or "").strip():
+        channel = "stable"
+    return await resolve_target(channel, pin)
 
 
 # ── Installer diagnostics ───────────────────────────────────────────────────
@@ -406,8 +609,48 @@ def resolve_default_branch(proj: str) -> str:
 
 
 def git_fetch(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
-    """``git fetch origin <branch>``."""
+    """``git fetch origin <branch>`` — advance the remote-tracking ref for *branch*.
+
+    The nightly (branch-tracking) path uses this; the release paths use
+    :func:`git_fetch_tags`, which also brings the tags a checkout needs.
+    """
     return _run_git(["fetch", "origin", branch], cwd=proj, timeout=60)
+
+
+def git_fetch_tags(proj: str) -> subprocess.CompletedProcess[str]:
+    """``git fetch --tags origin`` — fetch origin's branches AND its release tags.
+
+    The release-based apply resolves a tag from GitHub's releases API and then
+    checks it out locally; the tag has to be present in the local repository
+    first, which a plain ``git fetch origin <branch>`` does not guarantee. This is
+    the fetch half of the "ride release tags" path that replaced pull-from-main.
+    """
+    return _run_git(["fetch", "--tags", "origin"], cwd=proj, timeout=60)
+
+
+def git_checkout(proj: str, ref: str) -> subprocess.CompletedProcess[str]:
+    """``git checkout <ref>`` — move HEAD to a release tag (or any ref).
+
+    Non-destructive by construction: git refuses to overwrite uncommitted local
+    modifications and leaves the tree untouched with a non-zero exit, so this can
+    never silently discard a user's work the way ``reset --hard`` did. Checking out
+    a tag detaches HEAD onto that exact release — which is precisely "ride release
+    tags", the state RUM-4 leaves the git kind in.
+    """
+    return _run_git(["checkout", ref], cwd=proj, timeout=30)
+
+
+def git_fast_forward(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
+    """``git merge --ff-only origin/<branch>`` — advance a branch WITHOUT a reset.
+
+    The nightly/developer channel is the one path that tracks the current branch
+    instead of a release tag. It advances by fast-forward only: this can add new
+    upstream commits but can NEVER rewrite or discard local history — a diverged
+    branch makes it fail with a non-zero exit and an untouched tree, which is the
+    safe answer. There is deliberately no ``reset --hard`` fallback; that silent
+    tracked-change destruction is exactly what RUM-4 retired.
+    """
+    return _run_git(["merge", "--ff-only", f"origin/{branch}"], cwd=proj, timeout=30)
 
 
 def git_is_up_to_date(proj: str, branch: str) -> bool:
@@ -417,11 +660,13 @@ def git_is_up_to_date(proj: str, branch: str) -> bool:
 
 
 def git_tracked_changes(proj: str) -> list[str]:
-    """Porcelain status lines for TRACKED paths only — what a reset would destroy.
+    """Porcelain status lines for TRACKED paths only — what an advance could clobber.
 
-    Untracked entries (``??``) survive ``reset --hard``, so they are excluded:
-    warning about files that are not at risk trains the reader to click through
-    the warning that matters.
+    Untracked entries (``??``) are safe across both an advance mechanism RUM-4
+    uses (``git checkout`` refuses to touch them; a fast-forward leaves them), so
+    they are excluded: warning about files that are not at risk trains the reader
+    to click through the warning that matters. The auto/CLI paths use this to
+    require a clean tree before advancing, so an in-progress edit is never at risk.
     """
     res = _run_git(["status", "--porcelain"], cwd=proj, timeout=10)
     if res.returncode != 0:
@@ -429,11 +674,6 @@ def git_tracked_changes(proj: str) -> list[str]:
     # NOT stripped: porcelain status codes are column-significant (" M" unstaged vs
     # "M " staged), and stripping the blob eats the first line's leading space.
     return [ln for ln in (res.stdout or "").splitlines() if ln.strip() and not ln.startswith("??")]
-
-
-def git_reset_hard(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
-    """``git reset --hard origin/<branch>`` — DESTRUCTIVE to tracked changes."""
-    return _run_git(["reset", "--hard", f"origin/{branch}"], cwd=proj, timeout=10)
 
 
 # ── Git primitives (async; the dashboard's pipeline runs on these) ──────────

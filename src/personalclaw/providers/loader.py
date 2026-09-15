@@ -276,26 +276,29 @@ def _seed_promptonly_installed_apps() -> None:
             )
 
 
-def load_all_extensions() -> None:
-    """Main entry point: discover and register all extensions.
+def register_extension_providers() -> None:
+    """Discover + register every native and installed provider extension IN THIS PROCESS.
 
-    Called once during gateway startup.
+    This is the in-process half of gateway startup (:func:`load_all_extensions`): it
+    seeds the bundled native apps as installed apps, IMPORTS each enabled provider
+    app's implementation module — which is what runs that app's module-level
+    ``register_type`` / ``register_scanner`` / ``register_catalog`` and so wires its
+    provider type, media scanners and discovery catalog into the process-wide
+    registries — and seeds each app's declared prompts + skills.
+
+    It starts NO app-backend subprocess and NO watchdog thread; those are the
+    long-lived gateway's concern, not a short-lived process's. Any entry point that
+    resolves providers OUTSIDE the gateway (a CLI command, a worker) must call this —
+    otherwise only core's built-in providers are visible and an app-contributed
+    provider (Bedrock embedding, …) silently reads as "unknown provider" / "no
+    executor" there, even though the same app resolves fine inside the gateway (ES-3).
+
+    Idempotent: the provider registry dedupes by app name and each app module guards
+    its own module-level registration against re-import.
     """
     from personalclaw.providers.registry import get_provider_registry
 
     registry = get_provider_registry()
-
-    # Reconcile any app update that crashed mid-swap BEFORE discovery reads the
-    # apps tree (A2 crash recovery) — restore a half-swapped app from its
-    # leftover .{name}.rollback dir, or drop a stale one.
-    try:
-        from personalclaw.apps.app_manager import recover_interrupted_updates
-
-        recovered = recover_interrupted_updates()
-        if recovered:
-            logger.info("Recovered interrupted app updates: %s", recovered)
-    except Exception:
-        logger.debug("app update recovery failed", exc_info=True)
 
     # Seed native apps as real installed apps (first run only; seed-once
     # marker). MUST run before discovery so the seeded apps are picked up via the
@@ -338,6 +341,62 @@ def load_all_extensions() -> None:
         _register_app_routes()
     except Exception:
         logger.debug("app-routes tool provider registration failed", exc_info=True)
+
+
+def bootstrap_cli_providers() -> None:
+    """Register app-contributed providers for a standalone (non-gateway) process.
+
+    Mirrors the gateway's provider-init sequence (``dashboard/server.py`` right after
+    :func:`load_all_extensions`) so a CLI command that builds a real embedding/chat
+    provider resolves it the same way the gateway does — but WITHOUT launching the
+    gateway's app-backend subprocesses or watchdogs (see
+    :func:`register_extension_providers`). Three steps, in the gateway's order:
+
+    1. import + register the installed provider apps (their types + media scanners);
+    2. migrate any legacy Settings > Models bindings (best-effort);
+    3. replay ``config.json`` provider entries into the LLM registry so config-defined
+       providers (ollama, openai-compatible, …) resolve too.
+
+    Idempotent and safe to call once at the start of a provider-dependent command.
+    """
+    register_extension_providers()
+    try:
+        from personalclaw.providers.use_cases import migrate_legacy_bindings
+
+        migrate_legacy_bindings()
+    except Exception:
+        logger.debug("legacy binding migration failed", exc_info=True)
+    try:
+        from personalclaw.llm.registry import sync_entries_from_config
+
+        sync_entries_from_config()
+    except Exception:
+        logger.debug("config provider-entry sync failed", exc_info=True)
+
+
+def load_all_extensions() -> None:
+    """Main entry point: discover + register all extensions AND launch the gateway's
+    long-lived app-backend subprocesses + watchdogs. Called once during gateway startup.
+
+    The in-process registration half is :func:`register_extension_providers`; a
+    non-gateway entry point (a CLI command, a worker) calls that — or the CLI wrapper
+    :func:`bootstrap_cli_providers` — directly, so it does not also spawn backend
+    subprocesses it will never supervise.
+    """
+    # Reconcile any app update that crashed mid-swap BEFORE discovery reads the
+    # apps tree (A2 crash recovery) — restore a half-swapped app from its
+    # leftover .{name}.rollback dir, or drop a stale one. A gateway-restart concern,
+    # so it stays on the gateway path rather than in the shared registration helper.
+    try:
+        from personalclaw.apps.app_manager import recover_interrupted_updates
+
+        recovered = recover_interrupted_updates()
+        if recovered:
+            logger.info("Recovered interrupted app updates: %s", recovered)
+    except Exception:
+        logger.debug("app update recovery failed", exc_info=True)
+
+    register_extension_providers()
 
     # Relaunch enabled apps' backend subprocesses (they don't survive a gateway
     # restart) so an installed+enabled app's reverse-proxy is live from startup.

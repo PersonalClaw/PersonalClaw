@@ -293,7 +293,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
-- `GET /api/inbox/digest` — on-demand channel digest.
+- `POST /api/inbox/digest` — on-demand channel digest.
 - `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `POST /api/inbox/notes` — the USER writes their own inbox item (INU-9).
@@ -560,6 +560,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
 - `GET /api/onboarding/import` — what each source holds, and what is already ours.
 - `POST /api/onboarding/import` — import the picked categories and report outcomes.
+- `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
+- `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
+- `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.
@@ -747,11 +750,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/test` — execute a lifecycle or event trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
-- `POST /api/update` — git pull, reinstall, rebuild, restart gateway.
-- `POST /api/update/auto` — toggle auto-update on/off.
+- `POST /api/update` — advance the checkout to its release, rebuild, restart.
 - `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
 - `GET /api/update/check` — kind-aware update check (contract C2).
-- `POST /api/update/dev-mode` — toggle git dev-mode (track commits vs tags).
 - `POST /api/update/simulate` — walk through update steps with delays.
 - `POST /api/upload` — open native file picker and return selected paths.
 - `POST /api/upload/file` — cross-platform multipart file upload.

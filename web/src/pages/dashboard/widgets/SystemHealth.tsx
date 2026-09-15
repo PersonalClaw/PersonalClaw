@@ -138,7 +138,11 @@ export function SystemHealth({ navigate }: RouteProps) {
           {system.load_1m != null && <Metric icon={Cpu} value={system.load_1m.toFixed(2)} label={`load · ${system.cpu_count}cpu`} />}
         </>
       )}
-      <Metric icon={Zap} value={status.cron_jobs ?? 0} label="triggers" tone="var(--color-secondary)" />
+      {/* The unified trigger count (issue 773) — schedules + store-only kinds + lifecycle hooks +
+          data-event triggers — so this number matches the Triggers page. It used to read
+          `cron_jobs` (the schedule STORE alone), which silently dropped the lifecycle hooks the
+          page includes, so the rail said "5 triggers" where the page listed 7. */}
+      <Metric icon={Zap} value={status.triggers ?? 0} label="triggers" tone="var(--color-secondary)" />
       <Metric icon={Users} value={status.subagents ?? 0} label="subagents" tone="var(--color-info)" />
       {status.yolo && (
         <span className="flex items-center gap-xs rounded-pill px-m py-xs" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)' }}>

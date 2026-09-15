@@ -41,7 +41,7 @@ const SYSTEM = {
   net_rx_kbs: 9728, net_tx_kbs: 10956,
 }
 const STATUS = {
-  uptime: '5m 46s', version: '0.1.3', platform: 'darwin', cron_jobs: 4, subagents: 0,
+  uptime: '5m 46s', version: '0.1.3', platform: 'darwin', triggers: 4, subagents: 0,
   update_available: false,
 }
 

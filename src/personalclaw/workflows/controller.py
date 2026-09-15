@@ -637,6 +637,8 @@ class RunController:
             inputs=self.run.inputs,
             spec_version=self.run.spec_version,
             resumed=resumed,
+            owner_username=self.run.owner_username,
+            origin_harness=self.run.origin_harness,
         )
         self._enforce_inherited_mode()
         provisioned = await self._provision_workspace()
@@ -1473,6 +1475,8 @@ class RunController:
                 version=self.run.spec_version,
                 spec=self.spec,
                 preview=result.preview,
+                owner_username=self.run.owner_username,
+                origin_harness=self.run.origin_harness,
             ),
         )
         self.journal.user_edited_mid_flight([o.to_dict() for o in result.ops])

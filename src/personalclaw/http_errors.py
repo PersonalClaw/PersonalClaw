@@ -80,6 +80,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── model resolution (first-run legibility) ──
+    # A model-dependent route was driven before any model provider was bound. The wire
+    # peer of the agent-session `ERR_MODEL_UNRESOLVED` (errors.py): an HTTP route answers
+    # with THIS lowercase_snake code + a message carrying the "no model provider resolves
+    # for use case" phrasing the FE `isNoModelSetupError` matcher keys on, so a first-run
+    # surface says "connect a model" rather than reporting a fake success or a bare 500.
+    "model_unresolved": (
+        "No model provider resolves for the use case this route needs — no provider is "
+        "configured, or the bound one is absent. Connect a model in Settings → Models."
+    ),
     # ── resilience doctor (dashboard/handlers/doctor.py) ──
     "doctor_disabled": "The Doctor surface is turned off on this instance.",
     "unknown_capability": "No capability with that name is registered with the Doctor.",
@@ -491,6 +501,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The note could not be written to the inbox, so it was not kept. Your text is "
         "still in the compose box — try saving again."
     ),
+    # ── inbox field-type validation (handlers_inbox.api_inbox_update — issue 338 / #2845) ──
+    # A per-FIELD type refusal, distinct from `invalid_body` (a whole-body "this is not the
+    # expected object" answer). `PUT /api/inbox/{id}` validates each updatable field's type
+    # BEFORE mutating anything, so a non-string `draft` (or a non-boolean `favorited`, etc.)
+    # can no longer poison the store. The wire `message` is request-derived and names the
+    # field and the WIRE type it expected — never the caller's value, which may be arbitrarily
+    # large — e.g. "draft must be a string, got object".
+    "invalid_field_type": "A request field carries a value of the wrong type for that field.",
     # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
     # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
     # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system
@@ -533,6 +551,18 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "unknown_policy_key": (
         "A policy override key is not in the overridable set; the detail names the "
         "offending keys and the keys a run may override."
+    ),
+    # ── onboarding local-model zero-key on-ramp (handlers/local_model.py) ──
+    # `local_model_endpoint_invalid` (400) — the bind target is not a loopback or
+    # private (RFC-1918) address; only the endpoint a local/LAN Ollama listens on is
+    # bindable here. `local_model_bind_failed` (400) — the endpoint was local but the
+    # bind could not complete (no Ollama answered, no chat model pulled, or the Ollama
+    # provider app is not installed); the detail carries the seed path's remediation.
+    "local_model_endpoint_invalid": (
+        "A local model can only be bound to a loopback or private (RFC-1918) endpoint."
+    ),
+    "local_model_bind_failed": (
+        "A reachable local model could not be bound; the detail explains what was missing."
     ),
 }
 

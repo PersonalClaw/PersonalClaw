@@ -12,7 +12,8 @@ import { notify } from '../../app/appSdk'
 
 /** Updates — current version, available updates, auto-update toggle, and the
  *  rendered changelog. Backed by /api/update/check + /api/changelog + POST
- *  /api/update (apply) + /api/update/auto. */
+ *  /api/update (apply); the auto-update mode writes the `updates.auto` config
+ *  field via PATCH /api/config/personalclaw (RUM-5 retired POST /api/update/auto). */
 /** The document's front matter is written for CONTRIBUTORS, and it was rendering as product copy.
  *
  *  Measured on `#/settings/updates`: `/api/changelog` serves CHANGELOG.md verbatim (255,413 chars), so the
@@ -106,15 +107,25 @@ export function UpdatesPanel() {
     try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
     notify(`Couldn't ${what}: ${msg}`, 'error')
   }
+  // Auto-update is the opt-in `updates.auto` mode: on ⇒ 'staged' (apply at the
+  // next safe point — holds while work is in flight, lands on the resolved release tag),
+  // off ⇒ 'off' (notify only, never applies). The legacy `auto_update` bool + its dedicated
+  // endpoint were retired; the write now goes through the validated config PATCH. A richer
+  // Off/Staged selector is the Settings > Updates screen.
   const toggleAuto = (v: boolean) => {
-    setInfo((p) => p && { ...p, auto_update: v })
+    setInfo((p) => p && { ...p, auto: v ? 'staged' : 'off' })
     api.setAutoUpdate(v)
       .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
       .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} automatic updates`))
   }
+  // Developer update mode is now the `updates.channel` = 'nightly' lane:
+  // on ⇒ track the current branch (fast-forward), off ⇒ ride stable release tags.
+  // A richer Stable/Beta/Developer selector is the Settings > Updates screen;
+  // this preserves the one control a git user needs to opt into branch-tracking.
   const toggleDevMode = (v: boolean) => {
-    setInfo((p) => p && { ...p, update_dev_mode: v })
-    api.setUpdateDevMode(v)
+    const channel = v ? 'nightly' : 'stable'
+    setInfo((p) => p && { ...p, channel })
+    api.patchConfig('updates.channel', channel)
       .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
       .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} developer update mode`))
   }
@@ -184,13 +195,14 @@ export function UpdatesPanel() {
 
       <Section title="Automatic updates">
         <RowGroup>
-          <Row label="Auto-update" hint="Download and apply updates automatically when available.">
-            <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={info.auto_update} onChange={toggleAuto} label="Auto-update" /></div>
+          <Row label="Auto-update" hint="Apply updates automatically at the next safe point — held while a session or subagent is running, and only ever the resolved release, never raw main.">
+            <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={info.auto === 'staged'} onChange={toggleAuto} label="Auto-update" /></div>
           </Row>
-          {/* Dev-mode toggle: git checkouts only (track every commit vs. ride release tags). */}
+          {/* Dev-mode toggle: git checkouts only — the `nightly` channel (track every
+              commit on the current branch) vs. `stable` (ride release tags). */}
           {isGit && (
             <Row label="Developer update mode" hint="Track every new commit on your branch instead of only tagged releases (contributors).">
-              <div className="flex items-center gap-2"><Toggle on={!!info.update_dev_mode} onChange={toggleDevMode} label="Developer update mode" /></div>
+              <div className="flex items-center gap-2"><Toggle on={info.channel === 'nightly'} onChange={toggleDevMode} label="Developer update mode" /></div>
             </Row>
           )}
         </RowGroup>

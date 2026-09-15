@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
 - `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn.
 - The dashboard gains a **Desktop live view** widget: the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land.
 - The desktop app now ships for **Linux x86-64**: every release attaches an AppImage and a `.deb`, built and smoke-tested by CI from the release tag.
@@ -16,6 +17,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **A pip / pipx / uv wheel install now upgrades to the release your `updates` channel/pin selects, not a blind `releases/latest`.**
+- **Unattended auto-update is now OPT-IN and STAGED, and the always-on `auto_update` bool is retired.**
+- **The in-app updater no longer tracks raw `main` — a git checkout rides release TAGS by channel, and the destructive `git reset --hard origin/main` is gone from every unattended and dashboard apply path.**
 - **The install scanner's terminal tier is no longer shell-only: destruction written in Python is refused, and a bundle that deletes your home directory can no longer install with a clean bill of health.**
 - **`run_chat` is no longer exported from `personalclaw.sdk.channel`.**
 - **Workflow runs gain a sparse `policy_overrides` overlay: the five per-instance supervisor knobs (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) can now be persisted per run, composed on top of the template/kind defaults at resolution time.**
@@ -25,6 +29,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **Creating a loop on a fresh install with no model bound now says so, instead of silently building a bare-defaults plan.**
+- **The unattended auto-update no longer silently discards a user's uncommitted tracked-file edits.**
 - **A native-Windows gateway no longer `ImportError`s at boot on the POSIX-only `resource` module.**
 - **The desktop app now tells the gateway it IS the desktop app, so a packaged install stops offering to `pip install -U` its own frozen backend.**
 - **The three surfaces that tell a desktop user how to update stopped promising an updater the shell does not ship.**

@@ -1119,14 +1119,42 @@ class DashboardState:
             "uptime": _fmt_duration(uptime),
             "start_time": self.start_time,
             "sessions": self.sessions.count,
-            # The STORE's count. This fed the SPA's "triggers" metric from the legacy
-            # service, which the cutover left holding nothing.
-            "cron_jobs": self.trigger_counts()["total"],
+            # NB: the dashboard's "triggers" rail is NOT sourced here. `cron_jobs` used to be —
+            # `trigger_counts()["total"]`, the schedule STORE's count — but that under-counted the
+            # rail's own label: the Triggers page counts lifecycle hooks too (issue 773). The rail
+            # now reads `triggers` (the unified count), assembled by `api_status` via
+            # `handlers.triggers.unified_trigger_count`. The schedule-store count still ships as the
+            # richer `cron` block (`trigger_counts()`); a flat `cron_jobs` mirror of `cron["total"]`
+            # with no remaining reader is dropped.
             "lessons": self._lessons_count(),
             "subagents": self.subagents.count if self.subagents else 0,
             "update_available": update_available,
             "no_crons": self.no_crons,
         }
+
+    def active_work_snapshot(self) -> dict[str, int]:
+        """Count in-flight work a restart/apply would interrupt: running (not-done)
+        background subagents + live chat sessions.
+
+        The ONE place "is it safe to restart/apply now?" is answered — reused by the
+        manual-restart confirm gate (``/api/system/restart?probe=1``) and the staged
+        auto-update gate (``gateway._work_in_flight``, RUM-5) so the two never diverge.
+        Lives on ``DashboardState`` (not the HTTP handler) because it reads only this
+        object's own ``subagents``/``sessions``, and the gateway must consult it without
+        importing the dashboard's HTTP surface.
+        """
+        running_agents = 0
+        subs = getattr(self, "subagents", None)
+        if subs is not None:
+            try:
+                running_agents = sum(1 for a in subs.all_agents if not a.done)
+            except Exception:
+                running_agents = 0
+        try:
+            sessions = len(self.sessions._sessions)
+        except Exception:
+            sessions = 0
+        return {"running_agents": running_agents, "sessions": sessions}
 
     _APPROVAL_TIMEOUT = 7200  # 2 hours — interactive default (a human is present)
     # Unattended origins (cron / loop / heartbeat / scheduled) have no human to

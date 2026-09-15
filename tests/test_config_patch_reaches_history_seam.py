@@ -42,7 +42,6 @@ def _seed_config() -> dict:
         "default_agent": "personalclaw",
         "agent": {"approval_mode": "auto", "sandbox": "auto"},
         "local_models": {"pressure_warn_pct": 85},
-        "auto_update": False,
     }
 
 

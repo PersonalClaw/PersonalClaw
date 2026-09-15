@@ -617,6 +617,42 @@ def _app_source_catalog() -> list[dict[str, Any]]:
 # ── list ──
 
 
+def unified_trigger_count(state: DashboardState) -> int:
+    """The number of triggers ``GET /api/triggers`` lists — the tally the dashboard
+    SystemHealth rail renders under "triggers" so it AGREES with the Triggers page (#773).
+
+    Counts the SAME four sources :func:`api_triggers` gathers — clock schedules and the
+    store-only kinds from the unified store, lifecycle hooks, and data-event triggers —
+    but never serializes or redacts a row: a status poll only needs the tally. This is
+    deliberately WIDER than ``DashboardState.trigger_counts()`` / the ``cron`` status
+    block, which count the schedule store alone and stay as they are; the rail exists to
+    over-claim otherwise — it labels a schedule-store count "triggers" while the Triggers
+    page adds the (7 globally-fired) lifecycle hooks the store never held.
+
+    Never raises: ``GET /api/status`` is what a user opens when something is already
+    wrong, so a source that cannot be read contributes 0 rather than 500ing the surface —
+    exactly the contract ``trigger_counts()`` keeps for the schedule half.
+    """
+    total = 0
+    try:
+        from personalclaw.triggers.provider import all_rows
+
+        for row in all_rows(_trigger_store()):
+            if row.trigger.kind == "clock" or row.trigger.kind in _STORE_ONLY_KINDS:
+                total += 1
+    except Exception:  # noqa: BLE001 - a status read must never fail on the store half
+        logger.debug("schedule/store trigger count unavailable", exc_info=True)
+    try:
+        total += len(_hook_store(state).list_all())
+    except Exception:  # noqa: BLE001 - nor on the lifecycle-hook half
+        logger.debug("lifecycle hook count unavailable", exc_info=True)
+    try:
+        total += len(_event_store().load())
+    except Exception:  # noqa: BLE001 - nor on the data-event half
+        logger.debug("event trigger count unavailable", exc_info=True)
+    return total
+
+
 async def api_triggers(request: web.Request) -> web.Response:
     """GET /api/triggers?type=schedule|lifecycle — every trigger, both kinds.
 

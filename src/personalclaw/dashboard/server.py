@@ -552,6 +552,13 @@ async def start_dashboard(
     )
 
     register_onboarding_import_routes(app)
+    # The local + LAN Ollama zero-key on-ramp: detect a local Ollama, an
+    # opt-in RFC-1918 LAN scan, and a credential-free one-click bind. Its own module
+    # because the scan is a security-relevant network action gated behind an explicit
+    # POST, and the bind re-validates the endpoint as loopback/private.
+    from personalclaw.dashboard.handlers.local_model import register_local_model_routes
+
+    register_local_model_routes(app)
     # Doctor — tiered read-only health probes
     # Scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
@@ -1404,7 +1411,12 @@ async def start_dashboard(
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)
     app.router.add_post("/api/inbox/{id}/open", handlers_inbox.api_inbox_open)
     app.router.add_post("/api/inbox/{id}/favorite", handlers_inbox.api_inbox_favorite)
-    app.router.add_get("/api/inbox/digest", handlers_inbox.api_inbox_digest)
+    # POST, not GET (#337). This route CREATES an inbox item and spends a model call, so a
+    # browser prefetch, a retry, or a double render manufactured items — and a state-changing
+    # GET also sits outside CSRF protection entirely. Registered beside `/{id}/...` above and
+    # BEFORE nothing dynamic can shadow it: `digest` is a literal segment, and the dynamic
+    # `/api/inbox/{id}` routes are PUT/POST on a different path shape.
+    app.router.add_post("/api/inbox/digest", handlers_inbox.api_inbox_digest)
     app.router.add_get("/api/inbox/providers", handlers_inbox.api_inbox_providers)
 
     # Notifications (GET/clear registered in _register_mcp_routes; the rest here)
@@ -1415,10 +1427,8 @@ async def start_dashboard(
     app.router.add_get("/api/update/check", handlers.api_update_check)
     app.router.add_get("/api/changelog", handlers.api_changelog)
     app.router.add_post("/api/update", handlers.api_update_apply)
-    app.router.add_post("/api/update/auto", handlers.api_update_auto)
-    app.router.add_post("/api/update/dev-mode", handlers.api_update_dev_mode)
     app.router.add_post("/api/update/cancel", handlers.api_update_cancel)
-    # Restart-only (no git pull) — apply committed backend changes. GET-less:
+    # Restart-only (no git advance) — apply committed backend changes. GET-less:
     # ?probe=1 returns the active-work snapshot for the confirm gate.
     app.router.add_post("/api/system/restart", handlers.api_restart)
     # Only expose the simulation endpoint in dev/debug environments

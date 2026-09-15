@@ -218,7 +218,14 @@ def test_the_job_scan_is_not_vacuous() -> None:
     parsed = jobs(_CI.read_text(encoding="utf-8"))
     missing = LONG_STANDING_JOBS - set(parsed)
     assert not missing, f"the job scan lost long-standing jobs {sorted(missing)} — parser broke"
-    assert "uv run pytest" in run_commands(parsed["test"]), "the run: scan broke, not ci.yml"
+    # The pytest step's HOME is derived, not pinned to a job id (the same discipline the module
+    # docstring states for the browse leg): since #2720 the `test` job is an aggregation gate and
+    # the `uv run pytest …` step moved to `test-shard`, so anchor the run: scan on any job that
+    # runs it rather than on `test` specifically.
+    all_run = [cmd for block in parsed.values() for cmd in run_commands(block)]
+    assert any(
+        cmd.startswith("uv run pytest") for cmd in all_run
+    ), "the run: scan broke, not ci.yml"
 
 
 def test_the_module_walk_is_not_vacuous() -> None:

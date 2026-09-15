@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 from personalclaw import shutdown_event
@@ -71,6 +72,27 @@ def _dashboard_state():
 _MAX_MESSAGE_CHARS = 6000
 _MAX_THREAD_TURNS = 12
 _MAX_DIGEST_MESSAGES = 60
+
+
+def digest_item_id(channel_id: str, ts: float) -> str:
+    """The id for a generated channel digest: ``{channel}_digest_{uuid8}_{int(ts)}``.
+
+    A module-level function rather than an inline f-string so a test can assert the REAL id
+    instead of a copy of it. It was inline, and the first version of the test for this mirrored
+    the f-string in a helper — which meant reverting the production line left every behavioural
+    assertion green.
+
+    The uuid8 is what makes two digests distinct: the id used to be `{channel}_digest_{int(ts)}`,
+    second-granular, and `InboxStore.items` is keyed by id — so two digests generated in the
+    same second silently REPLACED one another, discarding a paid model call's output with no
+    error.
+
+    It sits BEFORE the timestamp on purpose. `InboxItem.ts` is `id.rsplit("_", 1)[-1]`, so a
+    uuid appended at the end would make every digest's `ts` a hex string — sorting and
+    rendering as garbage rather than failing loudly. That contract is also what the
+    Inbox-Unification plan means by "keeps the `ts` rsplit contract".
+    """
+    return f"{channel_id}_digest_{uuid.uuid4().hex[:8]}_{int(ts)}"
 
 
 def _resolve_source_kind(declared: str, source_name: str) -> str:
@@ -490,7 +512,7 @@ class InboxService:
             return None
         ts = time.time()
         item = InboxItem(
-            id=f"{channel_id}_digest_{int(ts)}",
+            id=digest_item_id(channel_id, ts),
             channel=channel_id,
             channel_name=channel_name,
             thread_ts=None,

@@ -3308,7 +3308,7 @@ export interface ProjectImportResult {
   project_id?: string; written?: string[]; error?: string
 }
 // Update + changelog.
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto_update: boolean; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; update_dev_mode?: boolean; release_notes?: string }
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; release_notes?: string }
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -3928,7 +3928,10 @@ export interface PushStatus {
 // sources those from their own endpoints).
 export interface DashboardStatus {
   uptime: string; uptime_secs?: number; start_time?: number
-  sessions?: number; messages?: number; cron_jobs?: number; lessons?: number; subagents?: number
+  /** Every trigger the Triggers page lists — schedules + store-only kinds + lifecycle
+   *  hooks + data-event triggers. The SystemHealth rail's "triggers" metric reads this so
+   *  it agrees with that page; the narrower schedule-store count rides the `cron` block. */
+  sessions?: number; messages?: number; triggers?: number; lessons?: number; subagents?: number
   update_available?: boolean; version?: string; platform?: string
   /** Non-null while a self-update pipeline is in flight (step: pulling/installing/
    *  building/restarting/error/failed) — lets a freshly-loaded page pick up an
@@ -4216,6 +4219,14 @@ export interface OnboardingStatePatch {
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
 }
+/** A reachable local Ollama endpoint and the chat model it will bind to.
+ *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess. */
+export interface LocalModelEndpoint { endpoint: string; model: string }
+/** `GET /api/onboarding/local-model` — localhost detection. `endpoint`/`model` are
+ *  present only when `detected` is true. */
+export interface LocalModelDetection { detected: boolean; endpoint?: string; model?: string }
+/** `POST /api/onboarding/local-model/bind` — the credential-free bind outcome. */
+export interface LocalModelBindResult { ok: boolean; status: string; model: string; provider: string }
 /** One thing another local agent tool holds that PersonalClaw could adopt.
  *  `existing` is the server's answer, from the fingerprint ledger of what THIS
  *  importer already wrote — so a re-entered first run marks an item instead of
@@ -5723,6 +5734,16 @@ export const api = {
    *  travel, never items, so a caller can never name a directory to copy in. */
   runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
+  /** Is a local Ollama reachable on localhost? A loopback round-trip, safe to
+   *  call automatically; `detected:false` when nothing bindable answers. */
+  detectLocalModel: () => get<LocalModelDetection>('/api/onboarding/local-model'),
+  /** The OPT-IN LAN sweep. Calling this IS the explicit user action; nothing
+   *  scans the network until it fires. Returns only endpoints that answered live. */
+  scanLocalModels: () => post<{ endpoints: LocalModelEndpoint[] }>('/api/onboarding/local-model/scan', {}),
+  /** One-click, credential-free bind of a discovered endpoint (mirrors
+   *  `--seed-local-model`: no API key, nothing written to `config.json` as a secret). */
+  bindLocalModel: (endpoint: string) =>
+    post<LocalModelBindResult>('/api/onboarding/local-model/bind', { endpoint }),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.
@@ -6798,8 +6819,10 @@ export const api = {
   draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
+  // POST, not GET: it creates that item and spends a model call, so a prefetch or a
+  // retry of a GET manufactured duplicates (#337).
   digestInboxChannel: (channelId: string, hours = 4) =>
-    get<InboxItem>(`/api/inbox/digest?channel_id=${encodeURIComponent(channelId)}&hours=${hours}`),
+    post<InboxItem>(`/api/inbox/digest?channel_id=${encodeURIComponent(channelId)}&hours=${hours}`),
   sendInboxReply: (id: string, text: string) => post<{ ok: boolean; delivered_to_session?: boolean }>('/api/inbox/send', { id, text }),
   // P11 engagement signals — recorded only when inbox.engagement_ranking_enabled is on
   // (backend gates it); open is best-effort fire-and-forget, favorite persists the star.
@@ -6854,9 +6877,11 @@ export const api = {
   // Cancel a running update / dismiss a stuck progress overlay (backend clears
   // its update_progress state so a reload doesn't resurrect it).
   cancelUpdate: () => post<{ ok?: boolean }>('/api/update/cancel'),
-  setAutoUpdate: (enabled: boolean) => post<{ ok?: boolean }>('/api/update/auto', { enabled }),
-  setUpdateDevMode: (enabled: boolean) => post<{ ok?: boolean }>('/api/update/dev-mode', { enabled }),
-  // restart-only (no git pull) — apply committed backend changes.
+  // Auto-update mode is a plain `updates.auto` config field (off | staged) written
+  // through the validated config PATCH — the dedicated /api/update/auto endpoint and the
+  // legacy `auto_update` bool it wrote were RETIRED.
+  setAutoUpdate: (staged: boolean) => api.patchConfig('updates.auto', staged ? 'staged' : 'off'),
+  // restart-only (no git advance) — apply committed backend changes.
   // probe first for the active-work count powering the confirm gate.
   restartProbe: () => post<{ ok: boolean; running_agents: number; sessions: number }>('/api/system/restart?probe=1'),
   restartGateway: () => post<{ ok?: boolean; status?: string; error?: string }>('/api/system/restart'),

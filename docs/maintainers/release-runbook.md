@@ -84,8 +84,8 @@ cd web && npm run typecheck && npm test && npm run build
 ### 4. Land the bump through a PR
 
 `main` is protected and append-only. Branch, PR, merge — never push to `main`,
-and never force-push it (the `git pull`-based self-updater depends on its linear
-history).
+and never force-push it: release tags are cut from `main`, and the git kind's
+`nightly` channel fast-forwards it, so both depend on its linear history.
 
 ## Tagging
 

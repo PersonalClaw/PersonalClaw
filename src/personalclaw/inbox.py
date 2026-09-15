@@ -167,6 +167,68 @@ class Confidence(str, Enum):
     USER = "user"
 
 
+#: The type each externally-updatable item field must hold.
+#:
+#: `isinstance`, deliberately, NOT `type(v) is` — every one of the four string fields is
+#: legitimately written with a `str`-subclassing enum member by callers inside this package
+#: (`handlers_inbox` passes `ItemStatus.DISMISSED` itself, not its `.value`), and an exact-type
+#: check would refuse the codebase's own writes.
+#:
+#: Every field here HAS a dataclass default, which is what lets :meth:`InboxItem.from_dict`
+#: repair a wrong-typed stored value by dropping it. Adding a field with no default would
+#: break that, so the pairing is pinned by a test rather than left to be remembered.
+_UPDATABLE_FIELD_TYPES: dict[str, type] = {
+    "status": str,
+    "draft": str,
+    "classification": str,
+    "confidence": str,
+    "favorited": bool,
+}
+
+#: Python type → the word a client understands, so a refusal names the wire shape it
+#: expected instead of leaking `dict`/`NoneType` at an HTTP boundary.
+_WIRE_TYPE_NAMES: dict[type, str] = {
+    str: "string",
+    bool: "boolean",
+    int: "number",
+    float: "number",
+    dict: "object",
+    list: "array",
+    type(None): "null",
+}
+
+
+def _wire_type_name(t: type) -> str:
+    return _WIRE_TYPE_NAMES.get(t, t.__name__)
+
+
+class InboxFieldTypeError(ValueError):
+    """An item-field write named a value of the wrong type.
+
+    Raised BEFORE anything is persisted. The value is never echoed back — only the type
+    names — because the caller controls it and it may be arbitrarily large.
+    """
+
+    def __init__(self, field: str, expected: type, value: Any) -> None:
+        self.field = field
+        super().__init__(
+            f"{field} must be a {_wire_type_name(expected)}, " f"got {_wire_type_name(type(value))}"
+        )
+
+
+def validate_updatable_fields(fields: dict[str, Any]) -> None:
+    """Raise :class:`InboxFieldTypeError` on the first wrong-typed field.
+
+    One implementation, two call sites: the HTTP handler runs it *before* its dismiss /
+    mute / favorite side effects (so a refused request mutates nothing), and
+    :meth:`InboxStore.update` runs it again for the three callers that never touch HTTP.
+    """
+    for key, value in fields.items():
+        expected = _UPDATABLE_FIELD_TYPES.get(key)
+        if expected is not None and not isinstance(value, expected):
+            raise InboxFieldTypeError(key, expected, value)
+
+
 @dataclass
 class InboxItem:
     """A message surfaced by Inbox with an optional draft reply."""
@@ -216,7 +278,35 @@ class InboxItem:
 
     @classmethod
     def from_dict(cls, d: dict) -> "InboxItem":
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        """Rebuild an item from stored JSON, dropping what it cannot hold.
+
+        Already tolerant of *unknown* keys (that is what kept `favorited` back-compatible).
+        This extends the same tolerance to a wrong-typed value, and it is a repair, not
+        belt-and-braces: a stored `draft` that is an object made `redact_item` raise
+        ``TypeError`` for every reader, so one poisoned item took out `GET /api/inbox`
+        entirely — permanently, because the poison was on disk. Dropping the value falls the
+        field back to its dataclass default and the inbox loads again.
+
+        Only fields in :data:`_UPDATABLE_FIELD_TYPES` are dropped, and every one of those has
+        a default. A required field is left alone so a genuinely unreadable record still
+        fails loudly at construction instead of being silently invented.
+        """
+        clean: dict[str, Any] = {}
+        for key, value in d.items():
+            if key not in cls.__dataclass_fields__:
+                continue
+            expected = _UPDATABLE_FIELD_TYPES.get(key)
+            if expected is not None and not isinstance(value, expected):
+                logger.warning(
+                    "inbox item %s: stored %s is a %s, not a %s — falling back to the default",
+                    d.get("id", "<no id>"),
+                    key,
+                    _wire_type_name(type(value)),
+                    _wire_type_name(expected),
+                )
+                continue
+            clean[key] = value
+        return cls(**clean)
 
 
 # ── User Resolver ──
@@ -348,9 +438,17 @@ class InboxStore:
             self.save()
 
     def update(self, item_id: str, **kwargs: Any) -> InboxItem | None:
+        """Apply field updates and persist. Raises :class:`InboxFieldTypeError` on a
+        wrong-typed value, having written nothing.
+
+        Validation is a separate pass over ALL of *kwargs* before the first `setattr`, so a
+        two-field write with one bad field is refused whole rather than half-applied. The
+        old single loop reached `self.save()` with the bad value already on the item.
+        """
         item = self.items.get(item_id)
         if not item:
             return None
+        validate_updatable_fields(kwargs)
         for k, v in kwargs.items():
             if hasattr(item, k):
                 setattr(item, k, v)

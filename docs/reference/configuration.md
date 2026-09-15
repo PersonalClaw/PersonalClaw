@@ -226,7 +226,7 @@ makes the voice loop noisier, never less safe.
 | `agents` | object | `{}` | Agents page | Named agent definitions (see below). |
 | `default_agent` | string | `""` | Settings → Agent defaults | Active agent name from the `agents` section (also `PUT /api/config/default-agent`). |
 | `memory_stores` | object | `{}` | backend-only | Named memory store definitions; `memory_stores.<name>.description` is a human-readable purpose. Stores are referenced by agent profiles. |
-| `auto_update` | boolean | `true` | Settings → Updates | Automatically apply core updates when a new version is found (update checks always run; this gates the unattended pull + rebuild + restart). |
+| `updates.auto` | string | `"off"` | Settings → Updates | Opt-in unattended-apply mode (retired the legacy `auto_update` bool, RUM-5). `"off"` only notifies; `"staged"` applies at the next safe point — held while a session/subagent is in flight, and only ever the resolved channel/pin release tag, never raw `main`. |
 | `timezone` | string | `""` (system) | set by `personalclaw setup` | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Per-job trigger timezones override it. |
 | `snapshot_dir` | string | `""` | backend-only | Where `personalclaw snapshot` writes/reads portability snapshots. Empty = `~/.personalclaw/snapshots`. |
 
