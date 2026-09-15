@@ -4059,18 +4059,14 @@ class GatewayOrchestrator:
 
         ensure_computer_use_boot()
 
-        # Raise FD limit — each ACP agent session uses ~6 FDs (3 pipes)
-        # plus MCP server subprocesses. Default macOS limit (256) is too low.
-        import resource
+        # Raise the gateway's own FD limit — each ACP agent session uses ~6 FDs
+        # (3 pipes) plus MCP server subprocesses, and the default macOS soft limit
+        # (256) is too low. The ``resource`` module is POSIX-only; on a platform
+        # without it (native Windows) this degrades to a no-op through the guarded
+        # helper instead of ``ImportError``-ing gateway boot here. (WIN-1)
+        from personalclaw.resource_limits import raise_fd_limit
 
-        try:
-            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-            target = min(hard, 10240)
-            if soft < target:
-                resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
-                logger.info("Raised FD limit: %d → %d", soft, target)
-        except Exception:
-            pass
+        raise_fd_limit()
 
         # Clean up orphaned ACP agent processes from previous runs
         from personalclaw.session import cleanup_orphaned_sessions
