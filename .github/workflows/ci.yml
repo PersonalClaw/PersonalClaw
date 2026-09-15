@@ -215,8 +215,33 @@ jobs:
           # -n0: the truncation sweep is ~170 tiny `sh` invocations; xdist buys nothing.
           uv run pytest tests/test_website_installer.py -n0 --no-cov
 
-  test:
+  test-shard:
+    # ── Sharded pytest — the throughput fix (#2720) ───────────────────────────────────────────
+    # The single `test` job ran the whole ~40-min suite serially and was the binding constraint
+    # on merge rate. It is split into N=4 DISJOINT shards (pytest-split `--splits/--group`) that
+    # run in PARALLEL, so each PR's tests finish in ~1/N the wall-clock and each shard's log is
+    # ~1/N the size (which also mitigates the #2720 log-truncation class). The `test` job below
+    # is the AGGREGATION GATE: it keeps the STABLE `test` id — the branch-protection required
+    # check and the id roadmap plans reference (CI-RELEASE-ENGINEERING C1) — and goes green only
+    # when every shard passed.
+    #
+    # Coverage is deliberately NOT measured on the shards: it stays owned by full.yml's dedicated
+    # `coverage` job. Each shard runs `--no-cov` (its addopts `--cov` payload is pure redundant
+    # memory here — the same #2720 lever full.yml's matrix already uses).
+    #
+    # pytest-split partitions the collected items completely and disjointly; `least_duration`
+    # balances by a committed `.test_durations` when present and degrades to an even by-count
+    # split when it is not (this repo commits none yet — measured clean: 31 359 tests → 4 groups
+    # with zero overlap and zero gaps). Commit a `.test_durations` later for duration-balanced
+    # shards; nothing in this workflow changes.
     runs-on: ubuntu-latest
+    strategy:
+      # fail-fast:false so one red shard does not cancel the others — you want every failing
+      # shard's report in one push, not a fix-push-rediscover loop (same reason full.yml's matrix
+      # sets it). N is exactly the `shard` list below: extend it to re-shard, nothing else moves.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       # NOTE: do NOT set PERSONALCLAW_HOME here. The suite runs under the documented
       # no-global-home contract (CONTRIBUTING: destructive tests isolate via per-test
@@ -251,8 +276,36 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends tmux
           tmux -V
-      - name: pytest (full suite, xdist)
-        run: uv run pytest
+      - name: pytest (shard ${{ matrix.shard }} of 4 — xdist within the shard, no coverage)
+        # --no-cov: coverage is measured once by full.yml's `coverage` job; the addopts `--cov`
+        #   payload is redundant memory here (#2720). full.yml's matrix already runs this way.
+        # -q: with the addopts `--verbose` this nets to NORMAL verbosity — a progress summary,
+        #   not one line per test — so each shard's log stays small (the #2720 truncation class).
+        # --splits/--group select this shard's disjoint slice; xdist (`-n auto`, from addopts)
+        #   then parallelises it across the runner's cores. `least_duration` splits evenly by
+        #   count until a `.test_durations` is committed (see the job header).
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
+
+  test:
+    # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
+    # This job carries the STABLE `test` id (branch-protection required check + roadmap
+    # references). It goes green only when EVERY shard succeeded, and `if: always()` makes it
+    # report RED — never "skipped" — when a shard fails, so a required status check is always
+    # produced (a skipped required check would wedge the PR). It needs no checkout or toolchain:
+    # it only reads the matrix's aggregate result.
+    needs: [test-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: every test shard passed
+        run: |
+          result='${{ needs.test-shard.result }}'
+          if [ "$result" != "success" ]; then
+            echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
+                 "(expected 'success'). Open the red 'test-shard (N)' job(s) above for the failing tests."
+            exit 1
+          fi
+          echo "all 4 test shards passed"
 
   web:
     runs-on: ubuntu-latest

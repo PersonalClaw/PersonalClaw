@@ -22,24 +22,41 @@ permissions:
   contents: read
 
 jobs:
-  matrix:
+  matrix-shard:
     # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners
     # (PLATFORM-REACH A1.3). The arm pair is added via `include` — one job each on
     # the newest supported Python — rather than crossing arm into the full grid:
-    # A1.3 scopes arm to the non-PR path "for budget", so two extra jobs prove the
+    # A1.3 scopes arm to the non-PR path "for budget", so two extra legs prove the
     # arch while four would double this workflow's arm cost for no new signal.
+    #
+    # ── Sharded 4 ways, same mechanism as ci.yml's `test-shard` ───────────────────────────────
+    # Each leg is also split into N=4 disjoint shards (pytest-split `--splits/--group`), so every
+    # leg runs ~1/4 of the suite. Beyond wall-clock, this directly attacks #2720: the macOS
+    # runners OOM-killed the full-suite step mid-run and truncated the log, and a quarter-suite
+    # shard has a proportionally smaller peak RSS and log. The stable `matrix` id (CI-RELEASE-
+    # ENGINEERING C1) is preserved by the aggregation gate job below. This is the main/nightly
+    # path (not the PR gate), so the extra jobs cost budget only off the critical path.
+    #
+    # The arm `include` legs carry an explicit `shard` each (GitHub adds an include entry that
+    # omits a base-matrix key as a job with that key UNSET — which would pass `--group` an empty
+    # value — so the arm legs are enumerated per shard rather than left to inherit).
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
         os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4]
         include:
           # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
           # (macos-latest is arm64 too, but pinning keeps the arch explicit here).
-          - python: "3.13"
-            os: ubuntu-24.04-arm
-          - python: "3.13"
-            os: macos-14
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 1 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 2 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 3 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 4 }
+          - { python: "3.13", os: macos-14, shard: 1 }
+          - { python: "3.13", os: macos-14, shard: 2 }
+          - { python: "3.13", os: macos-14, shard: 3 }
+          - { python: "3.13", os: macos-14, shard: 4 }
     runs-on: ${{ matrix.os }}
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
@@ -69,24 +86,45 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (full suite)
+      - name: pytest (shard ${{ matrix.shard }} of 4)
         # The frontend URL-doctrine + config round-trip tests are part of this suite;
         # named here for legibility in the job summary.
         # #2720: the memory-limited macOS runners OOM-killed this step mid-suite — a
         # varying silent truncation (PASSED stream, then no summary, no assertion, no
-        # traceback). Two levers, both memory, neither weakens a test:
+        # traceback). The levers, none of which weakens a test:
         #   --no-cov  — coverage is measured once by the dedicated `coverage` job; the
         #               --cov payload (from addopts) is pure redundant memory here.
-        #   -n 2 on macOS — cap xdist workers so peak RSS stays under the runner ceiling
-        #               (--no-cov alone cleared ubuntu + macos-14 but macos-latest still
-        #               died at ~63%). ubuntu keeps -n auto from addopts. This leg proves
-        #               cross-platform correctness, not coverage or raw speed.
+        #   -n 2 on macOS — cap xdist workers so peak RSS stays under the runner ceiling.
+        #               ubuntu keeps -n auto from addopts.
+        #   --splits/--group — each leg now runs ~1/4 of the suite, so peak RSS AND log
+        #               size shrink proportionally (the direct cause of the truncation).
+        #               `least_duration` splits evenly by count until a `.test_durations`
+        #               is committed. -q keeps the per-shard log small.
+        # This leg proves cross-platform correctness, not coverage or raw speed.
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            uv run pytest --no-cov -n 2
+            uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
           else
-            uv run pytest --no-cov
+            uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
           fi
+
+  matrix:
+    # ── Aggregation gate carrying the stable `matrix` id (CI-RELEASE-ENGINEERING C1) ───────────
+    # Green only when every sharded matrix leg passed; `if: always()` so a failed leg reports red
+    # rather than skipped. Needs no checkout or toolchain — it only reads the matrix result.
+    needs: [matrix-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: every matrix shard passed
+        run: |
+          result='${{ needs.matrix-shard.result }}'
+          if [ "$result" != "success" ]; then
+            echo "::error title=matrix shards failed::the sharded matrix result was '$result'" \
+                 "(expected 'success'). Open the red 'matrix-shard (...)' leg(s) above."
+            exit 1
+          fi
+          echo "all matrix shards passed"
 
   audit:
     # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:
