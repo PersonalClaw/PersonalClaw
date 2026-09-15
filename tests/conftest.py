@@ -280,6 +280,94 @@ def _reset_context_engine_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _reset_session_restrictions():
+    """Clear the process-global per-session memory-restriction registry around every test.
+
+    ``session_restrictions`` keeps two module-level ``OrderedDict``s (``_temporary`` /
+    ``_incognito``) — one process-wide registry of which session keys are incognito or
+    temporary, by design (a restriction set on a live gateway must outlive the turn that
+    set it). It is a cross-test hazard under xdist for the same reason as the singletons
+    above: a test that ``mark_incognito``/``mark_temporary``s a key and does not clear it
+    leaks that key into whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix: several tests
+    reuse the key ``"k"``, and ``test_session_restrictions.TestSessionRestrictions`` clears
+    the registry only in ``setup_method`` (before each test, never after) — so once it has
+    run ``test_incognito``/``test_temporary`` on a worker, ``"k"`` stays restricted, and
+    ``test_session_search``'s ``test_persistent_mode_indexes_normally`` then sees
+    ``index_session("k", …, "persistent")`` refused (``is_restricted`` True) and reds. Same
+    discipline as ``_reset_channel_delivery_registry``: cleared, not snapshot-restored,
+    because outside a live gateway the correct state is empty.
+    """
+    import personalclaw.session_restrictions as sr
+
+    sr._temporary.clear()
+    sr._incognito.clear()
+    yield
+    sr._temporary.clear()
+    sr._incognito.clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_personalclaw_logging():
+    """Snapshot + restore the ``personalclaw`` logger namespace around every test.
+
+    Two process-global logging mutations leak across tests and are invisible in
+    isolation but deterministic-per-schedule in an xdist mix — the same shape as the
+    resets above. Both reach the SAME logger, ``logging.getLogger("personalclaw")``:
+
+    * ``cli.main()`` (exercised by every ``test_cli_*`` that calls it) runs the CLI's
+      logging setup, which ``setLevel(WARNING)`` on that logger (the persisted default)
+      and *appends* a ``RotatingFileHandler`` to it;
+    * ``dashboard.handlers.updates.apply_log_level`` / the ``agent.log_level`` PATCH set
+      that logger's level LIVE.
+
+    Neither restores. ``caplog.set_level(...)`` only touches the ROOT logger, not this
+    one, so once a worker has run a ``cli.main`` test the ``personalclaw`` logger stays
+    pinned at WARNING for the rest of that worker — and every later observability test
+    that expects its own DEBUG/INFO records to be captured (e.g.
+    ``test_channel_inbound_drop_reporting``) silently loses them and reds. Sharding
+    exposed this: a leaker and a victim that used to sit in different halves of one long
+    serial run now land on the same worker in the same shard.
+
+    Levels are snapshotted for the whole ``personalclaw.*`` namespace (not a name list —
+    the same reason the registry guards above snapshot rather than enumerate) and any
+    descendant created during the test is reset to ``NOTSET``. Handlers ADDED to the
+    ``personalclaw`` logger during the test are removed and closed at teardown, so a
+    worker does not accumulate a stale open ``gateway.log`` file handle per ``cli.main``
+    test. The root logger is deliberately left to ``caplog``, which owns it.
+    """
+    import logging
+
+    def _pclaw_loggers() -> dict[str, logging.Logger]:
+        out: dict[str, logging.Logger] = {}
+        for name, obj in list(logging.Logger.manager.loggerDict.items()):
+            if (name == "personalclaw" or name.startswith("personalclaw.")) and isinstance(
+                obj, logging.Logger
+            ):
+                out[name] = obj
+        return out
+
+    root = logging.getLogger("personalclaw")
+    levels_before = {name: lg.level for name, lg in _pclaw_loggers().items()}
+    levels_before["personalclaw"] = root.level
+    handlers_before = list(root.handlers)
+
+    yield
+
+    for name, lg in _pclaw_loggers().items():
+        lg.setLevel(levels_before.get(name, logging.NOTSET))
+    root.setLevel(levels_before["personalclaw"])
+    for handler in list(root.handlers):
+        if handler not in handlers_before:
+            root.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:  # pragma: no cover - close() is best-effort cleanup
+                pass
+
+
+@pytest.fixture(autouse=True)
 def _reset_sel_singleton():
     """Reset the process-global Security Event Log singleton around every test.
 
