@@ -262,6 +262,50 @@ def _ws_csp_sources() -> str:
         return ""
 
 
+# SPA fallback: serve index.html for client-side React Router paths, and normalize
+# the router's two refusals into the one wire envelope for /api/*.
+@web.middleware  # type: ignore[misc]
+async def spa_fallback(
+    request: web.Request,
+    handler: object,
+) -> web.StreamResponse:
+    try:
+        return await handler(request)  # type: ignore[operator]
+    except web.HTTPNotFound:
+        # An unmatched /api/* route must answer in the one wire envelope — a JSON
+        # client that mistypes or hits a removed route cannot parse aiohttp's
+        # text/plain default, and so cannot tell "route gone" from "server broke".
+        # Handlers that ANSWER 404 (rather than raising) are untouched here.
+        if request.path.startswith("/api/"):
+            from personalclaw.http_errors import json_error
+
+            return json_error("not_found", status=404)
+        # `/icons/` is excluded for the PWA: a manifest icon that resolves to
+        # index.html is an invalid icon, and the only symptom is an install
+        # prompt that never appears. A 404 is diagnosable; HTML is not.
+        if request.method == "GET" and not request.path.startswith(
+            ("/assets/", "/icons/", "/sprites/", "/vendor/")
+        ):
+            return await handlers.index(request)
+        raise
+    except web.HTTPMethodNotAllowed as exc:
+        # A wrong method on a REAL /api/* route raises HTTPMethodNotAllowed, which
+        # otherwise sails past the 404 branch and answers the very text/plain default
+        # that branch exists to prevent. Normalize it to the same wire envelope. The
+        # `Allow` header the router set (the methods that WOULD work) is preserved so
+        # a client can still discover them.
+        if request.path.startswith("/api/"):
+            from personalclaw.http_errors import json_error
+
+            allow = exc.headers.get("Allow")
+            return json_error(
+                "method_not_allowed",
+                status=405,
+                headers={"Allow": allow} if allow else None,
+            )
+        raise
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -1883,32 +1927,6 @@ async def start_dashboard(
                 "object-src 'none'; base-uri 'self'",
             )
         return resp  # type: ignore[return-value]
-
-    # SPA fallback: serve index.html for client-side React Router paths
-    @web.middleware  # type: ignore[misc]
-    async def spa_fallback(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        try:
-            return await handler(request)  # type: ignore[operator]
-        except web.HTTPNotFound:
-            # An unmatched /api/* route must answer in the one wire envelope — a JSON
-            # client that mistypes or hits a removed route cannot parse aiohttp's
-            # text/plain default, and so cannot tell "route gone" from "server broke".
-            # Handlers that ANSWER 404 (rather than raising) are untouched here.
-            if request.path.startswith("/api/"):
-                from personalclaw.http_errors import json_error
-
-                return json_error("not_found", status=404)
-            # `/icons/` is excluded for the PWA: a manifest icon that resolves to
-            # index.html is an invalid icon, and the only symptom is an install
-            # prompt that never appears. A 404 is diagnosable; HTML is not.
-            if request.method == "GET" and not request.path.startswith(
-                ("/assets/", "/icons/", "/sprites/", "/vendor/")
-            ):
-                return await handlers.index(request)
-            raise
 
     # CSRF: block state-mutating requests from cross-origin pages
     _safe_methods = {"GET", "HEAD", "OPTIONS"}
