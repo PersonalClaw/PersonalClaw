@@ -1981,6 +1981,12 @@ async def run_chat(
     # exactly one provider. Handing it to another one is #959 — a Discord answer delivered to
     # Telegram with a Discord channel id, silently lost.
     _mirror_delivery: Any = None
+    # Read by the finally's done-branch (maybe_offer_check_work), which runs on EVERY
+    # turn exit — including a turn that raises before the telemetry block inside the try
+    # (e.g. ProviderResolutionError when no model provider is bound, #2856). Its in-loop
+    # value comes from the terminal complete event; initialized here, beside the other
+    # finally-inputs, so cleanup always has it instead of an UnboundLocalError.
+    _turn_tool_call_count = 0
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -2813,7 +2819,8 @@ async def run_chat(
         # both native and ACP populate event_count/tool_call_count). Rendered as
         # the live-only "Turn complete" stats line after the loop.
         _turn_event_count = 0
-        _turn_tool_call_count = 0
+        # _turn_tool_call_count is initialized before the try (the finally's done-branch
+        # reads it on turns that raise before this block — #2856); set from the event below.
         # Cost/token accounting for the same "Turn complete" line (CATO-6). Captured
         # at EVENT_COMPLETE; _turn_priced is False only when the model has no price
         # row AND the provider reported no cost → render "unpriced", never $0.00.
