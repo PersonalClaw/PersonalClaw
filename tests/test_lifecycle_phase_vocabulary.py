@@ -19,6 +19,7 @@ import pytest
 from personalclaw.loop import store
 from personalclaw.loop.loop import (
     ACTIVE_STATUSES,
+    ATTENTION_STATUSES,
     ENDED_STATUSES,
     LOOP_PHASES,
     PRELAUNCH_STATUSES,
@@ -129,6 +130,24 @@ def test_loop_derived_sets_partition_the_vocabulary():
         (ACTIVE_STATUSES, ENDED_STATUSES, "active/ended"),
     ]:
         assert not (a & b), f"{name} overlap: {sorted(s.value for s in a & b)}"
+
+
+def test_attention_is_derived_and_sits_inside_active():
+    """`ATTENTION_STATUSES` is the fifth derived set, and the inbox turns on it: a loop's
+    "needs you" row stays open exactly while its status is in here, and `store.update_status`
+    resolves the row on the way out (#335). A hand-written literal would leave a new attention
+    status leaking a permanent, unresolvable row — so its derivation is pinned like terminality's.
+
+    Inside `ACTIVE_STATUSES` by construction (that set is `ACTIVE | ATTENTION`), which is also
+    the statement that a waiting loop still counts as a live one.
+    """
+    assert ATTENTION_STATUSES == frozenset(
+        s for s, phase in LOOP_PHASES.items() if phase is LifecyclePhase.ATTENTION
+    ), "ATTENTION_STATUSES is no longer derived from the phase map"
+    assert ATTENTION_STATUSES, "vacuity floor: no attention statuses at all"
+    assert ATTENTION_STATUSES <= ACTIVE_STATUSES
+    assert not (ATTENTION_STATUSES & ENDED_STATUSES), "an ended loop cannot be awaiting the user"
+    assert not (ATTENTION_STATUSES & PRELAUNCH_STATUSES)
 
 
 # ── the FAILED asymmetry, stated as one paired fact ──────────────────────────

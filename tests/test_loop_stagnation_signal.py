@@ -186,7 +186,21 @@ class TestWorkerCannotAuthorProgress:
             )
         assert d.status == LoopStatus.STAGNANT.value
         assert "byte-identical" in d.reason()
-        assert [a["dedup_key"] for a in attention] == [f"loop:{d.id}:stagnant"]
+        # ONE row for one stall, keyed per (loop, event, OCCURRENCE). The cycle suffix arrived
+        # with #335: `loop:<id>:<event>` was permanent per pair, so a loop's SECOND stall was
+        # swallowed for the lifetime of the home. What this test cares about is unchanged — one
+        # row, not one per poll — so the assertions below pin that invariant, not just the string.
+        cycles = loop_files.cycles_completed(d.id)
+        assert [a["dedup_key"] for a in attention] == [f"loop:{d.id}:stagnant:{cycles}"]
+
+        # The anti-stacking property, now that the key carries an occurrence: the watchdog
+        # re-observes a stalled loop on every tick, and a waiting loop completes no further
+        # cycles — so the key must not move under it. Measured rather than assumed, because if
+        # the count DID advance while stagnant this scoping would file a row per tick.
+        for _ in range(3):
+            asyncio.run(d.wd._poll_once())
+        assert len(attention) == 1, "the same stall filed a second row"
+        assert loop_files.cycles_completed(d.id) == cycles
 
     def test_fresh_content_keeps_the_loop_running(self, loop_home, cfg_file, attention):
         """The discriminator: the detector must not stall a loop that is doing real work.

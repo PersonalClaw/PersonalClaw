@@ -641,17 +641,78 @@ def _verification_opted_in(source: str, kind: str) -> bool:
         return False
 
 
+#: An attention row still awaiting the user. **The one definition**, because two functions
+#: turn on it in opposite directions and they must agree exactly: :func:`_find_open_by_dedup`
+#: SUPPRESSES a re-emission while a row is open, and :func:`resolve_attention_items` CLOSES
+#: rows that are open. If those sets ever diverged, a row could be "resolved" and still
+#: swallow the next occurrence — which is precisely the compounding failure #335 measured
+#: (a stale demand that cannot be cleared, plus a real later demand that never arrives).
+#: One constant makes resolution and re-arming the same event by construction.
+OPEN_STATUSES: frozenset[str] = frozenset({ItemStatus.PENDING.value, ItemStatus.SEEN.value})
+
+
+def resolve_attention_items(
+    state: Any, refs: dict[str, str], *, store: "InboxStore | None" = None
+) -> int:
+    """Close every open attention row whose ``refs`` match ALL the given pairs. Returns the count.
+
+    The counterpart to :func:`emit_attention_item`, and deliberately its neighbour: a durable
+    row raised for a standing request has to be closed when the request stops standing, and a
+    surface that emits without resolving teaches the user to distrust the inbox — they open the
+    row, find nothing to do, and stop looking. Both halves belong to whoever owns the seam, so
+    both live here rather than the resolve half being re-implemented per caller.
+
+    Matching on a REF SUBSET is what lets one implementation serve every emitter's own ref
+    vocabulary: a workflow gate resolves on ``{"workflow": run, "workflow_node": node}``, a loop
+    on ``{"loop": loop_id}``, and a future surface on whatever it stamped. Every pair must match,
+    so a scoped resolve cannot close a sibling row (a run with two concurrent gates has two rows,
+    and answering one must not answer the other).
+
+    ``HANDLED``, not ``DISMISSED``: the request was actually answered — by the user, or by the
+    engine on their behalf when the cause went away. "Dismissed" reads as *ignored*, which is a
+    different fact and feeds the engagement signals differently.
+
+    An EMPTY ``refs`` closes nothing and says so. It would otherwise match every row and empty
+    the user's inbox, and the one thing a caller can easily get wrong here is passing a dict
+    whose values were all falsy.
+
+    Best-effort like every other attention write: whatever the caller was doing (resuming a
+    loop, ending a run) matters more than the bookkeeping, and must not fail because of it.
+    """
+    if not refs or not all(refs.values()):
+        logger.debug("resolve_attention_items: refusing an unscoped resolve (%r)", refs)
+        return 0
+    try:
+        target = store or live_store(state)
+        if target is None:
+            target = InboxStore()
+            target.load()
+        closed = 0
+        for item in list(target.items.values()):
+            if item.status not in OPEN_STATUSES:
+                continue
+            if any(item.refs.get(key) != value for key, value in refs.items()):
+                continue
+            item.status = ItemStatus.HANDLED.value
+            closed += 1
+        if closed:
+            target.save()
+        return closed
+    except Exception:
+        logger.debug("could not resolve the attention rows for %r", refs, exc_info=True)
+        return 0
+
+
 def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":
     """An unresolved item carrying ``dedup_key``, newest first.
 
     Only PENDING/SEEN count as open: once the user has HANDLED or DISMISSED a request, a
     later re-emission is genuinely new and should surface again rather than be swallowed.
     """
-    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
     matches = [
         i
         for i in store.items.values()
-        if i.refs.get("dedup_key") == dedup_key and i.status in open_states
+        if i.refs.get("dedup_key") == dedup_key and i.status in OPEN_STATUSES
     ]
     if not matches:
         return None

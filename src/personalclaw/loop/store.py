@@ -30,6 +30,7 @@ from typing import Any
 
 from personalclaw.loop import files
 from personalclaw.loop.loop import (
+    ATTENTION_STATUSES,
     ENDED_STATUSES,
     KINDS,
     PRELAUNCH_STATUSES,
@@ -329,7 +330,13 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     elapsed_seconds whenever we LEAVE running (so displayed time excludes pauses);
     sets started_at on entering RUNNING (+ clears stale error); stamps completed_at on arriving
     at an ENDED status and clears it on leaving one. Extra ``fields`` are written through
-    (JSON-encoded if needed)."""
+    (JSON-encoded if needed).
+
+    Also **closes the loop's inbox attention row when the loop stops waiting on the user** —
+    see :func:`_resolve_attention_rows`. Here rather than at the callers because this is the
+    only place that knows the status the loop is coming FROM: a caller would have to re-read
+    the row to learn it, and the re-read is both racy and forgettable — the resume path simply
+    never did it, which is #335."""
     if not files.valid_loop_id(loop_id):
         raise KeyError(loop_id)
     conn = _connect()
@@ -386,10 +393,47 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     finally:
         conn.close()
     files.write_status(loop_id, new_status)
+    if current in ATTENTION_STATUSES and new_status not in ATTENTION_STATUSES:
+        _resolve_attention_rows(loop_id)
     out = get(loop_id)
     if out is None:
         raise KeyError(loop_id)
     return out
+
+
+def _resolve_attention_rows(loop_id: str) -> int:
+    """Close this loop's open inbox rows, because it has stopped waiting on the user.
+
+    The loop half of what the workflow gate path has had all along
+    (`workflows.attention.resolve_gate_item`). Measured on `origin/main`: a blocked loop raised
+    a durable "Loop blocked — needs you" row, the user resumed it, and the row stayed open
+    forever for a loop that was already `running` — the inbox demanding attention for something
+    already handled (#335).
+
+    Resolving also RE-ARMS the emitter, which is the half that makes the next real block
+    reachable. `emit_attention_item` dedups on the loop's key and, while a row is open, returns
+    it and fires no notification — so before this, one block per loop was all the user would
+    ever hear about for the lifetime of the home. Both directions read
+    `inbox.OPEN_STATUSES`, so "closed" and "no longer suppressing" cannot drift apart.
+
+    Only fires on the ATTENTION → non-ATTENTION transition, so an ordinary status write costs
+    nothing. Best-effort and swallowing: losing a loop transition to a bookkeeping failure is
+    strictly worse than leaving a row open, which is the same rule every other attention writer
+    follows.
+    """
+    try:
+        from personalclaw.inbox import resolve_attention_items
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        # The process-wide state when there is one — `live_store` needs it, because the running
+        # service holds its items in MEMORY and a detached `InboxStore()` copy would be
+        # overwritten by the service's next save (the bug `resolve_gate_item`'s docstring
+        # records). None is the headless case (CLI, tests), where the disk-backed fallback is
+        # both correct and the only option.
+        return resolve_attention_items(get_dashboard_state(), {"loop": loop_id})
+    except Exception:
+        logger.debug("loop %s: could not resolve its attention rows", loop_id, exc_info=True)
+        return 0
 
 
 # Spec fields a pre-launch loop may edit (the rest are engine-managed).
