@@ -71,6 +71,33 @@ def _owner_username() -> str:
         return ""
 
 
+# Attribution is server-derived on EVERY task write path, and a supplied `author` is
+# REFUSED rather than ignored — the same call the comment path already makes, for the
+# same reason: a 201/200 that stored a different author than the caller asked for tells
+# a forging client it worked and never tells an honest one its attribution was dropped.
+#
+# `Task.author` is not decoration. `Task.belongs_to` reads it, so it decides `?mine=1`
+# on the list route and `mine_only` on `/api/tasks/ready` — measured, a task created
+# with `author` set to anything else vanishes from the owner's own views. And the update
+# path was the worse half: it rewrote the author of an already-honestly-attributed row,
+# which `identity.py` forbids in as many words ("existing records keep the string they
+# were written with — rewriting history to match a new name would silently falsify the
+# record it exists to preserve"). The store enforces that half too, by listing `author`
+# alongside `id`/`provider`/`created_at` in `native._IMMUTABLE_FIELDS`.
+_SUPPLIED_AUTHOR_ERROR = "author is server-derived and must not be supplied"
+
+
+def _supplies_author(payload: object) -> bool:
+    """Whether a request payload tries to set `author` itself.
+
+    Keyed on PRESENCE, not truthiness: `author: ""` would otherwise slip through and
+    blank the attribution the server was about to stamp. `isinstance` first so a
+    non-dict body keeps whatever behavior it already had rather than gaining a new
+    failure mode from this check.
+    """
+    return isinstance(payload, dict) and "author" in payload
+
+
 async def api_tasks_graph(request: web.Request) -> web.Response:
     """GET /api/tasks/graph — adjacency + DependencyAnalysis (seam S3)."""
     provider = request.query.get("provider")
@@ -137,6 +164,13 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
     # Phase 1 — validate all.
     errors = []
     for i, item in enumerate(items):
+        # Bulk is the same two write verbs, so it inherits the same attribution rule —
+        # in PHASE 1, so one forging item aborts the batch instead of landing alongside
+        # honest ones. Bulk is the path where this matters most: it is the cheapest way
+        # to mint many rows, and it reaches `create_task`/`update_task` with `**item`
+        # exactly as the single-item handlers reach them with `**body`.
+        if op in ("create", "update") and _supplies_author(item):
+            errors.append({"index": i, "error": _SUPPLIED_AUTHOR_ERROR})
         if op == "create":
             if not isinstance(item, dict) or not str(item.get("title", "")).strip():
                 errors.append({"index": i, "error": "title required"})
@@ -245,6 +279,8 @@ async def api_tasks_create(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if _supplies_author(body):
+        return web.json_response({"error": _SUPPLIED_AUTHOR_ERROR}, status=400)
     raw_title = body.get("title")
     title = raw_title.strip() if isinstance(raw_title, str) else ""
     if not title:
@@ -268,6 +304,8 @@ async def api_tasks_update(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if _supplies_author(body):
+        return web.json_response({"error": _SUPPLIED_AUTHOR_ERROR}, status=400)
     provider_name = body.pop("provider", None)
     # The SAME resolution the create path does. `project_id` is not a `Task` field, so without this
     # it reached `update_task`, was ignored, and the edit answered 200 having changed nothing — the
@@ -329,10 +367,10 @@ async def api_tasks_comments_post(request: web.Request) -> web.Response:
     # comment as anyone. Silently dropping the field would answer 201 while storing a
     # different author than the caller asked for — a forging client would believe it
     # succeeded and an honest one would never learn its attribution was discarded.
-    if "author" in body:
-        return web.json_response(
-            {"error": "author is server-derived and must not be supplied"}, status=400
-        )
+    # Shares the predicate and the message with the task write paths so the two cannot
+    # drift into refusing on different grounds or saying different things.
+    if _supplies_author(body):
+        return web.json_response({"error": _SUPPLIED_AUTHOR_ERROR}, status=400)
     raw = body.get("body")
     # A non-string body is a client bug, not a comment — say so instead of crashing on
     # .strip(). Absent/null stays valid here and falls through to "body required".
