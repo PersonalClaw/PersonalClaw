@@ -3928,7 +3928,10 @@ export interface PushStatus {
 // sources those from their own endpoints).
 export interface DashboardStatus {
   uptime: string; uptime_secs?: number; start_time?: number
-  sessions?: number; messages?: number; cron_jobs?: number; lessons?: number; subagents?: number
+  /** Every trigger the Triggers page lists — schedules + store-only kinds + lifecycle
+   *  hooks + data-event triggers. The SystemHealth rail's "triggers" metric reads this so
+   *  it agrees with that page; the narrower schedule-store count rides the `cron` block. */
+  sessions?: number; messages?: number; triggers?: number; lessons?: number; subagents?: number
   update_available?: boolean; version?: string; platform?: string
   /** Non-null while a self-update pipeline is in flight (step: pulling/installing/
    *  building/restarting/error/failed) — lets a freshly-loaded page pick up an

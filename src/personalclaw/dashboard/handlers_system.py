@@ -103,6 +103,13 @@ async def api_status(request: web.Request) -> web.Response:
         asyncio.create_task(_do_update_check())
 
     data = state.status_snapshot(update_available=bool(_update_info.get("available")))
+    # Imported lazily (handler → handler): the triggers handler owns the union that defines
+    # what a "trigger" is, and importing it here rather than at module scope keeps the status
+    # handler's import graph flat.
+    from personalclaw.dashboard.handlers.triggers import (
+        unified_trigger_count as _unified_trigger_count,
+    )
+
     static_info = _get_static_system_info()
     if state._owner_hash is not None:
         owner_hash = state._owner_hash
@@ -123,6 +130,12 @@ async def api_status(request: web.Request) -> web.Response:
             # rewired: the honest question is whether the CLOCK is running, and that belongs to the
             # doctor's engine check, which already answers it.
             "cron": state.trigger_counts(),
+            # The dashboard SystemHealth rail's "triggers" metric (#773). The `cron` block above
+            # counts the schedule STORE alone; this counts every trigger the Triggers page lists —
+            # schedules + store-only kinds + lifecycle hooks + data-event triggers — so the rail's
+            # number agrees with the page instead of dropping the lifecycle hooks the store never
+            # held. Computed here, beside `cron`, because only the triggers handler owns that union.
+            "triggers": _unified_trigger_count(state),
             "stats": Stats().snapshot(),
             "stats_summary": Stats().summary(),
             "update_progress": state._update_progress,
