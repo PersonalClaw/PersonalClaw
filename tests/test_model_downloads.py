@@ -33,10 +33,17 @@ def _stub_providers(monkeypatch):
     """
     monkeypatch.setattr(M, "_provider", lambda name: object())
     monkeypatch.setattr(
-        M, "_model_exists", lambda provider, model: model in {"good", "slow", "boom", "already"}
+        M,
+        "_model_exists",
+        lambda provider, model: model in {"good", "slow", "boom", "already", "truncated"},
     )
     monkeypatch.setattr(M, "_expected_size_bytes", lambda provider, model: 4 * 1024 * 1024)
-    monkeypatch.setattr(M, "_is_downloaded", lambda provider, model: model == "already")
+    monkeypatch.setattr(
+        M, "_is_downloaded", lambda provider, model: model in {"already", "truncated"}
+    )
+    # `truncated` is on disk AND incomplete — the Repair case. Stubbed explicitly so the
+    # short-circuit's two inputs read side by side.
+    monkeypatch.setattr(M, "_is_truncated", lambda provider, model: model == "truncated")
     monkeypatch.setattr(M, "_dir_size", lambda path: 0)
 
     async def _fetch(provider, model):
@@ -108,6 +115,26 @@ async def test_already_downloaded_short_circuits():
     assert err is None
     assert job.state == "done"
     assert job.downloaded_bytes == job.total_bytes  # reported complete immediately
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_model_is_refetched_not_short_circuited():
+    """The Repair path (#1776): "already downloaded" must mean "downloaded INTACT".
+
+    A truncated model satisfies ``_is_downloaded`` — real bytes are present, just not enough
+    of them — so the short-circuit above claimed it and Repair answered an instant
+    ``done``/``downloaded_bytes == total_bytes`` while fetching nothing. Measured against the
+    real gateway on a 1800 MB card holding 3 MB: ``202 {"state":"done"}`` in milliseconds and
+    the truncated chip still there on reload. So the button fired and still did nothing, which
+    is the user-visible complaint the issue names.
+    """
+    reg = M.ModelDownloadRegistry()
+    job, err = reg.start("voice-clone-tts", "truncated")
+    assert err is None and job is not None
+    assert job.state in ("queued", "running"), "a truncated model must be RE-fetched"
+    assert job.downloaded_bytes == 0, "claiming the full byte count is the dead click's tell"
+    await _settle()
+    assert reg.get(job.id).state == "done"
 
 
 @pytest.mark.asyncio

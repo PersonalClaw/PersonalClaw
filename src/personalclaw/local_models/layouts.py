@@ -65,6 +65,33 @@ def hf_repo_dirname(model: str) -> str:
     return "models--" + str(model or "").strip().strip("/").replace("/", "--")
 
 
+def cache_root_for(provider: object) -> Path:
+    """Where *provider*'s downloaded weights live — the ONE answer to that question.
+
+    A provider MAY name its own cache via ``cache_dir()`` (the management-contract method the
+    byte-progress poller already reads); otherwise the shared models root under the
+    PersonalClaw home. Both the download job runner and
+    :meth:`~personalclaw.local_models.provider.LocalModelProvider._models_from_catalog`
+    resolve through here, so a download's progress baseline and a catalog row's
+    ``downloaded``/``integrity`` verdict can never disagree about which directory they mean —
+    they did, because the catalog path had no answer at all and silently skipped the probe.
+
+    ``provider`` is duck-typed (and may be ``None`` for an uninstalled app) so this stays
+    usable from the ABC itself without importing the registry.
+    """
+    getter = getattr(provider, "cache_dir", None)
+    if callable(getter):
+        try:
+            got = getter()
+            if got:
+                return Path(got)
+        except Exception:  # noqa: BLE001 — a provider's cache hint must never break a listing
+            logger.debug("cache_dir() failed for %r", provider, exc_info=True)
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / "models"
+
+
 def _is_partial(path: Path) -> bool:
     name = path.name.lower()
     return any(name.endswith(suffix) for suffix in PARTIAL_SUFFIXES)
@@ -90,15 +117,41 @@ def _has_real_bytes(path: Path) -> bool:
         return False
 
 
+def escapes_root(model: str) -> bool:
+    """Whether *model* would join onto a cache root OUTSIDE it (a `..` segment).
+
+    The model id reaching :func:`candidate_paths` is not a user typing in a box — for a
+    catalog-driven provider it comes from an APP-AUTHORED ``catalog.json`` card, so it is
+    untrusted input joined onto a filesystem root, which is precisely the shape ARCC's
+    SAX-04 allowlist/range-checking control calls out ("implement canonical path resolution
+    to prevent directory traversal attacks"). Measured before the guard: a card named
+    ``"../SECRETS"`` made :func:`downloaded_layouts` return ``<root>/../SECRETS`` and
+    :func:`on_disk_bytes` sum bytes from it, and :func:`delete_all_layouts` would have
+    ``rmtree``'d it.
+
+    Checks the NAME's canonical segments rather than the resolved candidate on purpose: a
+    legitimate model directory is sometimes itself a symlink onto another volume (multi-GB
+    weights on an external disk), and a resolved-path containment test would report that
+    real download as absent. An absolute id is already defanged by the caller's
+    ``strip("/")``; a ``..`` segment is the live escape.
+    """
+    name = str(model or "").strip().strip("/")
+    return ".." in Path(name).parts if name else False
+
+
 def candidate_paths(cache_root: str | Path, model: str) -> list[Path]:
     """Every path *model* could occupy under *cache_root*, in probe order.
 
     Returned whether or not they exist — callers use this both to look for a download and to
-    know what a delete must sweep.
+    know what a delete must sweep. A model id that :func:`escapes_root` yields NO candidates,
+    so every consumer (probe, size sum, delete sweep) fails closed on it at once.
     """
     root = Path(cache_root)
     name = str(model or "").strip().strip("/")
     if not name:
+        return []
+    if escapes_root(name):
+        logger.warning("refusing model id %r: it escapes the cache root", model)
         return []
 
     out: list[Path] = [root / hf_repo_dirname(name)]
@@ -144,6 +197,37 @@ def is_downloaded(cache_root: str | Path, model: str) -> bool:
     for path in candidate_paths(cache_root, model):
         if _has_real_bytes(path):
             return True
+    return False
+
+
+def has_partial(cache_root: str | Path, model: str) -> bool:
+    """Whether an UNFINISHED fetch of *model* is sitting under *cache_root*.
+
+    True when any layout holds a `.part`/`.tmp`/`.incomplete`/`.download` artifact. This is
+    the on-disk *explanation* for a model whose bytes fall short of its declared size, and it
+    is why the §2.3 truncation detector needs no injected "these are downloading right now"
+    set: the evidence is in the same directory the size was measured from.
+
+    Deriving it from disk rather than from the job registry also survives a gateway restart —
+    a crashed fetch's leftovers are still visible, where an in-memory job set is not — and
+    keeps this module free of any dependency on the download runner.
+    """
+    for path in candidate_paths(cache_root, model):
+        try:
+            if path.is_file():
+                if _is_partial(path):
+                    return True
+                continue
+            if not path.is_dir():
+                continue
+            for child in path.rglob("*"):
+                try:
+                    if child.is_file() and _is_partial(child):
+                        return True
+                except OSError:
+                    continue
+        except OSError:
+            logger.debug("partial probe: could not stat %s", path, exc_info=True)
     return False
 
 
