@@ -664,6 +664,13 @@ class _ChatSession:
         return True
 
     def to_dict(self) -> dict:
+        # Import locally: chat_utils imports state at module load, so a top-level
+        # import here would be circular. The list message count MUST run the same
+        # exclusion/collapse rule the detail view serves (_prepare_messages skips the
+        # per-turn `done` sentinel and collapses `chunk` runs), or the sidebar count
+        # and the open conversation disagree on the same session (#2862).
+        from personalclaw.dashboard.chat_utils import _prepare_messages
+
         last_ts = self.messages[-1].get("ts", "") if self.messages else ""
         # Single reverse scan for last_msg, options, and last_activity_ts.
         last_msg = ""
@@ -742,7 +749,7 @@ class _ChatSession:
             "mode": self.mode,
             "workspace_dir": self.workspace_dir,
             "project_id": self.project_id,
-            "messages": len(self.messages),
+            "messages": len(_prepare_messages(self.messages, self.running)),
             "running": self.running,
             "stopping": self._stopping,
             "pending_approval": pending_approval,
