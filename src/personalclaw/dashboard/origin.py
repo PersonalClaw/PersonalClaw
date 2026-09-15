@@ -276,6 +276,26 @@ def auth_is_off(auth_cfg: AuthConfig | None = None) -> bool:
     return cfg.mode == AuthMode.NONE
 
 
+def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
+    """Return ``True`` when a request from loopback still needs a token.
+
+    A loopback (indeed any private-network) request skips the token gate only in
+    the three cases the ``token_auth`` middleware short-circuits on: auth is
+    genuinely off (``AuthMode.NONE`` / ``PERSONALCLAW_DEV_NO_AUTH=1`` — both via
+    :func:`auth_is_off`) or the opt-in local-network bypass
+    (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1``). Under the default ``local_token``
+    mode a token IS required even on loopback — the middleware returns
+    ``403 {"error": "Token required"}`` for a tokenless loopback request. This is
+    the predicate ``doctor`` must consult before claiming "no token required": a
+    local *bind* is not the same fact as a token-free loopback.
+    """
+    if auth_is_off(auth_cfg):
+        return False
+    if os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1":
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Dashboard host / URL helpers
 # ---------------------------------------------------------------------------

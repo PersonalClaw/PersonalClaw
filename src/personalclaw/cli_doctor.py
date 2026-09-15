@@ -18,6 +18,7 @@ from personalclaw.config.loader import env_path
 from personalclaw.dashboard.origin import (
     auth_is_off,
     is_local_bind,
+    loopback_requires_token,
     machine_hostname,
     parse_dashboard_url,
     resolve_bind_host,
@@ -339,7 +340,18 @@ def _doctor() -> None:
     _local = is_local_bind(_bind_host)
     if _local:
         print("  bind:        127.0.0.1 (local-only, SSH tunnel for remote)")
-        print("  auth:        loopback trusted (no token required)")
+        # A local BIND is not a token-free loopback: the default `local_token`
+        # gateway still returns 403 {"error": "Token required"} to a tokenless
+        # loopback request. Only claim "no token required" when the token gate is
+        # actually bypassed (AuthMode.NONE / PERSONALCLAW_DEV_NO_AUTH=1, or
+        # PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1) — mirror the middleware, don't
+        # infer from the bind alone (#2860).
+        if loopback_requires_token():
+            print(
+                "  auth:        🔒 token required (run: personalclaw token, for a signed-in link)"
+            )
+        else:
+            print("  auth:        loopback trusted (no token required)")
     else:
         print("  bind:        0.0.0.0 (all interfaces)")
         print("  auth:        ✅ token auth required (via !dashboard)")
