@@ -198,6 +198,13 @@ class CatalogEntry:
     # claimed nothing, which the card renders as no badges, NOT as a row of misses.
     # Verified in the apps-repo CI for first-party apps (apps/quality.py).
     quality: dict[str, Any] = field(default_factory=dict)
+    # #1778: the app's declared core-version floor evaluated against THIS core, so a
+    # version refusal is visible on the consent card next to the permissions, crons and
+    # scan verdict rather than arriving as a mystery error after the user clicks Install.
+    # ``{"state", "required", "host", "reason"}``; ``state == "ok"`` with an empty
+    # ``required`` means the app declared no floor. Empty ``{}`` for a registry-index
+    # pointer card, whose manifest has not been fetched yet — same as ``permissions``.
+    coreCompatibility: dict[str, Any] = field(default_factory=dict)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -591,6 +598,7 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
                     pointer=f"{url}#{entry.name}",
                     permissions=_perms,
                     crons=_crons,
+                    coreCompatibility=m.core_compatibility().to_dict(),
                 )
             )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -1107,6 +1115,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     quality=(m.quality.to_dict() if m.quality else {}),
                     permissions=_perms,
                     crons=_crons,
+                    coreCompatibility=m.core_compatibility().to_dict(),
                 )
             )
     return out
@@ -1206,6 +1215,7 @@ def available_bundled() -> list[CatalogEntry]:
                 quality=(m.quality.to_dict() if m.quality else {}),
                 permissions=_perms,
                 crons=_crons,
+                coreCompatibility=m.core_compatibility().to_dict(),
             )
         )
     return out
