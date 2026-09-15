@@ -223,7 +223,26 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
         logger.debug("Suggestions prompt unresolved — using fallback")
         return list(_FALLBACK_SUGGESTIONS)
 
-    client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+    # Acquiring the background session RESOLVES a model; a pre-onboarding instance with no
+    # provider bound raises ProviderResolutionError here. That is the SAME "can't generate yet"
+    # state as an empty context, an unresolved prompt, or a stream timeout — a degradation, not a
+    # fault — so it returns the fallback list quietly (a debug line, never a WARNING traceback).
+    # Before this, the acquire sat outside the try below, so the error propagated to
+    # ``refresh_suggestions``' ``except Exception: logger.warning(..., exc_info=True)`` — a full
+    # traceback on every poll — and, because generation always threw before ``cache.generated_at``
+    # was set, ``api_suggestions`` re-ran generation on EVERY poll. Kept OUTSIDE the try/finally
+    # below on purpose: that ``finally`` releases a semaphore this call never acquired when the
+    # acquire itself fails. Two classes carry the signal (the LLM registry's and the bridge's) —
+    # catch both, as ``session.py`` and ``cli.py`` do for the same reason.
+    from personalclaw.llm.registry import ProviderResolutionError as _LLMResolveErr
+    from personalclaw.providers.provider_bridge import ProviderResolutionError as _BridgeResolveErr
+
+    try:
+        client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+    except (_BridgeResolveErr, _LLMResolveErr):
+        logger.debug("No model resolves for suggestions yet — using fallback")
+        return list(_FALLBACK_SUGGESTIONS)
+
     text = ""
     try:
 
