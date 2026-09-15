@@ -12,6 +12,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
+from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
 from personalclaw.config.loader import AgentProfile, AppConfig, resolve_agent_config_path
 from personalclaw.config.schema import SCHEMA_REGISTRY, config_entry_to_dict
 from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
@@ -550,6 +551,20 @@ async def api_agent_detail(request: web.Request) -> web.Response:
         # 200 with a GET response body for a mutating request (#427).
         if not isinstance(patch_body, dict):
             return json_error("invalid_body", message="JSON body must be an object", status=400)
+        # 🔴 …and the VALUES, with the same table the two `/api/agents` write paths use. This
+        # path writes `personalclaw.json` — the runtime config the ACP agent reads at boot —
+        # and it type-checked nothing: `{"description": 12345}` persisted an int where a
+        # string is declared, `{"tools": [{"a": 1}, 5]}` persisted objects into a list of
+        # server names, and a 2000-deep value was a raw `RecursionError` 500 out of
+        # `_atomic_json_write`'s `json.dumps`. Same defect class as #349's create/update half,
+        # one function away from the guard that fixed the list fields for #427.
+        #
+        # Before the file loop, so a malformed body is refused whether or not the agent
+        # exists, and so nothing is read or written before the refusal.
+        try:
+            patch_staged = _staged_agent_fields(patch_body, _AGENT_DETAIL_PATCH_KEYS)
+        except ConfigValueError as exc:
+            return _agent_write_refusal(exc)
 
     for f in AGENTS_DIR.glob("*.json"):
         try:
@@ -595,15 +610,15 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                     async with _get_config_lock():
                         data = json.loads(f.read_text(encoding="utf-8"))
                         for key in ("model", "description", "system_prompt", "approval_mode"):
-                            if key in patch_body:
-                                val = patch_body[key]
+                            if key in patch_staged:
+                                val = patch_staged[key]
                                 if val:
                                     data[key] = val
                                 else:
                                     data.pop(key, None)
                         for key in ("skills", "tools", "triggers"):
-                            if key in patch_body:
-                                val = patch_body[key]
+                            if key in patch_staged:
+                                val = patch_staged[key]
                                 if isinstance(val, list):
                                     data[key] = val
                                 # 🔴 A wrong TYPE is not a delete instruction. `else: data.pop(key)`
@@ -691,6 +706,183 @@ def _resolve_agent_name(name: str, cfg) -> str | None:
     return None
 
 
+# ── The one validator every agent write passes through (#349) ──
+#
+# Bounds are deliberately NON-BINDING. This is a TYPE fix, not a size policy: #349
+# records a 200 KB `system_prompt` and a 100 000-element `triggers` list that both
+# persist correctly today, so a cap that refused either would be a new refusal
+# smuggled in under a type fix. `coerce_edit_value` requires *some* bound (its
+# defaults — 256 chars, 20 items — are sized for the Settings fields it was written
+# for, not for an agent persona), so these say "effectively unbounded" out loud
+# instead of silently inheriting a cap nobody chose for this surface.
+_AGENT_TEXT_MAX_LEN = 4_000_000
+_AGENT_LIST_MAX_ITEMS = 1_000_000
+
+#: The write-side allowlist for an agent profile: every field of
+#: :class:`~personalclaw.config.loader.AgentProfile`, spelled in the ``_EDITABLE_CONFIG``
+#: spec shape so it is checked by the SAME
+#: :func:`~personalclaw.config.edit_spec.coerce_edit_value` every other config write path
+#: already uses. This is a table, not a second validator — the rules stay that function's.
+#:
+#: Why it exists: the three LIST fields were guarded (``isinstance(..., list)``) and the
+#: thirteen SCALAR fields were not, so ``{"description": 12345}`` answered 200 and an int
+#: landed in ``config.json`` where the schema declares a string. The loader notices on
+#: every subsequent load and logs "using default" — which never happens, because
+#: ``config/validation.py``'s ``_apply_field_default`` documents itself as handling
+#: one-level paths and ``agents.<name>.<field>`` is three segments. So one bad write bought
+#: an unbounded warning flood (#349 B). Storing something other than what was declared is
+#: worse than refusing it: the caller was told it succeeded, so nothing ever looks wrong —
+#: the reasoning ``config/edit_spec.py``'s module docstring already spells out.
+#:
+#: ``tests/test_agent_write_validation.py`` pins this table against
+#: ``dataclasses.fields(AgentProfile)``, so a new profile field cannot be added without a
+#: spec, and cannot drift from the JSON Schema the loader reads the same field back with.
+_AGENT_FIELD_SPECS: dict[str, dict] = {
+    "provider": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "provider_agent": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "acp_mode": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "default_dir": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "memory_store": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "description": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "system_prompt": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "voice": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    # A real boolean, not `bool(value)`. `bool("false")` is True, so coercing here would
+    # turn a request to switch a behaviour OFF into one that switches it ON — the exact
+    # defect `config/edit_spec.py` was created to stop re-deriving.
+    "natural_voice": {"type": "bool"},
+    "model": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "approval_mode": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "skills": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
+    "tools": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
+    "triggers": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
+    "source": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "specialty": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    "route_hints": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+}
+
+#: The keys ``PATCH /api/agents/detail/{name}`` applies to the per-file runtime config.
+#: A subset of :data:`_AGENT_FIELD_SPECS`, so that path validates with the same table
+#: rather than growing a dialect for the same seven fields.
+_AGENT_DETAIL_PATCH_KEYS = (
+    "model",
+    "description",
+    "system_prompt",
+    "approval_mode",
+    "skills",
+    "tools",
+    "triggers",
+)
+
+#: How deep a value in an agent write body may nest. Every field above is a scalar or a
+#: list of strings — depth 2 — so nothing legitimate comes close. The bound exists because
+#: both writers this handler family reaches RECURSE: ``cfg.save()`` goes through
+#: ``dataclasses.asdict`` and ``json.dumps``, so a 1200-deep body was a raw
+#: ``RecursionError`` 500 out of the writer with a traceback where a 400 belongs (#349 A).
+#: 12 is the bound ``workflows/validator.py`` already uses for a nested spec tree.
+_MAX_AGENT_BODY_DEPTH = 12
+
+
+def _agent_value_too_deep(value: Any) -> bool:
+    """True when *value* nests deeper than :data:`_MAX_AGENT_BODY_DEPTH`.
+
+    ITERATIVE, so its safety does not depend on the cap's VALUE. A recursive walker happens
+    to be safe at 12 (it returns at the cap, so it can only be ~12 frames deep), which is
+    exactly what makes the recursive form a trap: raise the cap and the guard becomes the
+    thing that raises ``RecursionError``. An explicit stack cannot acquire that coupling.
+    """
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_AGENT_BODY_DEPTH:
+            return True
+        if isinstance(node, dict):
+            stack.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, list):
+            stack.extend((v, depth + 1) for v in node)
+    return False
+
+
+def _staged_agent_fields(body: dict, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
+    """Return the agent-profile fields present in *body*, validated and coerced.
+
+    Only keys actually present are returned, so a caller can tell "set this to empty" from
+    "leave it alone" — which is what makes one helper serve both the create path (absent →
+    dataclass default) and the two update paths (absent → unchanged).
+
+    Raises :class:`~personalclaw.config.edit_spec.ConfigValueError` whose message NAMES the
+    field; the caller renders it as a 4xx. Nothing is written before it raises, so a refused
+    body cannot leave a half-applied profile behind.
+    """
+    staged: dict[str, Any] = {}
+    for key in keys if keys is not None else tuple(_AGENT_FIELD_SPECS):
+        if key not in body:
+            continue
+        value = body[key]
+        # Depth FIRST, and once for the whole value rather than per field. Two reasons it
+        # cannot be folded into the type checks: the crash reproduced through
+        # `tools: [<2000-deep>]` as well as through a scalar, so a scalars-only guard would
+        # not have closed it; and `coerce_edit_value` interpolates the offending value into
+        # its message, where `repr()` of a deep structure recurses in turn.
+        if _agent_value_too_deep(value):
+            raise ConfigValueError(
+                f"{key} is nested more than {_MAX_AGENT_BODY_DEPTH} levels deep",
+                f"{key}=<nested>",
+            )
+        try:
+            staged[key] = coerce_edit_value(key, value, _AGENT_FIELD_SPECS[key])
+        except ConfigValueError as exc:
+            # The message names the FIELD: a body can carry seventeen of them, so a bare
+            # "must be a string" would not say which one was refused. Same reason
+            # `PUT /api/config/personalclaw` prefixes its own.
+            raise ConfigValueError(f"{key} {exc}", exc.resources, exc.status) from None
+    return staged
+
+
+def _agent_write_refusal(exc: ConfigValueError) -> web.Response:
+    """Render a staged-field rejection as a structured 4xx naming the field.
+
+    ``exc.status`` is 400 for every rule ``_AGENT_FIELD_SPECS`` uses;
+    ``test_no_spec_uses_a_type_coerce_edit_value_does_not_support`` is what keeps
+    ``coerce_edit_value``'s 500 branch (an unrecognised spec ``type``) unreachable from here.
+    """
+    return json_error("invalid_request", message=str(exc), status=exc.status)
+
+
+def _unavailable_agent_name(name: str) -> str | None:
+    """Why *name* may not be CREATED, or None when it is free.
+
+    Two name classes, one answer, because both produced a lying ``{"ok": true}``:
+
+    * **Retired** (``RETIRED_AGENT_NAMES``) — the config migration PRUNES these on the very
+      next load, so ``POST {"name": "personalclaw-autonomous"}`` answered 200 with the name
+      echoed back and the agent then did not exist (404 on its detail route). That is the
+      exact failure ``api_default_agent`` guards against a few hundred lines up, with the
+      same reasoning written out there.
+    * **Reserved** (``is_reserved_agent``) — protected only by the seeding migration having
+      ALREADY run. On a config with no ``agents`` map yet (a first-run install), create
+      answered 200 for ``personalclaw-lite``; seeding is add-if-MISSING, so it then never
+      overwrote the caller's profile, and the background chore worker ran with the caller's
+      ``system_prompt`` and model. PUT and DELETE both answer 403 for a reserved name, so
+      the impostor was also un-editable and un-deletable. The ABSENCE of the seeded profile
+      was the protection, not a guard — the same shape as this file's own PATCH-delete
+      note (#349 C).
+
+    Answering 403 matches the two siblings that already refuse a reserved agent
+    (``PUT``/``DELETE /api/agents/{name}``): the request is well-formed and refused, not
+    malformed.
+    """
+    from personalclaw.agents.defaults import RETIRED_AGENT_NAMES, is_reserved_agent
+
+    if is_reserved_agent(name):
+        return f"'{name}' is a built-in system agent name and cannot be created"
+    if name.lower() in {n.lower() for n in RETIRED_AGENT_NAMES}:
+        return (
+            f"'{name}' is a retired system agent name — the next config load prunes it, "
+            "so creating it would report success and leave nothing behind"
+        )
+    return None
+
+
 async def api_personalclaw_agents(request: web.Request) -> web.Response:
     """GET /api/agents — list all PersonalClaw agent definitions."""
     from personalclaw.agents.defaults import is_reserved_agent
@@ -768,37 +960,33 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    # Validate BEFORE taking the lock: this depends only on the request body and the spec
+    # table, so holding the lock across it would serialise every rejected request behind
+    # whoever is writing, for no benefit. Same placement as `PUT /api/config/personalclaw`.
+    try:
+        staged = _staged_agent_fields(body)
+    except ConfigValueError as exc:
+        return _agent_write_refusal(exc)
 
     async with _get_config_lock():
         cfg = AppConfig.load()
         if _resolve_agent_name(name, cfg):
             return web.json_response({"error": f"Agent '{name}' already exists"}, status=409)
-        cfg.agents[name] = AgentProfile(
-            provider=body.get("provider", ""),
-            provider_agent=body.get("provider_agent", ""),
-            acp_mode=body.get("acp_mode", ""),
-            default_dir=body.get("default_dir", ""),
-            memory_store=body.get("memory_store", ""),
-            description=body.get("description", ""),
-            system_prompt=body.get("system_prompt", ""),
-            voice=body.get("voice", ""),  # soul/voice layer (#42)
-            natural_voice=bool(body.get("natural_voice", False)),  # plainer prose (PT-7)
-            model=body.get("model", ""),
-            approval_mode=body.get("approval_mode", ""),
-            skills=body.get("skills", []) if isinstance(body.get("skills"), list) else [],
-            tools=body.get("tools", []) if isinstance(body.get("tools"), list) else [],
-            # Triggers referenced at create time must persist too — the update
-            # handler accepts them, so the create path has to match or triggers
-            # chosen in the create form are silently lost until re-edit.
-            triggers=(
-                [str(t) for t in body["triggers"]] if isinstance(body.get("triggers"), list) else []
-            ),
-            source=body.get("source", "personalclaw"),
-            # Routing metadata (AGENT-ROUTING S1) — persist at create or the
-            # authoring form's values are lost until re-edit.
-            specialty=body.get("specialty", ""),
-            route_hints=body.get("route_hints", ""),
-        )
+        # A name the system owns is refused BEFORE the write, not reconciled after it.
+        # AFTER the duplicate check deliberately: when the name IS already in the config,
+        # "already exists" is the more specific answer, and it is what the case-insensitive
+        # conflict rail asserts for the reserved agents that are normally seeded. This branch
+        # is what the duplicate check cannot cover — a name that is NOT in the config yet and
+        # must never be written under (see `_unavailable_agent_name`).
+        unavailable = _unavailable_agent_name(name)
+        if unavailable:
+            return json_error("forbidden", message=unavailable, status=403)
+        # Every field comes from the ONE validated table, and the dataclass defaults fill
+        # whatever the body omitted. The seventeen hand-written `body.get(...)` calls this
+        # replaces had a parallel seventeen in the update handler, which is how `triggers`
+        # came to be accepted by one path and dropped by the other, and how thirteen scalar
+        # fields came to skip the guard their three list siblings had.
+        cfg.agents[name] = AgentProfile(**staged)
         cfg.save()
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
@@ -833,64 +1021,27 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
                 {"error": f"'{name}' is a built-in system agent; only its model can be changed"},
                 status=403,
             )
+    # Same table, same coercion, same placement (before the lock) as create — so the pair
+    # cannot drift again. This also RETIRES the list fields' silent ignore: a wrong-typed
+    # `skills`/`tools`/`triggers` used to answer 200 having changed nothing, and being told a
+    # write succeeded when it did not is the failure `config/edit_spec.py` exists to stop.
+    # Clearing a list stays expressible, by sending `[]`.
+    try:
+        staged = _staged_agent_fields(body)
+    except ConfigValueError as exc:
+        return _agent_write_refusal(exc)
+
     async with _get_config_lock():
         cfg = AppConfig.load()
         if name not in cfg.agents:
             return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
         agent = cfg.agents[name]
+        # `_staged_agent_fields` walks `_AGENT_FIELD_SPECS` in order, so this audit list is
+        # deterministic rather than request-order dependent.
         changed: list[str] = []
-        if "provider" in body:
-            agent.provider = body.get("provider", "")
-            changed.append("provider")
-        if "provider_agent" in body:
-            agent.provider_agent = body.get("provider_agent", "")
-            changed.append("provider_agent")
-        if "acp_mode" in body:
-            agent.acp_mode = body.get("acp_mode", "")
-            changed.append("acp_mode")
-        if "default_dir" in body:
-            agent.default_dir = body["default_dir"]
-            changed.append("default_dir")
-        if "memory_store" in body:
-            agent.memory_store = body["memory_store"]
-            changed.append("memory_store")
-        if "description" in body:
-            agent.description = body["description"]
-            changed.append("description")
-        if "system_prompt" in body:
-            agent.system_prompt = body["system_prompt"]
-            changed.append("system_prompt")
-        if "voice" in body:  # soul/voice layer (#42)
-            agent.voice = body["voice"]
-            changed.append("voice")
-        if "natural_voice" in body:  # plainer prose (PT-7)
-            agent.natural_voice = bool(body["natural_voice"])
-            changed.append("natural_voice")
-        if "model" in body:
-            agent.model = body["model"]
-            changed.append("model")
-        if "approval_mode" in body:
-            agent.approval_mode = body["approval_mode"]
-            changed.append("approval_mode")
-        if "skills" in body and isinstance(body["skills"], list):
-            agent.skills = body["skills"]
-            changed.append("skills")
-        if "tools" in body and isinstance(body["tools"], list):
-            agent.tools = body["tools"]
-            changed.append("tools")
-        if "triggers" in body and isinstance(body["triggers"], list):
-            # Referenced lifecycle-trigger IDs — the only triggers that fire for this agent.
-            agent.triggers = [str(t) for t in body["triggers"]]
-            changed.append("triggers")
-        if "source" in body:
-            agent.source = body["source"]
-            changed.append("source")
-        if "specialty" in body:  # routing metadata (AGENT-ROUTING S1)
-            agent.specialty = body["specialty"]
-            changed.append("specialty")
-        if "route_hints" in body:
-            agent.route_hints = body["route_hints"]
-            changed.append("route_hints")
+        for field_name, value in staged.items():
+            setattr(agent, field_name, value)
+            changed.append(field_name)
         cfg.save()
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
