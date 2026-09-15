@@ -2081,6 +2081,7 @@ async def start_dashboard(
     # everything outside /api/) is enumerated with reasons in api_version_gate.py.
     from personalclaw.dashboard.api_version_gate import api_version_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
@@ -2130,6 +2131,12 @@ async def start_dashboard(
         ),
         app_permission_middleware,
         sel_audit_middleware,
+        # Maps an unguarded request-shape fault (a non-object JSON body, a non-numeric
+        # query/path param) raised by the handler to the one 400 wire envelope, so a
+        # malformed request never escapes as aiohttp's bare `500 text/plain`. Sits just
+        # OUTSIDE invalid_id so that gate (whose UnsafeRecordId is not a ValueError) still
+        # runs closest to the handler and is never shadowed. See request_boundary.py.
+        request_boundary_middleware(),
         # INNERMOST: wraps the handler and nothing else, so it maps a store's refusal of
         # an unsafe record id to a 400 without also catching one raised by a middleware
         # (which would be a bug, not a client error). See invalid_id_gate.py.
