@@ -37,6 +37,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# SPA fallback: serve index.html for client-side React Router paths, and rewrite a
+# router-raised 404/405 on an /api/* route into the ONE wire error envelope. Defined
+# at module scope (like `token_auth_middleware`) so it can be driven through a REAL
+# aiohttp router in a test — a wrong method only raises HTTPMethodNotAllowed via the
+# actual dispatcher, never by calling a handler directly.
+@web.middleware  # type: ignore[misc]
+async def spa_fallback(
+    request: web.Request,
+    handler: object,
+) -> web.StreamResponse:
+    try:
+        return await handler(request)  # type: ignore[operator]
+    except web.HTTPMethodNotAllowed as exc:
+        # A wrong method on an /api/* route raises HTTPMethodNotAllowed from the
+        # router, which by default answers text/plain — the same illegible-to-a-
+        # JSON-client failure as the 404 below. Answer it in the SAME wire envelope,
+        # preserving the 405 status and the router's `Allow` header (it names the
+        # methods the route DOES accept, so the client can correct its request).
+        # `method_not_allowed` is already a registered wire code.
+        if request.path.startswith("/api/"):
+            from personalclaw.http_errors import json_error
+
+            allow = exc.headers.get("Allow")
+            return json_error(
+                "method_not_allowed",
+                status=405,
+                headers={"Allow": allow} if allow else None,
+            )
+        raise
+    except web.HTTPNotFound:
+        # An unmatched /api/* route must answer in the one wire envelope — a JSON
+        # client that mistypes or hits a removed route cannot parse aiohttp's
+        # text/plain default, and so cannot tell "route gone" from "server broke".
+        # Handlers that ANSWER 404 (rather than raising) are untouched here.
+        if request.path.startswith("/api/"):
+            from personalclaw.http_errors import json_error
+
+            return json_error("not_found", status=404)
+        # `/icons/` is excluded for the PWA: a manifest icon that resolves to
+        # index.html is an invalid icon, and the only symptom is an install
+        # prompt that never appears. A 404 is diagnosable; HTML is not.
+        if request.method == "GET" and not request.path.startswith(
+            ("/assets/", "/icons/", "/sprites/", "/vendor/")
+        ):
+            return await handlers.index(request)
+        raise
+
+
 def _single_post_ceiling() -> int:
     """Body-size ceiling for the MAIN + API apps.
 
@@ -1884,31 +1932,10 @@ async def start_dashboard(
             )
         return resp  # type: ignore[return-value]
 
-    # SPA fallback: serve index.html for client-side React Router paths
-    @web.middleware  # type: ignore[misc]
-    async def spa_fallback(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        try:
-            return await handler(request)  # type: ignore[operator]
-        except web.HTTPNotFound:
-            # An unmatched /api/* route must answer in the one wire envelope — a JSON
-            # client that mistypes or hits a removed route cannot parse aiohttp's
-            # text/plain default, and so cannot tell "route gone" from "server broke".
-            # Handlers that ANSWER 404 (rather than raising) are untouched here.
-            if request.path.startswith("/api/"):
-                from personalclaw.http_errors import json_error
-
-                return json_error("not_found", status=404)
-            # `/icons/` is excluded for the PWA: a manifest icon that resolves to
-            # index.html is an invalid icon, and the only symptom is an install
-            # prompt that never appears. A 404 is diagnosable; HTML is not.
-            if request.method == "GET" and not request.path.startswith(
-                ("/assets/", "/icons/", "/sprites/", "/vendor/")
-            ):
-                return await handlers.index(request)
-            raise
+    # The SPA fallback middleware is defined at module scope (`spa_fallback`), like
+    # `token_auth_middleware`, so a test can drive a wrong method through a REAL
+    # router — the only place aiohttp raises HTTPMethodNotAllowed. It is placed in
+    # the middleware chain below.
 
     # CSRF: block state-mutating requests from cross-origin pages
     _safe_methods = {"GET", "HEAD", "OPTIONS"}

@@ -154,6 +154,60 @@ def test_unmatched_api_routes_answer_in_the_wire_envelope() -> None:
     assert 'return json_error("not_found", status=404)' in source
 
 
+@pytest.mark.asyncio
+async def test_wrong_method_on_api_route_answers_in_the_wire_envelope() -> None:
+    """A wrong method on an ``/api/*`` route raises ``HTTPMethodNotAllowed`` from the
+    ROUTER (not a handler), which aiohttp answers ``text/plain`` by default — illegible
+    to the JSON clients that read this surface, exactly like the raised-404 above.
+    ``spa_fallback`` must convert it into the SAME coded wire envelope, preserving the
+    405 status and the ``Allow`` header the router set (it names the methods the route
+    DOES accept, so the client can correct its request).
+
+    Driven through a real ``TestServer`` so the router is the one that raises — a
+    handler called directly never can, which is why the static census cannot see it.
+    """
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.server import spa_fallback
+
+    async def _chat_post(request: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
+
+    app = web.Application(middlewares=[spa_fallback])
+    app.router.add_post("/api/chat", _chat_post)
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/api/chat")  # POST-only route, wrong method
+        assert resp.status == 405
+        assert resp.content_type == "application/json"
+        assert "POST" in resp.headers.get("Allow", "")
+        body = await resp.json()
+        assert set(body) == {"error"}
+        assert body["error"]["code"] == "method_not_allowed"
+        assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_wrong_method_on_non_api_route_keeps_the_default_405() -> None:
+    """The rewrite is scoped to ``/api/*``. A wrong method on a non-API route falls
+    through untouched — aiohttp's default ``text/plain`` 405 — so page routes keep
+    their normal behavior."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.server import spa_fallback
+
+    async def _page_post(request: web.Request) -> web.Response:
+        return web.Response(text="ok")
+
+    app = web.Application(middlewares=[spa_fallback])
+    app.router.add_post("/page", _page_post)
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/page")  # wrong method, non-API
+        assert resp.status == 405
+        assert resp.content_type == "text/plain"
+
+
 def test_pwa_routes_are_registered_at_the_origin_root() -> None:
     """A service worker's scope is its path: served from ``/assets/`` it could only
     control ``/assets/``, so ``/sw.js`` must be registered at the root."""
