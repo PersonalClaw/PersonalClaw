@@ -190,6 +190,23 @@ CATALOG: tuple[DiscoverTip, ...] = (
 )
 
 
+#: Every tip id the catalog defines — the complete set of ids that mean anything.
+#:
+#: DERIVED from :data:`CATALOG` rather than hand-listed, so it cannot drift from it: a tip
+#: added or renamed above joins this set by construction. A hand-maintained second copy of
+#: these ten strings is exactly the kind of pair that goes stale.
+TIP_IDS: frozenset[str] = frozenset(tip.id for tip in CATALOG)
+
+
+class UnknownTipError(ValueError):
+    """A dismissal named an id the catalog does not define.
+
+    Such an id is *inert*: :func:`select_visible` only ever compares against catalog ids, so
+    persisting one can never hide anything. It is junk in a settings file that
+    :func:`load_dismissed` re-reads on every Discover request, and nothing ever removes it.
+    """
+
+
 # ── engagement signals (auto-hide "when used") ───────────────────────────────
 # Each check is a cheap read of state that ALREADY exists — one dir listing, one
 # JSON read, or one SQLite COUNT — never a provider/network call. Every check is
@@ -315,25 +332,48 @@ def compute_engaged(state: Any = None) -> dict[str, bool]:
 
 
 def load_dismissed() -> set[str]:
-    """The set of dismissed tip ids (empty on any read error)."""
+    """The set of dismissed tip ids (empty on any read error).
+
+    Narrowed to :data:`TIP_IDS`, because that is what a *tip id* is. The file is on the
+    user's disk and was written by older builds that accepted anything, so anything else in
+    it is junk the reader must not carry — :func:`dismiss` prunes it on the next write.
+    """
     from personalclaw.providers.entity_routes import _load_entity_settings
 
     raw = _load_entity_settings(_ENTITY)
     ids = raw.get(_DISMISSED_FIELD, [])
-    return {str(x) for x in ids} if isinstance(ids, list) else set()
+    if not isinstance(ids, list):
+        return set()
+    return {str(x) for x in ids} & TIP_IDS
 
 
 def dismiss(tip_id: str) -> set[str]:
-    """Persist *tip_id* as dismissed; returns the full dismissed set."""
+    """Persist *tip_id* as dismissed; returns the full dismissed set.
+
+    Refuses an id the catalog does not define (:class:`UnknownTipError`) — default-deny
+    against :data:`TIP_IDS` rather than a shape check, because the valid set is *closed and
+    known*, so nothing outside it can ever be legitimate. An accepted id needs no length or
+    character bound as a consequence: the longest one the catalog defines is ten characters.
+
+    Also prunes: an id no longer in the catalog is dropped from the stored list on the way
+    through. That clears junk written by a build that accepted anything, and drops the
+    dismissal of a tip that has since been retired — which is meaningless either way, since
+    :func:`select_visible` can only act on ids the catalog still defines.
+    """
     from personalclaw.providers.entity_routes import (
         _load_entity_settings,
         _save_entity_settings,
     )
 
+    if tip_id not in TIP_IDS:
+        raise UnknownTipError(tip_id)
+
     current = _load_entity_settings(_ENTITY)
     existing = current.get(_DISMISSED_FIELD, [])
-    ids = {str(x) for x in existing} if isinstance(existing, list) else set()
-    ids.add(str(tip_id))
+    stored = {str(x) for x in existing} if isinstance(existing, list) else set()
+    ids = (stored | {tip_id}) & TIP_IDS
+    if pruned := stored - ids:
+        logger.info("discover: dropping %d dismissed id(s) the catalog no longer has", len(pruned))
     current[_DISMISSED_FIELD] = sorted(ids)
     _save_entity_settings(_ENTITY, current)
     return ids
