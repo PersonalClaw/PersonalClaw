@@ -1519,6 +1519,57 @@ class TestAutoApplyUpdateGitPath:
                 await orch._auto_apply_update()
         ds.clear_update_progress.assert_called()
 
+    @pytest.mark.asyncio
+    async def test_dirty_tree_refuses_reset(self):
+        """RUM-4 data-loss safety: the UNATTENDED auto-update must NOT
+        ``git reset --hard`` over a working tree that carries uncommitted
+        tracked-file edits. It refuses, leaves the tree untouched (no reset is
+        ever spawned), and surfaces an actionable paused state instead of
+        silently discarding the user's work."""
+        orch = _make_orchestrator()
+        ds = _mock_dashboard_state()
+        orch.dashboard_state = ds
+
+        spawned: list[tuple] = []
+        call_count = [0]
+
+        async def _fake_exec(*args, **kwargs):
+            spawned.append(args)
+            call_count[0] += 1
+            proc = AsyncMock()
+            proc.kill = MagicMock()
+            if call_count[0] == 1:  # branch detection → main
+                proc.communicate = AsyncMock(return_value=(b"main\n", b""))
+                proc.returncode = 0
+            elif call_count[0] == 2:  # fetch succeeds
+                proc.communicate = AsyncMock(return_value=(b"", b""))
+                proc.returncode = 0
+            elif call_count[0] == 3:  # diff --quiet → new commits exist
+                proc.returncode = 1
+            else:
+                proc.returncode = 0
+            proc.wait = AsyncMock(return_value=proc.returncode)
+            return proc
+
+        with (
+            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch(
+                "personalclaw.self_update.git_tracked_changes",
+                return_value=[" M src/personalclaw/gateway.py"],  # a dirty tracked edit
+            ),
+        ):
+            with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec):
+                await orch._auto_apply_update()
+
+        # The user's uncommitted edit is safe: no destructive reset was spawned.
+        assert not any(
+            tuple(a[:3]) == ("git", "reset", "--hard") for a in spawned
+        ), f"auto-update spawned a destructive reset over a dirty tree: {spawned}"
+        # The refusal is surfaced as an actionable paused state, not a silent no-op.
+        ds.push_update_progress.assert_any_call(
+            "error", "Update paused — commit or stash your local changes first."
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests: run method (partial — covers init sequence)
@@ -2066,8 +2117,9 @@ class TestAutoApplyUpdateVenvPath:
     def _fake_exec_factory(call_count, *, pip_rc: int = 0):
         """Subprocess fake for the auto-apply pipeline call sequence:
         1 branch detection → main, 2 fetch, 3 diff --quiet (rc=1: has
-        changes), 4 status --porcelain (clean), 5 reset --hard,
-        6 pip install -e . (``pip_rc``)."""
+        changes), 4 reset --hard, 5 pip install -e . (``pip_rc``). The
+        dirty-tree guard no longer runs through create_subprocess_exec — it is
+        ``self_update.git_tracked_changes``, which the callers patch clean."""
 
         async def _fake_exec(*args, **kwargs):
             call_count[0] += 1
@@ -2082,11 +2134,8 @@ class TestAutoApplyUpdateVenvPath:
             elif call_count[0] == 3:
                 proc.returncode = 1  # diff --quiet → has changes
             elif call_count[0] == 4:
-                proc.communicate = AsyncMock(return_value=(b"", b""))
-                proc.returncode = 0
-            elif call_count[0] == 5:
                 proc.returncode = 0  # git reset --hard
-            elif call_count[0] == 6:
+            elif call_count[0] == 5:
                 # pip install -e .
                 proc.communicate = AsyncMock(return_value=(b"", b"boom" if pip_rc else b""))
                 proc.returncode = pip_rc
@@ -2111,7 +2160,10 @@ class TestAutoApplyUpdateVenvPath:
         call_count = [0]
         reexec = AsyncMock()
 
-        with patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}):
+        with (
+            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
+        ):
             with patch(
                 "asyncio.create_subprocess_exec",
                 side_effect=self._fake_exec_factory(call_count),
@@ -2141,7 +2193,10 @@ class TestAutoApplyUpdateVenvPath:
         call_count = [0]
         reexec = AsyncMock()
 
-        with patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}):
+        with (
+            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": "/tmp/proj"}),
+            patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
+        ):
             with patch(
                 "asyncio.create_subprocess_exec",
                 side_effect=self._fake_exec_factory(call_count, pip_rc=1),
