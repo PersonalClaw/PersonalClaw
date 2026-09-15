@@ -647,9 +647,12 @@ class NativeTaskProvider(TaskProvider):
                 data = []
             comment = {
                 "id": f"c-{uuid.uuid4().hex[:8]}",
-                # Attribution: explicit author, else the owner's handle, else the
-                # historical "user" placeholder so existing readers see no change.
-                "author": author or _current_username() or "user",
+                # Attribution: an explicit author wins, else the owner's handle, else
+                # "" — the SAME resolution as `Task.author` on create (see create_task),
+                # so a task and its comments AGREE in the default no-handle state (#2847).
+                # The historical "user" placeholder is dropped: it made every comment
+                # disagree with its own task until `dashboard.username` was set.
+                "author": author or _current_username(),
                 "body": body,
                 "created_at": _now_iso(),
             }
