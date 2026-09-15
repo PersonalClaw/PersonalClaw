@@ -270,6 +270,108 @@ def test_the_loop_gate_kills_its_shells_group():
     )
 
 
+# ── the same census over the file browser's spawns (#432) ──
+#
+# files.py is where this defect class was found a second time: `api_file_git_original`
+# had hand-rolled `_git`'s spawn and its timeout handler killed NOTHING (measured: two
+# live processes leaked per timeout — the git child and its grandchild — accumulating
+# one pair per poll of the diff view), and `_content_search_rg` had the identical shape
+# for ripgrep. Keyed by FUNCTION here, not by variable name: all four of these spawns
+# are called `proc`, so the by-name matcher above cannot tell them apart.
+_FILES_REAPED = {
+    "_git",  # git forks: fsmonitor hook, LFS filter, remote helper
+    "_content_search_rg",  # rg over a huge tree blows the 15s search deadline
+}
+_FILES_PID_KILL = {
+    "api_upload",  # osascript: the Finder dialog is the OS's window, not a child
+    "api_screenshot",  # screencapture: no children
+}
+# Only a spawn whose child can fork needs its own session; a group signal you do not
+# lead is wider than the fix (see the updates.py census above for the same rule).
+_FILES_GROUP_LED = {"_git"}
+
+
+def _spawn_functions(source: str) -> dict[str, dict[str, object]]:
+    """Map function name -> {kill: "group"|"pid"|None, own_session: bool} per spawn site."""
+    out: dict[str, dict[str, object]] = {}
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        dumped = ast.dump(fn)
+        if "create_subprocess" not in dumped:
+            continue
+        kill: str | None = None
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if "TimeoutError" not in (ast.dump(node.type) if node.type else ""):
+                continue
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Call):
+                    continue
+                f = inner.func
+                if isinstance(f, ast.Attribute) and f.attr in {"kill", "terminate"}:
+                    kill = "pid"
+                elif isinstance(f, ast.Name) and f.id in {"kill_timed_out", "terminate_and_reap"}:
+                    kill = "group"
+        out[fn.name] = {"kill": kill, "own_session": "start_new_session" in dumped}
+    return out
+
+
+def test_every_file_browser_spawn_reaps_its_timeout():
+    """No spawn in files.py may time out and walk away, and the census must be complete.
+
+    Three directions, because each is a way the module drifted or could drift again:
+    an unclassified spawn (a NEW endpoint shelling out) reds naming itself; a censused
+    reaper that stops reaping reds; and a leaf that acquires a session it doesn't need
+    reds too.
+    """
+    src = (_SRC / "dashboard" / "handlers" / "files.py").read_text()
+    sites = _spawn_functions(src)
+
+    unclassified = set(sites) - _FILES_REAPED - _FILES_PID_KILL
+    assert not unclassified, (
+        f"{sorted(unclassified)} in files.py spawn a process but are not in this census. "
+        "Classify each: route the timeout through kill_timed_out (the default — it "
+        "group-signals when the child leads a group and falls back to the pid when it "
+        "does not, and its reap is BOUNDED), or justify a bare pid kill here. #432 was "
+        "exactly this: a spawn nobody had classified, whose timeout killed nothing."
+    )
+    stale = (_FILES_REAPED | _FILES_PID_KILL) - set(sites)
+    assert not stale, f"census names {sorted(stale)}, which no longer spawn anything"
+
+    not_reaping = {n for n in _FILES_REAPED if sites[n]["kill"] != "group"}
+    assert not not_reaping, (
+        f"{sorted(not_reaping)} no longer reap through kill_timed_out. A killed-but-"
+        "unreaped child is a zombie holding its end of the pipe; an unkilled one is an "
+        "orphan that outlives the request (#432 leaked one per timed-out read)."
+    )
+    drifted = {n for n in _FILES_PID_KILL if sites[n]["kill"] != "pid"}
+    assert not drifted, f"{sorted(drifted)} changed kill style without moving in the census"
+
+    assert {n for n, s in sites.items() if s["own_session"]} == _FILES_GROUP_LED, (
+        "the set of files.py spawns leading their own session drifted from the census: "
+        f"found {sorted(n for n, s in sites.items() if s['own_session'])}"
+    )
+
+
+def test_the_by_function_matcher_sees_an_unreaped_timeout():
+    """VACUITY: the rail above must recognise #432's actual shape as unreaped."""
+    unreaped = (
+        "import asyncio\n"
+        "async def api_leaky():\n"
+        "    proc = await asyncio.create_subprocess_exec('git', 'show', 'HEAD:x')\n"
+        "    try:\n"
+        "        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)\n"
+        "    except asyncio.TimeoutError:\n"
+        "        return None\n"
+    )
+    assert _spawn_functions(unreaped) == {"api_leaky": {"kill": None, "own_session": False}}
+
+    fixed = unreaped.replace("        return None\n", "        await kill_timed_out(proc)\n")
+    assert _spawn_functions(fixed)["api_leaky"]["kill"] == "group"
+
+
 def test_the_matcher_tells_the_two_shapes_apart():
     """VACUITY: the matcher is not vacuous — it labels each shape, and differently."""
     header = (
