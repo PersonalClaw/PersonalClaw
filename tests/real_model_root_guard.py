@@ -169,6 +169,7 @@ ORIGINALS: dict[str, object] = {}
 GUARDED_FUNCTIONS: tuple[str, ...] = (
     "candidate_paths",
     "is_downloaded",
+    "has_partial",
     "downloaded_layouts",
     "on_disk_bytes",
     "delete_all_layouts",

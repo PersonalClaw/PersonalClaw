@@ -239,7 +239,15 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
   ]
   return (
     <ContextMenu items={menuItems}>
-    <ListRow index={index} accent="var(--color-primary)" onClick={onClick} label={agent.name}>
+    {/* The coral rail is the One Voice signal — "this is the ACTIVE agent" — so it belongs on the
+        one globally-default agent, not on all seven. Painted on every native row it read as a group
+        marker (a job the "Native N" header and the coral icon square already do), which is coral on
+        something that isn't active: a One Voice Rule violation and, at 3px, exactly the "colored
+        side-stripe" DESIGN.md warns against as decoration. Reserving it for `isDefault` matches the
+        rail's only other shipped uses — `InboxPage` lights it for UNREAD, `TriggersListPage` for
+        ENABLED — where the rail always means "this row is live/needs you". The default row still
+        pairs it with the star; the rest keep the coral icon square that says "agent". */}
+    <ListRow index={index} accent={isDefault ? 'var(--color-primary)' : undefined} onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">

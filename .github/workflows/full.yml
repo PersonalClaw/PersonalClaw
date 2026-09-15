@@ -72,7 +72,21 @@ jobs:
       - name: pytest (full suite)
         # The frontend URL-doctrine + config round-trip tests are part of this suite;
         # named here for legibility in the job summary.
-        run: uv run pytest
+        # #2720: the memory-limited macOS runners OOM-killed this step mid-suite — a
+        # varying silent truncation (PASSED stream, then no summary, no assertion, no
+        # traceback). Two levers, both memory, neither weakens a test:
+        #   --no-cov  — coverage is measured once by the dedicated `coverage` job; the
+        #               --cov payload (from addopts) is pure redundant memory here.
+        #   -n 2 on macOS — cap xdist workers so peak RSS stays under the runner ceiling
+        #               (--no-cov alone cleared ubuntu + macos-14 but macos-latest still
+        #               died at ~63%). ubuntu keeps -n auto from addopts. This leg proves
+        #               cross-platform correctness, not coverage or raw speed.
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            uv run pytest --no-cov -n 2
+          else
+            uv run pytest --no-cov
+          fi
 
   audit:
     # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:

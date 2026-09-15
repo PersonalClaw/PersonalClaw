@@ -198,6 +198,9 @@ describe('VACUITY: the server contract and the field semantics this fix relies o
   it('PUT /api/agents/{name} really is a partial update keyed on presence', () => {
     // If this ever became an unconditional assignment, omitting the key would start CLEARING the
     // provider instead of preserving it — the fix would invert into a worse bug, silently.
+    // The presence gate now lives in the shared `_staged_agent_fields` helper (#349): both write
+    // paths stage the body through it, and it SKIPS any key the body did not carry, so the update
+    // only ever writes fields that were actually sent — provider/source among them.
     const src = py('dashboard/handlers/agents.py')
     // 🪤 Bounded to the next top-level `async def`, not to the next blank line: a `[\s\S]*?\n\n`
     // window stops inside the docstring, well before the assignment block.
@@ -205,19 +208,34 @@ describe('VACUITY: the server contract and the field semantics this fix relies o
       /async def api_personalclaw_agent_update[\s\S]*?(?=\nasync def |\ndef |$)/,
     )?.[0] ?? ''
     expect(handler, 'found the update handler').not.toBe('')
-    expect(handler, 'and the window reached the assignment block').toMatch(/agent\.provider = /)
-    expect(handler, 'provider is applied only when present').toMatch(/if "provider" in body:/)
-    expect(handler, 'and so is source').toMatch(/if "source" in body:/)
+    expect(handler, 'it stages the body through the shared validator').toMatch(/staged = _staged_agent_fields\(body\)/)
+    // Only the staged (present) fields are written — never an unconditional `agent.provider = …`.
+    expect(handler, 'and it applies ONLY the staged fields').toMatch(/for field_name, value in staged\.items\(\):/)
+    expect(handler, 'writing each present field, not a hardcoded set').toMatch(/setattr\(agent, field_name, value\)/)
+    // The presence gate itself, in the shared helper: a key absent from the body is skipped.
+    const staged = src.match(/def _staged_agent_fields\([\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(staged, 'found _staged_agent_fields').not.toBe('')
+    expect(staged, 'a field absent from the body is skipped, not written').toMatch(/if key not in body:\s*\n\s*continue/)
+    // provider and source flow through that gate like every other field.
+    const specs = src.match(/_AGENT_FIELD_SPECS: dict\[str, dict\] = \{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(specs, 'found _AGENT_FIELD_SPECS').not.toBe('')
+    expect(specs, 'provider is a spec-table field, so it is presence-gated').toMatch(/"provider":/)
+    expect(specs, 'and so is source').toMatch(/"source":/)
   })
 
   it('POST /api/agents really defaults an absent provider to "" (inherit), not to native', () => {
-    // The whole reason the create page must state `native` itself.
+    // The whole reason the create page must state `native` itself. An absent `provider` is not
+    // staged (the shared helper skips absent keys), so `AgentProfile(**staged)` falls through to
+    // the dataclass default — `""`, asserted in the next test — NOT to native.
     const src = py('dashboard/handlers/agents.py')
     const handler = src.match(
       /async def api_personalclaw_agents_create[\s\S]*?(?=\nasync def |\ndef |$)/,
     )?.[0] ?? ''
     expect(handler, 'found the create handler').not.toBe('')
-    expect(handler).toMatch(/provider=body\.get\("provider", ""\)/)
+    expect(handler, 'it stages the body through the shared validator').toMatch(/staged = _staged_agent_fields\(body\)/)
+    expect(handler, 'and builds the profile from only the present fields').toMatch(/AgentProfile\(\*\*staged\)/)
+    // No native default is substituted for an absent provider — the omission is the contract.
+    expect(handler, 'it must not hardcode a native provider default').not.toMatch(/"native"/)
   })
 
   it('AgentProfile.provider is declared empty-means-inherit, and the loader honours that', () => {

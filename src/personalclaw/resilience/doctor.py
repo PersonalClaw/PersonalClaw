@@ -1352,6 +1352,46 @@ async def _probe_timezone(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_resource_limits(_ctx: DoctorContext) -> ProbeResult:
+    """sandbox — is the POSIX ``resource`` (rlimit) facility available on THIS host?
+
+    The gateway raises its own ``RLIMIT_NOFILE`` soft cap at boot, and the sandbox spawn
+    shim applies rlimit ceilings, both through the ``resource`` module. That module is
+    POSIX-only and absent on native Windows — where it is missing, both degrade silently
+    to a no-op. This probe surfaces that platform fact rather than leaving it invisible.
+
+    **The ok=True call.** Absence is a platform CAPABILITY fact, not a gateway failure: a
+    permanent red on every Windows host would train operators to ignore the doctor (the same
+    reasoning the cgroup-scopes probe follows), and nothing is being *silently* dropped once
+    the row states it. So both states are ``ok=True`` at tier 3; the ``detail`` carries the
+    consequence loudly when the facility is missing. The decision is the SAME guarded helper
+    the gateway and shim consult (``resource_limits_available``), so this can never claim a
+    facility the boot path does not actually have.
+    """
+    from personalclaw.resource_limits import resource_limits_available
+
+    available = await asyncio.to_thread(resource_limits_available)
+    evidence = {"platform": sys.platform, "available": bool(available)}
+    if available:
+        return ProbeResult(
+            ok=True,
+            detail=(
+                "POSIX resource limits (rlimit) available — the gateway raises its own "
+                "NOFILE ceiling at boot and the sandbox shim can apply rlimit ceilings."
+            ),
+            evidence=evidence,
+        )
+    return ProbeResult(
+        ok=True,
+        detail=(
+            f"POSIX resource limits (rlimit) are NOT available on this platform "
+            f"({sys.platform}) — the `resource` module is absent, so the gateway's NOFILE "
+            "ceiling is not raised at boot and the sandbox rlimit floor does not apply."
+        ),
+        evidence=evidence,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1505,6 +1545,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_sandbox_cgroup_scopes,
             "Sandbox pids/RSS enforcement",
+        )
+    )
+    register_probe(
+        Probe(
+            "sandbox.resource_limits",
+            "sandbox",
+            Tier.CAPABILITY,
+            _probe_resource_limits,
+            "POSIX resource-limits (rlimit) availability",
         )
     )
     register_probe(

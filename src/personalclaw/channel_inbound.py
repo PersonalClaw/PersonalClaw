@@ -51,6 +51,15 @@ including with the window monkeypatched to zero.
 branch that routes on an error, an unreadable store, or an unknown policy: the trust
 store's own read path falls back to defaults, and the default DM policy is ``pairing`` —
 absence of data means "not trusted".
+
+**Fail-closed, not fail-quiet.** Failing closed silently made a healthy socket that
+discards a message indistinguishable from a dead one. Every disposition is announced by the
+gate's single reporter, :func:`~personalclaw.channel_trust.report_inbound_verdict`, reached
+from inside :func:`~personalclaw.channel_trust.guard_inbound` — the one function every
+verdict is now minted in, pairing redemption included. The two paths this module owns that
+the gate never sees are reported here instead: an admission-cache hit (DEBUG — a redelivery
+of an already-decided message is the routine dedup) and a missing dashboard state (WARNING
+in :func:`_route_to_session` — an allowed message that still cannot reach a session).
 """
 
 from __future__ import annotations
@@ -122,6 +131,16 @@ def admit(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool = Tru
     key = _message_key(provider, msg)
     cached = _ADMITTED.get(key)
     if cached is not None:
+        # DEBUG, and deliberately not a re-report: the disposition was already announced at
+        # its derived level when it was first reached, and a provider redelivering the same
+        # message must not be able to repeat an operator-visible line. This is the genuinely
+        # routine dedup in the inbound path — unlike a denied sender, which is a decision.
+        logger.debug(
+            "channel inbound already decided: provider=%s reason=%s allowed=%s",
+            provider,
+            cached.reason,
+            cached.allowed,
+        )
         return cached
     verdict = _decide(state, provider, msg, is_dm=is_dm)
     _remember(key, verdict)
@@ -188,7 +207,12 @@ async def deliver_inbound(
     state = getattr(services, "dashboard_state", None)
     verdict = admit(state, provider, msg, is_dm=is_dm)
     if not verdict.allowed:
-        logger.debug("channel inbound denied: provider=%s reason=%s", provider, verdict.reason)
+        # No log line here: this used to be a bare DEBUG that named neither the channel nor
+        # the sender, so it could not answer "which channel do I have to track?" — and it
+        # fired on an admission-cache hit too, re-announcing a decision already reported.
+        # `report_inbound_verdict` owns the announcement now, at a level derived from the
+        # verdict, which is also why the three transports that call `guard_inbound` directly
+        # (and therefore never reach this line) are fixed by the same change.
         return verdict
     await _route_to_session(services, provider, msg, verdict.fenced_text or msg.text, turn_runner)
     return verdict

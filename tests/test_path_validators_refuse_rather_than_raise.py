@@ -48,19 +48,24 @@ NUL_PATHS = [
     "~/a\x00b",
     "\x00",
 ]
+#: Explicit ASCII ids. Without them pytest derives the id from the param string, which puts a
+#: raw/escaped NUL into the printed node id — and, worse, for the 100k-char param below produces a
+#: ~100 KB single log line. Under `--verbose` (addopts) + xdist on CI that line intermittently
+#: overflows the log/IPC stream and truncates the whole run mid-suite with no summary (#2720).
+NUL_IDS = ["nul-mid", "nul-trailing", "nul-leading", "nul-home", "nul-only"]
 
 
 # ── each validator refuses in its OWN documented way ─────────────────────────────────────────
 
 
-@pytest.mark.parametrize("raw", NUL_PATHS)
+@pytest.mark.parametrize("raw", NUL_PATHS, ids=NUL_IDS)
 def test_validate_file_path_returns_None_instead_of_raising(raw):
     """🔑 Its docstring promises "the canonical path or None if rejected". Raising breaks that
     contract for every caller, and the callers are HTTP handlers."""
     assert validate_file_path(raw) is None
 
 
-@pytest.mark.parametrize("raw", NUL_PATHS)
+@pytest.mark.parametrize("raw", NUL_PATHS, ids=NUL_IDS)
 def test_safe_read_file_raises_its_OWN_refusal(raw):
     """`PermissionError`, not `ValueError`. Callers already handle the former — it is the refusal
     this function documents — and none of them expected the latter from a path argument."""
@@ -68,7 +73,7 @@ def test_safe_read_file_raises_its_OWN_refusal(raw):
         safe_read_file(raw)
 
 
-@pytest.mark.parametrize("raw", NUL_PATHS)
+@pytest.mark.parametrize("raw", NUL_PATHS, ids=NUL_IDS)
 def test_is_sensitive_path_fails_CLOSED(raw):
     """🪤 The trap. Pre-fix this answered False — "safe" — for a path it could not resolve. A
     classifier that cannot classify must not vouch for the input."""
@@ -87,6 +92,9 @@ def test_is_sensitive_path_fails_CLOSED(raw):
         "\udcff/tmp/x",  # an unpaired surrogate — encodes to nothing valid
         "/tmp/\udce9",
     ],
+    # Explicit ids: the 100k-char param would otherwise become a ~100 KB node id / log line
+    # (#2720 — see NUL_IDS above).
+    ids=["nul-instance", "double-nul", "enametoolong", "unpaired-surrogate", "lone-surrogate"],
 )
 def test_validate_file_path_never_raises_for_hostile_input(raw):
     """The NUL was one member of "the OS refused to canonicalize this". The `except` around the

@@ -445,7 +445,32 @@ def _install_python_deps(manifest: AppManifest) -> bool:
     return True
 
 
-def _load_staged_manifest(staged: Path) -> AppManifest:
+def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
+    """Raise when the running core is older than the app's declared floor (#1778).
+
+    ``minPersonalClawVersion`` is a compat gate; before this it was declared, validated
+    and round-tripped but read by nothing, so an app built against a newer SDK surface
+    installed happily and then failed at runtime inside the app backend — surfacing as an
+    app bug rather than a version mismatch.
+
+    Only ``incompatible`` refuses. A malformed floor or an unmeasurable host fails OPEN
+    with a warning — see the four-state note in :mod:`personalclaw.apps.manifest`, which
+    owns the decision itself so no path re-derives the comparison."""
+    compat = manifest.core_compatibility()
+    if not compat.admits:
+        raise AppLifecycleError(f"{action} refused: {manifest.name!r} {compat.reason}")
+    if compat.reason:
+        logger.warning("app %s: %s", manifest.name, compat.reason)
+
+
+def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManifest:
+    """Parse + gate the manifest at ``staged``. THE chokepoint every write path crosses.
+
+    ``install`` calls this for the source peek AND the staged copy; ``update`` does the
+    same — so the core-version gate lives here rather than as a per-entry-point copy that
+    can drift. ``enable`` and the boot backend launcher ask
+    :meth:`AppManifest.core_compatibility` directly (their manifest is already installed,
+    so there is nothing to stage)."""
     mpath = staged / APP_MANIFEST_FILENAME
     if not mpath.is_file():
         raise AppLifecycleError(f"no {APP_MANIFEST_FILENAME} in source")
@@ -456,6 +481,7 @@ def _load_staged_manifest(staged: Path) -> AppManifest:
     errors = manifest.validate()
     if errors:
         raise AppLifecycleError(f"manifest validation failed: {'; '.join(errors)}")
+    _core_version_gate(manifest, action=action)
     return manifest
 
 
@@ -1055,7 +1081,7 @@ def update(
     if not src.is_dir():
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
     try:
-        peek = _load_staged_manifest(src)
+        peek = _load_staged_manifest(src, action="update")
     except AppLifecycleError as exc:
         return InstallResult(ok=False, error=str(exc))
     name = name or peek.name
@@ -1073,7 +1099,7 @@ def update(
     live = app_dir(name)
     rollback = _rollback_dir(name)
     try:
-        manifest = _load_staged_manifest(staged)
+        manifest = _load_staged_manifest(staged, action="update")
         if manifest.name != name:
             return InstallResult(
                 ok=False,
@@ -1393,6 +1419,15 @@ def start_enabled_app_backends() -> list[str]:
         name = app_info.get("name", "")
         try:
             manifest = AppManifest.from_dict(manifest_data)
+            # Core-version gate (#1778) — the boot-load path for an app that is ALREADY
+            # installed and enabled. Reached after a core downgrade (or an install that
+            # predates this gate): spawning the backend would produce exactly the
+            # arbitrary runtime failure inside the app that the gate exists to prevent,
+            # so it is skipped with a legible reason instead.
+            compat = manifest.core_compatibility()
+            if not compat.admits:
+                logger.warning("app %s: backend not started — %s", name, compat.reason)
+                continue
             from personalclaw.apps.backend_runtime import get_backend_supervisor
 
             sup = get_backend_supervisor()
@@ -1446,6 +1481,17 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
         return False
     manifest = _manifest_of(name)
     if manifest is not None:
+        # Core-version gate (#1778). Install-time refusal alone is not enough: the core
+        # can be DOWNGRADED under an app that was installed against a newer one, and the
+        # app is then already on disk. Checked BEFORE onEnable, so no third-party hook
+        # runs for an app this core cannot host.
+        compat = manifest.core_compatibility()
+        if not compat.admits:
+            logger.warning("app %s: enable refused — %s", name, compat.reason)
+            _audit("enable", "refused_core_version", name, caller=caller, error=compat.reason)
+            return False
+        if compat.reason:
+            logger.warning("app %s: %s", name, compat.reason)
         try:
             _run_hook(
                 manifest.setup.onEnable,

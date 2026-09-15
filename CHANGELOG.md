@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **A native-Windows gateway no longer `ImportError`s at boot on the POSIX-only `resource` module.**
 - **The desktop app now tells the gateway it IS the desktop app, so a packaged install stops offering to `pip install -U` its own frozen backend.**
 - **The three surfaces that tell a desktop user how to update stopped promising an updater the shell does not ship.**
 - **Every channel's outbound reply now goes to that channel, so a multi-provider install stops losing answers.**
@@ -40,6 +41,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - A provider's **sensitive settings are write-only again on the route the dashboard actually uses**.
 - **A keep-data uninstall (`Uninstall`, the middle removal rung) no longer destroys or silently overwrites an earlier copy of the app's `data/` that is still on disk.**
 - **The ledger's run totals now say whether a dollar figure was actually measured.**
+- A local model downloaded from a `catalog.json` now reports its **on-disk** state, so the truncated-model **Repair** button can finally appear — and finally repairs.
+- **A model id that escapes its cache root is refused instead of followed.**
+- **The diff view's committed-side read (`GET /api/file-git-original`) no longer leaks a process per timed-out read, no longer answers `HTTP 500` when git cannot be executed, and no longer serves a directory listing as a file's committed content.**
+- **An agent write now validates the SHAPE of every field before storing it.**
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.

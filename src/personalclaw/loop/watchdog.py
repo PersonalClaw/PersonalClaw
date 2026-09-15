@@ -323,6 +323,36 @@ class LoopWatchdog:
         "stagnant": "needs_input",
     }
 
+    def _attention_dedup_key(self, loop_id: str, event: str) -> str:
+        """The idempotency key for one WAIT, scoped to the cycle it happened at.
+
+        Two polls of the same wait must share a key — the watchdog re-observes a blocked loop
+        every tick, and without dedup each tick would stack a row. But `loop:<id>:<event>` alone
+        is permanent per (loop, event), so it also swallowed every LATER block of the same loop:
+        one row, one notification, ever (#335). A loop completes no cycles while it is waiting,
+        so the completed-cycle count is stable across re-polls of one wait and has advanced by
+        the next one — which is exactly the distinction, and the same reasoning the workflow key
+        applies with its epoch (`workflows.attention.dedup_key`) and the trigger autopause card
+        with its `(trigger_id, state)` fingerprint: *re-entering* a paused state is not news,
+        *entering it again* is.
+
+        Belt and braces with the resolve on `store.update_status`: that closes the row and
+        re-arms the key, this makes the re-arm hold even if the resolve never ran (a crash
+        between the two, a row the user dismissed while the loop stayed blocked). One of the two
+        failing must not silence the user.
+        """
+        try:
+            from personalclaw.loop import files as loop_files
+
+            cycles = loop_files.cycles_completed(loop_id)
+        except Exception:
+            # A key without the occurrence is the OLD behaviour: still deduped per (loop, event),
+            # just not re-armed by a later block. Degrading to that beats raising in a publish
+            # path, and it cannot double-notify.
+            logger.debug("loop %s: cycle count unavailable for the dedup key", loop_id)
+            return f"loop:{loop_id}:{event}"
+        return f"loop:{loop_id}:{event}:{cycles}"
+
     def _publish(self, loop_id: str, event: str, data: Any = None) -> None:
         try:
             self._state.loop_sse().publish(
@@ -357,7 +387,7 @@ class LoopWatchdog:
                         title=title,
                         body=self._loop_name(loop_id),
                         refs={"loop": loop_id, "loop_kind": loop.kind if loop else ""},
-                        dedup_key=f"loop:{loop_id}:{event}",
+                        dedup_key=self._attention_dedup_key(loop_id, event),
                     )
                 else:
                     self._state.notify(

@@ -13,11 +13,13 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from typing import NamedTuple
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
@@ -1754,10 +1756,59 @@ def _path_within_roots(path: str) -> bool:
     return False
 
 
-async def _git(args: list[str], cwd: str, timeout: float = 5.0) -> str:
-    """Run a read-only ``git`` command (arg vector, never shell). Returns stdout
-    text, or '' on error/timeout. Output is redacted before returning."""
-    import asyncio  # noqa: F811
+# The committed-side read is the one git call a user waits on interactively (opening a
+# diff), so it gets a longer deadline than the status/log polls. Named rather than
+# inline so a test can INJECT a deadline instead of sleeping out the real one.
+_GIT_SHOW_TIMEOUT = 30.0
+# Ceiling on the committed side of a diff, in bytes of git's stdout.
+_GIT_ORIGINAL_CAP = 512 * 1024
+
+
+class _GitResult(NamedTuple):
+    """What one ``git`` invocation produced.
+
+    ``ok`` is False for EVERY way a read can fail to answer — git absent or not
+    executable, the host out of processes, the deadline blown, or a non-zero exit —
+    because a caller that needs to tell "no answer" from "the answer is empty" needs
+    one flag, not four exception types. ``out`` is still returned on a non-zero exit
+    (git writes partial stdout before failing) so a caller may use whichever it wants.
+    """
+
+    ok: bool
+    out: str
+    truncated: bool = False
+
+
+async def _git(
+    args: list[str], cwd: str, timeout: float = 5.0, *, max_bytes: int | None = None
+) -> _GitResult:
+    """Run a read-only ``git`` command (arg vector, never shell) and report the result.
+
+    🔴 **THE ONE GIT INVOCATION IN THIS MODULE.** A second, hand-rolled
+    ``create_subprocess_exec("git", …)`` lived in :func:`api_file_git_original` and
+    forgot, one by one, everything this function already knew (#432): a timed-out
+    ``git show`` was neither killed nor reaped (**measured: 2 live processes leaked per
+    timeout — the ``git`` child and its grandchild — accumulating one pair per poll**),
+    an unexecutable git raised ``PermissionError`` out of the handler and answered the
+    request with **HTTP 500** where this function returns "no answer", and the copy's
+    ``returncode`` check was the only thing standing between the caller and a git *tree
+    listing* served as a file's contents. The rail for that is
+    ``test_files_git_status.py::test_files_has_exactly_one_git_invoker`` — it walks this
+    module's AST, so a new git spawn cannot be added quietly.
+
+    The timeout path goes through :func:`personalclaw.cancellation.kill_timed_out`
+    rather than ``proc.kill()`` + ``await proc.wait()``, and the child leads its own
+    session so that helper's GROUP branch can fire. Both halves were measured, not
+    reasoned: with a forking ``git`` (an fsmonitor hook, an LFS filter — git plumbing
+    does fork) the pid-only kill left the grandchild holding the inherited stdout pipe,
+    and ``wait()`` resolves on pipe disconnect rather than on reaping, so **one
+    git-status request with a 1.00s deadline took 135.48s to return**. A deadline that
+    waits out the child it killed is not a deadline.
+
+    *max_bytes*, when given, caps stdout BEFORE decode+redaction and sets
+    :attr:`_GitResult.truncated` — so a caller that only wants the first N bytes of a
+    committed blob doesn't pay a multi-megabyte regex pass to find that out.
+    """
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -1766,28 +1817,29 @@ async def _git(args: list[str], cwd: str, timeout: float = 5.0) -> str:
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            # So kill_timed_out can signal the GROUP: git forks (remote helpers,
+            # fsmonitor, filter drivers) and a grandchild holds this stdout pipe.
+            start_new_session=True,
         )
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            # Reap the killed child so it doesn't linger as a zombie. The Changes
-            # panel polls git-status every few seconds while a worker runs, so on a
-            # slow/large repo unreaped timeouts would pile up defunct git processes.
-            try:
-                await proc.wait()
-            except ProcessLookupError:
-                pass
-            return ""
     except (OSError, ValueError):
-        return ""
+        # git absent (FileNotFoundError), present but not executable (PermissionError),
+        # or the host out of fds/processes. A read that cannot be ASKED reads as no
+        # answer — degrade, never raise into the request.
+        return _GitResult(False, "")
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError, ValueError):
+        # Deadline blown or the pipe broke. Either way the child is still RUNNING and
+        # must not outlive the request: group-signalled and reaped under a bound.
+        await kill_timed_out(proc)
+        return _GitResult(False, "")
+    truncated = max_bytes is not None and len(out) > max_bytes
+    if max_bytes is not None:
+        out = out[:max_bytes]
     text = out.decode("utf-8", "replace")
     text, _ = redact_credentials(text)
     text, _ = redact_exfiltration_urls(text)
-    return text
+    return _GitResult(proc.returncode == 0, text, truncated)
 
 
 async def api_file_git_status(request: web.Request) -> web.Response:
@@ -1813,10 +1865,10 @@ async def api_file_git_status(request: web.Request) -> web.Response:
     # `git init` with no commits yet — the greenfield case), where
     # ``rev-parse --abbrev-ref HEAD`` just prints the literal "HEAD". Fall back to
     # rev-parse for a genuinely detached HEAD (no symbolic ref).
-    branch = (await _git(["symbolic-ref", "--short", "HEAD"], repo)).strip()
+    branch = (await _git(["symbolic-ref", "--short", "HEAD"], repo)).out.strip()
     if not branch:
-        branch = (await _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)).strip()
-    porcelain = await _git(["status", "--porcelain", "-z"], repo)
+        branch = (await _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)).out.strip()
+    porcelain = (await _git(["status", "--porcelain", "-z"], repo)).out
     statuses: dict[str, str] = {}
     # ``-z`` separates entries with NUL; rename entries carry a second NUL-
     # separated path (the origin) which we skip.
@@ -1863,7 +1915,7 @@ async def api_file_git_log(request: web.Request) -> web.Response:
     # NUL-delimited fields per commit, record-separated by newline, so subjects
     # with arbitrary punctuation parse cleanly.
     fmt = "%h%x00%s%x00%cr%x00%an"
-    out = await _git(["log", f"-{limit}", f"--pretty=format:{fmt}"], repo)
+    out = (await _git(["log", f"-{limit}", f"--pretty=format:{fmt}"], repo)).out
     commits: list[dict] = []
     for line in out.splitlines():
         parts = line.split("\x00")
@@ -1903,14 +1955,18 @@ async def api_file_git_commit(request: web.Request) -> web.Response:
     # subject+diff — which the cockpit would misreport as a legit "empty checkpoint"
     # rather than "this commit no longer exists here". rev-parse --verify --quiet
     # echoes the full sha when h is a real commit in this repo, nothing when it isn't.
-    resolved = (await _git(["rev-parse", "--verify", "--quiet", f"{h}^{{commit}}"], repo)).strip()
+    resolved = (
+        await _git(["rev-parse", "--verify", "--quiet", f"{h}^{{commit}}"], repo)
+    ).out.strip()
     if not resolved:
         return web.json_response(
             {"repoRoot": repo, "hash": h, "subject": "", "diff": "", "found": False}
         )
-    subject = (await _git(["show", "-s", "--format=%s", h], repo)).strip()
+    subject = (await _git(["show", "-s", "--format=%s", h], repo)).out.strip()
     # ``--`` separates the rev from paths so a hash can never be read as a flag.
-    diff = await _git(["show", "--no-color", "--stat", "--patch", h, "--"], repo, timeout=10.0)
+    diff = (
+        await _git(["show", "--no-color", "--stat", "--patch", h, "--"], repo, timeout=10.0)
+    ).out
     _sel().log_tool_invocation(
         session_key="dashboard", tool_name="git_commit", outcome="success", resources=repo
     )
@@ -1933,8 +1989,9 @@ async def api_file_git_commit(request: web.Request) -> web.Response:
 async def api_file_git_original(request: web.Request) -> web.Response:
     """GET /api/file-git-original?path=... — the committed (HEAD) contents of a
     file, for a working-vs-HEAD diff view. Returns ``{content, exists}``; exists is
-    False for a file not in HEAD (newly added — the diff is then against empty).
-    Allowlist-gated like the rest; redacted on the way out."""
+    False for anything HEAD holds no FILE for — a newly added path (the diff is then
+    against empty), a directory, or a repo git cannot currently be asked about.
+    Allowlist-gated like the rest; redacted on the way out (inside :func:`_git`)."""
     raw = request.query.get("path", "").strip()
     path = _validate_dashboard_path(raw)
     if not path:
@@ -1946,34 +2003,33 @@ async def api_file_git_original(request: web.Request) -> web.Response:
         rel = os.path.relpath(path, repo)
     except ValueError:
         return web.json_response({"content": "", "exists": False})
-    # git show HEAD:<rel> — non-zero exit (path not in HEAD) → newly added file.
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "show",
-            f"HEAD:{rel}",
-            cwd=repo,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-    except (FileNotFoundError, asyncio.TimeoutError):
+    # ``cat-file blob`` asks the exact question this endpoint answers — "the committed
+    # FILE at this path" — and fails when the named object is not a blob. The replaced
+    # ``show HEAD:<rel>`` asked a looser one: for a DIRECTORY it exits 0 and prints a
+    # tree LISTING, which this endpoint served as the file's committed content with
+    # exists:true. MEASURED on the pre-fix code (#432):
+    #   {"content": "tree HEAD:sub\n\na.txt\nb.txt\n", "exists": true}
+    # — the diff view rendered a directory index as the original side of a file.
+    # Type-checking the object separately would be a second round trip to re-derive
+    # what the read itself can refuse.
+    #
+    # The 512KB cap is applied inside _git (before redaction, so a multi-megabyte blob
+    # is not regex-scanned to be thrown away) and reported back, so a cut HEAD side is
+    # still SIGNALLED rather than silently short — else a large committed file's diff
+    # reads as if the worker deleted the tail (no-silent-caps; mirrors fileRead's
+    # X-Truncated and the commit view's truncated flag).
+    res = await _git(
+        ["cat-file", "blob", f"HEAD:{rel}"],
+        repo,
+        timeout=_GIT_SHOW_TIMEOUT,
+        max_bytes=_GIT_ORIGINAL_CAP,
+    )
+    if not res.ok:
         return web.json_response({"content": "", "exists": False})
-    if proc.returncode != 0:
-        return web.json_response({"content": "", "exists": False})
-    data = out or b""
-    _CAP = 512 * 1024
-    # Signal when the HEAD side was cut — else a large committed file's diff would
-    # silently show the original truncated, reading as if the worker deleted the tail
-    # (no-silent-caps; mirrors fileRead's X-Truncated + the commit-view truncated flag).
-    truncated = len(data) > _CAP
-    text = data[:_CAP].decode("utf-8", "replace")
-    text, _ = redact_credentials(text)
-    text, _ = redact_exfiltration_urls(text)
     _sel().log_tool_invocation(
         session_key="dashboard", tool_name="git_show", outcome="success", resources=repo
     )
-    return web.json_response({"content": text, "exists": True, "truncated": truncated})
+    return web.json_response({"content": res.out, "exists": True, "truncated": res.truncated})
 
 
 _CONTENT_SEARCH_IGNORE_DIRS = {
@@ -2018,8 +2074,17 @@ async def _content_search_rg(root: str, query: str, include: str) -> tuple[list[
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
+    except (OSError, ValueError):
+        return [], False
+    try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=_CONTENT_SEARCH_TIMEOUT)
     except (asyncio.TimeoutError, OSError, ValueError):
+        # The sibling of #432's git leak, in this same module: search over a huge tree
+        # blows the 15s deadline, the handler returned, and ripgrep kept running —
+        # unkilled and unreaped, one orphan per timed-out search. No start_new_session
+        # above on purpose: rg never forks, so kill_timed_out's single-pid fallback is
+        # the right signal and a group it doesn't lead would only widen the blast radius.
+        await kill_timed_out(proc)
         return [], False
     results: list[dict] = []
     for line in out.decode("utf-8", "replace").splitlines():

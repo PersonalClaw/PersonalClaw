@@ -89,3 +89,37 @@ def test_knowledge_embedder_none_when_nothing_bound(monkeypatch):
 
     monkeypatch.setattr(reg, "get_active_embed_fn", lambda: None)
     assert emb_mod.create_embedder_from_config({}) is None
+
+
+@pytest.mark.asyncio
+async def test_embed_many_fn_works_from_inside_a_running_event_loop(monkeypatch):
+    """Regression: `get_active_embed_many_fn()`'s returned closure used a bare
+    `asyncio.run(...)` instead of `run_embed_sync`, so calling it from ANY async caller
+    with a loop already running (dashboard handlers, knowledge chunk-backfill during
+    ingest — the exact callers this batch accessor exists for) raised
+    ``RuntimeError: asyncio.run() cannot be called from a running event loop`` on every
+    group, which `embed_batch`'s retry/bisect classifier then reported as a permanent
+    per-chunk failure. The single-text path (`get_active_embed_fn`) already bridged
+    through `run_embed_sync`; the batch path must do the same. This test is itself
+    running inside an event loop (``pytest.mark.asyncio``), so it reproduces the failure
+    directly rather than asserting on a mock that could not see the bug.
+    """
+
+    class _FakeDirectProvider:
+        """Stands in for an app-registered provider (e.g. Bedrock) whose `embed_batch`
+        is a real coroutine — the shape `_ensure_scanned()` would hand back."""
+
+        name = "fake-direct"
+
+        async def embed_batch(self, texts: list[str], model: str = "") -> list[list[float]]:
+            return [[float(len(t))] for t in texts]
+
+    monkeypatch.setattr(reg, "_active_embedding_spec", lambda: ("fake-direct", "fake-model"))
+    monkeypatch.setattr(reg, "_ensure_scanned", lambda: None)
+    monkeypatch.setattr(reg, "_providers", {"fake-direct": _FakeDirectProvider()})
+
+    fn = reg.get_active_embed_many_fn()
+    assert fn is not None
+    # Called directly (not awaited) — `fn` is a plain sync callable, exactly how the
+    # gateway's async ingest/chunk-backfill path calls it. Before the fix this raised.
+    assert fn(["a", "bb", "ccc"]) == [[1.0], [2.0], [3.0]]

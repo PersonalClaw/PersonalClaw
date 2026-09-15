@@ -11,7 +11,6 @@ active embedding model is chosen in Settings > Models (``active_models.json`` as
   registry's ``embed()`` using the user-supplied endpoint/credential.
 """
 
-import asyncio
 import logging
 from collections.abc import Callable
 
@@ -292,10 +291,22 @@ def get_active_embed_many_fn() -> Callable[[list[str]], list[list[float] | None]
     # what matters to the caller is one call per group, not how the provider satisfies it.
 
     def _embed_many(texts: list[str]) -> list[list[float] | None]:
-        # One `asyncio.run` per BATCH is the whole point of batching — never one per text.
-        # (The per-text executor churn this used to warn about is gone from the single-text
-        # sites too; they share `base.run_embed_sync` now.)
-        return list(asyncio.run(batch(texts, model=model_id)) or [])
+        # One bridged call per BATCH is the whole point of batching — never one per text.
+        # A raw `asyncio.run()` here (as opposed to `run_embed_sync`) raises
+        # "asyncio.run() cannot be called from a running event loop" the moment this is
+        # invoked from async code with a loop already running — which is exactly the
+        # ingest/chunk-backfill path (dashboard handlers, knowledge processing), the one
+        # caller this batch accessor exists for. `run_embed_sync` is the same bridge the
+        # single-text path above already uses, so both sites now behave identically with
+        # and without a running loop. Timeout scales with group size — Bedrock's
+        # `embed_batch` is a sequential loop of `embed()` calls under the hood, so a
+        # multi-text group legitimately needs more wall time than the single-text budget.
+        return list(
+            run_embed_sync(
+                lambda: batch(texts, model=model_id), timeout=max(60.0, 5.0 * len(texts))
+            )
+            or []
+        )
 
     return _embed_many
 

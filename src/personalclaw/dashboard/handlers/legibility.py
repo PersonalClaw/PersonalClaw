@@ -25,7 +25,7 @@ from personalclaw.legibility.always_on import (
     read_instruction,
     write_instruction,
 )
-from personalclaw.legibility.discover import compute_discover, dismiss
+from personalclaw.legibility.discover import UnknownTipError, compute_discover, dismiss
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,11 @@ async def api_discover_dismiss(request: web.Request) -> web.Response:
 
     Body: ``{"id": "<tip-id>"}``. Persists the dismissal in
     ``entity_settings/legibility.json`` and echoes the full dismissed set.
+
+    The id must be one the catalog defines. This validated only that ``id`` was *present*,
+    so any string at all was persisted forever into a settings file with no UI that can
+    inspect or clear it — and, since one POST may carry the app's whole body ceiling, a
+    single request could leave megabytes there for every later Discover read to parse.
     """
     try:
         body = await request.json()
@@ -55,7 +60,13 @@ async def api_discover_dismiss(request: web.Request) -> web.Response:
     tip_id = str(body.get("id", "")).strip()
     if not tip_id:
         return web.json_response({"error": "id is required"}, status=400)
-    ids = dismiss(tip_id)
+    try:
+        ids = dismiss(tip_id)
+    except UnknownTipError:
+        # %r, and truncated: the id is caller-supplied, and repr escapes the newlines that
+        # would otherwise let it forge a second log line.
+        logger.info("discover dismiss refused: %r is not a catalog tip id", tip_id[:80])
+        return web.json_response({"error": "unknown tip id"}, status=400)
     return web.json_response({"ok": True, "dismissed": sorted(ids)})
 
 

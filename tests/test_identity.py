@@ -165,19 +165,25 @@ class TestTaskAttribution:
         assert task.title == "From before"
 
     @pytest.mark.asyncio
-    async def test_comment_author_falls_back_to_the_historical_placeholder(
+    async def test_comment_author_agrees_with_task_author_with_no_handle(
         self, tmp_path, monkeypatch
     ):
+        """#2847: with no configured handle a comment stamps the SAME author as its
+        task — "" — not the retired "user" placeholder. The placeholder made every task
+        and its comments disagree until ``dashboard.username`` was set."""
         import personalclaw.config.loader as loader
         import personalclaw.tasks.native as native
 
         monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
         monkeypatch.setattr(native, "config_dir", lambda: tmp_path, raising=False)
+        monkeypatch.setattr(native, "_current_username", lambda: "")
         provider = native.NativeTaskProvider()
         task = await provider.create_task(title="x")
-        monkeypatch.setattr(native, "_current_username", lambda: "")
         comment = await provider.add_comment(task.id, "a note")
-        assert comment is not None and comment.author == "user"
+        assert comment is not None
+        # The invariant: a task and its comments agree in the default no-handle state.
+        assert comment.author == task.author == ""
+        # An explicit handle still flows through to the comment path unchanged.
         monkeypatch.setattr(native, "_current_username", lambda: "keyur-golani")
         second = await provider.add_comment(task.id, "another")
         assert second is not None and second.author == "keyur-golani"

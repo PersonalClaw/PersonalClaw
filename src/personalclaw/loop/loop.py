@@ -98,6 +98,19 @@ ENDED_STATUSES: frozenset[LoopStatus] = frozenset(
     status for status, phase in LOOP_PHASES.items() if phase is LifecyclePhase.ENDED
 )
 
+#: Loop states where the loop is WAITING ON THE USER. Derived from the phase map like its
+#: siblings, and load-bearing for the inbox: an attention row raised for a waiting loop stays
+#: open exactly while the loop's status is in here, and is resolved on the transition OUT
+#: (``store.update_status``). Derived rather than listed so a NEW attention status inherits the
+#: resolution instead of quietly leaking a permanent row — the failure #335 measured.
+#:
+#: ``PAUSED`` is in here, so pausing a blocked loop KEEPS its row — deliberately. The user chose
+#: to defer the question rather than answer it, the question is still theirs, and the row is what
+#: reminds them when they come back. Resuming (→ RUNNING) or ending the loop closes it.
+ATTENTION_STATUSES: frozenset[LoopStatus] = frozenset(
+    status for status, phase in LOOP_PHASES.items() if phase is LifecyclePhase.ATTENTION
+)
+
 #: Ended loop states a loop may still LEAVE — the one place ``failed`` stops meaning what it
 #: means for a run, stated rather than implied. A loop is a CAMPAIGN of attempts, so a dead
 #: worker ends the attempt and not the campaign: ``ACTION_SOURCE_STATES["resume"]`` accepts
