@@ -178,6 +178,16 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
     }
 
 
+# Commands that build a REAL embedding/chat provider (the eval family) and so must
+# bootstrap installed provider apps into this standalone process first — the same
+# provider init the gateway runs at boot (see ``providers.loader.bootstrap_cli_providers``).
+# ``eval-harvest`` is excluded: it reads terminal runs into scenario cases and resolves
+# no live provider.
+_PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
+    {"eval", "judge-bench", "study", "ablation", "eval-gate", "retrieval-eval"}
+)
+
+
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
     # Load .env from the project root (CWD or detected project dir) and from
@@ -1359,6 +1369,18 @@ Examples:
     logging.getLogger("personalclaw").addHandler(_fh)
     for _lname in _APP_LOGGER_ROOTS:
         logging.getLogger(_lname).addHandler(_fh)
+
+    # App-contributed providers (Bedrock embedding, …) register only when their app
+    # module is imported — work the gateway does at boot but a standalone CLI process
+    # otherwise never does, leaving its provider registry empty. The eval commands
+    # build REAL embedding/chat providers and run read-only over the local stores, so
+    # they must first bootstrap installed provider apps the same way the gateway does
+    # or an app-provided arm (e.g. retrieval-eval's vector arm) reads "no executor"
+    # even with the embedder bound (ES-3).
+    if args.command in _PROVIDER_BOOTSTRAP_COMMANDS:
+        from personalclaw.providers.loader import bootstrap_cli_providers
+
+        bootstrap_cli_providers()
 
     if args.command == "chat":
         # A fresh install has no chat model bound yet, and the getting-started
