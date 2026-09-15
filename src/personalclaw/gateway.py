@@ -3841,9 +3841,13 @@ class GatewayOrchestrator:
     async def _auto_apply_update(self) -> None:
         """Auto-apply: fetch, reset to remote, rebuild, restart.
 
-        Uses ``git fetch`` + ``git reset --hard`` instead of ``git pull``
-        so local tracked-file edits never cause merge conflicts.
-        Untracked files (task specs, notes) are untouched by reset.
+        SAFE-BY-DEFAULT: this UNATTENDED path never silently discards a user's
+        uncommitted tracked-file edits. If the working tree carries tracked
+        changes, it REFUSES the destructive ``git reset --hard`` and leaves the
+        tree untouched — the interactive ``personalclaw update`` path prompts
+        instead, and both share the ``self_update.git_tracked_changes`` predicate
+        so "is it safe to hard-reset?" is answered in exactly one place. Untracked
+        files (task specs, notes) survive a reset and never block an update.
         """
         proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
         if not proj:
@@ -3911,27 +3915,34 @@ class GatewayOrchestrator:
                     self.dashboard_state.clear_update_progress()
                 return
 
-            # Warn if local tracked-file edits will be discarded
-            status_proc = await asyncio.create_subprocess_exec(
-                "git",
-                "status",
-                "--porcelain",
-                cwd=proj,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            status_out, _ = await asyncio.wait_for(status_proc.communicate(), timeout=10)
-            if status_out and status_out.strip():
-                tracked = [
-                    ln
-                    for ln in status_out.decode(errors="replace").splitlines()
-                    if not ln.startswith("??")
-                ]
-                if tracked:
-                    logger.warning("Auto-update: discarding local tracked-file changes in %s", proj)
+            # SAFE-BY-DEFAULT: this UNATTENDED path must NEVER silently discard a
+            # user's uncommitted tracked-file edits. If the working tree carries
+            # tracked changes, REFUSE the destructive reset and leave the tree
+            # untouched — the user can commit or `git stash`, and the next check
+            # applies cleanly. Shares the SAME predicate as the interactive CLI
+            # path (self_update.git_tracked_changes) so there is one mechanism,
+            # not two. Untracked files (task specs, notes) survive a reset and so
+            # never block an update.
+            from personalclaw import self_update
 
-            # Hard reset to remote — discards local tracked-file edits,
-            # untracked files (task specs, notes) are preserved.
+            tracked = await asyncio.to_thread(self_update.git_tracked_changes, proj)
+            if tracked:
+                logger.warning(
+                    "Auto-update: refusing to apply — %d uncommitted tracked-file "
+                    "change(s) in %s would be discarded by a hard reset. Commit or "
+                    "`git stash` them; the update applies on the next check.",
+                    len(tracked),
+                    proj,
+                )
+                if self.dashboard_state:
+                    self.dashboard_state.push_update_progress(
+                        "error",
+                        "Update paused — commit or stash your local changes first.",
+                    )
+                return
+
+            # Hard reset to remote — safe now: the tree carries no tracked edits.
+            # Untracked files (task specs, notes) are preserved.
             reset = await asyncio.create_subprocess_exec(
                 "git",
                 "reset",
