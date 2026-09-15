@@ -1381,6 +1381,24 @@ class DashboardState:
             except Exception:
                 logger.warning("Flush failed for session %s", session.key, exc_info=True)
 
+    #: Note fields the PLATFORM decides, which caller-supplied `meta` may not set (issue 423).
+    #:
+    #: Only the ones the authority-last assignment in `notify` cannot cover on its own:
+    #:
+    #: * `mode`, `targets`, `source`, `escalated_by`, `badge_only`, `native` — written further down
+    #:   under a condition, so a note that took a different branch would leave a caller's value in
+    #:   place. `source` in particular names the surface a consumer deep-links to, and the comment
+    #:   at its assignment explains why the RULE owns it rather than the emitter.
+    #: * `acked` — `notify` never writes it; the ack path (`handlers/messaging.py`) does. A note
+    #:   that arrives already acknowledged is one the user never sees.
+    #:
+    #: `kind`/`title`/`body`/`ts` are deliberately NOT listed: they are assigned unconditionally
+    #: after the merge, which protects them structurally and keeps this set from having to grow in
+    #: step with the happy path.
+    _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
+        {"mode", "targets", "source", "escalated_by", "badge_only", "native", "acked"}
+    )
+
     def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None:
         """Push a notification to ALL connected SSE clients and persist to disk.
 
@@ -1408,14 +1426,43 @@ class DashboardState:
         except Exception:  # never let the prefs gate break delivery
             logger.debug("notification_allowed failed; delivering", exc_info=True)
 
+        # 🔴 THE NOTE OWNS ITS OWN FIELDS (issue 423). This was `note = {kind, title, body, ts}`
+        # followed by `note.update(meta)`, so caller-supplied meta merged OVER the four fields the
+        # platform had just decided. `kind` is the worst of them: `notification_allowed(kind)` above
+        # has already been evaluated on the PARAMETER, so an emitter could pass a gate as one kind
+        # and be persisted, broadcast and rule-matched as another. `acked` is next: the ack path
+        # (`handlers/messaging.py`) owns it, and a note carrying `acked: True` on arrival is one the
+        # user never sees.
+        #
+        # This matters because `notify` is the choke point for EVERY emitter — its own docstring
+        # lists "crons, loops, hooks, inbox alerts, heartbeats, app actions" — and an app bundle is
+        # third-party code. Meta is the one part of a note a caller controls.
+        #
+        # Meta goes in FIRST and the platform's fields are assigned after, so authority is
+        # structural rather than a list someone has to remember to extend: a field this method
+        # starts setting later is protected by the assignment itself. `_RESERVED_NOTE_KEYS` covers
+        # only what that cannot reach — the fields set further down under a condition, and `acked`,
+        # which `notify` never writes at all. ARCC's input-validation guidance is explicit that this
+        # is the allowlist direction ("only data fitting specific, approved criteria is processed").
+        supplied = dict(meta or {})
+        smuggled = sorted(set(supplied) & self._RESERVED_NOTE_KEYS)
+        if smuggled:
+            # Logged, not silent: a reserved key in meta is an emitter bug, and dropping it without
+            # a word is how the emitter's author never learns their field vanished.
+            logger.debug(
+                "notify(%s): ignoring platform-owned key(s) %s supplied in meta", kind, smuggled
+            )
         note: dict[str, Any] = {
-            "kind": kind,
-            "title": title,
-            "body": body,
-            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            k: v for k, v in supplied.items() if k not in self._RESERVED_NOTE_KEYS
         }
-        if meta:
-            note.update(meta)
+        note.update(
+            {
+                "kind": kind,
+                "title": title,
+                "body": body,
+                "ts": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
 
         # Resolve the rule. Every failure path here falls through to immediate delivery:
         # a policy layer that can't read its own config must not be able to silence the
