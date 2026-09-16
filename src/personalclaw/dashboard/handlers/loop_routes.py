@@ -19,6 +19,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config.loader import AppConfig
+from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, manager, store, validation
 from personalclaw.loop.loop import ACTION_SOURCE_STATES, KINDS, Loop, LoopStatus
@@ -249,6 +250,29 @@ async def api_loop_classify(request: web.Request) -> web.Response:
                 f"{validation._MAX_TASK_LEN:,} characters."
             },
             status=400,
+        )
+    # No-provider first-run legibility rail (ONBOARDING-UX OU-12). Classification is a
+    # model call (`one_shot_completion(use_case="background")` below). On a fresh install
+    # with nothing bound it USED to answer 200 `classified:false` — indistinguishable from
+    # "the model returned garbage", so the user got bare defaults with a generic
+    # "couldn't auto-analyze" warning instead of "no model connected yet". Preflight the
+    # same no-instantiate probe behind onboarding's `needs_model` and surface the calm
+    # setup signal (the wire peer of ERR_MODEL_UNRESOLVED, message keyed for the FE
+    # `isNoModelSetupError` matcher) instead of the silent fallback. Only fires when
+    # NOTHING resolves — `can_resolve_use_case("background")` is true whenever any usable
+    # model is bound (background falls back to the chat chain), so a bound instance is
+    # byte-for-byte unchanged. The composer already degrades a null classify to
+    # "Could not analyze the task — is a model configured?" (LoopComposer.submit).
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    if not can_resolve_use_case("background"):
+        return json_error(
+            "model_unresolved",
+            message=(
+                "No model provider resolves for use case 'background'. Connect a model in "
+                "Settings → Models to analyze tasks."
+            ),
+            status=409,
         )
     strat = kinds.get(kind)
     from personalclaw.llm_helpers import one_shot_completion
