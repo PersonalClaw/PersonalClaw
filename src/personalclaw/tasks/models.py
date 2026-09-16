@@ -232,6 +232,17 @@ class Task:
     # reads back as "" — no attribution, i.e. today's behavior. Distinct from
     # `assignee`, which is who should DO it.
     author: str = ""
+    # WHICH HARNESS minted this record, as an origin-attribution handle
+    # (MULTI-TENANCY-ENTITY TSE2-2). A locally-minted task is stamped with this
+    # home's `durability` `machine_id` at CREATE; a record served by a shared/
+    # multi-tenant provider carries the origin of the harness that minted it.
+    # Additive with an empty default: a task written before this field existed —
+    # or by a provider that does not attribute origin — reads back as "", which
+    # means "this harness's" (single-home behavior, unchanged). Distinct from
+    # `author` (WHO) and from the id (WHICH record): it is a sidecar, never an id
+    # format change, so two harnesses' stores merge attributably even when a
+    # `t-<hex8>` id collides by chance.
+    origin_harness: str = ""
     assignee: str = ""
     priority: TaskPriority = TaskPriority.MEDIUM
     labels: list[str] = field(default_factory=list)
@@ -360,6 +371,8 @@ class Task:
             task_list_id=from_field("task_list_id", d.get("task_list_id"), strict=False),
             dependencies=from_field("dependencies", deps_raw, strict=False),
             author=from_field("author", d.get("author"), strict=False),  # absent pre-attribution
+            # absent pre-attribution OR from a provider that does not attribute origin → "".
+            origin_harness=from_field("origin_harness", d.get("origin_harness"), strict=False),
             assignee=from_field("assignee", d.get("assignee"), strict=False),
             priority=from_field("priority", d.get("priority", "medium"), strict=False),
             labels=from_field("labels", d.get("labels"), strict=False),
@@ -634,6 +647,7 @@ TASK_FIELD_COERCERS: dict[str, Any] = {
     "task_list_id": _as_text,
     "dependencies": _as_dependencies,
     "author": _as_text,
+    "origin_harness": _as_text,
     "assignee": _as_text,
     "priority": _as_priority,
     "labels": _as_text_list,
@@ -700,6 +714,11 @@ class Project:
     # or loop scoped under it (distinct from agent_instructions_template, which is
     # operating-procedure guidance; the brief is the WHAT/WHY of the project).
     brief: str = ""
+    # WHICH HARNESS minted this project (MULTI-TENANCY-ENTITY TSE2-2). Stamped with this
+    # home's `durability` `machine_id` at CREATE; empty on a project written before the field
+    # existed, which reads as "this harness's". A sidecar for cross-harness attribution — the
+    # `p-<hex8>` id format is untouched.
+    origin_harness: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -724,6 +743,7 @@ class Project:
             name_locked=bool(d.get("name_locked", False)),
             agent_instructions_template=d.get("agent_instructions_template", ""),
             brief=str(d.get("brief") or ""),
+            origin_harness=str(d.get("origin_harness") or ""),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

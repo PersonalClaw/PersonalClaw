@@ -235,6 +235,27 @@ def _active_agent_count(store: Any) -> int:
     )
 
 
+def _origin_harness_for(store: Any) -> str:
+    """This home's stable `machine_id` — the origin stamped on a locally-minted trigger
+    (MULTI-TENANCY-ENTITY TSE2-2). Resolved from the STORE's own home (`base_dir`) so it matches the
+    file the row is written to, falling back to the active `config_dir`; REUSES `durability`'s
+    per-machine key and never raises — an unreadable home degrades to ``""`` = "this harness's".
+    """
+    try:
+        from pathlib import Path
+
+        from personalclaw.durability.shards import machine_id
+
+        base = getattr(store, "base_dir", None)
+        if base is None:
+            from personalclaw.config.loader import config_dir
+
+            base = config_dir()
+        return machine_id(Path(base))
+    except Exception:  # noqa: BLE001 - origin attribution must never break a create
+        return ""
+
+
 def create(
     store: Any,
     *,
@@ -391,6 +412,9 @@ def create(
         # always meant that.
         enabled=bool(enabled),
         created_by=created_by,
+        # Origin (MULTI-TENANCY-ENTITY TSE2-2): a locally-minted trigger's origin IS this home, so
+        # it is stamped from the store's `machine_id` at create — never caller-set. Empty → "".
+        origin_harness=_origin_harness_for(store),
         spec=resolved_spec,
         workflow=dict(workflow),
         # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116). Authoring a trigger IS the

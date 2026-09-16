@@ -643,6 +643,14 @@ class Trigger:
     #: written before this field existed has it, and stopping every existing automation would be an
     #: absurd cost for a field nobody asked for.
     author: str = ""
+    #: WHICH HARNESS minted this row (MULTI-TENANCY-ENTITY TSE2-2), as an origin-attribution
+    #: handle — this home's `durability` `machine_id`, REUSED not minted. Orthogonal to `author`
+    #: (WHO) and to `created_by` (WHAT): a shared trigger store needs all three — "the agent on
+    #: Alice's machine" is one row. Stamped at CREATE (`tools.create`); a row written before this
+    #: field existed, or one a `trigger` provider serves without an origin, reads back as ``""`` =
+    #: "this harness's" (a single-home install is byte-unchanged). A sidecar, never an id-format
+    #: change, so two harnesses' stores merge attributably even if a slugged id collides.
+    origin_harness: str = ""
     spec: dict[str, Any] = field(default_factory=dict)
     gates: dict[str, Any] = field(default_factory=dict)
     capabilities: dict[str, Any] = field(default_factory=dict)
@@ -743,6 +751,7 @@ class Trigger:
             "enabled": self.enabled,
             "created_by": self.created_by,
             "author": self.author,
+            "origin_harness": self.origin_harness,
             "spec": dict(self.spec),
             "gates": dict(self.gates),
             "capabilities": dict(self.capabilities),
@@ -1046,6 +1055,10 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         # three authors of the same row (`identity.slugify_username` already guarantees the owner
         # side is canonical, so only the incoming side needs normalizing).
         author=str(data.get("author", "") or "").strip().lower(),
+        # Origin (MULTI-TENANCY-ENTITY TSE2-2): an OPAQUE machine id, so it is read verbatim — never
+        # lowercased/stripped the way `author` (a username) is. Absent → "" = "this harness's". A
+        # provider-served row keeps whatever origin the minting harness stamped.
+        origin_harness=str(data.get("origin_harness", "") or ""),
         spec=dict(spec),
         gates=dict(gates),
         capabilities=(

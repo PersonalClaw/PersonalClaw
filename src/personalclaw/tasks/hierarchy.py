@@ -47,6 +47,19 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _current_origin_harness() -> str:
+    """This home's stable `machine_id` — the origin stamped on a locally-minted project
+    (MULTI-TENANCY-ENTITY TSE2-2). REUSES `durability`'s per-machine key; never minted here, and
+    never raises: an unreadable/unwritable home degrades to ``""`` (= "this harness's").
+    """
+    try:
+        from personalclaw.durability.shards import machine_id
+
+        return machine_id(config_dir())
+    except Exception:
+        return ""
+
+
 class HierarchyStore:
     """Filesystem-backed CRUD for projects and task lists."""
 
@@ -177,6 +190,7 @@ class HierarchyStore:
                         id=f"p-{uuid.uuid4().hex[:8]}",
                         name=name,
                         is_builtin=True,
+                        origin_harness=_current_origin_harness(),
                         created_at=now,
                         updated_at=now,
                     )
@@ -220,6 +234,7 @@ class HierarchyStore:
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
             is_builtin=name in BUILTIN_PROJECTS,
+            origin_harness=_current_origin_harness(),
             created_at=now,
             updated_at=now,
         )
@@ -268,6 +283,7 @@ class HierarchyStore:
             name_locked=bool(name_locked),
             agent_instructions_template=agent_instructions_template,
             brief=str(brief or "").strip(),
+            origin_harness=_current_origin_harness(),
             created_at=now,
             updated_at=now,
         )
