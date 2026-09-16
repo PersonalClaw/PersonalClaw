@@ -1667,6 +1667,42 @@
     "type": "list[ProjectionRuleConfig]"
   },
   {
+    "default": "off",
+    "path": "updates.auto",
+    "sensitive": false,
+    "type": "Literal[off, staged]"
+  },
+  {
+    "default": "stable",
+    "path": "updates.channel",
+    "sensitive": false,
+    "type": "Literal[stable, beta, nightly]"
+  },
+  {
+    "default": true,
+    "path": "updates.check_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 12,
+    "path": "updates.check_interval_hours",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "updates.last_version",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "updates.pin",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": true,
     "path": "voice.clean_for_speech_enabled",
     "sensitive": false,

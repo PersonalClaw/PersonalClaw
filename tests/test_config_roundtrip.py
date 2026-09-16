@@ -247,6 +247,7 @@ _SECTIONS = [
     "local_models",
     "proactive",
     "apps",
+    "updates",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -325,6 +326,15 @@ _SPECIAL = {
     ("security", "autonomy_denylist"): [
         {"paths": ["~/.ssh/**"], "actions": ["credential-read"], "verdict": "block"}
     ],
+    # updates.channel is enum-constrained (RUM-1: stable|beta|nightly) — a generated
+    # "stable-x" is coerced back to `stable` by load()'s _safe_choice and would read as a
+    # dropped field. `beta` is the real non-default that proves the field round-trips;
+    # `nightly` is deliberately not used here, since a fixture should not model the
+    # git-only track-main channel as the normal case.
+    ("updates", "channel"): "beta",
+    # updates.auto is enum-constrained (RUM-1: off|staged) — a generated "off-x" is coerced
+    # back to `off`. `staged` is the real non-default that proves the field round-trips.
+    ("updates", "auto"): "staged",
 }
 
 
@@ -443,6 +453,90 @@ def test_load_fallbacks_match_dataclass_defaults(cfg_file):
                     f"but empty-config load gives {got!r}"
                 )
     assert not diffs, "load() fallback drift vs dataclass defaults:\n" + "\n".join(diffs)
+
+
+# ---------------------------------------------------------------------------
+# RELEASE-UPDATE-MECHANISM RUM-1 — the `updates` block + legacy backfill.
+#
+# The generic leaf-walk above already proves all six fields survive save/load and
+# `test_every_leaf_field_survives_save_load` covers the round-trip; these assert the
+# two points that walk cannot see — the PATCH write path and the load-time legacy
+# mapping — each on a known-true AND a known-false case so none can pass vacuously.
+# ---------------------------------------------------------------------------
+
+
+def test_updates_defaults_are_release_tracking_and_notify_only():
+    """RUM-1: the shipped defaults — stable channel, no pin, notify-only, checks on 12h."""
+    u = AppConfig().updates
+    assert u.channel == "stable"
+    assert u.pin == ""
+    assert u.auto == "off"
+    assert u.check_enabled is True
+    assert u.check_interval_hours == 12
+    assert u.last_version == ""
+
+
+def test_updates_fields_in_editable_allowlist():
+    """RUM-1: every field is PATCH-editable (the write path of the round-trip)."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG["updates.channel"] == {
+        "type": "enum",
+        "values": ["stable", "beta", "nightly"],
+    }
+    assert _EDITABLE_CONFIG["updates.auto"] == {"type": "enum", "values": ["off", "staged"]}
+    assert _EDITABLE_CONFIG["updates.check_enabled"] == {"type": "bool"}
+    assert _EDITABLE_CONFIG["updates.check_interval_hours"] == {"type": "int", "min": 1, "max": 168}
+    assert _EDITABLE_CONFIG["updates.pin"]["type"] == "str"
+    assert _EDITABLE_CONFIG["updates.last_version"]["type"] == "str"
+
+
+def test_legacy_auto_update_true_maps_to_staged_on_stable(cfg_file):
+    """RUM-1 backfill: a home with legacy `auto_update=true` (and no `updates` block)
+    loads to `updates.auto="staged"` + `channel="stable"` — the existing unattended-update
+    git user stops riding raw main and starts riding stable release tags."""
+    cfg_file.write_text(json.dumps({"auto_update": True}), encoding="utf-8")
+    u = AppConfig.load().updates
+    assert u.auto == "staged"
+    assert u.channel == "stable"
+
+
+def test_legacy_auto_update_false_maps_to_off(cfg_file):
+    """RUM-1 backfill (known-false case): `auto_update=false` maps to notify-only."""
+    cfg_file.write_text(json.dumps({"auto_update": False}), encoding="utf-8")
+    assert AppConfig.load().updates.auto == "off"
+
+
+def test_legacy_update_dev_mode_true_maps_to_nightly(cfg_file):
+    """RUM-1 backfill: a home with legacy `dashboard.update_dev_mode=true` loads to
+    `channel="nightly"` — the git-only track-main opt-in becomes the nightly channel."""
+    cfg_file.write_text(json.dumps({"dashboard": {"update_dev_mode": True}}), encoding="utf-8")
+    assert AppConfig.load().updates.channel == "nightly"
+
+
+def test_legacy_update_dev_mode_false_stays_stable(cfg_file):
+    """RUM-1 backfill (known-false case): dev-mode off leaves the default stable channel."""
+    cfg_file.write_text(json.dumps({"dashboard": {"update_dev_mode": False}}), encoding="utf-8")
+    assert AppConfig.load().updates.channel == "stable"
+
+
+def test_explicit_updates_block_wins_over_legacy_flags(cfg_file):
+    """RUM-1: an explicit `updates` field always wins over the legacy source, so the
+    backfill is a one-time floor and never overrides a chosen value. A backwards mapping
+    (legacy overriding the block) would read auto="staged"/channel="nightly" here."""
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "auto_update": True,
+                "dashboard": {"update_dev_mode": True},
+                "updates": {"auto": "off", "channel": "stable"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    u = AppConfig.load().updates
+    assert u.auto == "off"
+    assert u.channel == "stable"
 
 
 def test_every_apps_field_is_patchable_or_has_a_write_path():
