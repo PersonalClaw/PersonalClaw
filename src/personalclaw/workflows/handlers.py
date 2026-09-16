@@ -611,6 +611,17 @@ async def api_def_refine(request: web.Request) -> web.Response:
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
+def _owner_username() -> str:
+    """The configured owner username, so the frontend can scope/label runs as mine vs theirs
+    (TSE2-1). Never raises — attribution is a projection detail, not a reason to 500 a list."""
+    try:
+        from personalclaw.identity import current_username
+
+        return current_username()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 async def api_runs_list(request: web.Request) -> web.Response:
     """Paginated run list. Reads the store directly: this is a projection for a table, not
     an engine operation, and routing it through the service would add nothing."""
@@ -629,12 +640,24 @@ async def api_runs_list(request: web.Request) -> web.Response:
         limit=limit,
         offset=offset,
     )
+    # `?mine=1` scopes the list to the owner's runs (TSE2-1), the same filter the tasks list uses:
+    # a foreign-authored run stays VISIBLE in the unfiltered history (its author rides in the row)
+    # but is excluded from the owner's "my runs" count. `WorkflowRun.belongs_to` treats an
+    # unattributed row as the owner's, so a solo install with no username sees no change.
+    if str(request.query.get("mine", "")).strip().lower() in ("1", "true", "yes"):
+        owner = _owner_username()
+        if owner:
+            runs = [r for r in runs if r.belongs_to(owner)]
+            # `total` describes the filtered set now; reporting the store's count would make the
+            # UI read "3 of 8" for a list holding 3 — the same correction the tasks list makes.
+            total = len(runs)
     return web.json_response(
         {
             "runs": [r.to_dict() for r in runs],
             "total": total,
             "limit": limit,
             "offset": offset,
+            "owner": _owner_username(),
         }
     )
 

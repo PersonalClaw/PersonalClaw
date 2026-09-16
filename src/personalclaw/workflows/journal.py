@@ -299,13 +299,22 @@ class Journal(LedgerWriter):
         inputs: dict[str, Any],
         spec_version: int,
         resumed: bool = False,
+        owner_username: str = "",
+        origin_harness: str = "",
     ) -> None:
+        """`owner_username`/`origin_harness` are the run's attribution (TSE2-1), carried onto the
+        opening ledger row so a federated Run Ledger can attribute a run to who/what minted it
+        without re-reading the SQLite row. Optional and defaulting to "" (the owner's) so a caller
+        that never wired them — or a pre-plan replay — writes exactly today's bytes but for the
+        two empty keys."""
         self.write(
             RUN_STARTED,
             workflow_name=workflow_name,
             inputs=dict(inputs or {}),
             spec_version=spec_version,
             resumed=resumed,
+            owner_username=owner_username,
+            origin_harness=origin_harness,
         )
 
     def run_finished(
