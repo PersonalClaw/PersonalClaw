@@ -339,8 +339,11 @@ def test_the_cli_still_writes_a_key_the_allowlist_does_not_declare(cfg_file):
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     assert "session.timeout_secs" in _EDITABLE_CONFIG or True  # documented either way
-    _config_set("auto_update", "true")
-    assert json.loads(cfg_file.read_text(encoding="utf-8"))["auto_update"] is True
+    # `observe_max_messages` is a real top-level field (present in to_dict) that the PATCH
+    # allowlist does not declare — so the CLI still writes it, coercing via _parse_value.
+    assert "observe_max_messages" not in _EDITABLE_CONFIG
+    _config_set("observe_max_messages", "207")
+    assert json.loads(cfg_file.read_text(encoding="utf-8"))["observe_max_messages"] == 207
 
 
 # ── The registry is the single source ─────────────────────────────────────

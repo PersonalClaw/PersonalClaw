@@ -391,7 +391,6 @@ def test_every_leaf_field_survives_save_load(cfg_file):
     for section in _SECTIONS:
         expected[section] = _mutate_leaves(section, getattr(cfg, section))
     # Scalar top-level fields (dict-typed ones excluded — see _SECTIONS note).
-    cfg.auto_update = False
     cfg.timezone = "Europe/Berlin"
     cfg.snapshot_dir = "test-value"
     cfg.observe_max_messages = 207
@@ -407,7 +406,6 @@ def test_every_leaf_field_survives_save_load(cfg_file):
             if got != want:
                 diffs.append(f"{section}.{dotted}: saved {want!r} but loaded {got!r}")
     for name, want in [
-        ("auto_update", False),
         ("timezone", "Europe/Berlin"),
         ("snapshot_dir", "test-value"),
         ("observe_max_messages", 207),

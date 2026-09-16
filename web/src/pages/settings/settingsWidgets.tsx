@@ -1249,7 +1249,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'updates', group: 'System', label: 'Updates', icon: DownloadCloud, size: 'sm',
     description: 'Version, changelog, and update controls.',
-    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade ${u ? `${u.version ?? ''} ${u.available ? `update available ${u.latest ?? ''}` : 'up to date'} ${u.auto_update ? 'auto-update' : ''}` : ''}` },
+    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade ${u ? `${u.version ?? ''} ${u.available ? `update available ${u.latest ?? ''}` : 'up to date'} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
     render(query, go) {
       const { data: u, refresh, stale: uStale } = useUpdates()
       return (
@@ -1263,7 +1263,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             </div>
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <span data-type="caption" className="text-on-surface-low">Auto-update</span>
-              <Switch on={u.auto_update} label="Auto-update"
+              <Switch on={u.auto === 'staged'} label="Auto-update"
                 onToggle={(v) => mutate(() => api.setAutoUpdate(v).then(refresh), 'settings:update-check')} />
             </div>
           </>}

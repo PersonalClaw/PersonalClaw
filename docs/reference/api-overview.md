@@ -27,7 +27,7 @@ per-route contract.
 | `POST /api/system/restart` | Restart the gateway process. |
 | `GET /api/suggestions` | Precomputed dashboard suggestion cards. |
 | `GET /api/changelog` | Changelog for the update panel. |
-| `GET /api/update/check` · `POST /api/update` · `POST /api/update/auto` · `POST /api/update/cancel` · `POST /api/update/simulate` | Core self-update: check, apply, toggle unattended mode, cancel, dry-run. |
+| `GET /api/update/check` · `POST /api/update` · `POST /api/update/cancel` · `POST /api/update/simulate` | Core self-update: check, apply, cancel, dry-run. Unattended mode is the `updates.auto` config field (off \| staged) written via `PATCH /api/config/personalclaw` — the dedicated `/api/update/auto` endpoint was retired in RUM-5. |
 | `GET /api/design/tokens/default` | Default design-token set. |
 
 ## Chat & sessions

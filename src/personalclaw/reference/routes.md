@@ -751,7 +751,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
 - `POST /api/update` — advance the checkout to its release, rebuild, restart.
-- `POST /api/update/auto` — toggle auto-update on/off.
 - `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
 - `GET /api/update/check` — kind-aware update check (contract C2).
 - `POST /api/update/simulate` — walk through update steps with delays.

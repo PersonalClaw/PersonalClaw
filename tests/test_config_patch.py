@@ -28,7 +28,6 @@ def _seed_config() -> dict:
         "default_agent": "personalclaw",
         "session": {"pool_agent": "", "timeout_secs": 3600, "autocompact_pct": 50.0},
         "agent": {"approval_mode": "auto", "sandbox": "auto"},
-        "auto_update": False,
     }
 
 
@@ -189,13 +188,13 @@ class TestBoolValidator:
     @pytest.mark.asyncio
     async def test_valid_bool_passes(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "auto_update", True)
+            resp = await _patch(c, "updates.check_enabled", True)
             assert resp.status == 200
 
     @pytest.mark.asyncio
     async def test_bool_non_bool_returns_400(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "auto_update", "true")
+            resp = await _patch(c, "updates.check_enabled", "true")
             assert resp.status == 400
 
 

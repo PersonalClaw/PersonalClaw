@@ -243,12 +243,6 @@
     "type": "str"
   },
   {
-    "default": true,
-    "path": "auto_update",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
     "default": false,
     "path": "browse.user_browser_enabled",
     "sensitive": false,

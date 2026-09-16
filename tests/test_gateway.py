@@ -631,9 +631,9 @@ class TestCheckForUpdates:
         import personalclaw.dashboard.handlers as _h
 
         orig = _h._update_info.copy()
-        # Create a config with auto_update=False
+        # Config with updates.auto="off" (notify-only) — the retired auto_update bool is gone.
         fake_cfg = MagicMock()
-        fake_cfg.auto_update = False
+        fake_cfg.updates.auto = "off"
         try:
             _h._update_info.update({"available": True, "version": "9.9.9"})
             with patch.object(_h, "_do_update_check", new_callable=AsyncMock):

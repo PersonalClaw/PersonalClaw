@@ -851,13 +851,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # 0 = off; the ceiling is generous on purpose (a year) since "archive rarely"
     # is a legitimate preference and archiving is non-destructive.
     "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
-    "auto_update": {"type": "bool"},
     # RELEASE-UPDATE-MECHANISM RUM-1 — the release-tracking config block. All six are
     # runtime-editable from Settings > Updates (RUM-10). `channel`/`auto` are closed enums
     # so an out-of-range value is REFUSED at the boundary (a mistyped channel should be
     # told, not silently overruled); `check_interval_hours` states the same [1, 168] window
     # `load()` clamps, so the file and the dashboard agree. `pin`/`last_version` are free
     # text (a version string or PEP 440 range) the resolver interprets, not this boundary.
+    # `updates.auto` (off | staged) is the opt-in unattended-apply gate that RETIRED the
+    # legacy top-level `auto_update` bool (RUM-5): "off" = notify-only, "staged" = apply at
+    # the next safe point (holds while work is in flight, lands on the resolved tag).
     "updates.channel": {"type": "enum", "values": ["stable", "beta", "nightly"]},
     "updates.pin": {"type": "str", "max_len": 64},
     "updates.auto": {"type": "enum", "values": ["off", "staged"]},

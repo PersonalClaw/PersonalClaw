@@ -389,7 +389,10 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
     api.personalclawConfig().then((c) => {
       if (!alive) return
       const apps = (c.apps ?? {}) as { registry_source_enabled?: boolean }
-      setAutonomy({ autoUpdate: c.auto_update !== false, registrySeeded: apps.registry_source_enabled !== false })
+      // `updates.auto` = 'staged' is the opt-in unattended-apply mode (RUM-5); anything else
+      // (the 'off' default) is notify-only. Retired the legacy top-level `auto_update` bool.
+      const updates = (c.updates ?? {}) as { auto?: string }
+      setAutonomy({ autoUpdate: updates.auto === 'staged', registrySeeded: apps.registry_source_enabled !== false })
     }).catch(() => { if (alive) setAutonomy('failed') })
     return () => { alive = false }
   }, [])
