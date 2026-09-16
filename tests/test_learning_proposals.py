@@ -219,9 +219,12 @@ def test_a_rejection_is_remembered_and_blocks_a_refile():
 
 
 def test_an_acceptance_also_blocks_a_refile():
-    _, prop = P.enqueue(kind="skill", title="A skill", body=BODY, provenance="human")
+    """`lesson_batch`, not `skill`: `accept` now RESOLVES its installer, so accepting a `skill`
+    with no target would fail the install (correctly) and never reach the decision memory this
+    test is about. A kind whose accept writes nothing keeps the assertion on the one property."""
+    _, prop = P.enqueue(kind="lesson_batch", title="A lesson", body=BODY, provenance="human")
     P.accept(prop.id)
-    verdict, again = P.enqueue(kind="skill", title="A skill", body=BODY, provenance="human")
+    verdict, again = P.enqueue(kind="lesson_batch", title="A lesson", body=BODY, provenance="human")
     assert verdict is Verdict.SKIP and again is None
 
 
@@ -449,7 +452,9 @@ def test_accept_and_reject_are_audited(monkeypatch):
     act the security event log exists to make reviewable."""
     events = []
     monkeypatch.setattr(P, "_audit", lambda op, prop, outcome: events.append((op, outcome)))
-    _, a = P.enqueue(kind="skill", title="a", body=BODY, provenance="human")
+    # `lesson_batch`: the audit is what is under test, and a `skill` with no target now fails its
+    # (resolved) install, which audits "failed" instead of "completed".
+    _, a = P.enqueue(kind="lesson_batch", title="a", body=BODY, provenance="human")
     P.accept(a.id)
     _, b = P.enqueue(kind="template", title="b", body="another distinct body here", occurrences=3)
     P.reject(b.id)

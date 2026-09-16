@@ -25,7 +25,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from personalclaw.tasks.models import TERMINAL_STATUSES, Task, TaskStatus
+from personalclaw.tasks.models import (
+    STARTABLE_STATUSES,
+    TERMINAL_STATUSES,
+    Task,
+    TaskStatus,
+)
 
 
 class DependencyCycleError(ValueError):
@@ -204,12 +209,24 @@ def classify_manual_block(task: Task, tasks: dict[str, Task]) -> None:
 
 
 def ready_task_ids(tasks: dict[str, Task]) -> list[str]:
-    """Tasks that can be started now: not in a terminal state and with every
-    BLOCKS prerequisite already terminal (done/cancelled). A task with no
-    prerequisites is ready."""
+    """Tasks that can be started now: in a STARTABLE status, and with every BLOCKS
+    prerequisite already terminal (done/cancelled). A task with no prerequisites is ready.
+
+    The two conditions ask different questions and read different sets, which is the fix for
+    issue 467. This tested `status not in TERMINAL_STATUSES`, treating "not finished" as
+    "startable" — so a BLOCKED task (the user parked it) and a SKIPPED one (a branch the run
+    declined) were both offered as work. Measured before the fix:
+
+        open → READY    in_progress → READY    done → not ready    cancelled → not ready
+        blocked → READY                        skipped → READY
+
+    `STARTABLE_STATUSES` is the startability answer; `TERMINAL_STATUSES` stays the
+    dependency-satisfaction answer, unchanged — a prerequisite still only clears when it is
+    genuinely finished.
+    """
     out: list[str] = []
     for tid, t in tasks.items():
-        if t.status in TERMINAL_STATUSES:
+        if t.status not in STARTABLE_STATUSES:
             continue
         prereqs = [p for p in t.prerequisite_ids() if p in tasks]
         if all(tasks[p].status in TERMINAL_STATUSES for p in prereqs):

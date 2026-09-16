@@ -30,6 +30,31 @@ class TaskStatus(enum.Enum):
 # A task in a terminal state satisfies any dependency that points at it.
 TERMINAL_STATUSES = (TaskStatus.DONE, TaskStatus.CANCELLED)
 
+#: Statuses a task can be STARTED from — the answer to "offer me the next thing to do".
+#:
+#: A different question from `TERMINAL_STATUSES`, whose comment above scopes it precisely: that set
+#: answers *does this satisfy a dependency pointing at it*. `reconcile.ready_task_ids` had only the
+#: one set, so it read "not terminal" as "startable" and offered BLOCKED and SKIPPED tasks as work
+#: (issue 467) — a task the user deliberately blocked, and a branch the run declined, handed back by
+#: the one projection every work-selection surface reads.
+#:
+#: An ALLOWLIST rather than a denylist, and the reason is recorded right above: `SKIPPED` exists
+#: because `from_dict` used to coerce an unknown status to OPEN, so skipped work "read back as work
+#: still to do — silently, on the board the user plans from". A denylist repeats that default. With
+#: an allowlist a status nobody has classified yet is simply not offered, which is the failure a
+#: planning surface can survive.
+STARTABLE_STATUSES = (TaskStatus.OPEN, TaskStatus.IN_PROGRESS)
+
+#: Statuses that are neither startable nor dependency-satisfying: work is parked, not finished.
+#:
+#: Named so the three sets PARTITION `TaskStatus` and a test can prove it — which is what forces a
+#: decision when a status is added, instead of it defaulting into whichever set was written as a
+#: denylist. Deliberately NOT folded into `TERMINAL_STATUSES`: whether a SKIPPED prerequisite should
+#: satisfy its dependents is a real product question (a declined branch may or may not release the
+#: work behind it) and answering it here would change dependency behaviour under cover of a
+#: startability fix.
+HELD_STATUSES = (TaskStatus.BLOCKED, TaskStatus.SKIPPED)
+
 
 class TaskPriority(str, enum.Enum):
     CRITICAL = "critical"

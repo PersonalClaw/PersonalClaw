@@ -701,7 +701,14 @@ class TestStatus:
         assert "not running" in out
 
     def test_status_success(self, capsys):
-        """200 OK should display stats."""
+        """200 OK should display stats.
+
+        The payload is the shape `/api/status` really emits — `cron` is a BLOCK and there is
+        no `crons`/`messages`/`tool_calls` key (#2903). The previous fixture invented all
+        three, so it passed while the surface printed a hardwired `0` for each. The
+        wire contract itself is pinned against the live endpoint in
+        `test_cli_status_wire_contract.py`; this stays a plain reader unit test.
+        """
         from personalclaw.cli_server import _status
 
         mock_resp = MagicMock()
@@ -709,10 +716,9 @@ class TestStatus:
             {
                 "uptime": "1h 0m",
                 "sessions": 2,
-                "messages": 10,
-                "tool_calls": 5,
                 "subagents": 0,
-                "crons": 1,
+                "cron": {"total": 1, "enabled": 1, "broken": 0},
+                "stats": {"total_turns": 7},
                 "lessons": 3,
             }
         ).encode()
@@ -724,6 +730,8 @@ class TestStatus:
         out = capsys.readouterr().out
         assert "1h 0m" in out
         assert "Sessions" in out or "sessions" in out.lower()
+        assert "Cron jobs:   1" in out
+        assert "Turns:       7" in out
 
     def test_status_unexpected_exception(self, capsys):
         """Non-network exceptions should report gateway as running with unexpected response."""

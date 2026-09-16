@@ -22,7 +22,13 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, manager, store, validation
-from personalclaw.loop.loop import ACTION_SOURCE_STATES, KINDS, Loop, LoopStatus
+from personalclaw.loop.loop import (
+    ACTION_SOURCE_STATES,
+    KINDS,
+    PRELAUNCH_STATUSES,
+    Loop,
+    LoopStatus,
+)
 from personalclaw.loop.watchdog import registry_key
 
 logger = logging.getLogger(__name__)
@@ -33,6 +39,56 @@ logger = logging.getLogger(__name__)
 
 def _as_list(v) -> list:
     return v if isinstance(v, list) else []
+
+
+def _refuse_source_state(
+    action: str, status: str, sources: frozenset[LoopStatus]
+) -> web.Response | None:
+    """The ONE lifecycle refusal: 409 naming the status, unless ``status`` may be a
+    SOURCE of ``action``. ``None`` means admissible — proceed.
+
+    ``PATCH /api/loops/{id}`` has spoken this sentence out of
+    :data:`~personalclaw.loop.loop.ACTION_SOURCE_STATES` since `PP-16`
+    (``Cannot pause a loop in 'planning' state``). The ``/plan/*`` POST family drives the
+    same status machine and skipped the vocabulary entirely, so ``plan/retry`` accepted a
+    RUNNING loop and dragged it back to ``planning`` — measured: ``pause``/``resume``/
+    ``start`` then all refuse, the only exit left is ``stop``, and the frozen spec
+    re-opens because ``planning`` is a pre-launch phase (#412).
+
+    Callers MUST reach this BEFORE any write. Two of the plan routes wrote the planning
+    session first and kicked the planner second, so a refusal added downstream of the
+    write would be a partial action wearing a 409 (``plan/comment`` reverted the step's
+    ``awaiting_review`` gate to ``pending`` on its way in).
+    """
+    if LoopStatus(status) in sources:
+        return None
+    return web.json_response({"error": f"Cannot {action} a loop in '{status}' state"}, status=409)
+
+
+def _refuse_replan(cid: str) -> web.Response | None:
+    """The ``/plan/*`` family's shared precondition: a real loop, still pre-launch.
+
+    The stepwise walkthrough exists to BUILD a spec that has not been launched — every
+    route in the family either advances it or edits an artifact that ``finalize_plan``
+    projects into the spec before flipping the loop to ``review``. So the admissible set
+    is exactly the PRELAUNCH phase, DERIVED from
+    :data:`~personalclaw.loop.loop.LOOP_PHASES` via
+    :data:`~personalclaw.loop.loop.PRELAUNCH_STATUSES` rather than listed here: a status
+    added to that phase becomes admissible the day it joins the map, and no second copy
+    of the vocabulary can drift.
+
+    ``replan`` is deliberately NOT a row in ``ACTION_SOURCE_STATES``: that table's KEYS
+    are the actions ``PATCH /api/loops/{id}`` dispatches — the frontend mirrors exactly
+    those (``web/src/lib/loopStatus.ts:LoopAction``, railed by
+    ``tests/test_loop_action_guard_mirror.py`` on set EQUALITY), so a row for a POST
+    family would either advertise a PATCH action that does not exist or make PATCH accept
+    ``{"action": "replan"}`` and silently no-op. One refusal shape, two admissible sets,
+    each derived from the same phase map.
+    """
+    loop = store.get(cid)
+    if loop is None:
+        return web.json_response({"error": "Not found"}, status=404)
+    return _refuse_source_state("replan", loop.status, PRELAUNCH_STATUSES)
 
 
 async def _json_body(request: web.Request) -> dict | web.Response:
@@ -569,10 +625,9 @@ async def api_loop_action(request: web.Request) -> web.Response:
     loop = store.get(cid)
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
-    if LoopStatus(loop.status) not in ACTION_SOURCE_STATES[action]:
-        return web.json_response(
-            {"error": f"Cannot {action} a loop in '{loop.status}' state"}, status=409
-        )
+    refusal = _refuse_source_state(action, loop.status, ACTION_SOURCE_STATES[action])
+    if refusal is not None:
+        return refusal
     # Launch-time re-validation: a kind may block start (e.g. a brownfield code loop
     # with no bound workspace). Generic — the rule lives in the strategy, not here.
     # Only on a fresh start (resume of a paused, already-launched loop is exempt).
@@ -666,7 +721,7 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
     proj = store.get(cid)
     if proj is None:
         return web.json_response({"error": "Not found"}, status=404)
-    from personalclaw.loop.loop import PRELAUNCH_STATUSES, TERMINAL_STATUSES
+    from personalclaw.loop.loop import TERMINAL_STATUSES
 
     if LoopStatus(proj.status) in TERMINAL_STATUSES:
         return web.json_response(
@@ -774,7 +829,7 @@ async def api_loop_queue(request: web.Request) -> web.Response:
     action = str(body.get("action", "queue"))
     if action not in ("queue", "unqueue"):
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
-    from personalclaw.loop.loop import PRELAUNCH_STATUSES, TERMINAL_STATUSES
+    from personalclaw.loop.loop import TERMINAL_STATUSES
 
     if action == "queue":
         # A terminal loop has no scheduler — a queued task would sit forever. Reject
@@ -915,13 +970,9 @@ async def api_loop_plan_start(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    loop = store.get(cid)
-    if loop is None:
-        return web.json_response({"error": "Not found"}, status=404)
-    from personalclaw.loop.loop import PRELAUNCH_STATUSES
-
-    if LoopStatus(loop.status) not in PRELAUNCH_STATUSES:
-        return web.json_response({"error": "Loop spec is frozen (already started)"}, status=409)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
     return _kick_plan_advance(request, cid)
 
 
@@ -931,8 +982,9 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    if store.get(cid) is None:
-        return web.json_response({"error": "Not found"}, status=404)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
     from personalclaw.loop import plan_walkthrough as pw
 
     pw.clear_design_error(cid)
@@ -950,6 +1002,9 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
     from personalclaw.planning import session as PS
 
     session = loop_files.read_plan_session(cid)
@@ -975,6 +1030,9 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
     text = str(body.get("text", "")).strip()
     if not text:
         return web.json_response({"error": "Comment text required"}, status=400)
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
     import time as _time
 
     from personalclaw.planning import session as PS
@@ -1001,6 +1059,9 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)
     markdown = str(body.get("markdown", ""))
+    refusal = _refuse_replan(cid)
+    if refusal is not None:
+        return refusal
     from personalclaw.planning import session as PS
 
     session = loop_files.read_plan_session(cid)

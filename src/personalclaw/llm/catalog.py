@@ -38,6 +38,7 @@ profile / …); ``model`` is the entry's pinned model (rarely needed for listing
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -339,31 +340,82 @@ def infer_capabilities(model_id: str, families: list[str] | None = None) -> list
 # seam and each app reuses it.
 
 
-async def openai_compatible_list_models(
+class ModelDiscoveryError(RuntimeError):
+    """A ``GET {base}/models`` attempt that produced no model list, and why.
+
+    Exists because ``[]`` was the answer to two different questions: "this endpoint
+    serves no models" and "I never got a list out of it" (blocked, unreachable, 401,
+    404, non-JSON). Those need different actions from the user, so they must not be the
+    same value. The message says what to do next — no traceback, no response body echoed
+    (an error page can contain a reflected credential), and never the API key.
+
+    ``url`` is the URL actually requested (the single most useful fact when a base URL is
+    wrong) and ``status`` the HTTP status when one was received.
+    """
+
+    def __init__(self, message: str, *, url: str = "", status: int | None = None) -> None:
+        super().__init__(message)
+        self.url = url
+        self.status = status
+
+
+#: A path segment that is an API VERSION (``v1``, ``v4``, ``v1beta``, ``v1alpha1``) — as
+#: opposed to an ordinary segment that merely starts with a "v" (``vllm``, ``voice``).
+_VERSION_SEGMENT = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
+
+
+def openai_compatible_models_url(
+    endpoint: str | None, *, default_base: str = "https://api.openai.com/v1"
+) -> str:
+    """The ``/models`` URL to GET for an OpenAI-compatible ``endpoint``.
+
+    ``/v1`` is appended only when the base carries NO version segment at all, which is
+    the property the old ``if not base.endswith("/v1")`` was protecting: a user who
+    types the bare host (``https://api.openai.com``) still reaches ``/v1/models``.
+
+    What ``endswith`` got wrong (#955) is every OpenAI-compatible base whose version is
+    spelled anything other than a trailing ``/v1``. A base of the form
+    ``https://api.vendor.example/api/coding/paas/v4`` became ``…/paas/v4/v1/models`` → 404 →
+    zero models discovered, silently, for an endpoint serving a textbook OpenAI model list.
+    Gemini's OpenAI shim (``…/v1beta/openai``) has the same shape with the version not even
+    last, so the test is "does any segment name a version", not "does the last one".
+    (Reserved ``.example`` host by rule — ``tests/test_network_egress_hosts.py`` reads a
+    routable hostname in shipped source as a DESTINATION, even in a docstring.)
+    """
+    base = (endpoint or default_base).rstrip("/")
+    segments = base.split("://", 1)[-1].split("/")[1:]
+    if not any(_VERSION_SEGMENT.match(s) for s in segments):
+        base += "/v1"
+    return f"{base}/models"
+
+
+async def openai_compatible_discover_models(
     endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> list[ModelInfo]:
-    """List models from an OpenAI-compatible ``GET {base}/v1/models`` endpoint.
+    """List models from an OpenAI-compatible ``GET {base}/models`` endpoint, STRICTLY.
 
-    ``default_base`` lets a branded app point at its own default host while
-    reusing this client. Returns ``[]`` on any failure (unreachable / non-200 /
-    missing config) — discovery degrades gracefully, never raises.
+    Returns the models the endpoint advertised — including ``[]`` when it advertised an
+    empty list, which is a real and honest answer. Raises :class:`ModelDiscoveryError`
+    when no list was obtained at all, so a caller can tell the two apart; use
+    :func:`openai_compatible_list_models` for the fail-soft view.
 
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL
     audit) rather than raw aiohttp — an operator-configured ``endpoint`` is an
     egress surface, so discovery is guarded the same as every other outbound call
     (#41 class). (The inference path is the ``openai`` SDK's own client — a separate,
-    deliberate boundary; this fail-soft GET is the cleanly-migratable part.)
+    deliberate boundary; this GET is the cleanly-migratable part.)
     """
     import json as _json
 
     from personalclaw.sdk.net import CONNECTOR, EgressBlocked, egress_policy_for, fetch
 
     if not api_key and not endpoint:
-        return []
-    base = (endpoint or default_base).rstrip("/")
-    if not base.endswith("/v1"):
-        base += "/v1"
+        raise ModelDiscoveryError(
+            "No endpoint or API key configured for this provider — set its endpoint "
+            "(and key, if the endpoint needs one) in Settings → Providers."
+        )
+    url = openai_compatible_models_url(endpoint, default_base=default_base)
     headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -374,18 +426,61 @@ async def openai_compatible_list_models(
     # allow-listed, so model discovery silently returns [] (the picker stays empty).
     policy = egress_policy_for(CONNECTOR)
     try:
-        r = await fetch(f"{base}/models", policy=policy, method="GET", headers=headers)
-        if r.status != 200:
-            return []
+        r = await fetch(url, policy=policy, method="GET", headers=headers)
+    except EgressBlocked as exc:
+        raise ModelDiscoveryError(
+            f"Egress policy blocked {url} ({exc}) — allow-list the host under "
+            f"security.egress.allow_hosts, or set security.egress.allow_private for a "
+            f"LAN/localhost endpoint.",
+            url=url,
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — every transport failure, named not swallowed
+        raise ModelDiscoveryError(
+            f"Could not reach {url} ({type(exc).__name__}) — check the endpoint host is "
+            f"correct and reachable from this machine.",
+            url=url,
+        ) from exc
+    if r.status in (401, 403):
+        raise ModelDiscoveryError(
+            f"{url} rejected the credential (HTTP {r.status}) — re-enter this provider's "
+            f"API key.",
+            url=url,
+            status=r.status,
+        )
+    if r.status == 404:
+        raise ModelDiscoveryError(
+            f"No model list at {url} (HTTP 404) — set this provider's endpoint to the same "
+            f"base your chat completions use (the base, not the /chat/completions path).",
+            url=url,
+            status=r.status,
+        )
+    if r.status != 200:
+        raise ModelDiscoveryError(
+            f"{url} answered HTTP {r.status} — check the endpoint and try again.",
+            url=url,
+            status=r.status,
+        )
+    try:
         data = _json.loads(r.text)
-    except EgressBlocked:
-        return []  # blocked host/redirect — discovery degrades gracefully
-    except Exception:  # noqa: BLE001 — discovery is fail-soft
-        return []
+    except Exception as exc:  # noqa: BLE001 — a non-JSON 200 is a wrong-URL symptom
+        raise ModelDiscoveryError(
+            f"{url} answered HTTP 200 but the body is not JSON — check this provider's "
+            f"endpoint points at the API base, not at a web page.",
+            url=url,
+            status=r.status,
+        ) from exc
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ModelDiscoveryError(
+            f"{url} answered HTTP 200 but not with an OpenAI-shaped model list "
+            f'(expected {{"object":"list","data":[…]}}) — check this provider\'s endpoint.',
+            url=url,
+            status=r.status,
+        )
 
     out: list[ModelInfo] = []
-    for m in data.get("data", []):
-        model_id = m.get("id", "")
+    for m in rows:
+        model_id = m.get("id", "") if isinstance(m, dict) else ""
         if not model_id:
             continue
         out.append(
@@ -396,7 +491,34 @@ async def openai_compatible_list_models(
                 extra={"owned_by": m.get("owned_by", "")} if m.get("owned_by") else {},
             )
         )
+    if rows and not out:
+        raise ModelDiscoveryError(
+            f"{url} listed {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}, none of them "
+            f'carrying an "id" — check this provider\'s endpoint speaks the OpenAI models '
+            f"protocol.",
+            url=url,
+            status=r.status,
+        )
     return out
+
+
+async def openai_compatible_list_models(
+    endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
+) -> list[ModelInfo]:
+    """The fail-soft view of :func:`openai_compatible_discover_models`: ``[]`` on any
+    failure (unreachable / non-200 / unparseable / missing config), never raises.
+
+    ``default_base`` lets a branded app point at its own default host while reusing this
+    client. The failure is LOGGED at WARNING rather than dropped: a provider that
+    contributes nothing to the model pool was previously indistinguishable from one that
+    was never asked, at every log level (#955). A caller that needs to tell "no models"
+    from "no answer" apart must call the strict function.
+    """
+    try:
+        return await openai_compatible_discover_models(endpoint, api_key, default_base=default_base)
+    except ModelDiscoveryError as exc:
+        logger.warning("Model discovery found nothing: %s", exc)
+        return []
 
 
 class ModelCatalog(ABC):
@@ -410,9 +532,14 @@ class ModelCatalog(ABC):
 
     @abstractmethod
     async def list_models(self) -> list[ModelInfo]:
-        """Return the models this provider can serve. Empty list on any failure
-        (never raise for a routine "can't reach it / not configured" — return
-        ``[]`` so the dropdown degrades gracefully)."""
+        """Return the models this provider can serve.
+
+        ``[]`` means "asked, and it serves none" — a real answer. An implementation that
+        could not obtain a list at all, and has nothing to degrade to, raises instead
+        (:class:`ModelDiscoveryError` for the OpenAI-compatible wire): every caller of
+        this method already relays a raised failure to the user, and "0 models" is not
+        the same answer as "I could not reach the endpoint" (#955). An implementation
+        with a curated fallback still degrades to it — with the failure logged."""
         raise NotImplementedError
 
     async def test_connection(self) -> ConnectionResult:
@@ -462,7 +589,10 @@ __all__ = [
     "ConnectionResult",
     "PullProgress",
     "ModelCatalog",
+    "ModelDiscoveryError",
     "ModelManager",
     "infer_capabilities",
+    "openai_compatible_discover_models",
     "openai_compatible_list_models",
+    "openai_compatible_models_url",
 ]

@@ -37,6 +37,7 @@ per-route contract.
 | `POST /api/chat` | Send a message (creates a session if needed). |
 | `GET/POST /api/chat/sessions` | List sessions / create one. |
 | `GET /api/chat/sessions/{session}` | Session detail + transcript. |
+| `GET /api/chat/sessions/{session}/map` | Session-map marks (turn/tool/approval/error index) + per-turn telemetry. |
 | `DELETE /api/chat/sessions/{session}` | Delete a session. |
 | `POST /api/chat/sessions/cleanup` | Bulk-clean stale sessions. |
 | `GET /api/chat/sessions/{session}/tool-result/{rid}` | Fetch a stored full tool result. |

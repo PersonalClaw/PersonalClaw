@@ -1046,16 +1046,37 @@ class AcceptError(Exception):
     """Raised when a proposal cannot be accepted."""
 
 
-def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
-    """Accept a proposal: install via *installer*, then remember the decision.
+class NoProposalInstallerError(AcceptError):
+    """Nothing in this build can install this proposal's kind.
 
-    The installer is injected rather than dispatched here on purpose. This module
-    owns the queue and the decision memory; it must not also know how to write a
-    skill, a template and a tier migration — that coupling is what made the old
-    single-kind queue impossible to generalize.
+    A distinct type because it is not a failure and not a permission decision — the accept was
+    REFUSED because there is no writer, so the surface reporting it should say "not supported
+    yet" rather than "forbidden" or "it broke". An ``AcceptError`` subclass so every existing
+    ``except AcceptError`` caller keeps the property that matters: the row stays pending.
+    """
+
+
+def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
+    """Accept a proposal: install it, then remember the decision.
+
+    This module still owns no write. The dispatch lives in
+    :mod:`personalclaw.learning.installers` — one owner, delegating to whichever module owns the
+    entity being written — and is RESOLVED here rather than injected by callers.
+
+    It used to be injected, with ``installer=None`` skipping the install entirely. The separation
+    was right and the default was the defect: the dashboard route called this with no installer at
+    all, so accepting a proposal wrote nothing, answered 200, and recorded a decision that
+    permanently suppressed a change never applied. An optional dependency every real caller must
+    remember to pass is a defect waiting to recur, so nothing has to remember it now.
+
+    ``installer`` remains as an explicit OVERRIDE for a caller that owns its own write —
+    ``knowledge.updates.propose_update`` closes over the item it is updating. Passing one replaces
+    the resolved dispatch entirely; that caller owns reporting whether its write landed.
 
     The decision is recorded ONLY after the install succeeds. Recording first would
-    mean a failed install permanently suppresses its own retry.
+    mean a failed install permanently suppresses its own retry. A kind nothing can install raises
+    :class:`NoProposalInstallerError` for the same reason: no decision is recorded, so the
+    proposal is still in the queue when an installer for it lands.
 
     ``actor`` gates the call (LEARNING-FLYWHEEL §7 — S75). Measured before it existed:
     NOTHING here knew who was accepting, so "the model cannot accept its own
@@ -1076,12 +1097,21 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
         _audit("learning_proposal_accept", prop, "blocked")
         logger.warning("Blocked %s accept of %s: %s", actor, pid, row["reason"])
         raise AcceptError(gate.reason)
-    if installer is not None:
-        try:
-            installer(prop)
-        except Exception as exc:
-            _audit("learning_proposal_accept", prop, "failed")
-            raise AcceptError(f"install failed for {pid!r}: {exc}") from exc
+    if installer is None:
+        from personalclaw.learning import installers
+
+        installer = installers.installer_for()
+    try:
+        installer(prop)
+    except NoProposalInstallerError:
+        # Not a failure and not a permission decision: nothing here writes this kind. Recording
+        # no decision is the whole point — the row stays pending and re-filable.
+        _audit("learning_proposal_accept", prop, "unsupported")
+        logger.warning("Cannot install a %s proposal (%s); accept refused", prop.kind, pid)
+        raise
+    except Exception as exc:
+        _audit("learning_proposal_accept", prop, "failed")
+        raise AcceptError(f"install failed for {pid!r}: {exc}") from exc
 
     prop.status = Status.ACCEPTED.value
     prop.updated_at = _now()

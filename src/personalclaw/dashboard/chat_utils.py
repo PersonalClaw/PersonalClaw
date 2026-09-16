@@ -538,6 +538,39 @@ def persisted_history_key(conversation_log, session_name: str) -> str:
     return resolve_history_key(conversation_log, session_name) or _history_key_for(session_name)
 
 
+def full_session_messages(state: DashboardState, session: _ChatSession) -> list[dict]:
+    """THE owner of "the whole transcript for this session, oldest first".
+
+    The in-memory buffer holds at most the tail (``restore_recent_sessions`` keeps the
+    last 500 and records how many older messages stayed on disk in
+    ``_disk_older_count``), so the complete transcript is ``the older disk head + the
+    buffer``. That splice is what makes an INDEX into this list meaningful: the visible
+    user/assistant position inside it is ``at_message_index``, the coordinate
+    ``POST .../fork`` and edit-resend speak.
+
+    Extracted because a second reader arrived. ``GET /api/chat/sessions/{session}``
+    built the splice inline, and ``GET /api/chat/sessions/{session}/map`` has to index
+    the IDENTICAL list — derive the map from the bare buffer instead and every
+    coordinate it publishes is off by ``_disk_older_count`` visible messages, silently
+    addressing the wrong turn. One splice, one meaning.
+
+    ``_disk_older_count`` is the stable slice boundary (set at restore/resume, never
+    drifting as new messages arrive), and an unreadable log degrades to the buffer
+    alone rather than failing the read — a partial transcript is still navigable.
+    """
+    mem_msgs = list(session.messages)
+    if session._disk_older_count <= 0 or not state.conversation_log:
+        return mem_msgs
+    history_key = persisted_history_key(state.conversation_log, session.key)
+    try:
+        disk_msgs = state.conversation_log.read_messages_chained(history_key)
+    except Exception:  # noqa: BLE001 — an unreadable log must not fail a transcript read
+        logger.warning("read_messages_chained failed for %s", history_key, exc_info=True)
+        disk_msgs = []
+    older = disk_msgs[: session._disk_older_count] if disk_msgs else []
+    return list(older) + mem_msgs
+
+
 def _apply_incognito_prefix(session, message: str) -> str:
     """Prepend the incognito/temporary instruction for non-persistent sessions.
 

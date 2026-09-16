@@ -698,6 +698,50 @@ def _update() -> None:
         _update_desktop()
 
 
+# The ONE place `personalclaw status` names where each counter lives in the
+# `GET /api/status` payload — a (label, key-path) table rather than six inline
+# `data.get(...)` calls, because inline is exactly what hid #2903: three lines read
+# `crons` / `messages` / `tool_calls`, keys the endpoint has NEVER emitted, and each
+# defaulted to `0`. A home with five system schedules printed `Cron jobs: 0` while the
+# same payload carried `cron.total == 5` and `personalclaw cron list` listed all five.
+#
+# `/api/status` owns this contract, not the CLI: the dashboard reads the same payload,
+# and `status_snapshot` deliberately DROPPED its writerless `messages` counter (see
+# `dashboard/state.py` + `test_dashboard_status_snapshot.py`) rather than ship a
+# permanent 0. So the reader moves to the emitter's shape, and the two unproduced lines
+# go with it — `messages` and `tool_calls` have no writer anywhere in the payload, and
+# `stats.py`'s own rule is that a counter without a call site is removed, not surfaced.
+# `Turns` replaces them: the same "is anything happening?" signal, from a counter that
+# is genuinely written (`stats.inc_turns` on every completed turn).
+#
+# `tests/test_cli_status_wire_contract.py` walks this table against a REAL `/api/status`
+# response, so the next rename on either side fails a test instead of zeroing a line.
+_STATUS_LINES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Uptime", ("uptime",)),
+    ("Sessions", ("sessions",)),
+    ("Subagents", ("subagents",)),
+    ("Cron jobs", ("cron", "total")),
+    ("Turns", ("stats", "total_turns")),
+    ("Lessons", ("lessons",)),
+)
+
+
+def _status_value(data: object, path: tuple[str, ...]) -> str:
+    """The payload value at *path*, or ``—`` when the payload does not carry it.
+
+    NEVER substitutes ``0`` for a missing key. An absent field is NO MEASUREMENT, and
+    printing it as ``0`` is indistinguishable from a genuinely idle gateway — which is
+    why #2903 survived unnoticed through the payload change that removed the keys. A
+    ``—`` puts the next such drift on the surface a user actually reads.
+    """
+    cur = data
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return "—"
+        cur = cur[key]
+    return "—" if cur is None or cur == "" else str(cur)
+
+
 def _status(args: argparse.Namespace) -> None:
     """Query the running gateway for stats, or print offline message."""
     port = resolve_client_port(getattr(args, "port", None))
@@ -721,13 +765,8 @@ def _status(args: argparse.Namespace) -> None:
         return
 
     print(f"PersonalClaw v{__version__}\n")
-    print(f"  Uptime:      {data.get('uptime', '—')}")
-    print(f"  Sessions:    {data.get('sessions', 0)}")
-    print(f"  Messages:    {data.get('messages', 0)}")
-    print(f"  Tool calls:  {data.get('tool_calls', 0)}")
-    print(f"  Subagents:   {data.get('subagents', 0)}")
-    print(f"  Cron jobs:   {data.get('crons', 0)}")
-    print(f"  Lessons:     {data.get('lessons', 0)}")
+    for label, path in _STATUS_LINES:
+        print(f"  {label + ':':<12} {_status_value(data, path)}")
 
 
 def _boot_config() -> AppConfig:

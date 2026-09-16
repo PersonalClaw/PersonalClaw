@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A chat session now has a durable index: `GET /api/chat/sessions/{session}/map`.**
 - **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
 - `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn.
 - The dashboard gains a **Desktop live view** widget: the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land.
@@ -17,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
 - **A pip / pipx / uv wheel install now upgrades to the release your `updates` channel/pin selects, not a blind `releases/latest`.**
 - **Unattended auto-update is now OPT-IN and STAGED, and the always-on `auto_update` bool is retired.**
 - **The in-app updater no longer tracks raw `main` — a git checkout rides release TAGS by channel, and the destructive `git reset --hard origin/main` is gone from every unattended and dashboard apply path.**
@@ -29,6 +31,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **Content-hashed `/assets/*` Vite bundles no longer defeat the browser cache.**
+- **`personalclaw --help` no longer prints argparse's internal `==SUPPRESS==` sentinel, and the internal command it was meant to hide is now genuinely hidden.**
+- **Accepting a learning proposal installs it, or says it cannot.**
 - **Creating a loop on a fresh install with no model bound now says so, instead of silently building a bare-defaults plan.**
 - **The unattended auto-update no longer silently discards a user's uncommitted tracked-file edits.**
 - **A native-Windows gateway no longer `ImportError`s at boot on the POSIX-only `resource` module.**
@@ -51,6 +56,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A model id that escapes its cache root is refused instead of followed.**
 - **The diff view's committed-side read (`GET /api/file-git-original`) no longer leaks a process per timed-out read, no longer answers `HTTP 500` when git cannot be executed, and no longer serves a directory listing as a file's committed content.**
 - **An agent write now validates the SHAPE of every field before storing it.**
+- **An OpenAI-compatible provider now discovers the models its endpoint actually lists, and says why when it cannot.**
+- **Knowledge search no longer hands back the whole library for a term the library happens to talk about — and no longer collapses to a single result when one title happens to match.**
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -63,6 +70,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Files page keeps unsaved edits across a rename: it now owns the draft cache FileViewer documents, the cache entry moves with the file (no more "Rename and discard" consent — nothing is discarded), a confirmed close purges the draft so a discarded edit cannot resurrect on reopen, and the Code cockpit's two programmatic close paths (workspace switch, worker delete) purge theirs too.**
 - The **Speaking speed** slider (Settings → Speech & Transcription) no longer tells every provider the same story: its Fast/Slow ends and "lower is faster" hint were Piper's `--length-scale` semantics, which are exactly backwards for OpenAI-compatible remote voices (the same raw number is the API's multiplier, where higher is faster) — so dragging toward "Fast" made remote speech slower.
 - **Editing a prompt or snippet whose body contains a credential-shaped string no longer destroys it.**
+- **Acking one notification can no longer permanently delete up to 200 older ones.**
+- **A retired built-in app no longer lingers as an undeletable broken card.**
+- **An upgraded home no longer ends up with two of a system-owned scheduled job.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

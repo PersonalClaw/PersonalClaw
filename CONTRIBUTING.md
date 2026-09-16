@@ -343,6 +343,25 @@ When `lint` does fail in CI, a bot posts the exact fix as a PR comment — that
 works on fork PRs too, via a relay workflow, because CI itself is given a
 read-only token on a fork and cannot comment.
 
+### Reading a red `test` without reading the log
+
+A failing test job annotates only `Process completed with exit code 1`, which
+does not name the case — and the suite's log is long enough that the summary is
+sometimes truncated away. So every pytest step in CI writes a JUnit XML and
+uploads it as a run artifact even when the job fails. Download the small XML
+instead of the log:
+
+```bash
+gh run list --branch <your-branch> --limit 1            # get the run id
+gh run download <run-id> --name junit-test-shard-2      # 1…4, one per shard
+```
+
+`<testcase>` elements with a `<failure>` child are the failures, with the node
+id and the assertion message. The other jobs publish theirs under
+`junit-browse-live`, `junit-rails`, `junit-client` and `junit-lint-installer`;
+the nightly `full` workflow adds one per matrix leg. This is how you tell a
+known flake from a genuine break without a blind re-run.
+
 ## Architecture orientation
 
 - Core package: `src/personalclaw/` — gateway (`gateway.py`), dashboard API

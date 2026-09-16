@@ -796,10 +796,24 @@ def test_probe_writes_only_the_sidecar(monkeypatch, tmp_path):
     A spawned agent CLI's cwd escaping the configured home is a live hazard elsewhere;
     a probe that only asks for a version has no business writing anywhere, so this pins
     that the sole new file under the home is the runner sidecar.
+
+    The home is this test's OWN, set the way three tests above already do it, because the
+    assertion is about what a probe NEWLY writes. Nine sibling tests in this file call
+    `probe_runner(_absent_runner())`, and each writes the same
+    `agent-metadata/fake-runner.runner.json`. Sharing the session home therefore put the
+    sidecar in `before`, so `after - before` was empty and the assertion read as "the probe
+    wrote nothing" — the exact opposite of the defect it guards.
+
+    That failed only when the file ran in ONE process (`-n 0`): under the configured
+    `-n auto` the siblings scatter across workers, so the collision usually missed and the
+    file read green. A mutation harness runs `-n 0` by design, which is where it surfaced.
     """
     bin_path = _write_exec(tmp_path / "fake-cli", "#!/bin/sh\necho 'fake-cli 1.0.0'\n")
     monkeypatch.setenv(_FAKE_ENV, str(bin_path))
-    home = _home()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    assert _home() == home, "the probe must be measured against this test's own home"
     before = {p for p in home.rglob("*") if p.is_file()}
     runners.probe_runner(_absent_runner())
     after = {p for p in home.rglob("*") if p.is_file()}

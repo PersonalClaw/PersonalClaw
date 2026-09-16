@@ -1032,6 +1032,9 @@ async def start_dashboard(
     # rather than `project` so it can never be misread as a session named "project".
     app.router.add_get("/api/chat/sessions/bound-project", chat.api_chat_session_bound_project)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
+    # The durable session map: the in-session index's marks + per-turn telemetry,
+    # served without hydrating the whole transcript client-side.
+    app.router.add_get("/api/chat/sessions/{session}/map", chat.api_chat_session_map)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
     app.router.add_post("/api/chat/sessions/{session}/interrupt", chat.api_chat_session_interrupt)
@@ -1864,9 +1867,10 @@ async def start_dashboard(
         # Web fonts referenced at the absolute path /fonts/*.woff2 by fonts.css. Without
         # this route they fell through to the SPA catch-all (→ index.html, decoded as a
         # font → "invalid sfntVersion"), so the app silently rendered in system-font
-        # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono).
-        if (_DIST_DIR / "fonts").is_dir():
-            app.router.add_static("/fonts", _DIST_DIR / "fonts", show_index=False)
+        # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono). A
+        # dedicated handler (not add_static) so the Content-Type is stated, never guessed
+        # — aiohttp's FileResponse defaults .woff2 to application/octet-stream (#2916).
+        app.router.add_get("/fonts/{name}", handlers.font_asset)
         # PWA app icons the manifest declares at stable, unhashed paths (they are
         # referenced from JSON, so they cannot carry a content hash). Also listed in
         # spa_fallback's exclusions below: a missing icon must 404, because HTML
@@ -1891,7 +1895,15 @@ async def start_dashboard(
 
     # ── Middleware ────────────────────────────────────────────────────────────
 
-    # No-cache: prevents Chrome from caching stale assets
+    # Content-hashed Vite output (`/assets/AgentsSection-<hash>.js`): the URL itself
+    # changes whenever the file's content does (Vite's own cache-busting), so the
+    # response can be cached forever — this is the ONLY prefix this middleware treats
+    # as immutable. Deliberately narrower than token_auth._BYPASS_PREFIXES: `/fonts/`,
+    # `/sprites/` and `/vendor/` also skip auth but are STABLE-named (unhashed), so
+    # long-lived caching them would serve stale content past a rebuild (#2933).
+    _IMMUTABLE_ASSET_PREFIX = "/assets/"
+
+    # No-cache: prevents Chrome from caching stale HTML/API responses
     @web.middleware  # type: ignore[misc]
     async def no_cache_middleware(
         request: web.Request,
@@ -1899,11 +1911,18 @@ async def start_dashboard(
     ) -> web.StreamResponse:
         resp = await handler(request)  # type: ignore[operator]
         if hasattr(resp, "headers"):
-            resp.headers.setdefault(
-                "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
-            )
-            resp.headers.setdefault("Pragma", "no-cache")
-            resp.headers.setdefault("Expires", "0")
+            if request.path.startswith(_IMMUTABLE_ASSET_PREFIX):
+                # #2933: these bundles are content-addressed, so `no-store` bought
+                # nothing but a full re-download of ~22 MB of JS/CSS on every load.
+                # `public` is safe here — the route is unauthenticated (see
+                # token_auth._BYPASS_PREFIXES) and carries no per-user data.
+                resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+            else:
+                resp.headers.setdefault(
+                    "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
+                )
+                resp.headers.setdefault("Pragma", "no-cache")
+                resp.headers.setdefault("Expires", "0")
             # CSP: defense-in-depth layer. Primary XSS protection is rehypeSanitize
             # (strips script/iframe/form/foreignObject at HAST level before rendering).
             # CSP must allow 'unsafe-inline' because widget iframes (blob: sandbox)

@@ -405,9 +405,9 @@ async def _probe_channels(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=not errored,
         detail=(
-            f"{len(errored)} transport(s) errored"
+            f"{len(errored)} transport{'s' if len(errored) != 1 else ''} errored"
             if errored
-            else f"{len(transports)} transport(s) ok"
+            else f"{len(transports)} transport{'s' if len(transports) != 1 else ''} ok"
         ),
         evidence={"transports": transports},
     )
@@ -473,11 +473,13 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
     ok = not phantom  # unavailable providers are a WARN, not a failure of this pack
     detail_parts = []
     if phantom:
-        detail_parts.append(f"{len(phantom)} phantom binding(s)")
+        detail_parts.append(f"{len(phantom)} phantom binding{'s' if len(phantom) != 1 else ''}")
     if unavailable:
-        detail_parts.append(f"{len(unavailable)} provider(s) unavailable")
+        detail_parts.append(
+            f"{len(unavailable)} provider{'s' if len(unavailable) != 1 else ''} unavailable"
+        )
     if not detail_parts:
-        detail_parts.append(f"{len(reg)} local provider(s) ok")
+        detail_parts.append(f"{len(reg)} local provider{'s' if len(reg) != 1 else ''} ok")
     return ProbeResult(
         ok=ok,
         detail="; ".join(detail_parts),
@@ -532,12 +534,19 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
     dead = [n for n, v in ev["backends"].items() if not v["alive"]]
     problems = []
     if dead:
-        problems.append(f"{len(dead)} backend(s) not running")
+        problems.append(f"{len(dead)} backend{'s' if len(dead) != 1 else ''} not running")
     if ev["rollback_leftovers"]:
-        problems.append(f"{len(ev['rollback_leftovers'])} interrupted update(s)")
+        problems.append(
+            f"{len(ev['rollback_leftovers'])} interrupted "
+            f"update{'s' if len(ev['rollback_leftovers']) != 1 else ''}"
+        )
     return ProbeResult(
         ok=not problems,
-        detail=("; ".join(problems) if problems else f"{len(ev['backends'])} app backend(s) ok"),
+        detail=(
+            "; ".join(problems)
+            if problems
+            else f"{len(ev['backends'])} app backend{'s' if len(ev['backends']) != 1 else ''} ok"
+        ),
         evidence=ev,
     )
 
@@ -653,9 +662,10 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=not open_breakers,
         detail=(
-            f"{len(open_breakers)} provider(s) with an open breaker"
+            f"{len(open_breakers)} provider{'s' if len(open_breakers) != 1 else ''} "
+            "with an open breaker"
             if open_breakers
-            else f"{len(providers)} provider(s), no open breakers"
+            else f"{len(providers)} provider{'s' if len(providers) != 1 else ''}, no open breakers"
         ),
         evidence={"providers": providers, "generated_from": health.get("generated_from", 0)},
     )
@@ -677,7 +687,8 @@ async def _probe_crashes(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=False,
         detail=(
-            f"{len(recent)} recent crash artifact(s); latest: {latest.get('kind')} — "
+            f"{len(recent)} recent crash artifact{'s' if len(recent) != 1 else ''}; "
+            f"latest: {latest.get('kind')} — "
             f"{latest.get('exception_type')}"
         ),
         evidence={"crashes": recent},
@@ -776,7 +787,9 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
 
     reasons: list[str] = []
     if ev["errors"]:
-        reasons.append(f"{ev['errors']} flush error(s) in {ev['days']}d")
+        reasons.append(
+            f"{ev['errors']} flush error{'s' if ev['errors'] != 1 else ''} in {ev['days']}d"
+        )
     if ev["all_ok_streak"] >= _MEMORY_OK_STREAK_WARN and ev["passes"] and not ev["produced"]:
         reasons.append(
             f"{ev['all_ok_streak']} consecutive flush_ok passes and nothing produced in "
@@ -789,7 +802,8 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=True,
         detail=(
-            f"{ev['passes']} pass(es) in {ev['days']}d, {ev['produced']} produced, "
+            f"{ev['passes']} pass{'es' if ev['passes'] != 1 else ''} in {ev['days']}d, "
+            f"{ev['produced']} produced, "
             f"{ev['staging_backlog']} awaiting consolidation, ${ev['cost_usd']}"
         ),
         evidence=ev,
@@ -848,8 +862,11 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=False,
         detail=(
-            f"{ev['unclaimed_count']} unclaimed path(s) and {ev['undeclared_db_count']} "
-            "undeclared database(s) — these are in NO snapshot"
+            f"{ev['unclaimed_count']} unclaimed "
+            f"path{'s' if ev['unclaimed_count'] != 1 else ''} and "
+            f"{ev['undeclared_db_count']} undeclared "
+            f"database{'s' if ev['undeclared_db_count'] != 1 else ''} — "
+            f"{'these are' if gaps != 1 else 'this is'} in NO snapshot"
         ),
         evidence=ev,
     )
@@ -1014,14 +1031,16 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
         return ProbeResult(
             ok=True,
             detail=(
-                f"chunk ANN index active but out of step at {len(stale)} dimension(s) "
+                f"chunk ANN index active but out of step at {len(stale)} "
+                f"dimension{'s' if len(stale) != 1 else ''} "
                 f"({', '.join(stale)}) — the next search rebuilds it"
             ),
             evidence=ev,
         )
     return ProbeResult(
         ok=True,
-        detail=f"chunk ANN index active ({indexed_total} chunk vector(s) indexed)",
+        detail=f"chunk ANN index active ({indexed_total} chunk "
+        f"vector{'s' if indexed_total != 1 else ''} indexed)",
         evidence=ev,
     )
 
@@ -1197,14 +1216,18 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
         return ProbeResult(
             ok=True,
             detail=(
-                f"{ev.get('projected')} page(s) projected; {waiting} waiting on you "
+                f"{ev.get('projected')} page{'s' if ev.get('projected') != 1 else ''} projected; "
+                f"{waiting} waiting on you "
                 f"({ev.get('conflicts')} changed on both sides, "
                 f"{ev.get('owner_deleted')} deleted here but still in the library)"
             ),
             evidence=ev,
         )
     return ProbeResult(
-        ok=True, detail=f"{ev.get('projected')} page(s) projected, none in conflict", evidence=ev
+        ok=True,
+        detail=f"{ev.get('projected')} page{'s' if ev.get('projected') != 1 else ''} projected, "
+        "none in conflict",
+        evidence=ev,
     )
 
 

@@ -191,6 +191,7 @@ def reconcile_remediation_trigger(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.system_singleton import converge_system_singleton
 
     try:
         cfg = AppConfig.load().resilience.remediation
@@ -199,6 +200,13 @@ def reconcile_remediation_trigger(store: Any) -> None:
         return
 
     try:
+        # Same upgrade-path duplication the digest hit (issue 396): a legacy `crons.json`
+        # copy of this job carries a random id the lookup below cannot match. The return
+        # value is ignored here because `enabled` is derived from config a few lines down —
+        # config is the authority for this row, not a retired duplicate's flag.
+        converge_system_singleton(
+            store, canonical_id=REMEDIATION_TRIGGER_ID, provider=PROVIDER_NAME
+        )
         existing = store.get(REMEDIATION_TRIGGER_ID)
     except Exception:
         logger.debug("remediation trigger: could not read the trigger store", exc_info=True)

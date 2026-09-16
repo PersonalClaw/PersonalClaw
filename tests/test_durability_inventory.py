@@ -225,6 +225,33 @@ class TestTheGuardMeetsARealHome:
             )
             assert covered, f"{entry.path} is declared but no snapshot path carries it"
 
+    def test_usage_stats_fold_is_ignored_so_a_fresh_install_audits_clean(self, tmp_path):
+        """🔴 #2906. `usage_stats.json` is a DERIVED per-day fold (`routing/usage.py`) written at
+        first boot, so on a fresh install `audit_home()` reported "1 unclaimed path" and the doctor
+        report + dashboard health strip went coral before the user had done anything.
+
+        It is IGNORED, not declared, exactly like its twins `update_check.json` /
+        `update_releases.json`: it refolds from sources that ARE declared, so it carries no unique
+        truth and a restored stale copy is worse than the empty one the next `GET /api/usage`
+        refolds. The audit that used to flag it must now claim-or-ignore every path on a
+        fresh-boot-shaped home.
+        """
+        assert inv.is_ignored("usage_stats.json"), "the derived usage fold must not fail the audit"
+        assert inv.claim_for("usage_stats.json") is None, "it is ignored, never a declared entry"
+        # A fresh-boot-shaped home whose only extra file is the fold audits clean.
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / "config.json").write_text("{}", encoding="utf-8")
+        (home / "usage_stats.json").write_text("{}", encoding="utf-8")
+        result = inv.audit_home(home)
+        assert result.ok, f"unclaimed={result.unclaimed} dbs={result.undeclared_dbs}"
+        assert "usage_stats.json" not in result.unclaimed
+        # And the guard is NOT weakened: a genuinely-undeclared sibling file still fails.
+        (home / "not_a_known_store.json").write_text("{}", encoding="utf-8")
+        after = inv.audit_home(home)
+        assert not after.ok
+        assert "not_a_known_store.json" in after.unclaimed
+
     def test_the_MACHINE_LOCAL_paths_are_ignored_not_declared(self):
         """🔴 SECURITY / identity. `session_key` and `sessions.json` hold live auth material, and
         `machine_id` is what `durability/shards.py` stamps shards with — a restored copy would

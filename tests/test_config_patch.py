@@ -63,6 +63,70 @@ class TestPatchGeneral:
             )
             assert resp.status == 400
 
+    # ── `path` is the SELECTOR: a missing/unusable one is a malformed request (#2926) ──
+    # Every arm asserts the message NAMES the fault, because the defect was not the status
+    # (already 400) but the sentence: `path` fell through to the allowlist check and produced
+    # `field not editable: ` — a field name that is blank. Asserting only the status would
+    # have passed before the fix, so each case pins the prose.
+
+    @pytest.mark.asyncio
+    async def test_absent_path_names_the_missing_field_not_a_blank_one(self, tmp_config) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await c.patch("/api/config/personalclaw", json={"value": 1})
+            assert resp.status == 400
+            error = (await resp.json())["error"]
+            assert "missing required 'path'" in error
+            assert "not editable" not in error
+
+    @pytest.mark.asyncio
+    async def test_empty_path_names_the_empty_selector_not_a_blank_field(self, tmp_config) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await c.patch("/api/config/personalclaw", json={"path": "", "value": 1})
+            assert resp.status == 400
+            error = (await resp.json())["error"]
+            assert "'path' is empty" in error
+            assert "not editable" not in error
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_path_is_refused_as_empty(self, tmp_config) -> None:
+        # `"   "` is a name for nothing: it rendered as `field not editable:    `, which is the
+        # same illegible sentence as the empty-string case with the blank harder to see.
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await c.patch("/api/config/personalclaw", json={"path": "   ", "value": 1})
+            assert resp.status == 400
+            assert "'path' is empty" in (await resp.json())["error"]
+
+    @pytest.mark.asyncio
+    async def test_non_string_path_is_refused_by_name(self, tmp_config) -> None:
+        # An unhashable `path` used to raise TypeError out of `_EDITABLE_CONFIG.get()`; the
+        # request-shape boundary caught it and answered a generic `bad_request`. The handler
+        # owns this refusal, so it says which key was wrong.
+        async with TestClient(TestServer(_make_app())) as c:
+            for bad in (["agent.yolo"], {"a": 1}, 7):
+                resp = await c.patch("/api/config/personalclaw", json={"path": bad, "value": 1})
+                assert resp.status == 400, bad
+                assert "'path' must be a string" in (await resp.json())["error"], bad
+
+    @pytest.mark.asyncio
+    async def test_unknown_field_still_names_the_field(self, tmp_config) -> None:
+        # The arms above must not swallow the genuine allowlist rejection they sit in front of.
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "not.real", 1)
+            assert resp.status == 400
+            assert (await resp.json())["error"] == "field not editable: not.real"
+
+    @pytest.mark.asyncio
+    async def test_no_refusal_message_has_a_blank_field_name(self, tmp_config) -> None:
+        # The invariant the issue actually asks for, across every malformed-`path` shape: no
+        # refusal ends in a dangling separator with nothing after it.
+        bodies = [{"value": 1}, {"path": "", "value": 1}, {"path": "  ", "value": 1}]
+        async with TestClient(TestServer(_make_app())) as c:
+            for body in bodies:
+                resp = await c.patch("/api/config/personalclaw", json=body)
+                error = (await resp.json())["error"]
+                assert error == error.strip(), body
+                assert not error.rstrip().endswith(":"), body
+
 
 # ── Enum validator ───────────────────────────────────────────────────────
 

@@ -328,11 +328,30 @@ class TestApiTerminalDelete:
 
     @pytest.mark.asyncio
     async def test_returns_404_for_unknown_session(self):
+        """A DELETE of an unknown session id answers the registered JSON error envelope
+        ``{"error": {"code", "message"}}`` — NOT the bare text/plain 404 it used to send
+        (#2932). The systemic 500-text/plain guard (#2861) maps only RAISED exceptions;
+        this handler RETURNS its 404, so it slipped through until fixed here.
+
+        Rail-style, consistent with ``test_http_error_codes_append_only``: the emitted
+        ``code`` must be a released row in ``HTTP_ERROR_CODES`` — a wire code a browser
+        client / saved SOP branches on cannot be minted ad hoc.
+        """
+        from personalclaw.http_errors import HTTP_ERROR_CODES
+
         req = _make_request(session_id="nonexistent")
         with patch.object(terminal, "_sel") as mock_sel:
             mock_sel.return_value.log_api_access = MagicMock()
             resp = await terminal.api_terminal_delete(req)
         assert resp.status == 404
+        # The envelope, not text/plain — this is the whole point of #2932.
+        assert resp.content_type == "application/json"
+        body = json.loads(resp.body)
+        assert set(body) == {"error"}
+        assert body["error"]["code"] == "not_found"
+        assert body["error"]["message"]  # a non-empty human sentence
+        # Rail: the emitted wire code is a registered, released one (no ad-hoc minting).
+        assert body["error"]["code"] in HTTP_ERROR_CODES
 
     @pytest.mark.asyncio
     async def test_deletes_existing_session(self):

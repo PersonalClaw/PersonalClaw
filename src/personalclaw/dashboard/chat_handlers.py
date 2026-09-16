@@ -36,6 +36,7 @@ from personalclaw.dashboard.chat_utils import (
     _remove_queued_by_id,
     _sync_dashboard_sessions,
     apply_task_mode,
+    full_session_messages,
     persisted_history_key,
 )
 from personalclaw.dashboard.state import (
@@ -827,18 +828,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     # _disk_older_count gates whether to read disk AND provides the stable
     # slice boundary (set at restore/resume, never drifts with new messages).
     if limit_raw is None and before is None:
-        mem_msgs = list(session.messages)
-        if session._disk_older_count > 0 and state.conversation_log:
-            history_key = resolved_key
-            try:
-                disk_msgs = state.conversation_log.read_messages_chained(history_key)
-            except Exception:
-                logger.warning("read_messages_chained failed for %s", history_key, exc_info=True)
-                disk_msgs = []
-            older = disk_msgs[: session._disk_older_count] if disk_msgs else []
-            messages = older + mem_msgs
-        else:
-            messages = mem_msgs
+        # The splice lives in `full_session_messages` (chat_utils) because the session-map
+        # endpoint has to index the SAME list — see its docstring.
+        messages = full_session_messages(state, session)
         total = len(messages)
         has_more = False
     else:

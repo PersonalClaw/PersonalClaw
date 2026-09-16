@@ -164,3 +164,125 @@ def test_pwa_routes_are_registered_at_the_origin_root() -> None:
     source = Path(server_mod.__file__).read_text(encoding="utf-8")
     assert 'add_get("/sw.js", handlers.service_worker)' in source
     assert 'add_get("/manifest.webmanifest", handlers.manifest_webmanifest)' in source
+
+
+# ── Web fonts under /fonts/* (issue #2916) ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("dm-sans.woff2", "font/woff2"),
+        ("legacy.woff", "font/woff"),
+        ("fallback.ttf", "font/ttf"),
+        ("fallback.otf", "font/otf"),
+    ],
+)
+async def test_font_asset_states_its_content_type(
+    tmp_path, filename: str, content_type: str
+) -> None:
+    """The Content-Type is declared, never guessed.
+
+    aiohttp's ``FileResponse`` resolves the type from its own private ``mimetypes``
+    table, which lacks the woff/woff2 entries — so ``add_static`` would send
+    ``application/octet-stream`` for a first-party font asset (#2916).
+    """
+    from personalclaw.dashboard.handlers import core
+
+    fonts = tmp_path / "dist" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / filename).write_bytes(b"\x00\x01")
+
+    req = MagicMock()
+    req.match_info = {"name": filename}
+    with patch.object(core, "_DIST_DIR", tmp_path / "dist"):
+        resp = await core.font_asset(req)
+    assert isinstance(resp, web.FileResponse)
+    assert resp.headers["Content-Type"] == content_type
+
+
+@pytest.mark.asyncio
+async def test_font_asset_missing_returns_404_and_does_not_raise(tmp_path) -> None:
+    """A missing font must RETURN 404, not raise.
+
+    ``spa_fallback`` turns a raised ``HTTPNotFound`` for a non-excluded GET into
+    ``index.html``, and HTML decoded as a font is the "invalid sfntVersion" failure
+    this route exists to prevent. ``/fonts/`` is deliberately NOT in the fallback
+    exclusion tuple, so the handler itself must answer the status.
+    """
+    from personalclaw.dashboard.handlers import core
+
+    (tmp_path / "dist" / "fonts").mkdir(parents=True)
+
+    req = MagicMock()
+    req.match_info = {"name": "does-not-exist.woff2"}
+    with patch.object(core, "_DIST_DIR", tmp_path / "dist"):
+        resp = await core.font_asset(req)
+    assert resp.status == 404
+    assert resp.content_type == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_font_asset_unsupported_extension_404s(tmp_path) -> None:
+    """A present-but-non-font file is not served with a guessed type — 404 instead."""
+    from personalclaw.dashboard.handlers import core
+
+    fonts = tmp_path / "dist" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "notes.txt").write_text("secret-ish")
+
+    req = MagicMock()
+    req.match_info = {"name": "notes.txt"}
+    with patch.object(core, "_DIST_DIR", tmp_path / "dist"):
+        resp = await core.font_asset(req)
+    assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_font_asset_rejects_path_traversal(tmp_path) -> None:
+    """A ``name`` that resolves outside the fonts directory must 404, never serve."""
+    from personalclaw.dashboard.handlers import core
+
+    dist = tmp_path / "dist"
+    (dist / "fonts").mkdir(parents=True)
+    (dist / "sw.js").write_text("// service worker")
+
+    req = MagicMock()
+    req.match_info = {"name": "../sw.js"}
+    with patch.object(core, "_DIST_DIR", dist):
+        resp = await core.font_asset(req)
+    assert resp.status == 404
+    assert not isinstance(resp, web.FileResponse)
+
+
+@pytest.mark.asyncio
+async def test_font_asset_serves_through_symlinked_dist(tmp_path) -> None:
+    """In dev, static/dist is a symlink to web/dist — the handler must follow it."""
+    from personalclaw.dashboard.handlers import core
+
+    real_dist = tmp_path / "real-dist"
+    (real_dist / "fonts").mkdir(parents=True)
+    (real_dist / "fonts" / "dm-sans.woff2").write_bytes(b"\x00")
+
+    link = tmp_path / "linked-dist"
+    link.symlink_to(real_dist)
+
+    req = MagicMock()
+    req.match_info = {"name": "dm-sans.woff2"}
+    with patch.object(core, "_DIST_DIR", link):
+        resp = await core.font_asset(req)
+    assert isinstance(resp, web.FileResponse)
+    assert resp.headers["Content-Type"] == "font/woff2"
+
+
+def test_fonts_route_is_a_typed_handler_not_a_static_mount() -> None:
+    """Clean break: /fonts is served by the explicit-Content-Type handler, not
+    ``add_static`` (whose ``FileResponse`` emits ``application/octet-stream``)."""
+    from pathlib import Path
+
+    import personalclaw.dashboard.server as server_mod
+
+    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    assert 'add_get("/fonts/{name}", handlers.font_asset)' in source
+    assert 'add_static("/fonts"' not in source

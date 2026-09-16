@@ -1372,25 +1372,153 @@ def seed_builtin_apps() -> list[str]:
             shutil.rmtree(dest, ignore_errors=True)
     if changed:
         _write_seed_marker(seeded)
-    # One-shot migration: ollama-models was once native (bundled) but was de-cored
-    # into a normal first-party app. Its installed.json still says origin="builtin"
-    # and it's in the seed marker, which makes _is_native() lock it (disable/uninstall
-    # refused). Fix: downgrade origin to "local" and remove from the seed marker so it
-    # behaves like every other first-party app (user-manageable).
-    _OLLAMA_MIGRATION_NAME = "ollama-models"
-    if _OLLAMA_MIGRATION_NAME in seeded:
-        ollama_meta = _read_installed(_OLLAMA_MIGRATION_NAME)
-        if ollama_meta is not None and ollama_meta.origin == "builtin":
-            manifest_check = _manifest_of(_OLLAMA_MIGRATION_NAME)
-            if manifest_check is None or not manifest_check.native:
-                ollama_meta.origin = "local"
-                ollama_meta.updatedAt = _now_iso()
-                _write_installed(_OLLAMA_MIGRATION_NAME, ollama_meta)
-                logger.info("migrated %s from builtin→local (de-cored)", _OLLAMA_MIGRATION_NAME)
-        seeded.discard(_OLLAMA_MIGRATION_NAME)
-        _write_seed_marker(seeded)
+    # The seeding above is FORWARD-ONLY: it walks what the wheel still ships. The reverse
+    # direction is what `retire_orphaned_builtins` supplies — a name this home seeded whose
+    # packaged source is gone. Ordered after the forward pass so `present` is the full set.
+    retire_orphaned_builtins(seeded, _bundled_native_names())
 
     return newly
+
+
+def _bundled_native_names() -> set[str]:
+    """Every name the wheel currently ships as a NATIVE app."""
+    from personalclaw.providers.loader import BUNDLED_DIR
+
+    names: set[str] = set()
+    if not BUNDLED_DIR.is_dir():
+        return names
+    for entry in sorted(BUNDLED_DIR.iterdir()):
+        manifest_file = entry / APP_MANIFEST_FILENAME if entry.is_dir() else None
+        if not manifest_file or not manifest_file.is_file():
+            continue
+        try:
+            manifest = AppManifest.from_json_file(manifest_file)
+        except Exception:
+            continue
+        if manifest.native:
+            names.add(manifest.name)
+    return names
+
+
+def _core_factory_is_gone(name: str) -> bool:
+    """True when this app's provider points at a CORE factory that no longer exists.
+
+    A native app is a thin manifest over an implementation that lives in core, so retiring the
+    core factory retires the app — and that is exactly the state this detects. Deliberately
+    limited to `personalclaw.*` modules: a de-cored app's implementation lives in its own files,
+    and importing THOSE at seed time would execute app code during boot for no reason. An
+    unreadable or non-core implementation therefore answers False (not a dead core factory),
+    which routes the app down the gentler de-core branch.
+    """
+    import importlib
+
+    manifest = _manifest_of(name)
+    provider = getattr(manifest, "provider", None) if manifest is not None else None
+    impl = str(getattr(provider, "implementation", "") or "")
+    module_path, _, func_name = impl.rpartition(":")
+    if not module_path or not func_name or not module_path.startswith("personalclaw."):
+        return False
+    try:
+        module = importlib.import_module(module_path)
+    except Exception:
+        # The module itself is gone — the factory certainly is.
+        return True
+    return not hasattr(module, func_name)
+
+
+def _holds_user_data(name: str) -> bool:
+    """True when the app's `data/` directory has anything in it."""
+    data_dir = app_dir(name) / _APP_DATA_DIRNAME
+    try:
+        return data_dir.is_dir() and any(data_dir.iterdir())
+    except OSError:
+        # Unreadable — assume it holds something rather than deleting it.
+        return True
+
+
+def _clear_native_flag(name: str) -> None:
+    """Drop `native: true` from an installed app's manifest, in place.
+
+    The other half of unlocking a retired built-in: `_is_native()` reads the manifest flag first,
+    so a retired app that still declares itself native stays locked however its origin reads.
+    Best-effort — an unwritable or unparseable manifest leaves the origin change standing rather
+    than aborting the sweep.
+    """
+    path = app_dir(name) / APP_MANIFEST_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not data.get("native"):
+            return
+        data["native"] = False
+        atomic_write(path, json.dumps(data, indent=2) + "\n")
+    except Exception:
+        logger.debug("could not clear the native flag on %s", name, exc_info=True)
+
+
+def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
+    """Reconcile seed-marker names whose packaged native source is gone. Returns what changed.
+
+    🔴 THREE STATES USED TO DISAGREE (issues 334, 368). The ScheduleService retirement deleted
+    `create_schedule_provider` and stopped bundling `personalclaw-schedule-tools`, but nothing
+    removed it from an existing install. Measured on a home upgraded across six `main` SHAs: the
+    app stayed installed and enabled, `_is_native()` locked it against disable AND uninstall
+    (`origin="builtin"`), `GET /api/apps` rendered it beside 28 working built-ins with an
+    "Installed" badge and no error, `DELETE` answered `404 not installed` while the list said it
+    was, and every gateway boot logged an `AttributeError` from `load_factory`. The only escape
+    was hand-editing the home.
+
+    The precedent was already here as a hardcoded one-shot for `ollama-models`, which this
+    replaces: that app is one instance of the general rule, so a second retirement would have
+    needed a second one-shot. Nothing is left beside this — the block is deleted, not bypassed.
+
+    Two outcomes, decided by whether the app can still run:
+
+    * **Dead** — its provider named a core factory that no longer exists, so the app cannot work
+      and the platform installed it without asking. Unlock it, disable it, and remove the
+      directory — but ONLY when it holds no user data. An app whose `data/` has contents is
+      unlocked and disabled and left in place: a retirement must not delete something the user
+      may want, and an unlocked app is removable in one click.
+    * **De-cored** — the packaged source is gone but the implementation is not a dead core
+      factory (it moved into the app's own files, `ollama-models`' history). Unlock only; it
+      still works, so it keeps running as an ordinary user-manageable app.
+
+    Either way the name leaves the marker, so this is idempotent and a re-seed cannot resurrect
+    a retired built-in.
+    """
+    orphans = sorted(seeded - present)
+    if not orphans:
+        return []
+    changed: list[str] = []
+    for name in orphans:
+        meta = _read_installed(name)
+        dead = _core_factory_is_gone(name)
+        if meta is not None:
+            # Unlocking is the half BOTH outcomes need, and it takes BOTH writes: `_is_native()`
+            # answers True on the manifest's `native` flag OR the `builtin` origin, so clearing one
+            # leaves the app locked. Measured while writing this — `origin="local"` alone kept
+            # `_is_native()` True, because the INSTALLED app.json still claimed native.
+            meta.origin = "local"
+            if dead:
+                meta.enabled = False
+            meta.updatedAt = _now_iso()
+            _write_installed(name, meta)
+            _clear_native_flag(name)
+        if dead and not _holds_user_data(name):
+            shutil.rmtree(app_dir(name), ignore_errors=True)
+            _audit("retire", "ok", name)
+            logger.info("retired de-bundled builtin app %s (its core factory is gone)", name)
+        elif dead:
+            logger.info(
+                "de-bundled builtin app %s is disabled and unlocked; its data/ is kept for you "
+                "to remove",
+                name,
+            )
+        else:
+            logger.info("unlocked de-cored builtin app %s (builtin→local)", name)
+        seeded.discard(name)
+        changed.append(name)
+    _write_seed_marker(seeded)
+    return changed
 
 
 def start_enabled_app_backends() -> list[str]:
@@ -1674,6 +1802,16 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     ``data=unconsumed_copy <paths>`` (#2585). This rung never resolves that itself: the
     "cleanup" for each is a delete in a failure path, which is how #2574 happened.
 
+    EVERY ``False`` NAMES ITSELF. This rung returns a bare ``bool``, so the log line is the
+    only place a caller — a user reading ``gateway.log``, or CI reading a red — can learn
+    WHY an app it asked to remove is still installed. Two branches used to answer with
+    nothing at all (the preservation copy failing, and a name that cannot hold a parked
+    copy), which is how a real failure of this rung reached main as ``assert False is True``
+    with no cause anywhere in the output. So each refusal/error path of an INSTALLED app
+    emits a ``logger.error`` naming the app and the reason, and
+    ``tests/test_app_uninstall_preserves_data.py`` holds that as an invariant over the
+    branches rather than per-branch — paired with the success path, which must stay silent.
+
     Because that refusal comes first, the park below needs no ``rmtree`` of its own
     destination — the destination is provably absent — so it is a single
     :meth:`~pathlib.Path.rename`. Both paths live under ``apps/``, always the same
@@ -1700,6 +1838,12 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     try:
         _validate_app_name(name)
     except ValueError as exc:
+        logger.error(
+            "app %s: this name cannot hold a parked copy of data/, so the keep-data "
+            "uninstall is refused; nothing was removed and force_uninstall still works: %s",
+            name,
+            exc,
+        )
         _audit("uninstall_keep_data", "refused", name, caller=caller, error=str(exc))
         return False
 
@@ -1753,13 +1897,38 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
             shutil.copytree(live_data, staged)
     except OSError as exc:
         shutil.rmtree(staged, ignore_errors=True)
+        # LOUD, not audit-only. This was the ladder's ONE invisible failure: it returned
+        # `False` having written nothing to any log, while every sibling below names itself
+        # (`data=unconsumed_copy` and `data=park_failed` both `logger.error`). So the one
+        # branch that fires on an unexplained filesystem fault was also the one branch that
+        # destroyed the evidence for it — measured on main's `Full` run 35248405420
+        # (macos-latest, py3.13), where the whole record of a failed keep-data uninstall was
+        # `assert False is True` with no cause anywhere in the output.
+        #
+        # `errno` rides both the log line and the audit detail because it is the WHOLE
+        # diagnosis here: ENOSPC ("free some disk and retry"), EMFILE/EACCES/EIO and a
+        # metadata-only `shutil.Error` are four different next actions, and `data=
+        # preserve_failed` alone cannot tell them apart. `shutil.copytree` aggregates its
+        # per-entry failures into a `shutil.Error` that carries no errno of its own, so
+        # `none` is a real, distinct answer: read the entry list in the message.
+        code = getattr(exc, "errno", None)
+        logger.error(
+            "app %s: data/ could not be copied out (%s -> %s), so NOTHING was removed and "
+            "the app is intact; errno=%s: %s",
+            name,
+            live_data,
+            staged,
+            code,
+            exc,
+            exc_info=True,
+        )
         _audit(
             "uninstall_keep_data",
             "error",
             name,
             caller=caller,
             error=f"could not preserve data/, so nothing was removed: {exc}",
-            detail="data=preserve_failed",
+            detail=f"data=preserve_failed errno={code if code is not None else 'none'}",
         )
         return False
 
@@ -1772,6 +1941,11 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
             # Nothing was removed, so `live_data` is still there and the stage is a
             # redundant duplicate of it: the one failure below that may still GC.
             shutil.rmtree(staged, ignore_errors=True)
+            logger.error(
+                "app %s: the removal this rung delegates to refused, so nothing was "
+                "deleted and data/ is untouched",
+                name,
+            )
             _audit(
                 "uninstall_keep_data",
                 "error",

@@ -115,6 +115,7 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     api_stt_transcribe,
     api_token_local,
     favicon,
+    font_asset,
     index,
     manifest_webmanifest,
     service_worker,

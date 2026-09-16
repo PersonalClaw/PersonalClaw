@@ -142,6 +142,19 @@ const { AppearanceProvider } = await import('../appearance')
 const { PersonalityProvider } = await import('../personality')
 const { IdentityProvider } = await import('../identity')
 
+// The tour walks rail → chat → inbox → approvals → settings and these tests also deep-link
+// `#/tools` and `#/discover`; every one of those routes except chat is `lazy(() => import(…))`
+// in `App.tsx`. Under the full suite that module transform, not the anchor poll, is what
+// outlasts `STOP_BUDGET_MS` (#2951) — so resolve them once here and let the module cache serve
+// `lazy`. `atStop`'s budget then measures the overlay, which is what it claims to measure.
+await Promise.all([
+  import('../../pages/inbox/InboxPage'),
+  import('../../pages/dashboard/DashboardPage'),
+  import('../../pages/settings/SettingsPage'),
+  import('../../pages/tools/ToolsPage'),
+  import('../../pages/discover/DiscoverPage'),
+])
+
 /** The shell in `main.tsx`'s provider stack — the REAL IdentityProvider, because the flip
  *  from onboarding to the app shell is the thing under test. */
 const renderApp = () => render(

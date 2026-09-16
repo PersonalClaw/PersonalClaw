@@ -114,6 +114,13 @@ logger = logging.getLogger(__name__)
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
 
+# Max chars persisted/delivered for a fire's error summary. Sized to fit a rendered
+# AgentError envelope (WHAT/WHY/FIX, ~250 chars) so the FIX line — the actionable
+# remediation PLATFORM-LEGIBILITY §2 adds over a bare ``TypeName: msg`` — survives into
+# the run-ledger row, ``last_error_summary``, and the delivered notification, instead of
+# being cut mid-word (as the old 200-char slice did, dropping FIX from every sink).
+_ERROR_SUMMARY_MAX = 512
+
 # How often the earned-autonomy promotion scan runs. Six hours, not the poll
 # interval it rides: one pass reads the SEL tail once per declared action type, and a rung
 # is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
@@ -1251,9 +1258,21 @@ class GatewayOrchestrator:
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            # A provider that RAISES (rather than returning a failed
+            # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
+            # hook (`hooks.py`) and event-trigger (`event_triggers.py`) seams already apply — so
+            # an app-contributed provider surfaces a coded, actionable failure on this (busiest,
+            # unattended: clock/file/webhook/chained) dispatch path instead of a bare
+            # ``TypeName: msg``. Retiring `_run_action_job` dropped this wrap the way it
+            # dropped the denylist: the successor seam inherited neither. Built ONCE and
+            # threaded into BOTH sinks — the persisted run record / `last_error_summary`, and the
+            # delivered notification — so the one envelope is the source of both, not two copies.
+            from personalclaw.action_providers import provider_failure
+
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
-            await self._record_fire_outcome(trigger, exc=exc)
-            self._deliver_fire_outcome(trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
+            rendered = provider_failure(provider_name, exc).render()
+            await self._record_fire_outcome(trigger, exc=exc, error=rendered)
+            self._deliver_fire_outcome(trigger, ok=False, error=rendered)
         finally:
             # 🔴 THE LIVE REFRESH. `ScheduleService._record_run` pushed `cron_history` so
             # the Executions/Logs views update without polling — and `_record_run` is reachable only
@@ -1499,7 +1518,7 @@ class GatewayOrchestrator:
                 trigger_id=str(getattr(trigger, "id", "") or ""),
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
-                summary=error[:200],
+                summary=error[:_ERROR_SUMMARY_MAX],
                 # 🔴 EACH FIRE IS A NEW EVENT (R18 / crit 10). This passed neither `run_id`
                 # nor `attempt_key`, so `event_id` — derived from exactly those three parts —
                 # produced the SAME id for every fire of a trigger, and `is_duplicate` then dropped
@@ -1529,9 +1548,21 @@ class GatewayOrchestrator:
             logger.debug("could not deliver the fire outcome for %s", trigger, exc_info=True)
 
     async def _record_fire_outcome(
-        self, trigger: Any, *, result: Any = None, exc: BaseException | None = None
+        self,
+        trigger: Any,
+        *,
+        result: Any = None,
+        exc: BaseException | None = None,
+        error: str = "",
     ) -> None:
         """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
+
+        On the raise path the caller passes the pre-rendered WHAT/WHY/FIX envelope as
+        ``error`` (PLATFORM-LEGIBILITY §2); ``exc`` is still passed because the autopause
+        exit is classified by exception TYPE, independent of the human-facing text. So
+        ``error`` is the persisted evidence and ``exc`` is the classification signal — one
+        envelope, built once at the seam, rather than this method re-deriving a bare
+        ``TypeName: msg`` of its own.
 
         🔴 WHY THIS EXISTS. `triggers/autopause.py` ships 13 functions implementing criterion 3 —
         typed exits, a 5-failure budget, parking for transport outages, immediate pause for config
@@ -1584,7 +1615,7 @@ class GatewayOrchestrator:
                     started_at=now,
                     finished_at=now,
                     status="success" if exit_type == autopause.ExitType.OK.value else "failure",
-                    error="" if exc is None else f"{type(exc).__name__}: {exc}"[:200],
+                    error=error[:_ERROR_SUMMARY_MAX],
                 )
             )
             # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
@@ -1631,13 +1662,16 @@ class GatewayOrchestrator:
                 # says why the slot exists: "'paused after 5 consecutive failures' without the
                 # error is an alert the user has to go digging to act on."
                 #
-                # Falls back to the lifecycle reason only when there is no error text at all (a
-                # provider returning `success=False` without raising) — an empty evidence line
-                # would be worse than a redundant one.
-                detail = f"{type(exc).__name__}: {exc}" if exc is not None else ""
+                # On the raise path `error` is the seam's pre-rendered WHAT/WHY/FIX envelope
+                # (PLATFORM-LEGIBILITY §2), whose WHAT line still carries the concrete
+                # ``TypeName: msg`` — so the evidence is richer, not lost. It falls back to the
+                # result's own error string (a provider returning `success=False` without raising),
+                # then to the lifecycle reason — an empty evidence line would be worse than a
+                # redundant one.
+                detail = error
                 if not detail and result is not None:
                     detail = str(getattr(result, "error", "") or "")
-                live.last_error_summary = (detail or decision.reason)[:200]
+                live.last_error_summary = (detail or decision.reason)[:_ERROR_SUMMARY_MAX]
             # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
             # needing attention must stop firing. Leaving `enabled` True while labelling the row
             # "autopaused" would be the inert control this program keeps finding.
@@ -2732,8 +2766,9 @@ class GatewayOrchestrator:
             user_name=(self._cfg.dashboard.user_name or "").strip() or "the user",
             style_rules="\n".join(sec.style_rules or []),
         )
-        # Background loop: polls the wired provider (when any) + runs retention
-        # maintenance honoring the inbox entity settings. Cheap when idle.
+        # Background loop: polls the wired provider (when any). Cheap when idle.
+        # Retention/dismissed/feedback maintenance is the remediation engine's
+        # `inbox.maintenance` job now, not a second cadence in this loop.
         self.inbox_svc.start()
         logger.info(
             "Inbox service initialized (provider=%s)", provider.source_name if provider else "none"
@@ -2762,9 +2797,21 @@ class GatewayOrchestrator:
         """
         if not parent_key:
             return None
+        from personalclaw.workflows import ownership
+
         if parent_key.startswith("dashboard:"):
             return {"session": parent_key.removeprefix("dashboard:")}
-        if ":" in parent_key and not parent_key.startswith(("cron:", "subagent:", "hook:")):
+        # `workflow:<run>:<node>` is excluded for the same reason as `cron:`/`subagent:`/`hook:`:
+        # the `chan, ts = key.split(":", 1)` below reads a namespace prefix as a CHANNEL id, so a
+        # run-owned key would ask the delivery provider to build a thread link for a channel named
+        # "workflow" with ts "<run>:<node>". That is a vendor call on parsed garbage. Latent rather
+        # than live today — every run-owned spawn is `silent=True`, and the one caller reachable
+        # with such a key suppresses the notification for a silent batch — but it is the same
+        # omission as the routing branch in `_subagent_done`, one branch away from the tail that
+        # run-owned completions now land in.
+        if ":" in parent_key and not parent_key.startswith(
+            ("cron:", "subagent:", "hook:", ownership.OWNED_PREFIX)
+        ):
             chan, ts = parent_key.split(":", 1)
             if self._channel_delivery is not None:
                 try:
@@ -2975,6 +3022,9 @@ class GatewayOrchestrator:
 
     def _init_subagents(self) -> None:
         """Initialize the subagent manager."""
+        # Imported for `_subagent_done`'s routing: the run-owned session namespace is defined once,
+        # in the module that owns it, so this branch cannot drift from `dispatch_stage`'s key.
+        from personalclaw.workflows import ownership
 
         async def _broadcast_subagent_status(info: SubagentInfo, event: str) -> None:
             """Broadcast subagent status change via WS for per-session tracking."""
@@ -3330,7 +3380,22 @@ class GatewayOrchestrator:
                 )
                 return
 
-            if parent_key and not parent_key.startswith(("cron:", "subagent:")):
+            if parent_key and not parent_key.startswith(
+                # `workflow:<run>:<node>` is a RUN-OWNED session (`ownership.OWNED_PREFIX`), not a
+                # channel. Its completion is consumed by the run's own controller, which polls
+                # `SubagentManager.get` (`controller._reconcile_dispatched_stages`) — so the work
+                # here is not "deliver it somewhere else", it is "do not deliver it twice". Without
+                # this the key fell through to the branch below and a finished stage was treated as
+                # a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session for a
+                # session that never existed and burned a full model turn injecting the result into
+                # it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares the
+                # intended policy in its docstring — "completions belong in the run journal, not
+                # injected into whatever chat session happened to start the run" — and passes
+                # `silent=True` to say so; the only reader of `silent` is the notification tail
+                # below, which is where this now lands. The PREFIX (not `is_owned`) is the right
+                # test for routing: a malformed owned key is still not a channel.
+                ("cron:", "subagent:", ownership.OWNED_PREFIX)
+            ):
                 # Channel session — inject silently into ACP session (no visible channel message).
                 # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.
                 assert self.sessions is not None
