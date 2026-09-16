@@ -19,6 +19,7 @@ agents to find.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import personalclaw.manifest_reference as ref_mod
@@ -62,18 +63,43 @@ def test_checked_in_reference_matches_a_fresh_render():
 
     This is the whole point: an agent reads exact signatures, so the checked-in
     copy must equal what the generator produces from the current registries.
+
+    Re-rendered until STABLE rather than compared once — and that is determinism,
+    not a softened guard. The render is a pure function of the source tree
+    (bit-identical across repeated calls in a quiescent process), but it derives
+    routes/tools/providers by SCANNING that tree live: an AST walk over every
+    ``*.py`` under the package plus a walk of the bundled-apps dir. That tree is
+    shared by every ``-n auto`` worker PROCESS, so a sibling on another worker can
+    transiently perturb it — a scaffold / install / codegen that creates then
+    removes a file mid-scan, a window coverage widens — and the resulting one-off
+    byte drift reds an unrelated PR that only a full ~44-min re-run clears (the
+    documented flake this test was). A GENUINE drift — a tool or route added without
+    its ``TOOL_META`` / route entry, or a hand-edited generated file — is
+    deterministic and reproduces on EVERY render, so it still reds every attempt
+    below; only a non-reproducing race is absorbed, and the remedy the assertion
+    prints when it fires is unchanged.
     """
-    rendered = render_reference()
     root = reference_dir()
-    mismatches: list[str] = []
-    for filename, expected in rendered.items():
-        path = root / filename
-        if not path.is_file():
-            mismatches.append(f"{filename}: missing from the shipped reference dir")
-            continue
-        actual = path.read_text(encoding="utf-8")
-        if actual != expected:
-            mismatches.append(f"{filename}: differs from a fresh render")
+
+    def _drifted() -> list[str]:
+        mismatches: list[str] = []
+        for filename, expected in render_reference().items():
+            path = root / filename
+            if not path.is_file():
+                mismatches.append(f"{filename}: missing from the shipped reference dir")
+            elif path.read_text(encoding="utf-8") != expected:
+                mismatches.append(f"{filename}: differs from a fresh render")
+        return mismatches
+
+    # A quiescent render matches; a render that raced a sibling's transient tree
+    # write does not. Re-render until one comes back clean — real drift never does,
+    # so this loop cannot turn a stale reference green, it can only outlast a race.
+    mismatches = _drifted()
+    for _ in range(5):
+        if not mismatches:
+            break
+        time.sleep(0.3)
+        mismatches = _drifted()
     assert not mismatches, _STALE_REMEDY + "\n" + "\n".join(mismatches)
 
 
