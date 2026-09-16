@@ -1050,6 +1050,12 @@ IGNORED: tuple[str, ...] = (
     # unbounded in size and trivially re-creatable by signing in again, so nothing is lost.
     "browse",
     "update_check.json",  # last update check — regenerated on the next poll
+    # RUM-2's releases-LIST cache, the direct twin of update_check.json above: the
+    # ETag-cached, offline-tolerant releases view the channel/pin resolver reads,
+    # refetched on the next poll. Ignored for the same reason — it carries no unique
+    # truth, so a restored stale release list is worse than the empty one the next
+    # check refills.
+    "update_releases.json",
     "fixture.yaml",  # test-fixture marker written by `--seed`
     # 🔴 #2539 — the socket this gateway bound, plus the pid that bound it
     # (`gateway_base.RUNTIME_FILE`). MACHINE-LOCAL and process-lifetime-scoped: it is written

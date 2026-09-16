@@ -129,6 +129,13 @@ _UNDECLARED_DEBT = frozenset(
         "sources",
         "surfaces",
         "update_check.json",
+        # RUM-2's releases-LIST cache — the direct twin of update_check.json above,
+        # written by the same self_update.py. It is the ETag-cached, offline-tolerant
+        # releases view the channel/pin resolver reads, refetched on the next poll, and
+        # (like its twin) it is IGNORED by the durability inventory. Pinned here for the
+        # same reason: it carries no unique truth, so a restored stale release list would
+        # be worse than the empty one the next check refills.
+        "update_releases.json",
     }
 )
 

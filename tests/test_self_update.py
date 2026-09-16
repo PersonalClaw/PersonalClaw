@@ -440,3 +440,226 @@ def test_git_root_finds_the_worktree_that_carries_dot_git(tmp_path) -> None:
     # Git runs at the repo root even when the project dir is the nested package.
     assert uk.git_root(str(nested)) == str(tmp_path)
     assert uk.git_root("") == ""
+
+
+# ── RUM-2: channel + pin resolver ───────────────────────────────────────────
+#
+# A faked releases list (the normalized view fetch_releases emits) that is
+# ADVERSARIAL to every shortcut a resolver might take:
+#   - the newest entry is a PRERELEASE and comes FIRST → `stable` must SKIP
+#     index 0, killing a "return releases[0]" cheat;
+#   - stable's answer (v0.2.1) and beta's answer (v0.3.0-rc.1) are DIFFERENT
+#     tags → a resolver that ignores the channel fails one of them;
+#   - the pin target (v0.2.0) is OLDER than both channel answers → a "return
+#     newest" cheat cannot satisfy pin-hit;
+#   - no branch ever returns the last entry (v0.1.3) → "return releases[-1]"
+#     is dead too.
+_FAKE_RELEASES: list[dict[str, object]] = [
+    {"tag": "v0.3.0-rc.1", "prerelease": True, "name": "0.3.0-rc.1", "body": "beta notes"},
+    {"tag": "v0.2.1", "prerelease": False, "name": "0.2.1", "body": "stable notes"},
+    {"tag": "v0.2.0", "prerelease": False, "name": "0.2.0", "body": ""},
+    {"tag": "v0.1.3", "prerelease": False, "name": "0.1.3", "body": ""},
+]
+
+
+def test_select_target_stable_excludes_prereleases() -> None:
+    got = uk.select_target(_FAKE_RELEASES, "stable")
+    assert got == "v0.2.1"  # newest NON-prerelease
+    assert got != "v0.3.0-rc.1"  # ...and never the newer prerelease
+
+
+def test_select_target_beta_includes_prereleases() -> None:
+    got = uk.select_target(_FAKE_RELEASES, "beta")
+    assert got == "v0.3.0-rc.1"  # newest release INCLUDING prereleases
+    assert got != "v0.2.1"  # ...not merely the newest stable
+
+
+def test_select_target_pin_overrides_channel_with_an_exact_hit() -> None:
+    # A non-empty pin wins over the channel and names EXACTLY the pinned release —
+    # even an OLDER one than either channel would pick.
+    for channel in ("stable", "beta", "nightly"):
+        assert uk.select_target(_FAKE_RELEASES, channel, "0.2.0") == "v0.2.0"
+    # A leading v on the pin is tolerated (normalized both sides).
+    assert uk.select_target(_FAKE_RELEASES, "stable", "v0.2.0") == "v0.2.0"
+    # Guard: the pin answer is genuinely the pinned tag, not a channel default.
+    assert uk.select_target(_FAKE_RELEASES, "stable", "0.2.0") != uk.select_target(
+        _FAKE_RELEASES, "stable"
+    )
+    assert uk.select_target(_FAKE_RELEASES, "beta", "0.2.0") != uk.select_target(
+        _FAKE_RELEASES, "beta"
+    )
+
+
+def test_select_target_pin_miss_returns_empty() -> None:
+    # A pin to a version with no matching release resolves to "" (not the newest).
+    assert uk.select_target(_FAKE_RELEASES, "stable", "9.9.9") == ""
+    assert uk.select_target(_FAKE_RELEASES, "beta", "9.9.9") == ""
+
+
+def test_select_target_nightly_is_branch_tracking_not_a_tag() -> None:
+    # nightly follows the checked-out branch, so there is no release tag to name.
+    assert uk.select_target(_FAKE_RELEASES, "nightly") == ""
+
+
+def test_select_target_prerelease_detected_by_tag_suffix() -> None:
+    # The `prerelease` flag is False, but a `-rc`/`-beta` tag suffix ALSO marks a
+    # prerelease (tag convention §3.6): stable skips it, beta takes it.
+    rels: list[dict[str, object]] = [
+        {"tag": "v0.4.0-rc.1", "prerelease": False, "name": "", "body": ""},
+        {"tag": "v0.3.9", "prerelease": False, "name": "", "body": ""},
+    ]
+    assert uk.select_target(rels, "stable") == "v0.3.9"
+    assert uk.select_target(rels, "beta") == "v0.4.0-rc.1"
+
+
+def test_select_target_beta_tie_prefers_the_published_release() -> None:
+    # When a stable release and its own release candidate share a version, beta
+    # offers the PUBLISHED one — the tie-break, not an accident of list order.
+    rels: list[dict[str, object]] = [
+        {"tag": "v0.3.0-rc.1", "prerelease": True, "name": "", "body": ""},
+        {"tag": "v0.3.0", "prerelease": False, "name": "", "body": ""},
+    ]
+    assert uk.select_target(rels, "beta") == "v0.3.0"
+
+
+def test_select_target_empty_list_returns_empty() -> None:
+    # No releases known (offline, empty cache) -> "" on every channel, never raises.
+    for channel in ("stable", "beta", "nightly"):
+        assert uk.select_target([], channel) == ""
+    assert uk.select_target([], "stable", "0.2.0") == ""
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_proves_all_four_branches(monkeypatch) -> None:
+    """The done_when headline: a faked releases list proves stable / beta /
+    pin-hit / pin-miss through the real resolve_target seam."""
+
+    async def _fake_releases() -> list[dict[str, object]]:
+        return _FAKE_RELEASES
+
+    monkeypatch.setattr(uk, "fetch_releases", _fake_releases)
+    assert await uk.resolve_target("stable") == "v0.2.1"  # stable
+    assert await uk.resolve_target("beta") == "v0.3.0-rc.1"  # beta
+    assert await uk.resolve_target("stable", "0.2.0") == "v0.2.0"  # pin-hit (overrides)
+    assert await uk.resolve_target("beta", "9.9.9") == ""  # pin-miss
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_offline_no_cache_returns_empty_never_raises(
+    monkeypatch, tmp_path
+) -> None:
+    # Offline with no prior cache: "" on every branch, and NEVER a raise.
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+
+    class _BoomSession:
+        def __init__(self, *a, **k):
+            raise OSError("network down")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _BoomSession)
+    assert await uk.resolve_target("stable") == ""
+    assert await uk.resolve_target("beta") == ""
+    assert await uk.resolve_target("stable", "0.2.0") == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_releases_offline_returns_cached_list(monkeypatch, tmp_path) -> None:
+    # A network failure degrades to the cached list; resolve_target then still
+    # answers from that cache (offline-tolerant).
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    uk.write_releases_cache(
+        {
+            "releases": [
+                {"tag": "v0.3.0-rc.1", "prerelease": True, "name": "", "body": ""},
+                {"tag": "v0.2.1", "prerelease": False, "name": "", "body": ""},
+            ],
+            "etag": 'W/"cached"',
+        }
+    )
+
+    class _BoomSession:
+        def __init__(self, *a, **k):
+            raise OSError("network down")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _BoomSession)
+    rels = await uk.fetch_releases()
+    assert [r["tag"] for r in rels] == ["v0.3.0-rc.1", "v0.2.1"]  # cached view, no raise
+    assert await uk.resolve_target("stable") == "v0.2.1"  # resolves from the cache
+
+
+# ── RUM-2: the ETag-cached fetch path (200 refresh + 304 conditional) ────────
+
+
+class _FakeResp:
+    def __init__(self, status, payload=None, headers=None) -> None:
+        self.status = status
+        self._payload = payload
+        self.headers = headers or {}
+
+    async def json(self):  # type: ignore[no-untyped-def]
+        return self._payload
+
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return self
+
+    async def __aexit__(self, *a):  # type: ignore[no-untyped-def]
+        return False
+
+
+class _FakeSession:
+    """Records the outbound request so the ETag conditional can be asserted."""
+
+    last_url = ""
+    last_headers: dict = {}
+
+    def __init__(self, resp: _FakeResp) -> None:
+        self._resp = resp
+
+    def get(self, url, headers=None):  # type: ignore[no-untyped-def]
+        _FakeSession.last_url = url
+        _FakeSession.last_headers = dict(headers or {})
+        return self._resp
+
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return self
+
+    async def __aexit__(self, *a):  # type: ignore[no-untyped-def]
+        return False
+
+
+@pytest.mark.asyncio
+async def test_fetch_releases_200_maps_and_caches(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    payload = [
+        {"tag_name": "v0.3.0-rc.1", "name": "rc", "body": "b", "prerelease": True},
+        {"tag_name": "v0.2.1", "name": "stable", "body": "s", "prerelease": False},
+        "not-a-dict",  # a junk element is dropped defensively
+    ]
+    resp = _FakeResp(200, payload, {"ETag": 'W/"fresh"'})
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **k: _FakeSession(resp))
+
+    rels = await uk.fetch_releases()
+    # tag_name -> tag, prerelease preserved, junk element dropped.
+    assert [r["tag"] for r in rels] == ["v0.3.0-rc.1", "v0.2.1"]
+    assert rels[0]["prerelease"] is True and rels[1]["prerelease"] is False
+    # Hit the releases LIST endpoint (not releases/latest), and cached the ETag.
+    assert "/releases" in _FakeSession.last_url and "latest" not in _FakeSession.last_url
+    assert uk.read_releases_cache()["etag"] == 'W/"fresh"'
+
+
+@pytest.mark.asyncio
+async def test_fetch_releases_304_returns_cache_and_sends_conditional(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    uk.write_releases_cache(
+        {
+            "releases": [{"tag": "v0.2.1", "prerelease": False, "name": "", "body": ""}],
+            "etag": 'W/"prev"',
+        }
+    )
+    resp = _FakeResp(304)
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **k: _FakeSession(resp))
+
+    rels = await uk.fetch_releases()
+    assert [r["tag"] for r in rels] == ["v0.2.1"]  # returned the cached list on 304
+    assert _FakeSession.last_headers.get("If-None-Match") == 'W/"prev"'  # sent the ETag

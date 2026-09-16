@@ -285,6 +285,181 @@ async def build_update_status(current: str) -> dict[str, object]:
     }
 
 
+# ── Channel + pin resolver (RUM-2) ──────────────────────────────────────────
+#
+# The full releases LIST is the source of truth for channel/pin resolution.
+# ``releases/latest`` (:func:`fetch_latest_release`) only ever names the newest
+# *non-prerelease*, so it cannot answer the ``beta`` channel — which must see
+# prereleases — nor a ``pin`` to any older release. This endpoint returns every
+# release, newest first; ``per_page=100`` is far more than a personal project
+# cuts. ETag-cached and offline-tolerant, exactly like the latest probe.
+_RELEASES_LIST_URL = "https://api.github.com/repos/PersonalClaw/PersonalClaw/releases?per_page=100"
+_LIST_CACHE_FILENAME = "update_releases.json"
+
+
+def _list_cache_path() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _LIST_CACHE_FILENAME
+
+
+def read_releases_cache() -> dict[str, object]:
+    """The last fetched releases-LIST view, or ``{}``. Never raises.
+
+    Kept in its own file (``update_releases.json``) so it never clobbers the
+    ``releases/latest`` cache :func:`read_release_cache` owns.
+    """
+    try:
+        return json.loads(_list_cache_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_releases_cache(data: dict[str, object]) -> None:
+    """Persist the releases-list view for the next (ETag-conditional) fetch."""
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        atomic_write(_list_cache_path(), json.dumps(data, indent=2) + "\n", fsync=True)
+    except Exception:
+        logger.debug("could not persist releases-list cache", exc_info=True)
+
+
+def _release_view(item: dict[str, object]) -> dict[str, object]:
+    """Reduce one GitHub release object to the fields the resolver needs."""
+    return {
+        "tag": str(item.get("tag_name") or ""),
+        "name": str(item.get("name") or ""),
+        "body": str(item.get("body") or ""),
+        "prerelease": bool(item.get("prerelease")),
+    }
+
+
+def _releases_from_cache(cache: dict[str, object]) -> list[dict[str, object]]:
+    """The list of release views inside a cache dict, or ``[]``."""
+    raw = cache.get("releases")
+    if not isinstance(raw, list):
+        return []
+    return [r for r in raw if isinstance(r, dict)]
+
+
+def _is_prerelease(release: dict[str, object]) -> bool:
+    """A release the ``stable`` channel must skip and ``beta`` must include.
+
+    Two independent signals, either sufficient: GitHub's own ``prerelease`` flag,
+    and a PEP 440 pre-release suffix on the tag (``v0.3.0-rc.1`` / ``-beta.N``) —
+    the tag convention §3.6 names. Taking both means a release flagged prerelease
+    with a plain tag, and a plainly-flagged release with a ``-rc``/``-beta`` tag,
+    are each kept out of stable and offered to beta.
+    """
+    if bool(release.get("prerelease")):
+        return True
+    return "-" in normalize_version(str(release.get("tag") or ""))
+
+
+def select_target(releases: list[dict[str, object]], channel: str, pin: str = "") -> str:
+    """The release tag a *channel*/*pin* selects from *releases* (pure, no I/O).
+
+    ``pin`` (a version, with or without a leading ``v``) OVERRIDES the channel:
+    the tag of the release whose version equals the pin, or ``""`` when no such
+    release exists. Otherwise the channel decides:
+
+    * ``stable`` — the newest **non-prerelease** release.
+    * ``beta`` — the newest release **including** prereleases.
+    * ``nightly`` — ``""``: nightly tracks the checked-out branch, not a release
+      tag (the git kind follows the branch — RUM-4), so there is no tag to name.
+
+    "Newest" is the highest :func:`version_tuple`, ties broken toward the stable
+    release (so a published ``v0.3.0`` beats its own ``v0.3.0-rc.1`` on ``beta``).
+    Returns ``""`` when no candidate matches. Never raises — every field access is
+    defensive, so a malformed cache degrades to ``""`` rather than an exception on
+    the update path. An unrecognized channel falls to the ``stable`` arm (safest).
+    """
+    pin = (pin or "").strip()
+    if pin:
+        want = normalize_version(pin)
+        for rel in releases:
+            tag = str(rel.get("tag") or "")
+            if tag and normalize_version(tag) == want:
+                return tag
+        return ""
+
+    if channel == "nightly":
+        return ""
+    if channel == "beta":
+        candidates = list(releases)
+    else:  # "stable" and any unrecognized channel -> the safe, non-prerelease line
+        candidates = [r for r in releases if not _is_prerelease(r)]
+
+    best_tag = ""
+    best_key: tuple[tuple[int, ...], bool] | None = None
+    for rel in candidates:
+        tag = str(rel.get("tag") or "")
+        if not tag:
+            continue
+        key = (version_tuple(tag), not _is_prerelease(rel))
+        if best_key is None or key > best_key:
+            best_key, best_tag = key, tag
+    return best_tag
+
+
+async def fetch_releases() -> list[dict[str, object]]:
+    """Return the full GitHub releases list, ETag-cached and offline-tolerant.
+
+    Mirrors :func:`fetch_latest_release` but hits ``/releases`` (the whole list),
+    which the channel/pin resolver needs. Sends ``If-None-Match`` with the cached
+    ETag: a 304 (or any network error) returns the cached list unchanged — empty
+    when nothing was ever fetched — a 200 refreshes and re-caches. Never raises.
+    """
+    import aiohttp
+
+    cache = read_releases_cache()
+    cached_list = _releases_from_cache(cache)
+    etag = str(cache.get("etag") or "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "personalclaw-update-check",
+    }
+    if etag:
+        headers["If-None-Match"] = etag
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(_RELEASES_LIST_URL, headers=headers) as resp:
+                if resp.status == 304:
+                    return cached_list  # unchanged since last check
+                if resp.status != 200:
+                    logger.debug("releases returned HTTP %s", resp.status)
+                    return cached_list
+                payload = await resp.json()
+                releases = [_release_view(it) for it in payload if isinstance(it, dict)]
+                view: dict[str, object] = {
+                    "releases": releases,
+                    "etag": resp.headers.get("ETag", "") or etag,
+                    "checked_at": time.time(),
+                }
+                write_releases_cache(view)
+                return releases
+    except Exception:
+        # Offline / DNS / TLS — degrade to the cached list without raising.
+        logger.debug("releases fetch: network error, using cache", exc_info=True)
+        return cached_list
+
+
+async def resolve_target(channel: str, pin: str = "") -> str:
+    """The release tag a *channel*/*pin* selects, from the ETag-cached list.
+
+    Fetches the releases list (offline-tolerant — a cached or empty list on any
+    network failure) and applies :func:`select_target`. Never raises; returns
+    ``""`` when nothing matches: offline with no cache, a ``pin`` naming no
+    release, or the branch-tracking ``nightly`` channel.
+    """
+    releases = await fetch_releases()
+    return select_target(releases, channel, pin)
+
+
 # ── Installer diagnostics ───────────────────────────────────────────────────
 
 
