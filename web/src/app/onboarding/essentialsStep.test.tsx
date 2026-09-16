@@ -30,6 +30,9 @@ const testModelProvider = vi.fn()
 const chatModels = vi.fn()
 const setActiveModel = vi.fn()
 const saveOnboardingState = vi.fn()
+const detectLocalModel = vi.fn()
+const scanLocalModels = vi.fn()
+const bindLocalModel = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -42,6 +45,9 @@ vi.mock('../../lib/api', () => ({
     chatModels: () => chatModels(),
     setActiveModel: (...a: unknown[]) => setActiveModel(...a),
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
+    detectLocalModel: () => detectLocalModel(),
+    scanLocalModels: () => scanLocalModels(),
+    bindLocalModel: (...a: unknown[]) => bindLocalModel(...a),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
@@ -96,9 +102,14 @@ beforeEach(() => {
   vi.clearAllMocks()
   // A COLD cache per test: `useQuery` memoizes module-globally, and a warm entry
   // would hide both the loading and the load-FAILURE branch on every test after the first.
-  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models']) invalidateKeys(k)
+  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:local-model']) invalidateKeys(k)
   try { sessionStorage.clear() } catch { /* jsdom always has it */ }
   appCatalog.mockResolvedValue(CATALOG)
+  // OU-13 default: no local Ollama anywhere. Every existing test therefore renders the
+  // model lane exactly as before the on-ramp — no bind card, no scan fired.
+  detectLocalModel.mockResolvedValue({ detected: false })
+  scanLocalModels.mockResolvedValue({ endpoints: [] })
+  bindLocalModel.mockResolvedValue({ ok: true, status: 'bound', model: 'llama3.2:3b', provider: 'Local Ollama' })
   modelProviderTypes.mockResolvedValue([{
     type: 'openai', label: 'OpenAI', app: 'openai-models', capabilities: ['chat'], multiInstance: true,
     settingsSchema: { properties: { api_key: { type: 'string', default: '', 'x-meta': { label: 'OpenAI API Key', sensitive: true } } }, required: ['api_key'] },
@@ -371,5 +382,101 @@ describe('a failed catalog fetch says so', () => {
     renderStep()
     expect(await screen.findByText(/No web search app is available/)).toBeTruthy()
     expect(screen.getAllByText(/first-party source/)[0]).toBeTruthy()
+  })
+})
+
+// ── OU-13: the local + LAN Ollama zero-key on-ramp ───────────────────────────
+//
+// Four falsifiable properties, each with a known-true AND a known-false case:
+//  1. NO OLLAMA REACHABLE ⇒ the lane is unchanged: no "Use this model" bind card, the
+//     catalog cards render as before, Continue stays disabled. Proven for BOTH the
+//     localhost branch (detection empty) and the LAN branch (scan empty).
+//  2. NO SCAN ON FIRST BOOT: mounting the step probes localhost (loopback) but fires
+//     ZERO network scan until the explicit "Scan my local network" click.
+//  3. A DISCOVERED ENDPOINT (localhost or LAN) offers a one-click, NO-API-KEY bind that
+//     routes through `bindLocalModel` — never the keyed `createModelProvider` path.
+//  4. A card is shown only for an endpoint the backend returned (a live-probed one).
+
+describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
+  const LOCALHOST = { endpoint: 'http://localhost:11434', model: 'llama3.2:3b' }
+  const LAN = { endpoint: 'http://192.168.1.50:11434', model: 'qwen2.5:0.5b' }
+
+  it('known-false localhost: no Ollama ⇒ no bind card, catalog unchanged, Continue disabled', async () => {
+    detectLocalModel.mockResolvedValue({ detected: false })
+    renderStep()
+    // The catalog renders exactly as today.
+    const reviews = await screen.findAllByRole('button', { name: /^Review$/ })
+    expect(reviews.length).toBeGreaterThan(0)
+    await waitFor(() => expect(detectLocalModel).toHaveBeenCalled())
+    // No auto-bind card was injected on the no-Ollama path.
+    expect(screen.queryByRole('button', { name: /Use this model/ })).toBeNull()
+    // Continue is still gated on a real model resolution.
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+
+  it('known-false: NO network scan fires on first boot (localhost probe only)', async () => {
+    detectLocalModel.mockResolvedValue({ detected: false })
+    renderStep()
+    await screen.findAllByRole('button', { name: /^Review$/ })
+    await waitFor(() => expect(detectLocalModel).toHaveBeenCalled())
+    // The loopback probe ran; the outbound LAN scan did NOT — it needs the explicit click.
+    expect(scanLocalModels).not.toHaveBeenCalled()
+  })
+
+  it('known-true localhost: one-click bind with NO API-key field reaches the resolved state', async () => {
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST })
+    const { onProgress } = renderStep()
+    const use = await screen.findByRole('button', { name: /Use this model/ })
+    expect(screen.getAllByText(/no API key/i).length).toBeGreaterThan(0)
+    await act(async () => { fireEvent.click(use) })
+    // The bind rode the credential-free seed path — never the keyed provider-create path.
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://localhost:11434'))
+    expect(createModelProvider).not.toHaveBeenCalled()
+    // No key entry was ever shown on this path.
+    expect(screen.queryByRole('button', { name: /Save and test/ })).toBeNull()
+    // The model lane resolved: it records the bound app and enables Continue.
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'ollama-models' } }))
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    await waitFor(() => expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(false))
+  })
+
+  it('known-false LAN: an empty scan surfaces no card and leaves the catalog unchanged', async () => {
+    detectLocalModel.mockResolvedValue({ detected: false })
+    scanLocalModels.mockResolvedValue({ endpoints: [] })
+    renderStep()
+    const scan = await screen.findByRole('button', { name: /Scan my local network/ })
+    await act(async () => { fireEvent.click(scan) })
+    await waitFor(() => expect(scanLocalModels).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText(/No local model found on your network/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Use this model/ })).toBeNull()
+    // The catalog Review buttons are still there — the empty scan altered nothing.
+    expect((await screen.findAllByRole('button', { name: /^Review$/ })).length).toBeGreaterThan(0)
+  })
+
+  it('known-true LAN: a discovered endpoint offers a one-click no-key bind of THAT endpoint', async () => {
+    detectLocalModel.mockResolvedValue({ detected: false })
+    scanLocalModels.mockResolvedValue({ endpoints: [LAN] })
+    const { onProgress } = renderStep()
+    const scan = await screen.findByRole('button', { name: /Scan my local network/ })
+    await act(async () => { fireEvent.click(scan) })
+    const use = await screen.findByRole('button', { name: /Use this model/ })
+    expect(screen.getByText(/192\.168\.1\.50/)).toBeTruthy()
+    await act(async () => { fireEvent.click(use) })
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://192.168.1.50:11434'))
+    expect(createModelProvider).not.toHaveBeenCalled()
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'ollama-models' } }))
+  })
+
+  it('a failed bind is shown in place, not swallowed', async () => {
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST })
+    bindLocalModel.mockRejectedValue(new Error(JSON.stringify({ error: { code: 'local_model_bind_failed', message: 'the Ollama app is not installed' } })))
+    renderStep()
+    const use = await screen.findByRole('button', { name: /Use this model/ })
+    await act(async () => { fireEvent.click(use) })
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    // A failed bind does NOT mark the lane resolved.
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(true)
   })
 })
