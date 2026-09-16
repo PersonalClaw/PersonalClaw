@@ -63,11 +63,24 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 @pytest.fixture(autouse=True)
 def _no_network_and_no_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No release probe (network) and no frontend build in any of these tests."""
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "")
+    """No release probe (network) and no frontend build in any of these tests.
+
+    The pip/git updaters resolve their target through ``self_update.resolve_target``
+    → ``fetch_releases`` (RUM-2/6). Stub the network seam (`fetch_releases`) to an
+    empty list so the REAL resolver runs offline-degraded (→ ``""``); a test that
+    wants a concrete target either patches `fetch_releases` with a list (real
+    resolver) or overrides `resolve_target` directly via `_fake_resolve`. Also pin a
+    default `stable`/no-pin config so `AppConfig.load()` never touches disk.
+    """
+
+    async def _no_releases() -> list:
+        return []
+
+    monkeypatch.setattr(su, "fetch_releases", _no_releases)
     monkeypatch.setattr(cli_server, "build_frontend_sync", lambda path: None)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
+    _channel(monkeypatch)
 
 
 def _channel(monkeypatch: pytest.MonkeyPatch, channel: str = "stable", pin: str = "") -> None:
@@ -324,7 +337,7 @@ def test_pip_kind_upgrades_without_a_source_tree(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
     """The regression this atom exists for: no PROJECT_DIR, and it still updates."""
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "9.9.9")
+    _fake_resolve(monkeypatch, "v9.9.9")
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
     _fake_installer(monkeypatch)
@@ -343,7 +356,7 @@ def test_pip_kind_upgrades_without_a_source_tree(
 def test_pip_kind_already_current_skips_the_installer(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "0.0.1")
+    _fake_resolve(monkeypatch, "v0.0.1")
     monkeypatch.setattr(cli_server, "__version__", "9.9.9")
 
     cli_server._update()
@@ -353,8 +366,12 @@ def test_pip_kind_already_current_skips_the_installer(
 
 
 def test_pip_kind_unknown_latest_upgrades_unpinned(monkeypatch: pytest.MonkeyPatch, spawns) -> None:
-    """Offline (no latest tag) still tries: `-U personalclaw`, not a refusal."""
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "")
+    """Offline (no release resolves) still tries: `-U personalclaw`, not a refusal.
+
+    The autouse fixture stubs `fetch_releases` to an empty list, so the real
+    `resolve_wheel_target` degrades to `""` on the default `stable`/no-pin config —
+    exactly the offline case. With no pin, an empty target upgrades unpinned rather
+    than refusing (a pin, by contrast, refuses; see the pin-miss test)."""
     _fake_installer(monkeypatch)
 
     cli_server._update()
@@ -366,7 +383,7 @@ def test_pip_kind_install_failure_reports_one_clean_line(
     monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """uv's stderr is ANSI-colored and leads with the headline — say that, not raw bytes."""
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "9.9.9")
+    _fake_resolve(monkeypatch, "v9.9.9")
     _fake_installer(monkeypatch)
     raw = "\x1b[31m×\x1b[0m No solution found when resolving dependencies:\n  ╰─▶ unsatisfiable."
 
@@ -389,7 +406,7 @@ def test_pip_kind_no_installer_available_exits_one(
 ) -> None:
     from personalclaw._installer import NoInstallerError
 
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "9.9.9")
+    _fake_resolve(monkeypatch, "v9.9.9")
 
     def _none(args):  # type: ignore[no-untyped-def]
         raise NoInstallerError("no pip, no uv")
@@ -402,6 +419,77 @@ def test_pip_kind_no_installer_available_exits_one(
     assert exc.value.code == 1
     assert "no pip, no uv" in capsys.readouterr().out
     assert not spawns
+
+
+# ── pip honors the `updates` channel/pin (RUM-6) ────────────────────────────
+
+# A releases list ADVERSARIAL to a "blind latest" install: the newest release is a
+# PRERELEASE, so stable and beta resolve to DIFFERENT tags, and the pin points at an
+# even older one. A `-U personalclaw==<releases/latest>` implementation would install
+# 0.2.1 for all three rows and fail beta + pin — which is exactly the bug RUM-6 kills.
+_RUM6_RELEASES = [
+    {"tag": "v0.3.0-rc.1", "prerelease": True},
+    {"tag": "v0.2.1", "prerelease": False},
+    {"tag": "v0.2.0", "prerelease": False},
+]
+
+
+def _fake_release_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Feed the REAL resolver a fixed releases list (no network, no resolve_target stub)."""
+
+    async def _list() -> list:
+        return [dict(r) for r in _RUM6_RELEASES]
+
+    monkeypatch.setattr(su, "fetch_releases", _list)
+
+
+@pytest.mark.parametrize(
+    "channel, pin, expected",
+    [
+        ("stable", "", "personalclaw==0.2.1"),  # newest non-prerelease
+        ("beta", "", "personalclaw==0.3.0-rc.1"),  # newest INCLUDING prereleases
+        ("stable", "0.2.0", "personalclaw==0.2.0"),  # pin overrides the channel exactly
+    ],
+)
+def test_pip_installs_the_channel_pin_resolved_spec(
+    monkeypatch: pytest.MonkeyPatch, spawns, channel: str, pin: str, expected: str
+) -> None:
+    """RUM-6 core: the wheel installed is the channel/pin-resolved tag, never a blind latest.
+
+    Non-vacuous by construction — beta (0.3.0-rc.1) and the pin (0.2.0) resolve to
+    versions DIFFERENT from stable's latest (0.2.1) over the same releases list, so a
+    `releases/latest` implementation would fail the beta and pin rows. Drives the REAL
+    `resolve_wheel_target`/`select_target` over `_RUM6_RELEASES` (only `fetch_releases`
+    is stubbed), so the resolver policy itself is exercised, not mocked away.
+    """
+    _channel(monkeypatch, channel, pin)
+    _fake_release_list(monkeypatch)
+    _fake_installer(monkeypatch)
+
+    cli_server._update()
+
+    assert any(
+        a[:5] == ["FAKE-INSTALLER", "install", "-U", expected, "--quiet"] for a in spawns
+    ), f"expected to install {expected}; spawns={spawns}"
+
+
+def test_pip_pin_miss_refuses_and_never_installs_latest(
+    monkeypatch: pytest.MonkeyPatch, capsys, spawns
+) -> None:
+    """A pin naming no release must REFUSE, not silently install the latest wheel.
+
+    The whole point of a pin is "stay exactly here"; falling back to `releases/latest`
+    on a miss would violate it. Distinguishes RUM-6 from the offline/no-pin case, which
+    does upgrade unpinned."""
+    _channel(monkeypatch, "stable", "0.9.9")  # no such release in the list
+    _fake_release_list(monkeypatch)
+    _fake_installer(monkeypatch)
+
+    cli_server._update()
+
+    out = capsys.readouterr().out
+    assert "No release matches the pinned version" in out
+    assert not spawns  # nothing was installed
 
 
 # ── container / desktop: instructions, not pretending ───────────────────────

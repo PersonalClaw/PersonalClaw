@@ -874,6 +874,33 @@ async def test_resolve_target_proves_all_four_branches(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_wheel_target_maps_nightly_onto_stable(monkeypatch) -> None:
+    """RUM-6: a wheel install has no branch to track, so the git-only `nightly`
+    channel rides `stable` instead of resolving to `""` — while stable/beta/pin are
+    UNCHANGED from `resolve_target`.
+
+    Non-vacuous: `resolve_target("nightly")` returns `""` (branch-tracking), so the
+    nightly row here would FAIL if `resolve_wheel_target` just delegated blindly; and
+    the pinned-nightly row proves a pin still overrides the channel (nightly with a
+    pin resolves the pin, not stable's latest)."""
+
+    async def _fake_releases() -> list[dict[str, object]]:
+        return _FAKE_RELEASES
+
+    monkeypatch.setattr(uk, "fetch_releases", _fake_releases)
+    # Unchanged vs resolve_target on the real channels.
+    assert await uk.resolve_wheel_target("stable") == "v0.2.1"
+    assert await uk.resolve_wheel_target("beta") == "v0.3.0-rc.1"
+    assert await uk.resolve_wheel_target("stable", "0.2.0") == "v0.2.0"
+    # The wheel-specific policy: nightly-without-pin rides stable (NOT "").
+    assert await uk.resolve_target("nightly") == ""  # the primitive: branch-tracking
+    assert await uk.resolve_wheel_target("nightly") == "v0.2.1"  # the wheel policy
+    # A pin still overrides the channel, even nightly.
+    assert await uk.resolve_wheel_target("nightly", "0.2.0") == "v0.2.0"
+    assert await uk.resolve_wheel_target("nightly", "9.9.9") == ""  # pin-miss refuses
+
+
+@pytest.mark.asyncio
 async def test_resolve_target_offline_no_cache_returns_empty_never_raises(
     monkeypatch, tmp_path
 ) -> None:

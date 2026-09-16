@@ -472,6 +472,22 @@ async def resolve_target(channel: str, pin: str = "") -> str:
     return select_target(releases, channel, pin)
 
 
+async def resolve_wheel_target(channel: str, pin: str = "") -> str:
+    """The release tag a WHEEL install (pip/pipx/uv) installs for *channel*/*pin*.
+
+    Identical to :func:`resolve_target`, with one wheel-specific policy: the
+    git-only ``nightly`` channel tracks a branch, and there is no published wheel
+    for a branch, so a wheel install rides the ``stable`` line instead of resolving
+    to ``""``. A ``pin`` is a pin on every install kind and OVERRIDES the channel
+    exactly as in :func:`resolve_target` (RUM-2), so ``nightly`` is only remapped to
+    ``stable`` when no pin is set. Never raises; returns ``""`` when nothing matches
+    (offline with no cache, or a ``pin`` naming no release).
+    """
+    if channel == "nightly" and not (pin or "").strip():
+        channel = "stable"
+    return await resolve_target(channel, pin)
+
+
 # ── Installer diagnostics ───────────────────────────────────────────────────
 
 
