@@ -491,6 +491,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The note could not be written to the inbox, so it was not kept. Your text is "
         "still in the compose box — try saving again."
     ),
+    # ── inbox field-type validation (handlers_inbox.api_inbox_update — issue 338 / #2845) ──
+    # A per-FIELD type refusal, distinct from `invalid_body` (a whole-body "this is not the
+    # expected object" answer). `PUT /api/inbox/{id}` validates each updatable field's type
+    # BEFORE mutating anything, so a non-string `draft` (or a non-boolean `favorited`, etc.)
+    # can no longer poison the store. The wire `message` is request-derived and names the
+    # field and the WIRE type it expected — never the caller's value, which may be arbitrarily
+    # large — e.g. "draft must be a string, got object".
+    "invalid_field_type": "A request field carries a value of the wrong type for that field.",
     # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
     # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
     # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system
