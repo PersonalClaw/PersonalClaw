@@ -947,3 +947,107 @@ def test_the_prompts_the_pipeline_asks_for_actually_ship() -> None:
         )
         assert path.is_file(), path
         assert "{{items}}" in path.read_text(encoding="utf-8")
+
+
+class TestTheProviderDrivesTheRealPipelineEndToEnd:
+    """PA-2 "the run" — the ONE seam neither the pipeline tests nor the call-site tests observe.
+
+    `TestTheCallSites.test_the_provider_calls_the_pipeline` fakes `run_triage` away, and every
+    pipeline test calls `run_triage` directly — so nothing drives the ENGINE-dispatched action
+    provider THROUGH the real collect→gate→strict-JSON→tier-clamp→rank→deliver path. The cycle-26
+    audit recorded PA-2 `partial` for exactly this reason: it drove the browser but never fired a
+    model, so "the tiering and the ranking are unobserved rather than doubted".
+
+    This fires the provider as the engine would and injects the ONE live dependency the done_when
+    does not judge — `_default_completion` (proposal *content*, not the mechanism) — plus a
+    capturing `notify`. Everything else is real: the manifest, the gate parse, the ordinal/tier/cap
+    contract, the digest render, and the delivery. It asserts the delivered WorkflowRun digest
+    honors every clause the done_when names.
+    """
+
+    async def test_the_provider_fires_collect_gate_propose_rank_and_delivers_as_one_run(
+        self, monkeypatch: Any
+    ) -> None:
+        import personalclaw.action_providers.triage_digest_provider as provider_mod
+        import personalclaw.proactive.pipeline as pipeline_mod
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.triage_digest_provider import (
+            TriageDigestActionProvider,
+        )
+
+        # 1. The items the engine's collect step hands the pipeline. Faked HERE (collect has its
+        #    own four tests in TestTheCollectors) so the ordinals are deterministic and the
+        #    assertions below can name the dropped and the surfaced row.
+        monkeypatch.setattr("personalclaw.proactive.collect.collect_all", lambda **_kw: _items())
+
+        # 2. The one live dependency — the model. Scripted so the gate DROPS the dependabot row per
+        #    the NL rule and the proposal stage asks a reply_draft at trivial, which the tier clamp
+        #    must RAISE. "relevance filter" routes the gate script; anything else, the proposals.
+        drop = _ordinal_of(_DEPENDABOT_TITLE)
+        keep = _ordinal_of(_REVIEW_TITLE)
+        completion = _Completion(
+            gate=_dispositions(**{drop: "drop", keep: "propose"}),
+            propose={"proposals": [_proposal(keep, "reply_draft", "trivial")]},
+        )
+        monkeypatch.setattr(pipeline_mod, "_default_completion", completion)
+
+        # 3. The live handles the provider (collect) and the delivery path both reach for. One
+        #    capturing notify is the singular gate (§1.5); the digest rides it as this delivery.
+        seen: list[dict] = []
+
+        class _State:
+            _inbox_store = None
+            _sessions: dict = {}
+
+            def notify(self, kind: str, title: str, body: str, *, meta: Any = None) -> None:
+                seen.append({"kind": kind, "title": title, "body": body, "meta": meta or {}})
+
+        class _Services:
+            state = _State()
+
+        monkeypatch.setattr(
+            "personalclaw.action_providers.services.get_action_services", lambda: _Services()
+        )
+        monkeypatch.setattr(
+            provider_mod,
+            "_proactive_config",
+            lambda: type("C", (), {"triage_enabled": True, "classifier_gate_enabled": True})(),
+        )
+
+        result = await TriageDigestActionProvider().execute(
+            {"filter_rules": [{"source": "inbox", "rule": "skip dependabot"}]},
+            ActionContext(event="clock", payload={"run_id": "run-pa2", "trigger_id": "trig-pa2"}),
+        )
+
+        # The run succeeded and spent exactly what the pipeline promises: ONE gate call, ONE
+        # proposal call — the "ONE strict-JSON call" contract, not one call per item.
+        assert result.success is True
+        assert (completion.gate_calls, completion.propose_calls) == (1, 1)
+        summary = json.loads(result.stdout)
+        assert summary["llm_calls"] == 2
+
+        # The manifest reflects all THREE source lanes it collected (inbox + channel + run).
+        assert summary["collected"] == _FIXTURE_SIZE
+        assert summary["lanes"] == {"inbox": 2, "channel": 0, "run": 1}
+
+        # It delivered once, as one normal WorkflowRun: the digest rode the singular notify gate,
+        # is `info` severity, and its statusUrl deep-links THIS run's journal (criterion 1 / §1.5).
+        assert summary["delivered"] is True
+        assert len(seen) == 1
+        note = seen[0]
+        assert note["kind"] == DIGEST_NOTIFY_KIND  # "info"
+        assert note["meta"]["statusUrl"] == "#/workflows/runs/run-pa2"
+
+        # The gate genuinely gated BEFORE the proposal stage: the dropped dependabot row is absent
+        # from the delivered body and counted as filtered, while the surfaced review row is present.
+        assert _DEPENDABOT_TITLE not in note["body"]
+        assert _REVIEW_TITLE in note["body"]
+        assert "Filtered by your rules: 1" in note["body"]
+
+        # The tier clamp is enforced end to end, not merely requested: reply_draft asked `trivial`
+        # and the surviving proposal was RAISED to `medium`, and the cap held.
+        assert len(summary["proposals"]) == 1
+        proposal = summary["proposals"][0]
+        assert proposal["item_id"] == keep
+        assert (proposal["tier"], proposal["clamped"]) == ("medium", True)
+        assert len(summary["proposals"]) <= MAX_PROPOSALS
