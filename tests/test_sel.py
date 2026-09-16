@@ -462,6 +462,7 @@ class TestSecurityEventDataclass:
         assert evt.prev_hash == ""
         assert evt.entry_hash == ""
         assert evt.metadata == {}
+        assert evt.caller_scope == ""  # G47: unset until a caller_scope is bound
 
     def test_metadata_default_factory_is_per_instance(self) -> None:
         # Catch the classic mutable-default-arg bug if someone "fixes" the
@@ -705,6 +706,102 @@ class TestReadLastHashExtras:
         (tmp_path / "security_events.jsonl").write_text("not json\n")
         log = SecurityEventLog(base_dir=tmp_path)
         assert log._last_hash == ""
+
+
+class TestCallerScopeAttribution:
+    """`G47` / AAPX-1: a SEL row carries the SUBSYSTEM (``caller_scope``) whose pass was
+    running when it was written, read from ``guardrails.audit``'s one shared caller seam.
+
+    This is what lets an audit distinguish a ladder step that RAN (and declined) from one
+    that NEVER FIRED. Before AAPX-1 the two were the same observation from the log: two
+    calls from the same session were byte-for-byte identical in every caller-attribution
+    field, because the only such field was the session-key ``caller_identity``.
+    """
+
+    #: Fields that are always unique/volatile per write, so they can never be the thing
+    #: that tells two rows apart. What REMAINS after removing them is the row's real
+    #: caller-attribution surface — identical for the two paths on origin/main.
+    _VOLATILE = {"event_id", "timestamp", "prev_hash", "entry_hash"}
+
+    def _attribution(self, row: dict) -> dict:
+        return {k: v for k, v in row.items() if k not in self._VOLATILE}
+
+    def _log_identical_call(self, log, *, ladder_ran: bool) -> None:
+        """Log ONE call that is identical in every pre-AAPX-1 field; the only difference is
+        whether a ladder subsystem scope was active (``ladder_ran``) or not."""
+        import contextlib
+
+        from personalclaw.guardrails.audit import caller_scope
+
+        # "skill_ladder" is a real member of the closed CALLERS vocabulary, so this drives
+        # the true seam (set_current_caller would reject a made-up value).
+        ctx = caller_scope("skill_ladder") if ladder_ran else contextlib.nullcontext()
+        with ctx:
+            log.log_tool_invocation(
+                session_key="_bg",
+                tool_name="one_shot_completion",
+                tool_kind="model_call",
+                outcome="completed",
+            )
+
+    def test_ran_and_declined_is_distinguishable_from_never_fired(self, tmp_path):
+        log = SecurityEventLog(base_dir=tmp_path)
+        self._log_identical_call(log, ladder_ran=True)  # a ladder step RAN (then declined)
+        self._log_identical_call(log, ladder_ran=False)  # a ladder step NEVER FIRED
+        rows = log.recent(limit=2)
+        assert len(rows) == 2
+        a, b = rows
+
+        # Vacuity floor: the two rows ARE the same call in every field the pre-AAPX-1 schema
+        # captured — same session (⇒ caller_identity + inferred source), same op/kind/outcome.
+        # Any distinguishability must therefore come from the new per-call caller surface,
+        # not an incidentally different input.
+        for shared in (
+            "caller_identity",
+            "source",
+            "event_type",
+            "operation",
+            "tool_kind",
+            "outcome",
+        ):
+            assert a[shared] == b[shared], shared
+        assert a["caller_identity"] == "_bg"
+
+        # THE CLAIM. With everything else equal, the two rows are still distinguishable.
+        # On origin/main the two projections are identical (==) and this FAILS; after
+        # AAPX-1 the surfaced caller differs and it PASSES.
+        assert self._attribution(a) != self._attribution(b)
+
+        # Concretely, the discriminator is the bound subsystem: exactly one row carries it.
+        # ``.get`` (not ``[]``) so this line gives a clean AssertionError on origin/main
+        # rather than a KeyError — the failure above is the one that matters.
+        assert sorted(r.get("caller_scope", "\x00missing") for r in rows) == ["", "skill_ladder"]
+
+    def test_explicit_caller_scope_on_event_is_not_overwritten(self, tmp_path):
+        # An explicit value wins over the ambient scope: only an UNSET field is filled.
+        from personalclaw.guardrails.audit import caller_scope
+
+        log = SecurityEventLog(base_dir=tmp_path)
+        with caller_scope("skill_ladder"):
+            log.log(_make_event(event_id="explicit", caller_scope="inbox_triage"))
+        assert log.recent()[0]["caller_scope"] == "inbox_triage"
+
+    def test_caller_scope_is_covered_by_the_hmac(self, tmp_path):
+        # The stamped attribution is tamper-evident: it is hashed like any other field, so a
+        # forged caller_scope on disk fails verification.
+        from personalclaw.guardrails.audit import caller_scope
+
+        log = SecurityEventLog(base_dir=tmp_path)
+        with caller_scope("skill_ladder"):
+            log.log(_make_event(event_id="chk"))
+        assert log.verify_integrity() == (1, 1)
+        path = tmp_path / "security_events.jsonl"
+        row = json.loads(path.read_text().strip())
+        assert row["caller_scope"] == "skill_ladder"
+        row["caller_scope"] = "inbox_triage"  # forge the attribution
+        path.write_text(json.dumps(row) + "\n")
+        total, valid = log.verify_integrity()
+        assert (total, valid) == (1, 0)
 
 
 class TestRotate:

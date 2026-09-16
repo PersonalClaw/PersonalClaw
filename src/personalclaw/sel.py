@@ -3,6 +3,8 @@
 Records structured JSON events for every tool/MCP action with:
 - Timestamp (ISO 8601 UTC)
 - Caller identity (session key, agent, source interface)
+- Caller subsystem (``caller_scope``: which unattended pass invoked the call, read from
+  the one shared attribution seam in ``guardrails.audit`` — see :class:`SecurityEvent`)
 - Operation type (tool_call, tool_approved, tool_rejected, tool_denied, mcp_call)
 - Resources affected (tool name, tool kind, arguments summary)
 - Outcome (approved, rejected, denied, completed, failed)
@@ -153,6 +155,20 @@ class SecurityEvent:
     downstream_service: str = ""  # MCP server name if applicable
     request_id: str = ""  # ACP permission request ID
     error: str = ""
+    #: WHICH SUBSYSTEM's pass was running when this event was recorded — one of
+    #: :data:`personalclaw.guardrails.audit.CALLERS`, or "" when nothing bound one (`G47`,
+    #: ACP-AGENT-PARITY). ``caller_identity`` above answers "whose SESSION" (a security
+    #: ACTOR — a session key / ``user`` / a remote address); this answers "whose PASS", the
+    #: per-call caller the actor alone cannot carry. Filled by :meth:`SecurityEventLog.log`
+    #: from the SAME ``guardrails.audit.caller_scope`` seam that stamps the model-call
+    #: ledger's ``caller`` column, so the two surfaces name a caller ONE way, not two.
+    #: 🔴 WHY IT EXISTS. Before this, a SEL row written inside ``caller_scope("skill_ladder")``
+    #: was byte-for-byte identical (bar its unique id/timestamp/hash) to one written outside
+    #: it, so a ladder pass that RAN and declined and one that NEVER FIRED were the same
+    #: observation from the log — the G47 instrumentation gap the ACP parity audit was blocked
+    #: on. Named ``caller_scope`` (not ``caller``) deliberately: SEL already overloads
+    #: ``caller``/``caller_identity`` for the actor, so a second ``caller`` here would collide.
+    caller_scope: str = ""
     prev_hash: str = ""  # HMAC chain — hash of previous entry
     entry_hash: str = ""  # HMAC of this entry (computed on write)
     metadata: dict = field(default_factory=dict)
@@ -340,6 +356,18 @@ class SecurityEventLog:
 
     def log(self, event: SecurityEvent) -> None:
         """Append an event to the log with HMAC chain integrity."""
+        # `G47`: stamp the subsystem whose pass is running when this event is recorded,
+        # read from the ONE shared attribution seam (`guardrails.audit.caller_scope`) that
+        # also stamps the model-call ledger's `caller` column. This is what lets an audit
+        # tell "a ladder ran and declined" from "a ladder never fired": two otherwise
+        # identical calls from the same session now differ by who invoked them. An explicit
+        # value on the event wins (only an unset field is filled), and reading a ContextVar
+        # changes nothing about the call itself — so a call that already ran is unaffected.
+        # Set before `_compute_hash` so the field is inside the tamper-evident HMAC.
+        if not event.caller_scope:
+            from personalclaw.guardrails.audit import current_caller
+
+            event.caller_scope = current_caller()
         with self._lock:
             event.prev_hash = self._last_hash
             event.entry_hash = self._compute_hash(event)
