@@ -203,11 +203,12 @@ def test_the_release_check_is_the_only_unprompted_destination():
     """The one host the product contacts without the user asking for that thing.
 
     Pinned deliberately: this is the sentence the privacy posture rests on, and it should
-    take a failing test to change it. This docstring used to claim an
-    ``updates.check_enabled`` opt-out existed "precisely because this request happens on a
-    schedule" — no such field exists anywhere in ``src/``, and the check is unconditional
-    (``test_self_update.py::test_auto_update_gates_the_apply_not_the_check``). The schedule
-    is real; the opt-out was not.
+    take a failing test to change it. ``api.github.com`` remains the sole unprompted
+    destination — but it is now suppressible: ``updates.check_enabled=false`` is the egress
+    kill switch (RUM-3), and with it set the check makes ZERO calls
+    (``test_self_update.py::test_fetch_latest_release_kill_switch_makes_zero_calls`` +
+    ``test_do_update_check_kill_switch_runs_no_subprocess``). The schedule is real; the
+    opt-out is now real too, and defaults ON so this rail's "unprompted" claim still holds.
     """
     unprompted = sorted(h for h, j in _table().items() if "FETCHED, unprompted" in j)
     assert unprompted == ["api.github.com"], (

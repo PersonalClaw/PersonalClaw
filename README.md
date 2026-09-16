@@ -212,14 +212,15 @@ conversations, memory, and knowledge never leave your machine unless *you* wire 
 provider app. Exports exclude credentials by design.
 
 **One outbound call you should know about.** PersonalClaw asks GitHub whether a newer release
-exists, at most once every 12 hours (`_UPDATE_CHECK_INTERVAL`, `dashboard/handlers/updates.py`),
-identifying itself with a `personalclaw-update-check` User-Agent. It sends no usage data — but it
-is a network request, so GitHub sees your IP, as it would for any HTTP call.
+exists, on a schedule — by default at most once every 12 hours (`updates.check_interval_hours`,
+`config/loader.py`) — identifying itself with a `personalclaw-update-check` User-Agent. It sends
+no usage data, but it is a network request, so GitHub sees your IP, as it would for any HTTP call.
 
-**There is currently no setting that turns that check off.** `auto_update` gates whether an
-update is *applied*, not whether the check happens — its own description says so: "update checks
-always run; this gates the unattended pull + rebuild + restart." If you need a host that never
-reaches out, block the egress; a config switch for it is not shipped yet.
+**You can turn that check off.** Set `updates.check_enabled` to `false` in your config and
+PersonalClaw makes **zero** outbound calls to GitHub: no scheduled release check and no egress
+from the updater at all. While the check is on, `updates.check_interval_hours` (1–168) tunes how
+often it runs. `auto_update` is a separate, orthogonal control — it gates whether an available
+update is *applied*, not whether the check happens.
 
 ## Supply chain
 
