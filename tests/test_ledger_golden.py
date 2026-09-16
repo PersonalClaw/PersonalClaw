@@ -98,6 +98,12 @@ def _normalize(records: list[dict[str, Any]], run_id: str) -> list[str]:
         norm = dict(rec)
         if "ts" in norm:
             norm["ts"] = "TS"
+        # `origin_harness` (TSE2-1) is the local `machine_id`: a random uuid minted per home, so it
+        # is provably nondeterministic in exactly the way the run-id half of `event_id` is, and is
+        # blanked for the same reason. `owner_username` is NOT normalized — it is "" in a
+        # config-less capture, deterministic, and its presence is part of what this asserts.
+        if "origin_harness" in norm:
+            norm["origin_harness"] = "HARNESS"
         for wall in ("duration_secs", "elapsed_secs"):
             if wall in norm:
                 norm[wall] = 0.0

@@ -932,6 +932,15 @@ class WorkflowRun:
     #: and persists no state. The write seam (`store.set_policy_overrides`) is strict about
     #: keys; this reader is tolerant — see `from_dict` below.
     policy_overrides: dict[str, Any] = field(default_factory=dict)
+    #: TSE2-1 (MULTI-TENANCY-ENTITY): attribution, never authority. `owner_username` answers "whose
+    #: run is this" and `origin_harness` "which machine minted it" — both OPTIONAL, stamped at
+    #: `store.create` from the shipped primitives (`identity.current_username()` and
+    #: `durability.shards.machine_id`), never invented here. Empty is today's behaviour: a run with
+    #: no attribution recorded is the owner's, exactly as `Task.author`/`Trigger.author` already
+    #: decided — so a foreign row must SAY whose it is. Distinct from the mutation `actor` KIND
+    #: (how a change was made, not who), which is untouched.
+    owner_username: str = ""
+    origin_harness: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -971,8 +980,27 @@ class WorkflowRun:
             "error_message",
             "attention",
             "policy_overrides",
+            "owner_username",
+            "origin_harness",
         }
     )
+
+    def belongs_to(self, username: str) -> bool:
+        """Whether this run is ``username``'s work (TSE2-1, mirroring `Task.belongs_to`).
+
+        A run has no assignee, so `owner_username` alone decides. With no username configured
+        every run belongs to the owner — a single-user install must behave exactly as it does
+        today, and it is the honest answer: with no identity there is nobody else a run could
+        belong to. An UNATTRIBUTED run (empty `owner_username` — written before this field, or
+        from an unattributed origin) is likewise the owner's, so a foreign row must SAY whose it
+        is. That is the same bargain the tasks and triggers seams already struck; it is what keeps
+        a foreign-authored run out of the owner's "my runs" count without excluding pre-plan rows.
+        """
+        owner = (username or "").strip().lower()
+        if not owner:
+            return True
+        author = (self.owner_username or "").strip().lower()
+        return not author or author == owner
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -1001,6 +1029,8 @@ class WorkflowRun:
             "error_message": self.error_message,
             "attention": self.attention,
             "policy_overrides": dict(self.policy_overrides),
+            "owner_username": self.owner_username,
+            "origin_harness": self.origin_harness,
         }
         d.update(self.extra)
         return d
@@ -1044,6 +1074,12 @@ class WorkflowRun:
             # seam (`store.set_policy_overrides`), the one place a bad key can be refused
             # before it is persisted.
             policy_overrides=dict(d.get("policy_overrides") or {}),
+            # Deserialization defaults to "" (today's behaviour = the owner's), NOT to
+            # `current_username()`: a pre-plan row that never carried attribution must read back
+            # byte-identical but for the empty default, and the create-time stamp is the ONE place
+            # a live username/machine_id is minted. Mirrors `Task.author`'s empty-is-owner rule.
+            owner_username=str(d.get("owner_username", "") or ""),
+            origin_harness=str(d.get("origin_harness", "") or ""),
             extra={k: v for k, v in d.items() if k not in cls._KNOWN},
         )
 

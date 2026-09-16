@@ -110,6 +110,8 @@ def _connect() -> sqlite3.Connection:
             error_message TEXT NOT NULL DEFAULT '',
             attention TEXT,
             policy_overrides TEXT NOT NULL DEFAULT '{}',
+            owner_username TEXT NOT NULL DEFAULT '',
+            origin_harness TEXT NOT NULL DEFAULT '',
             extra TEXT NOT NULL DEFAULT '{}'
         )""")
     # There is no DROP path, and PP-16 seam 4c's retirement of `task_list_id` deliberately
@@ -129,7 +131,17 @@ def _connect() -> sqlite3.Connection:
     # a migrated row behaves exactly like a fresh one. Without this, the column-named INSERT
     # above would fail on every pre-change home. Pinned by
     # `test_workflows_store.py::TestPolicyOverridesLegacySchema`.
-    _ensure_columns(conn, {"policy_overrides": "TEXT NOT NULL DEFAULT '{}'"})
+    # TSE2-1: `owner_username`/`origin_harness` join the same additive ladder, with the SAME
+    # defaults the fresh DDL declares — a home created before this change gains them empty, which
+    # `WorkflowRun.belongs_to` reads as the owner's, so a solo install is unchanged.
+    _ensure_columns(
+        conn,
+        {
+            "policy_overrides": "TEXT NOT NULL DEFAULT '{}'",
+            "owner_username": "TEXT NOT NULL DEFAULT ''",
+            "origin_harness": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
     # The run-tree query (WF2-R13). Without it, listing a tree scans the table.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_root_status ON runs(root_run_id, status)")
     conn.execute(
@@ -180,6 +192,8 @@ _COLUMNS = (
     "error_message",
     "attention",
     "policy_overrides",
+    "owner_username",
+    "origin_harness",
     "extra",
 )
 
@@ -243,6 +257,18 @@ def create(run: WorkflowRun) -> WorkflowRun:
         run.root_run_id = run.id
     if not run.created_at:
         run.created_at = _now()
+    # TSE2-1: stamp attribution from the shipped primitives, at the ONE creation seam (like
+    # `created_at`/`root_run_id` above). Empty stays empty when there is nothing to stamp —
+    # `current_username()` returns "" with no username configured (today's solo behaviour), and a
+    # caller that pre-set either field (a foreign-authored fixture, a replayed row) keeps it.
+    if not run.owner_username:
+        from personalclaw.identity import current_username
+
+        run.owner_username = current_username()
+    if not run.origin_harness:
+        from personalclaw.durability.shards import machine_id
+
+        run.origin_harness = machine_id(config_dir())
     conn = _connect()
     try:
         cols = ", ".join(_COLUMNS)
