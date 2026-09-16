@@ -601,7 +601,8 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _restore_provider_registry() -> object:
-    """Undo any provider-registry ENTRY a test registers into the process-global singleton.
+    """Undo any provider-registry ENTRY a test registers into the process-global singleton, and
+    restore the singleton ITSELF if a test reset or swapped it.
 
     `get_default_registry()` is a module-level singleton, so an entry a test registers outlives it
     and lands in whatever test shares the worker next. Snapshot-and-restore rather than a list of
@@ -617,14 +618,32 @@ def _restore_provider_registry() -> object:
       because another file had left a model provider behind;
     * a leaked `acp_agent` entry made `cli_doctor` exit 1 in `test_cli.py`.
 
-    Registered TYPES are deliberately left alone: `register_type` is how a test simulates an
-    installed provider app, it is idempotent, and a type with no entry resolves nothing.
+    The singleton IDENTITY is restored too, and this is what the sharded suite exposed. Provider
+    modules register their TYPES at IMPORT time — `personalclaw.llm.__init__` eager-imports
+    `acp_agent`, wiring the `acp_agent` type — and those modules are then cached in `sys.modules`.
+    So a test that calls `reset_default_registry()` / `set_default_registry(...)` (several do, in
+    their own autouse fixtures: `test_ea5_capture_proxy`, `test_ea5_capture_client_upstream`,
+    `test_scripted_provider_binding`, `test_evals_cell_provider`, `test_seed_local_model`) swaps in
+    a FRESH, TYPELESS registry that the cached modules never re-populate — and the next test on
+    the worker then dies with `unknown provider type 'acp_agent'`. It was invisible until #2720
+    sharded the suite: with fewer xdist workers a resetting test and
+    `test_provider_resolution_unify`'s `acp_agent` cases land on the same worker in sequence.
+    Restoring the original object (which still carries its import-time type registrations) heals
+    it; the `is` check makes the restore a no-op for the tests that already save/restore the
+    singleton themselves (`test_acp_bundles`, `test_agent_providers_endpoint`). Registered TYPES on
+    the original are still left alone (there is no `unregister_type`, so a mutation that would drop
+    a type can only be a reset/swap, which this catches): `register_type` is how a test simulates
+    an installed provider app, it is idempotent, and a type with no entry resolves nothing.
     """
-    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.llm import registry as _registry_mod
 
-    entries = getattr(get_default_registry(), "_entries", None)
+    original = _registry_mod.get_default_registry()
+    entries = getattr(original, "_entries", None)
     before = set(entries) if isinstance(entries, dict) else set()
     yield
+    if _registry_mod.get_default_registry() is not original:
+        _registry_mod.set_default_registry(original)
+    entries = getattr(original, "_entries", None)
     if isinstance(entries, dict):
         for name in set(entries) - before:
             entries.pop(name, None)
