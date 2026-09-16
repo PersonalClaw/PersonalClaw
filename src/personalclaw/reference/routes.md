@@ -293,7 +293,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
-- `GET /api/inbox/digest` — on-demand channel digest.
+- `POST /api/inbox/digest` — on-demand channel digest.
 - `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `POST /api/inbox/notes` — the USER writes their own inbox item (INU-9).

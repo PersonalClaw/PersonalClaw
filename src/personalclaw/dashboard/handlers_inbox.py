@@ -702,7 +702,17 @@ async def api_inbox_status(request: web.Request) -> web.Response:
 
 
 async def api_inbox_digest(request: web.Request) -> web.Response:
-    """GET /api/inbox/digest?channel_id=X&hours=4 — on-demand channel digest."""
+    """POST /api/inbox/digest?channel_id=X&hours=4 — on-demand channel digest.
+
+    **POST, where this used to be a GET (#337).** It is not a read: it spends a model call and
+    persists a new inbox item. As a GET, a browser prefetch, a client retry or a double render
+    each manufactured another digest — and a state-changing GET sits outside CSRF protection
+    entirely, so any page the user visited could trigger one against a LAN-reachable gateway.
+
+    Parameters stay in the query string rather than moving to a JSON body: they are two
+    non-sensitive scalars, a body would add a parse-failure surface for no gain, and the verb
+    is what carries the semantics.
+    """
     state: "DashboardState" = request.app["state"]
     channel_id = request.query.get("channel_id", "")
     if not channel_id:

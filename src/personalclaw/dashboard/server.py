@@ -1411,7 +1411,12 @@ async def start_dashboard(
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)
     app.router.add_post("/api/inbox/{id}/open", handlers_inbox.api_inbox_open)
     app.router.add_post("/api/inbox/{id}/favorite", handlers_inbox.api_inbox_favorite)
-    app.router.add_get("/api/inbox/digest", handlers_inbox.api_inbox_digest)
+    # POST, not GET (#337). This route CREATES an inbox item and spends a model call, so a
+    # browser prefetch, a retry, or a double render manufactured items — and a state-changing
+    # GET also sits outside CSRF protection entirely. Registered beside `/{id}/...` above and
+    # BEFORE nothing dynamic can shadow it: `digest` is a literal segment, and the dynamic
+    # `/api/inbox/{id}` routes are PUT/POST on a different path shape.
+    app.router.add_post("/api/inbox/digest", handlers_inbox.api_inbox_digest)
     app.router.add_get("/api/inbox/providers", handlers_inbox.api_inbox_providers)
 
     # Notifications (GET/clear registered in _register_mcp_routes; the rest here)
