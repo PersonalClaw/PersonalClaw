@@ -11,7 +11,7 @@ import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
 import { ConsentModal, PermissionList, CronConsentList } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
-import { api, type AppCatalogEntry, type ChatModelOption, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
+import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
 
 /** ONBOARDING-UX S1 T1.2r (OU-2) — the essential-apps step: the flow's first act
  *  after the name, and the only place a fresh install can become a working agent
@@ -173,6 +173,16 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     if (r?.ok && entry && lane) { setOpen(''); recordInstall(entry, lane) }
   }, [guarded, recordInstall])
 
+  // OU-13 — a local/LAN Ollama bind lands straight in the resolved state: it needs no
+  // API key and no model pick (the endpoint's own chat model is bound for you), so it
+  // skips the 'configure'/'bind' phases and marks the model lane done.
+  const handleLocalBound = useCallback((model: string) => {
+    setModelApp('ollama-models')
+    setBoundLabel(model)
+    setPhase('done')
+    onProgress({ essentials: { model: 'ollama-models' } })
+  }, [onProgress])
+
   const modelReady = phase === 'done'
 
   // A dead catalog fetch is NOT "no apps available" — say so, and offer the retry.
@@ -213,6 +223,12 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
               )}
             </div>
             <p className="text-on-surface-low text-[0.8125rem]">{lane.blurb}</p>
+
+            {/* OU-13 — the zero-key on-ramp sits ABOVE the catalog while the model lane
+                is still picking. Localhost auto-detects (a loopback probe, not a scan);
+                the LAN sweep is opt-in. When nothing is reachable it offers no bind
+                card, so the catalog below is unchanged. */}
+            {isModel && phase === 'pick' && <LocalModelOnRamp onBound={handleLocalBound} />}
 
             {/* The model lane's post-install sub-flow replaces its card list once an
                 app is chosen — key entry, Test, then the binding choice. */}
@@ -335,6 +351,101 @@ function ModelSubFlow({ app, phase, boundLabel, onConfigured, onBound }: {
   }
   if (phase === 'bind') return <BindModel onBound={onBound} />
   return <ConfigureProvider app={app} onConfigured={onConfigured} />
+}
+
+/** OU-13 — the local + LAN Ollama zero-key on-ramp, above the model catalog while the
+ *  lane is still picking. Localhost detection runs automatically on mount — a loopback
+ *  probe, never a network scan — and the LAN sweep fires NO request until the user
+ *  presses "Scan my local network". A discovered endpoint is shown only after the
+ *  backend's live `/api/tags` probe, and binding it writes NO API key (it rides the
+ *  same credential-free path as `--seed-local-model`). When nothing is reachable the
+ *  block offers no bind card, so the catalog below stays exactly as it was. */
+function LocalModelOnRamp({ onBound }: { onBound: (model: string) => void }) {
+  const { data: detection } = useQuery('onboarding:local-model', () => api.detectLocalModel())
+  const [scanState, setScanState] = useState<'idle' | 'scanning' | 'done'>('idle')
+  const [discovered, setDiscovered] = useState<LocalModelEndpoint[]>([])
+  const [scanError, setScanError] = useState('')
+  const [binding, setBinding] = useState('')   // endpoint currently binding
+  const [bindError, setBindError] = useState('')
+
+  const localhost: LocalModelEndpoint | null =
+    detection?.detected && detection.endpoint && detection.model
+      ? { endpoint: detection.endpoint, model: detection.model }
+      : null
+
+  const scan = async () => {
+    setScanState('scanning'); setScanError('')
+    try {
+      const r = await api.scanLocalModels()
+      setDiscovered(r.endpoints); setScanState('done')
+    } catch (e) {
+      setScanError(thrownMessage(e) || 'The network scan could not run.'); setScanState('done')
+    }
+  }
+
+  const bind = async (ep: LocalModelEndpoint) => {
+    setBinding(ep.endpoint); setBindError('')
+    try {
+      const r = await api.bindLocalModel(ep.endpoint)
+      if (r.ok) { onBound(r.model || ep.model); return }
+      setBinding(''); setBindError('That local model could not be bound.')
+    } catch (e) {
+      setBinding(''); setBindError(thrownMessage(e) || 'That local model could not be bound.')
+    }
+  }
+
+  // The localhost endpoint can also turn up in a scan; show it once, at the top.
+  const lan = discovered.filter((e) => e.endpoint !== localhost?.endpoint)
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-outline-variant bg-surface p-3">
+      <div className="flex items-baseline gap-2">
+        <Cpu size={14} className="shrink-0 translate-y-0.5 text-primary" aria-hidden="true" />
+        <span className="text-on-surface" data-type="body-s">Run a local model — no API key</span>
+      </div>
+      <p className="text-on-surface-low" data-type="caption">
+        If you run Ollama on this machine or your network, PersonalClaw can use it with no
+        key and nothing leaving your machine.
+      </p>
+      {bindError && <div className="text-danger" data-type="body-s" role="alert">{bindError}</div>}
+      {localhost && (
+        <LocalModelCard ep={localhost} where="on this machine"
+          busy={binding === localhost.endpoint} onUse={() => bind(localhost)} />
+      )}
+      {lan.map((e) => (
+        <LocalModelCard key={e.endpoint} ep={e} where="on your network"
+          busy={binding === e.endpoint} onUse={() => bind(e)} />
+      ))}
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" size="sm" loading={scanState === 'scanning'} onClick={scan}>
+          <Search size={14} aria-hidden="true" /> Scan my local network
+        </Button>
+        {scanState === 'done' && !scanError && lan.length === 0 && !localhost && (
+          <span className="text-on-surface-low" data-type="caption">No local model found on your network.</span>
+        )}
+      </div>
+      {scanError && <div className="text-danger" data-type="body-s" role="alert">{scanError}</div>}
+    </div>
+  )
+}
+
+/** One reachable local endpoint, with a single "Use it" action. The bind is
+ *  credential-free, and the card says so — the whole point is that no key is asked for. */
+function LocalModelCard({ ep, where, busy, onUse }: {
+  ep: LocalModelEndpoint; where: string; busy: boolean; onUse: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-surface-high p-3">
+      <Cpu size={15} aria-hidden="true" className="shrink-0 text-primary" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-on-surface" data-type="body-s">{ep.model}</div>
+        <div className="truncate text-on-surface-low" data-type="caption">Ollama {where} · {ep.endpoint} · no API key</div>
+      </div>
+      <Button variant="primary" size="sm" loading={busy} onClick={onUse}>
+        <Check size={14} aria-hidden="true" /> Use this model
+      </Button>
+    </div>
+  )
 }
 
 /** Key entry + Test. The instance is named after its provider type — a first run

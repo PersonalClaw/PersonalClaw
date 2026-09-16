@@ -106,7 +106,7 @@ class BindResult:
         return self.status in (BOUND, ALREADY_BOUND)
 
 
-def _probe_models(endpoint: str) -> list[dict] | None:
+def _probe_models(endpoint: str, *, timeout: float = PROBE_TIMEOUT_SECS) -> list[dict] | None:
     """Return Ollama's ``/api/tags`` model list, or None when unreachable.
 
     Probes the dialect the provider will actually SPEAK. The ``ollama-models`` app is
@@ -115,10 +115,15 @@ def _probe_models(endpoint: str) -> list[dict] | None:
     correctly reads as unreachable.
 
     Uses ``urllib`` rather than ``httpx`` so the seed path pulls in no provider SDK.
+
+    ``timeout`` overrides the default per-probe budget. The onboarding LAN scan
+    (:mod:`personalclaw.local_model_detect`) reuses THIS probe with a much shorter
+    budget so a whole subnet sweep stays inside a few seconds — one ``/api/tags``
+    implementation, not a second socket.
     """
     url = endpoint.rstrip("/") + "/api/tags"
     try:
-        with urllib.request.urlopen(url, timeout=PROBE_TIMEOUT_SECS) as resp:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
         logger.debug("local model probe failed for %s: %s", url, exc)

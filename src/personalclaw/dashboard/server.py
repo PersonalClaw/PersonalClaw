@@ -552,6 +552,13 @@ async def start_dashboard(
     )
 
     register_onboarding_import_routes(app)
+    # OU-13 — the local + LAN Ollama zero-key on-ramp: detect a local Ollama, an
+    # opt-in RFC-1918 LAN scan, and a credential-free one-click bind. Its own module
+    # because the scan is a security-relevant network action gated behind an explicit
+    # POST, and the bind re-validates the endpoint as loopback/private.
+    from personalclaw.dashboard.handlers.local_model import register_local_model_routes
+
+    register_local_model_routes(app)
     # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
     # DURABILITY-AND-SYNC §3 — scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the

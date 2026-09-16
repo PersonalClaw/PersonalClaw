@@ -4219,6 +4219,14 @@ export interface OnboardingStatePatch {
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
 }
+/** OU-13 — a reachable local Ollama endpoint and the chat model it will bind to.
+ *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess. */
+export interface LocalModelEndpoint { endpoint: string; model: string }
+/** `GET /api/onboarding/local-model` — localhost detection. `endpoint`/`model` are
+ *  present only when `detected` is true. */
+export interface LocalModelDetection { detected: boolean; endpoint?: string; model?: string }
+/** `POST /api/onboarding/local-model/bind` — the credential-free bind outcome. */
+export interface LocalModelBindResult { ok: boolean; status: string; model: string; provider: string }
 /** One thing another local agent tool holds that PersonalClaw could adopt (PEP-5).
  *  `existing` is the server's answer, from the fingerprint ledger of what THIS
  *  importer already wrote — so a re-entered first run marks an item instead of
@@ -5726,6 +5734,16 @@ export const api = {
    *  travel, never items, so a caller can never name a directory to copy in. */
   runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
+  /** OU-13 — is a local Ollama reachable on localhost? A loopback round-trip, safe to
+   *  call automatically; `detected:false` when nothing bindable answers. */
+  detectLocalModel: () => get<LocalModelDetection>('/api/onboarding/local-model'),
+  /** OU-13 — the OPT-IN LAN sweep. Calling this IS the explicit user action; nothing
+   *  scans the network until it fires. Returns only endpoints that answered live. */
+  scanLocalModels: () => post<{ endpoints: LocalModelEndpoint[] }>('/api/onboarding/local-model/scan', {}),
+  /** OU-13 — one-click, credential-free bind of a discovered endpoint (mirrors
+   *  `--seed-local-model`: no API key, nothing written to `config.json` as a secret). */
+  bindLocalModel: (endpoint: string) =>
+    post<LocalModelBindResult>('/api/onboarding/local-model/bind', { endpoint }),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.

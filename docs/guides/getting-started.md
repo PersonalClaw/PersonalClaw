@@ -121,6 +121,14 @@ which prints a ready-to-open URL with a fresh credential.
 First-run onboarding in the dashboard asks for your name and walks you to
 provider setup.
 
+**Already running [Ollama](https://ollama.com)?** The first-run **essentials**
+step detects a local Ollama automatically and offers a one-click bind with **no
+API key** — skip straight to [§4](#4-first-chat). If your Ollama runs on another
+machine on your network, press **"Scan my local network"** on the same step: it
+sweeps only your own private (RFC-1918) subnet for an Ollama, is time-bounded, and
+never runs until you press it. Nothing scans your network on first boot, and no
+credential is stored either way. Otherwise, configure a provider below.
+
 ## 3. Configure a model provider
 
 Model providers are installable apps — nothing is hardwired to a vendor.

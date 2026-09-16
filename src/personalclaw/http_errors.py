@@ -552,6 +552,18 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A policy override key is not in the overridable set; the detail names the "
         "offending keys and the keys a run may override."
     ),
+    # ── onboarding local-model zero-key on-ramp (handlers/local_model.py — OU-13) ──
+    # `local_model_endpoint_invalid` (400) — the bind target is not a loopback or
+    # private (RFC-1918) address; only the endpoint a local/LAN Ollama listens on is
+    # bindable here. `local_model_bind_failed` (400) — the endpoint was local but the
+    # bind could not complete (no Ollama answered, no chat model pulled, or the Ollama
+    # provider app is not installed); the detail carries the seed path's remediation.
+    "local_model_endpoint_invalid": (
+        "A local model can only be bound to a loopback or private (RFC-1918) endpoint."
+    ),
+    "local_model_bind_failed": (
+        "A reachable local model could not be bound; the detail explains what was missing."
+    ),
 }
 
 
