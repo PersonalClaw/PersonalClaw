@@ -9,7 +9,7 @@ the real dispatch; nothing here runs git, pip, or a frontend build.
 The fake layer is deliberately narrow and at the two real seams:
 `self_update._run_git` (every sync git spawn funnels through it) and
 `cli_server.subprocess.run` (the installer and the post-update `setup --agent-only`).
-A test that actually ran `git reset --hard` or `pip -U` would be a wrecking ball.
+A test that actually ran `git checkout` / a fast-forward or `pip -U` would be a wrecking ball.
 """
 
 from __future__ import annotations
@@ -70,10 +70,24 @@ def _no_network_and_no_build(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
 
 
-def _dev_mode(monkeypatch: pytest.MonkeyPatch, on: bool) -> None:
-    """Pin dashboard.update_dev_mode without writing a config file."""
-    cfg = types.SimpleNamespace(dashboard=types.SimpleNamespace(update_dev_mode=on))
+def _channel(monkeypatch: pytest.MonkeyPatch, channel: str = "stable", pin: str = "") -> None:
+    """Pin the `updates` channel/pin (RUM-4) without writing a config file.
+
+    The git updater's cadence is now the `updates.channel` block, not the retired
+    `dashboard.update_dev_mode` bool: `nightly` tracks the branch (fast-forward),
+    every other channel rides the resolved release tag.
+    """
+    cfg = types.SimpleNamespace(updates=types.SimpleNamespace(channel=channel, pin=pin))
     monkeypatch.setattr(cli_server.AppConfig, "load", classmethod(lambda cls: cfg))
+
+
+def _fake_resolve(monkeypatch: pytest.MonkeyPatch, tag: str) -> None:
+    """Make `self_update.resolve_target` return *tag* without any network."""
+
+    async def _resolve(channel: str, pin: str = "") -> str:
+        return tag
+
+    monkeypatch.setattr(su, "resolve_target", _resolve)
 
 
 def _as_git_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path) -> str:
@@ -115,56 +129,43 @@ def test_unmapped_kind_refuses_and_names_what_it_detected(
 # ── git ─────────────────────────────────────────────────────────────────────
 
 
-def test_git_kind_fetches_and_resets_the_resolved_branch(
+def test_git_release_channel_fetches_tags_and_checks_out_the_resolved_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
 ) -> None:
+    """stable channel, a newer release resolved ⇒ fetch --tags + checkout <tag>.
+
+    The core of RUM-4: the git kind rides release TAGS, never `git pull` /
+    `reset --hard origin/main`."""
     proj = _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _Git(
-        **{
-            "rev-parse": (0, "main\n", ""),
-            "diff": (1, "", ""),  # HEAD != origin/main → there is something to apply
-            "status": (0, "", ""),  # clean tree → no confirmation needed
-        }
-    )
+    _channel(monkeypatch, "stable")
+    _fake_resolve(monkeypatch, "v9.9.9")  # newer than the running version
+    monkeypatch.setattr(cli_server, "__version__", "0.1.0")
+    git = _Git(**{"status": (0, "", "")})  # clean tree
     monkeypatch.setattr(su, "_run_git", git)
 
     cli_server._update()
 
-    assert git.ran("fetch", "origin", "main")
-    assert git.ran("reset", "--hard", "origin/main")
+    assert git.ran("fetch", "--tags", "origin")
+    assert git.ran("checkout", "v9.9.9")
+    # It never reset --hard nor pulled.
+    assert not git.ran("reset")
+    assert not git.ran("pull")
     # The install runs, and the agent config is refreshed afterwards.
     assert any("install" in " ".join(a) for a in spawns)
     assert any(a[-2:] == ["setup", "--agent-only"] for a in spawns)
     assert proj in capsys.readouterr().out
 
 
-def test_git_kind_already_up_to_date_does_not_reset(
+def test_git_release_channel_on_latest_tag_rides_tags_not_commits(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
 ) -> None:
+    """stable channel + already on the resolved tag ⇒ don't touch the tree.
+
+    Being on the latest release TAG is "up to date" even when `main` has newer
+    commits — the whole point of retiring pull-from-main."""
     _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _Git(**{"rev-parse": (0, "main\n", ""), "diff": (0, "", "")})
-    monkeypatch.setattr(su, "_run_git", git)
-
-    cli_server._update()
-
-    assert "Already up to date" in capsys.readouterr().out
-    assert not git.ran("reset")
-    assert not spawns
-
-
-def test_git_kind_dev_mode_off_on_latest_tag_rides_tags_not_commits(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
-) -> None:
-    """dev_mode OFF + already on the latest release ⇒ don't pull arbitrary commits.
-
-    Same rule the dashboard's apply enforces, so the two surfaces cannot disagree
-    about what "up to date" means for a checkout.
-    """
-    _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, False)
-    monkeypatch.setattr(cli_server, "_latest_release_version", lambda: "0.0.1")
+    _channel(monkeypatch, "stable")
+    _fake_resolve(monkeypatch, "v0.0.1")  # older than / equal to the running version
     monkeypatch.setattr(cli_server, "__version__", "9.9.9")
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
@@ -173,15 +174,86 @@ def test_git_kind_dev_mode_off_on_latest_tag_rides_tags_not_commits(
 
     out = capsys.readouterr().out
     assert "Already on the latest release" in out
-    assert "Developer update mode" in out
     assert not git.calls and not spawns
 
 
-def test_git_kind_fetch_failure_exits_nonzero_before_touching_the_tree(
+def test_git_release_channel_offline_makes_no_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """Offline (resolve_target → "") ⇒ nothing to update to, tree untouched."""
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "stable")
+    _fake_resolve(monkeypatch, "")
+    git = _Git()
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    assert "No matching release found" in capsys.readouterr().out
+    assert not git.ran("checkout") and not spawns
+
+
+def test_git_pin_checks_out_the_pinned_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """A pin overrides the channel and is checked out even if it differs (rollback)."""
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "stable", pin="0.1.0")
+    _fake_resolve(monkeypatch, "v0.1.0")
+    monkeypatch.setattr(cli_server, "__version__", "0.2.0")  # running a NEWER version
+    git = _Git(**{"status": (0, "", "")})
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    assert git.ran("checkout", "v0.1.0")
+    assert not git.ran("reset")
+
+
+def test_git_nightly_channel_fast_forwards_the_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """nightly channel ⇒ fetch + fast-forward the branch, NEVER reset --hard."""
+    proj = _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "nightly")
+    git = _Git(
+        **{
+            "rev-parse": (0, "main\n", ""),
+            "diff": (1, "", ""),  # HEAD != origin/main → something to advance
+            "status": (0, "", ""),  # clean tree
+        }
+    )
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    assert git.ran("fetch", "origin", "main")
+    assert git.ran("merge", "--ff-only", "origin/main")
+    assert not git.ran("reset")  # the destructive path is gone
+    assert any("install" in " ".join(a) for a in spawns)
+    assert proj in capsys.readouterr().out
+
+
+def test_git_nightly_already_up_to_date_does_not_advance(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
 ) -> None:
     _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
+    _channel(monkeypatch, "nightly")
+    git = _Git(**{"rev-parse": (0, "main\n", ""), "diff": (0, "", "")})
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    assert "Already up to date" in capsys.readouterr().out
+    assert not git.ran("merge") and not git.ran("reset")
+    assert not spawns
+
+
+def test_git_nightly_fetch_failure_exits_nonzero_before_touching_the_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "nightly")
     git = _Git(**{"rev-parse": (0, "main\n", ""), "fetch": (128, "", "fatal: no such ref")})
     monkeypatch.setattr(su, "_run_git", git)
 
@@ -190,104 +262,59 @@ def test_git_kind_fetch_failure_exits_nonzero_before_touching_the_tree(
 
     assert exc.value.code == 1
     assert "git fetch origin main failed" in capsys.readouterr().out
-    assert not git.ran("reset")
+    assert not git.ran("merge") and not git.ran("reset")
 
 
-# ── git: the destructive-change confirmation ────────────────────────────────
+# ── git: a dirty tree is REFUSED, never discarded (RUM-4 has no reset) ────────
 
 
-def _dirty_git(monkeypatch: pytest.MonkeyPatch) -> _Git:
-    git = _Git(
-        **{
-            "rev-parse": (0, "main\n", ""),
-            "diff": (1, "", ""),
-            "status": (0, " M src/personalclaw/cli.py\n?? scratch.txt\n", ""),
-        }
-    )
+def test_release_checkout_refuses_a_dirty_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """A tracked edit blocks the checkout and is NEVER discarded — exit 1.
+
+    RUM-4 advances by `git checkout`, which is non-destructive; there is no
+    "discard my work?" prompt any more, so the safe answer is always to keep the
+    edits and tell the user to commit or stash."""
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "stable")
+    _fake_resolve(monkeypatch, "v9.9.9")
+    monkeypatch.setattr(cli_server, "__version__", "0.1.0")
+    git = _Git(**{"status": (0, " M src/personalclaw/cli.py\n?? scratch.txt\n", "")})
     monkeypatch.setattr(su, "_run_git", git)
-    return git
-
-
-def test_tracked_changes_confirmed_at_a_tty_proceeds(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
-) -> None:
-    _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _dirty_git(monkeypatch)
-    monkeypatch.setattr(cli_server.sys.stdin, "isatty", lambda: True, raising=False)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
-
-    cli_server._update()
-
-    assert git.ran("reset", "--hard", "origin/main")
-    out = capsys.readouterr().out
-    assert "src/personalclaw/cli.py" in out  # names the tracked file at risk
-    assert "scratch.txt" not in out  # untracked files survive a reset — don't cry wolf
-
-
-def test_tracked_changes_declined_at_a_tty_aborts_with_zero(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
-) -> None:
-    _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _dirty_git(monkeypatch)
-    monkeypatch.setattr(cli_server.sys.stdin, "isatty", lambda: True, raising=False)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
-
-    with pytest.raises(SystemExit) as exc:
-        cli_server._update()
-
-    # Declining is a deliberate choice, not a failure.
-    assert exc.value.code == 0
-    assert "Aborted." in capsys.readouterr().out
-    assert not git.ran("reset")
-    assert not spawns
-
-
-def test_eof_at_the_prompt_is_not_a_yes(monkeypatch: pytest.MonkeyPatch, tmp_path, spawns) -> None:
-    _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _dirty_git(monkeypatch)
-    monkeypatch.setattr(cli_server.sys.stdin, "isatty", lambda: True, raising=False)
-
-    def _eof(prompt: str = "") -> str:
-        raise EOFError
-
-    monkeypatch.setattr("builtins.input", _eof)
-
-    with pytest.raises(SystemExit):
-        cli_server._update()
-
-    assert not git.ran("reset")
-
-
-def test_non_interactive_stdin_refuses_the_reset_without_prompting(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
-) -> None:
-    """No TTY ⇒ never prompt, never guess "yes", and exit non-zero.
-
-    A piped "y" (or an EOFError traceback) would let cron discard uncommitted work
-    nobody agreed to lose. Refusing is recoverable; a wrong yes is not.
-    """
-    _as_git_checkout(monkeypatch, tmp_path)
-    _dev_mode(monkeypatch, True)
-    git = _dirty_git(monkeypatch)
-    monkeypatch.setattr(cli_server.sys.stdin, "isatty", lambda: False, raising=False)
-
-    def _boom(prompt: str = "") -> str:
-        raise AssertionError("input() must not be called without a TTY")
-
-    monkeypatch.setattr("builtins.input", _boom)
 
     with pytest.raises(SystemExit) as exc:
         cli_server._update()
 
     assert exc.value.code == 1
     out = capsys.readouterr().out
-    assert "stdin is not a terminal" in out
+    assert "src/personalclaw/cli.py" in out  # names the tracked file at risk
+    assert "scratch.txt" not in out  # untracked files are safe — don't cry wolf
     assert "git stash" in out  # names the remedy
-    assert not git.ran("reset")
-    assert not spawns
+    assert not git.ran("checkout") and not spawns  # nothing was advanced
+
+
+def test_nightly_fast_forward_refuses_a_dirty_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, "nightly")
+    git = _Git(
+        **{
+            "rev-parse": (0, "main\n", ""),
+            "diff": (1, "", ""),
+            "status": (0, " M src/personalclaw/gateway.py\n", ""),
+        }
+    )
+    monkeypatch.setattr(su, "_run_git", git)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "git stash" in out
+    assert not git.ran("merge") and not git.ran("reset") and not spawns
 
 
 # ── pip / pipx / uv tool ────────────────────────────────────────────────────

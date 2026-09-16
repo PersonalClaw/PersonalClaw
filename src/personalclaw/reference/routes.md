@@ -750,11 +750,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/test` — execute a lifecycle or event trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
-- `POST /api/update` — git pull, reinstall, rebuild, restart gateway.
+- `POST /api/update` — advance the checkout to its release, rebuild, restart.
 - `POST /api/update/auto` — toggle auto-update on/off.
 - `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
 - `GET /api/update/check` — kind-aware update check (contract C2).
-- `POST /api/update/dev-mode` — toggle git dev-mode (track commits vs tags).
 - `POST /api/update/simulate` — walk through update steps with delays.
 - `POST /api/upload` — open native file picker and return selected paths.
 - `POST /api/upload/file` — cross-platform multipart file upload.

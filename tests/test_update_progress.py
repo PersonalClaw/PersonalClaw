@@ -20,6 +20,16 @@ def _make_state(monkeypatch, tmp_path) -> DashboardState:
     )
 
 
+def _pin_updates(monkeypatch, upd, *, channel: str = "stable", pin: str = "") -> None:
+    """Pin the `updates` channel/pin the git apply reads (RUM-4), hermetically —
+    without reading (or creating) the real home. Only the `updates` block is
+    consulted by ``api_update_apply``."""
+    import types
+
+    cfg = types.SimpleNamespace(updates=types.SimpleNamespace(channel=channel, pin=pin))
+    monkeypatch.setattr(upd.AppConfig, "load", staticmethod(lambda: cfg))
+
+
 class TestUpdateProgressState:
     """Tests for DashboardState update progress tracking."""
 
@@ -268,16 +278,23 @@ class TestUpdateEndpoints:
 
     @pytest.mark.asyncio
     async def test_update_apply_rejects_dirty_tree(self, monkeypatch, tmp_path) -> None:
-        """Update apply returns 409 when the tree is dirty AND there are new
-        commits to pull (the dirty gate only guards a REAL pull — a
-        nothing-to-pull apply degrades to restart instead, tested below)."""
+        """Update apply returns 409 when the tree is dirty AND there is a newer
+        release to check out (the dirty gate only guards a REAL advance — a
+        nothing-to-advance apply degrades to restart instead, tested below)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         (tmp_path / ".git").mkdir(
             exist_ok=True
         )  # mark as a git checkout (T4.1 detect_install_kind)
 
+        import personalclaw.dashboard.handlers.updates as upd
         from personalclaw.dashboard.handlers import api_update_apply
+
+        _pin_updates(monkeypatch, upd, channel="stable")
+        monkeypatch.setattr(upd, "_local_version", "0.1.0")
+        # A newer release resolves, but the tree carries a tracked edit.
+        monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value="v9.9.9"))
+        monkeypatch.setattr(su, "git_tracked_changes", lambda proj: [" M some_file.py"])
 
         state = _make_state(monkeypatch, tmp_path)
         app = web.Application()
@@ -285,33 +302,18 @@ class TestUpdateEndpoints:
         request = MagicMock()
         request.app = app
 
-        # Upstream is 3 commits ahead (real pull pending); git status is dirty.
-        async def fake_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
-            proc = MagicMock()
-            proc.returncode = 0
-            if "rev-list" in args:
-                proc.communicate = AsyncMock(return_value=(b"3\n", b""))
-            elif "status" in args:
-                proc.communicate = AsyncMock(return_value=(b" M some_file.py\n", b""))
-            else:  # fetch etc.
-                proc.communicate = AsyncMock(return_value=(b"", b""))
-            return proc
-
-        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
-
         resp = await api_update_apply(request)
         assert resp.status == 409
         data = json.loads(resp.body)
         assert "uncommitted" in data["error"]
         # The 409 path must release the in-flight guard for the next attempt.
-        import personalclaw.dashboard.handlers.updates as upd
-
         assert upd._apply_in_flight is False
 
 
 class TestUpdateApplyPipeline:
-    """The public manual-apply pipeline: git pull → pip install -e . →
-    frontend rebuild → graceful re-exec, with the in-flight guard."""
+    """The public manual-apply pipeline (RUM-4): fetch --tags + checkout the
+    resolved release tag (nightly: fast-forward) → pip install -e . → frontend
+    rebuild → graceful re-exec, with the in-flight guard."""
 
     def _make_request(self, state):
         app = web.Application()
@@ -323,10 +325,9 @@ class TestUpdateApplyPipeline:
 
     @pytest.mark.asyncio
     async def test_full_pipeline_reaches_restart(self, monkeypatch, tmp_path) -> None:
-        """All subprocesses succeed → steps pulling/installing/building/
-        restarting fire and _graceful_reexec is REACHED (extends coverage
-        through the restart step — the old test stopped at early progress,
-        masking a dead restart tail)."""
+        """Release channel, a newer tag resolved → steps pulling/installing/
+        building/restarting fire and _graceful_reexec is REACHED. The git kind
+        rides the release TAG (fetch --tags + checkout), never a pull/reset."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         (tmp_path / ".git").mkdir(
@@ -335,6 +336,21 @@ class TestUpdateApplyPipeline:
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
+        _pin_updates(monkeypatch, upd, channel="stable")
+        monkeypatch.setattr(upd, "_local_version", "0.1.0")
+        monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value="v9.9.9"))
+        monkeypatch.setattr(su, "git_tracked_changes", lambda proj: [])
+        git_calls: list[tuple] = []
+        monkeypatch.setattr(
+            su,
+            "git_fetch_tags",
+            lambda proj: git_calls.append(("fetch_tags", proj)) or MagicMock(returncode=0),
+        )
+        monkeypatch.setattr(
+            su,
+            "git_checkout",
+            lambda proj, ref: git_calls.append(("checkout", ref)) or MagicMock(returncode=0),
+        )
 
         state = _make_state(monkeypatch, tmp_path)
         steps_seen: list[str] = []
@@ -352,12 +368,7 @@ class TestUpdateApplyPipeline:
             commands.append(args)
             proc = MagicMock()
             proc.returncode = 0
-            # Upstream is ahead → the probe sees a REAL update to pull, so the
-            # full pipeline (not the nothing-to-pull restart) runs.
-            if "rev-list" in args:
-                proc.communicate = AsyncMock(return_value=(b"5\n", b""))
-            else:
-                proc.communicate = AsyncMock(return_value=(b"", b""))
+            proc.communicate = AsyncMock(return_value=(b"", b""))
             return proc
 
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
@@ -382,12 +393,12 @@ class TestUpdateApplyPipeline:
         await asyncio.sleep(0.05)
 
         assert steps_seen == ["pulling", "installing", "building", "restarting"]
-        # No Amazon-era steps or tooling anywhere in the pipeline.
-        assert "syncing" not in steps_seen
+        # The git kind rode the release TAG — never a pull or a reset.
+        assert ("fetch_tags", str(tmp_path)) in git_calls
+        assert ("checkout", "v9.9.9") in git_calls
         flat = [str(a) for cmd in commands for a in cmd]
-        assert "workspace" not in flat
-        assert "make" not in flat
-        assert "AIPowerUserCapabilities" not in flat
+        assert "pull" not in flat
+        assert "reset" not in flat
         # pip reinstall runs through the running interpreter
         assert any("pip" in cmd for cmd in commands)
         assert fe_built == [str(tmp_path)]
@@ -409,20 +420,19 @@ class TestUpdateApplyPipeline:
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
+        _pin_updates(monkeypatch, upd, channel="stable")
+        monkeypatch.setattr(upd, "_local_version", "0.1.0")
+        monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value="v9.9.9"))
+        monkeypatch.setattr(su, "git_tracked_changes", lambda proj: [])
+        monkeypatch.setattr(su, "git_fetch_tags", lambda proj: MagicMock(returncode=0))
+        monkeypatch.setattr(su, "git_checkout", lambda proj, ref: MagicMock(returncode=0))
         state = _make_state(monkeypatch, tmp_path)
 
-        calls = [0]
-
         async def fake_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
-            calls[0] += 1
             proc = MagicMock()
             if any("pip" in str(a) for a in args):
                 proc.communicate = AsyncMock(return_value=(b"", b"resolver exploded"))
                 proc.returncode = 1
-            elif "rev-list" in args:
-                # Upstream ahead → real pipeline runs (past the restart-only probe).
-                proc.communicate = AsyncMock(return_value=(b"2\n", b""))
-                proc.returncode = 0
             else:
                 proc.communicate = AsyncMock(return_value=(b"", b""))
                 proc.returncode = 0
@@ -445,10 +455,10 @@ class TestUpdateApplyPipeline:
         assert upd._apply_in_flight is False
 
     @pytest.mark.asyncio
-    async def test_dev_mode_off_on_latest_tag_restarts_only(self, monkeypatch, tmp_path) -> None:
-        """Git checkout, commits ahead upstream, but on the latest release TAG
-        and update_dev_mode OFF → ride tags, not commits: degrade to restart-only
-        (no git pull), even though the upstream has new commits (plan 34 T4.3)."""
+    async def test_stable_channel_on_latest_tag_restarts_only(self, monkeypatch, tmp_path) -> None:
+        """Git checkout, stable channel, already on the resolved release TAG →
+        ride tags, not commits: degrade to restart-only (no checkout, no advance)
+        even though `main` may carry newer commits (RUM-4)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         (tmp_path / ".git").mkdir(exist_ok=True)
@@ -456,13 +466,9 @@ class TestUpdateApplyPipeline:
         from personalclaw import __version__ as _ver
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
-        # Upstream is ahead (commits exist to pull) …
-        monkeypatch.setattr(su, "commits_behind_upstream", AsyncMock(return_value=3))
-        # … but the cached release tag == our running version (on the latest tag).
-        import personalclaw.self_update as uk
-
-        monkeypatch.setattr(uk, "read_release_cache", lambda: {"tag": f"v{_ver}"})
-        # update_dev_mode defaults OFF (no config file).
+        _pin_updates(monkeypatch, upd, channel="stable")
+        # The resolved release tag == our running version (on the latest tag).
+        monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value=f"v{_ver}"))
         state = _make_state(monkeypatch, tmp_path)
         steps_seen: list[str] = []
         orig = state.push_update_progress
@@ -500,10 +506,10 @@ class TestUpdateApplyPipeline:
         assert upd._apply_in_flight is False
 
     async def _run_nothing_to_pull(self, monkeypatch, tmp_path, *, rev_list):
-        """Drive api_update_apply with a mocked git where `rev-list HEAD..@{u}`
-        behaves per `rev_list` (a (returncode, stdout) tuple) and the tree is
-        DIRTY — proving dirtiness doesn't matter when nothing will be pulled.
-        Returns (resp_data, steps_seen, reexec_calls, commands)."""
+        """Drive api_update_apply on the NIGHTLY channel with a mocked git where
+        `rev-list HEAD..@{u}` behaves per `rev_list` (a (returncode, stdout) tuple)
+        and the tree is DIRTY — proving dirtiness doesn't matter when nothing will
+        be advanced. Returns (resp_data, steps_seen, reexec_calls, commands)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         (tmp_path / ".git").mkdir(
@@ -512,6 +518,9 @@ class TestUpdateApplyPipeline:
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
+        # Nightly is the branch-tracking channel whose "nothing to advance" probe is
+        # commits_behind_upstream (the rev-list this helper mocks).
+        _pin_updates(monkeypatch, upd, channel="nightly")
         state = _make_state(monkeypatch, tmp_path)
 
         steps_seen: list[tuple[str, str]] = []
@@ -796,23 +805,23 @@ class TestGitCheckReadsRemoteVersion:
             U._update_info.update(saved)
 
 
-class TestCheckAgreesWithApplyUnderDevMode:
-    """PUBL-8: in commit-tracking mode, "behind" IS an available update.
+class TestCheckAgreesWithApplyUnderNightly:
+    """PUBL-8 (RUM-4): on the `nightly` channel, "behind" IS an available update.
 
-    The drive measured the disagreement: ``update_dev_mode`` on, ``commits_behind``
-    1, and the check still reported ``available: false`` while POST /api/update
-    happily pulled.
+    The drive measured the disagreement: the branch-tracking channel on,
+    ``commits_behind`` 1, and the check still reported ``available: false`` while
+    POST /api/update happily advanced.
     """
 
     @staticmethod
-    def _run(monkeypatch, *, dev_mode: bool, behind, kind: str = "git") -> dict:
+    def _run(monkeypatch, *, channel: str, behind, kind: str = "git") -> dict:
         import types
 
         from personalclaw.dashboard.handlers import updates as U
 
         cfg = types.SimpleNamespace(
             auto_update=True,
-            dashboard=types.SimpleNamespace(update_dev_mode=dev_mode),
+            updates=types.SimpleNamespace(channel=channel, pin=""),
         )
         monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
         monkeypatch.setattr(U, "_do_update_check", AsyncMock())
@@ -834,16 +843,16 @@ class TestCheckAgreesWithApplyUnderDevMode:
         resp = asyncio.run(U.api_update_check(MagicMock()))
         return json.loads(resp.body)
 
-    def test_dev_mode_behind_is_available(self, monkeypatch) -> None:
-        assert self._run(monkeypatch, dev_mode=True, behind=1)["available"] is True
+    def test_nightly_behind_is_available(self, monkeypatch) -> None:
+        assert self._run(monkeypatch, channel="nightly", behind=1)["available"] is True
 
-    def test_dev_mode_up_to_date_is_not_available(self, monkeypatch) -> None:
-        """Vacuity guard — the clause must not turn every dev-mode check green."""
-        assert self._run(monkeypatch, dev_mode=True, behind=0)["available"] is False
+    def test_nightly_up_to_date_is_not_available(self, monkeypatch) -> None:
+        """Vacuity guard — the clause must not turn every nightly check green."""
+        assert self._run(monkeypatch, channel="nightly", behind=0)["available"] is False
 
-    def test_tag_mode_behind_is_not_available(self, monkeypatch) -> None:
-        """Dev mode OFF rides release TAGS: commits behind is deliberately not news."""
-        assert self._run(monkeypatch, dev_mode=False, behind=1)["available"] is False
+    def test_stable_channel_behind_is_not_available(self, monkeypatch) -> None:
+        """Stable rides release TAGS: commits behind is deliberately not news."""
+        assert self._run(monkeypatch, channel="stable", behind=1)["available"] is False
 
     def test_non_git_kind_ignores_commits_behind(self, monkeypatch) -> None:
-        assert self._run(monkeypatch, dev_mode=True, behind=1, kind="pip")["available"] is False
+        assert self._run(monkeypatch, channel="nightly", behind=1, kind="pip")["available"] is False
