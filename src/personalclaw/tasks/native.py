@@ -38,7 +38,13 @@ logger = logging.getLogger(__name__)
 #: re-attribute a row that was already honestly signed. The HTTP layer refuses a supplied `author`
 #: outright; this is the store saying the same thing, so a future in-process caller cannot reopen
 #: it.
-_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"id", "provider", "created_at", "author"})
+#: `origin_harness` joins this set for the SAME reason `author` is here: it is provenance, stamped
+#: once at CREATE from this home's `machine_id`, and an update must never rewrite WHICH harness
+#: minted a row — a merged foreign row re-stamped with the local origin would silently collapse the
+#: very attribution TSE2-2 exists to preserve.
+_IMMUTABLE_FIELDS: frozenset[str] = frozenset(
+    {"id", "provider", "created_at", "author", "origin_harness"}
+)
 
 
 def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
@@ -134,6 +140,20 @@ def _current_username() -> str:
         from personalclaw.identity import current_username
 
         return current_username()
+    except Exception:
+        return ""
+
+
+def _current_origin_harness() -> str:
+    """This home's stable `machine_id` — the origin handle stamped on a locally-minted task
+    (MULTI-TENANCY-ENTITY TSE2-2). REUSES `durability`'s per-machine key; it is never minted here.
+    Never raises: origin attribution decorates a write and must never be the reason one fails, so
+    an unreadable/unwritable home degrades to ``""`` (= "this harness's", the single-home default).
+    """
+    try:
+        from personalclaw.durability.shards import machine_id
+
+        return machine_id(config_dir())
     except Exception:
         return ""
 
@@ -358,6 +378,9 @@ class NativeTaskProvider(TaskProvider):
                 # otherwise stamp the owner's handle. Unset handle → "" → today's
                 # behavior (no attribution).
                 author=_given("author", "") or _current_username(),
+                # Origin (MULTI-TENANCY-ENTITY TSE2-2): server-owned like `id`/`created_at`, never
+                # caller-set — a locally-minted task's origin IS this home. Empty degrades to "".
+                origin_harness=_current_origin_harness(),
                 assignee=_given("assignee", ""),
                 priority=_given("priority", "medium"),
                 labels=_given("labels", []),
