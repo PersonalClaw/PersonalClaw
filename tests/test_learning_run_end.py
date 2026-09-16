@@ -99,6 +99,10 @@ def test_no_vector_store_is_a_noop(home):
         # EXACT-dict comparison, on purpose: this test's job is that a null-memory service writes
         # nothing at all, and a new counter that could be nonzero on this path must fail here.
         "mined": 0,
+        # `tier_migration` is the §3.5 (LEARN-R17) producer, wired alongside `mined`. Zero here for
+        # the same reason: the whole capture short-circuits before any producer runs when no live
+        # vector store is injected, so a null-memory terminal run still writes nothing at all.
+        "tier_migration": 0,
     }
     assert P.list_pending(kind=P.Kind.LESSON_BATCH.value) == []
 
