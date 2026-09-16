@@ -36,6 +36,7 @@ import re as _re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, cast
 
 from personalclaw.config.coercion import (
     _expose_flag,
@@ -2879,6 +2880,87 @@ class VoiceConfig:
     )
 
 
+@dataclass
+class UpdatesConfig:
+    """Release-based update + release-tracking contract (RELEASE-UPDATE-MECHANISM RUM-1).
+
+    The single block the CLI, container, desktop and the Settings > Updates screen read.
+    RUM-1 is only the config surface + the legacy backfill; the resolver, the check
+    kill-switch, the retirement of pull-from-main and the per-kind apply are later RUM
+    atoms that CONSUME these fields.
+
+    Legacy backfill (applied in ``AppConfig.load()``, idempotent — a clean break under the
+    pre-1.0 banner, NOT a migration file): a home written before this block existed carries
+    the old ``auto_update`` bool and ``dashboard.update_dev_mode`` bool. On load, when the
+    ``updates`` block does not itself declare a field, ``auto_update=true`` maps to
+    ``auto="staged"`` with ``channel="stable"`` (an existing auto-updating git user stops
+    riding raw ``main`` and starts riding stable release tags), ``auto_update=false`` maps to
+    ``auto="off"``, and ``dashboard.update_dev_mode=true`` maps to ``channel="nightly"``. An
+    explicit ``updates`` field always wins over the legacy source.
+    """
+
+    channel: Literal["stable", "beta", "nightly"] = field(
+        default="stable",
+        metadata=_meta(
+            "Update Channel",
+            "Which release line this install tracks, chosen by how much churn you can "
+            "absorb rather than by version number. 'stable' (default) follows the newest "
+            "non-prerelease release — what almost everyone runs. 'beta' follows the newest "
+            "release including release candidates, for the next minor early. 'nightly' is "
+            "git checkouts only and the ONLY channel that ever tracks the current branch "
+            "instead of a release tag — never a default, and it requires a clean tree.",
+            enum=["stable", "beta", "nightly"],
+        ),
+    )
+    pin: str = field(
+        default="",
+        metadata=_meta(
+            "Version Pin",
+            "Stay on an exact version (e.g. '0.2.1') or a version line, overriding the "
+            "channel: 'update available' and any apply respect the pin. Empty (the default) "
+            "means follow the channel. This is the 'stay on 0.2.x' and rollback story — "
+            "artifacts are immutable and every version is kept.",
+        ),
+    )
+    auto: Literal["off", "staged"] = field(
+        default="off",
+        metadata=_meta(
+            "Automatic Updates",
+            "'off' (default) is notify-only: an available update raises a notification and "
+            "is NEVER applied unattended. 'staged' applies at the next safe point — it holds "
+            "while a session or subagent is in flight and lands only on the resolved "
+            "channel/pin release tag, never on raw main.",
+            enum=["off", "staged"],
+        ),
+    )
+    check_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Check for Updates",
+            "Whether the updater checks for a new release on a schedule. When off, the "
+            "updater makes ZERO outbound calls to GitHub — the privacy/egress kill switch. "
+            "On (the default), it checks every 'Check Interval Hours'.",
+        ),
+    )
+    check_interval_hours: int = field(
+        default=12,
+        metadata=_meta(
+            "Check Interval Hours",
+            "How often (in hours) to check for a new release when checking is enabled "
+            "(1-168). Ignored entirely when 'Check for Updates' is off.",
+        ),
+    )
+    last_version: str = field(
+        default="",
+        metadata=_meta(
+            "Last Running Version",
+            "The version this install last ran, persisted so a rollback can offer "
+            "'Roll back to v<last_version>'. Maintained by the updater; empty until the "
+            "first recorded run.",
+        ),
+    )
+
+
 class ConfigPreserveError(RuntimeError):
     """`AppConfig.save()` could not read the existing config, so it refused to write.
 
@@ -3064,6 +3146,15 @@ class AppConfig:
             "pull + rebuild + restart).",
         ),
     )
+    updates: "UpdatesConfig" = field(
+        default_factory=lambda: UpdatesConfig(),
+        metadata=_meta(
+            "Updates",
+            "Release-based update + release-tracking: channel, version pin, opt-in staged "
+            "apply, the check kill-switch and interval, and the last-running version for "
+            "rollback (RELEASE-UPDATE-MECHANISM).",
+        ),
+    )
     timezone: str = field(
         default="",
         metadata=_meta(
@@ -3207,6 +3298,38 @@ class AppConfig:
         proactive_data = data.get("proactive", {}) or {}
         if not isinstance(proactive_data, dict):
             proactive_data = {}
+        updates_data = data.get("updates", {})
+        if not isinstance(updates_data, dict):
+            updates_data = {}
+        # RUM-1 legacy backfill (idempotent, load-time — a clean break under the pre-1.0
+        # banner, NOT a migration file). An explicit `updates` field always wins; only
+        # when the block does not declare a field do the old flags map in. A home that
+        # never wrote `auto_update` (or the new default install) lands on the safe "off"
+        # default — matching the dataclass default — so an install that never explicitly
+        # opted into unattended updates is notify-only, per C7's "least accident risk".
+        updates_channel: Literal["stable", "beta", "nightly"]
+        if "channel" in updates_data:
+            updates_channel = cast(
+                Literal["stable", "beta", "nightly"],
+                _safe_choice(updates_data["channel"], ("stable", "beta", "nightly"), "stable"),
+            )
+        elif bool(dashboard_data.get("update_dev_mode")):
+            # `dashboard.update_dev_mode=true` was the git "track main" opt-in.
+            updates_channel = "nightly"
+        else:
+            updates_channel = "stable"
+        updates_auto: Literal["off", "staged"]
+        if "auto" in updates_data:
+            updates_auto = cast(
+                Literal["off", "staged"],
+                _safe_choice(updates_data["auto"], ("off", "staged"), "off"),
+            )
+        elif "auto_update" in data and data.get("auto_update"):
+            # A legacy unattended-update user (`auto_update=true`) stops riding raw main
+            # and rides the resolved stable release tag — hence "staged", channel "stable".
+            updates_auto = "staged"
+        else:
+            updates_auto = "off"
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -3628,6 +3751,20 @@ class AppConfig:
             default_agent=default_agent_val,
             memory_stores=memory_stores,
             auto_update=data.get("auto_update", True),
+            updates=UpdatesConfig(
+                channel=updates_channel,
+                pin=str(updates_data.get("pin", "") or ""),
+                auto=updates_auto,
+                # Plain read defaulting True: an unreadable value should leave the shipped
+                # behavior (checks run) rather than silently going dark.
+                check_enabled=bool(updates_data.get("check_enabled", True)),
+                # Clamped to the same [1, 168] window `_EDITABLE_CONFIG` enforces on the
+                # PATCH path, so a hand-edited config.json and the dashboard agree.
+                check_interval_hours=min(
+                    168, max(1, _safe_int(updates_data.get("check_interval_hours"), 12))
+                ),
+                last_version=str(updates_data.get("last_version", "") or ""),
+            ),
             timezone=data.get("timezone", ""),
             snapshot_dir=data.get("snapshot_dir", ""),
             durability=DurabilityConfig(
@@ -4192,6 +4329,7 @@ class AppConfig:
             "voice": asdict(self.voice),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
+            "updates": asdict(self.updates),
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),
             "evals": asdict(self.evals),
