@@ -142,6 +142,22 @@ def _register_upload_routes(app: web.Application) -> None:
     app.router.add_post("/api/uploads/{id}/complete", _up.api_uploads_complete)
 
 
+def _register_terminal_routes(app: web.Application) -> None:
+    """Register the built-in terminal (CLI panel) routes — only where the PTY substrate exists.
+
+    The terminal is a real pseudo-terminal built on POSIX-only fcntl/pty/termios. On a platform
+    without them (native Windows) ``handlers.terminal_supported()`` is ``False`` and NO terminal
+    route is registered: the feature is ABSENT, not broken (the handler module still imports,
+    guarded — see WIN-2). Every other dashboard route registers normally."""
+    if not handlers.terminal_supported():
+        return
+    app.router.add_get("/api/ws/terminal/{session_id}", handlers.api_terminal_ws)
+    app.router.add_post("/api/terminal/sessions", handlers.api_terminal_create)
+    app.router.add_get("/api/terminal/sessions", handlers.api_terminal_list)
+    app.router.add_delete("/api/terminal/sessions/{session_id}", handlers.api_terminal_delete)
+    app.router.add_get("/api/sandbox/providers", handlers.api_sandbox_providers)
+
+
 def _register_mcp_routes(app: web.Application) -> None:
     """Register API routes used by MCP tools (spawn, lessons, crons, etc.)."""
     app.router.add_post("/api/spawn", handlers.api_spawn)
@@ -1254,12 +1270,9 @@ async def start_dashboard(
 
     # Portability (export/import config+memory as zip)
 
-    # Terminal (CLI panel)
-    app.router.add_get("/api/ws/terminal/{session_id}", handlers.api_terminal_ws)
-    app.router.add_post("/api/terminal/sessions", handlers.api_terminal_create)
-    app.router.add_get("/api/terminal/sessions", handlers.api_terminal_list)
-    app.router.add_delete("/api/terminal/sessions/{session_id}", handlers.api_terminal_delete)
-    app.router.add_get("/api/sandbox/providers", handlers.api_sandbox_providers)
+    # Terminal (CLI panel). POSIX-only PTY substrate — omitted entirely on a
+    # platform without fcntl/pty/termios (native Windows), see WIN-2.
+    _register_terminal_routes(app)
 
     # Channels (comms transports) — management surface over registered transports
     from personalclaw.dashboard.handlers.channel_trust import (
@@ -2216,10 +2229,13 @@ async def start_dashboard(
     except Exception:
         logger.debug("MCP idle sweeper start skipped", exc_info=True)
 
-    # Start terminal orphan reaper (kills PTYs with no WS for >5 min)
-    _reaper = asyncio.create_task(handlers.reap_orphaned_terminals(app))
-    _reaper.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
-    state._terminal_reaper = _reaper  # prevent GC
+    # Start terminal orphan reaper (kills PTYs with no WS for >5 min). Skipped
+    # where the terminal feature is absent (native Windows) — no PTY is ever
+    # opened there, so there is nothing to reap (WIN-2).
+    if handlers.terminal_supported():
+        _reaper = asyncio.create_task(handlers.reap_orphaned_terminals(app))
+        _reaper.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
+        state._terminal_reaper = _reaper  # prevent GC
 
     # Trim the append-only security-event log at startup + periodically so audit
     # reads/verify stay fast (the chain is otherwise unbounded).

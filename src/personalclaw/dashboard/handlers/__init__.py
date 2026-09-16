@@ -377,6 +377,7 @@ from personalclaw.dashboard.handlers.terminal import (  # noqa: E402, F401
     api_terminal_list,
     api_terminal_ws,
     reap_orphaned_terminals,
+    terminal_supported,
 )
 
 # ── Updates & Logs (handlers/updates.py) ──
