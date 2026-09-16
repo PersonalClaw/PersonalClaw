@@ -569,6 +569,14 @@ class TestClassify:
             return "{}"
 
         monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _fake_one_shot)
+        # Classify now preflights the same no-instantiate model probe behind onboarding's
+        # `needs_model` (OU-12): with nothing bound it answers the calm `model_unresolved`
+        # 409 instead of a fake 200 `classified:false`. This test exercises DISPATCH, which
+        # presupposes a resolvable model — so declare one, mirroring a bound instance. The
+        # no-model 409 path is owned by `test_no_provider_first_run_rail`.
+        monkeypatch.setattr(
+            "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: True
+        )
         r = _run(
             H.api_loop_classify(
                 _req(

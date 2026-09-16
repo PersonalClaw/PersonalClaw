@@ -80,6 +80,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── model resolution (first-run legibility, ONBOARDING-UX OU-12) ──
+    # A model-dependent route was driven before any model provider was bound. The wire
+    # peer of the agent-session `ERR_MODEL_UNRESOLVED` (errors.py): an HTTP route answers
+    # with THIS lowercase_snake code + a message carrying the "no model provider resolves
+    # for use case" phrasing the FE `isNoModelSetupError` matcher keys on, so a first-run
+    # surface says "connect a model" rather than reporting a fake success or a bare 500.
+    "model_unresolved": (
+        "No model provider resolves for the use case this route needs — no provider is "
+        "configured, or the bound one is absent. Connect a model in Settings → Models."
+    ),
     # ── resilience doctor (dashboard/handlers/doctor.py) ──
     "doctor_disabled": "The Doctor surface is turned off on this instance.",
     "unknown_capability": "No capability with that name is registered with the Doctor.",
