@@ -694,6 +694,40 @@ def _restore_workflow_def_registry() -> object:
         _defs.unregister_provider(name)
 
 
+@pytest.fixture(autouse=True)
+def _restore_knowledge_provider_registry() -> object:
+    """Snapshot + restore the process-global KNOWLEDGE-SOURCE provider registry around every test.
+
+    `knowledge_providers.registry` keeps ONE module-level dict of source providers keyed by name
+    (`register_provider`/`unregister_provider` mutate it in place). It is the enrolment set the
+    Sources UI and `KnowledgeStore.create_source` read to decide which `watched-*` kinds may be
+    offered, and a cross-test hazard of the same class as `_restore_provider_registry` above: an
+    entry a test registers outlives it and lands in whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix, and the leak #2720's
+    sharding exposed on shard 1: `dashboard.server`'s API-server STARTUP path registers the three
+    core source providers (`DirSourceProvider`/`FeedSourceProvider`/`WebSourceProvider` — the
+    `watched-dir`/`watched-feed`/`watched-page` kinds) and never unregisters them (a gateway
+    registers once for its lifetime, by design). So once a worker has run any test that boots that
+    startup path, the registry stays populated, and `test_knowledge_sources_api.py`'s
+    `test_a_kind_with_no_enrolled_provider_is_not_offered` — which enrols NOTHING and asserts the
+    offered kinds are `[]` — then sees those three and reds. (`test_knowledge_sources_api`'s own
+    `registered` fixture already tears down what IT registers; this covers the startup path and any
+    other leaker.)
+
+    Snapshot-and-restore the whole dict rather than a name list, for the reason the guards above
+    record: a list silently stops covering the next name someone adds. The pre-test state is empty
+    today, so this reduces to dropping leaked entries after each test, but snapshotting keeps it
+    correct if a legitimate import-time registration is ever added.
+    """
+    from personalclaw.knowledge_providers import registry as _kp_registry
+
+    before = dict(_kp_registry._providers)
+    yield
+    _kp_registry._providers.clear()
+    _kp_registry._providers.update(before)
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
 
