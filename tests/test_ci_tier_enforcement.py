@@ -66,13 +66,17 @@ def _ci_run_commands() -> list[str]:
 def test_the_run_command_scan_is_not_vacuous():
     """Vacuity floor: if the scan below matched nothing, every rail here would pass.
 
-    ``npm run test:web`` and ``uv run pytest`` are both long-standing single-line
-    steps on main, so their absence means the scan broke, not that CI changed.
+    ``npm run test:web`` is a long-standing single-line step, and ``uv run pytest`` opens
+    every pytest step, so their absence means the scan broke, not that CI changed. The
+    pytest step is matched by PREFIX rather than exact string: since #2720 the `test` job
+    is sharded, so the bare ``uv run pytest`` became
+    ``uv run pytest --no-cov -q --splits 4 --group N …`` — still a single-line pytest step
+    the scan must see, just no longer a flagless one.
     """
     commands = _ci_run_commands()
     assert len(commands) >= 10, f"only {len(commands)} run: commands found — scan broke"
     assert "npm run test:web" in commands
-    assert "uv run pytest" in commands
+    assert any(c.startswith("uv run pytest") for c in commands)
 
 
 def test_every_tested_workspace_has_a_root_test_script():

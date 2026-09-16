@@ -280,6 +280,94 @@ def _reset_context_engine_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _reset_session_restrictions():
+    """Clear the process-global per-session memory-restriction registry around every test.
+
+    ``session_restrictions`` keeps two module-level ``OrderedDict``s (``_temporary`` /
+    ``_incognito``) — one process-wide registry of which session keys are incognito or
+    temporary, by design (a restriction set on a live gateway must outlive the turn that
+    set it). It is a cross-test hazard under xdist for the same reason as the singletons
+    above: a test that ``mark_incognito``/``mark_temporary``s a key and does not clear it
+    leaks that key into whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix: several tests
+    reuse the key ``"k"``, and ``test_session_restrictions.TestSessionRestrictions`` clears
+    the registry only in ``setup_method`` (before each test, never after) — so once it has
+    run ``test_incognito``/``test_temporary`` on a worker, ``"k"`` stays restricted, and
+    ``test_session_search``'s ``test_persistent_mode_indexes_normally`` then sees
+    ``index_session("k", …, "persistent")`` refused (``is_restricted`` True) and reds. Same
+    discipline as ``_reset_channel_delivery_registry``: cleared, not snapshot-restored,
+    because outside a live gateway the correct state is empty.
+    """
+    import personalclaw.session_restrictions as sr
+
+    sr._temporary.clear()
+    sr._incognito.clear()
+    yield
+    sr._temporary.clear()
+    sr._incognito.clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_personalclaw_logging():
+    """Snapshot + restore the ``personalclaw`` logger namespace around every test.
+
+    Two process-global logging mutations leak across tests and are invisible in
+    isolation but deterministic-per-schedule in an xdist mix — the same shape as the
+    resets above. Both reach the SAME logger, ``logging.getLogger("personalclaw")``:
+
+    * ``cli.main()`` (exercised by every ``test_cli_*`` that calls it) runs the CLI's
+      logging setup, which ``setLevel(WARNING)`` on that logger (the persisted default)
+      and *appends* a ``RotatingFileHandler`` to it;
+    * ``dashboard.handlers.updates.apply_log_level`` / the ``agent.log_level`` PATCH set
+      that logger's level LIVE.
+
+    Neither restores. ``caplog.set_level(...)`` only touches the ROOT logger, not this
+    one, so once a worker has run a ``cli.main`` test the ``personalclaw`` logger stays
+    pinned at WARNING for the rest of that worker — and every later observability test
+    that expects its own DEBUG/INFO records to be captured (e.g.
+    ``test_channel_inbound_drop_reporting``) silently loses them and reds. Sharding
+    exposed this: a leaker and a victim that used to sit in different halves of one long
+    serial run now land on the same worker in the same shard.
+
+    Levels are snapshotted for the whole ``personalclaw.*`` namespace (not a name list —
+    the same reason the registry guards above snapshot rather than enumerate) and any
+    descendant created during the test is reset to ``NOTSET``. Handlers ADDED to the
+    ``personalclaw`` logger during the test are removed and closed at teardown, so a
+    worker does not accumulate a stale open ``gateway.log`` file handle per ``cli.main``
+    test. The root logger is deliberately left to ``caplog``, which owns it.
+    """
+    import logging
+
+    def _pclaw_loggers() -> dict[str, logging.Logger]:
+        out: dict[str, logging.Logger] = {}
+        for name, obj in list(logging.Logger.manager.loggerDict.items()):
+            if (name == "personalclaw" or name.startswith("personalclaw.")) and isinstance(
+                obj, logging.Logger
+            ):
+                out[name] = obj
+        return out
+
+    root = logging.getLogger("personalclaw")
+    levels_before = {name: lg.level for name, lg in _pclaw_loggers().items()}
+    levels_before["personalclaw"] = root.level
+    handlers_before = list(root.handlers)
+
+    yield
+
+    for name, lg in _pclaw_loggers().items():
+        lg.setLevel(levels_before.get(name, logging.NOTSET))
+    root.setLevel(levels_before["personalclaw"])
+    for handler in list(root.handlers):
+        if handler not in handlers_before:
+            root.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:  # pragma: no cover - close() is best-effort cleanup
+                pass
+
+
+@pytest.fixture(autouse=True)
 def _reset_sel_singleton():
     """Reset the process-global Security Event Log singleton around every test.
 
@@ -513,7 +601,8 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _restore_provider_registry() -> object:
-    """Undo any provider-registry ENTRY a test registers into the process-global singleton.
+    """Undo any provider-registry ENTRY a test registers into the process-global singleton, and
+    restore the singleton ITSELF if a test reset or swapped it.
 
     `get_default_registry()` is a module-level singleton, so an entry a test registers outlives it
     and lands in whatever test shares the worker next. Snapshot-and-restore rather than a list of
@@ -529,14 +618,32 @@ def _restore_provider_registry() -> object:
       because another file had left a model provider behind;
     * a leaked `acp_agent` entry made `cli_doctor` exit 1 in `test_cli.py`.
 
-    Registered TYPES are deliberately left alone: `register_type` is how a test simulates an
-    installed provider app, it is idempotent, and a type with no entry resolves nothing.
+    The singleton IDENTITY is restored too, and this is what the sharded suite exposed. Provider
+    modules register their TYPES at IMPORT time — `personalclaw.llm.__init__` eager-imports
+    `acp_agent`, wiring the `acp_agent` type — and those modules are then cached in `sys.modules`.
+    So a test that calls `reset_default_registry()` / `set_default_registry(...)` (several do, in
+    their own autouse fixtures: `test_ea5_capture_proxy`, `test_ea5_capture_client_upstream`,
+    `test_scripted_provider_binding`, `test_evals_cell_provider`, `test_seed_local_model`) swaps in
+    a FRESH, TYPELESS registry that the cached modules never re-populate — and the next test on
+    the worker then dies with `unknown provider type 'acp_agent'`. It was invisible until #2720
+    sharded the suite: with fewer xdist workers a resetting test and
+    `test_provider_resolution_unify`'s `acp_agent` cases land on the same worker in sequence.
+    Restoring the original object (which still carries its import-time type registrations) heals
+    it; the `is` check makes the restore a no-op for the tests that already save/restore the
+    singleton themselves (`test_acp_bundles`, `test_agent_providers_endpoint`). Registered TYPES on
+    the original are still left alone (there is no `unregister_type`, so a mutation that would drop
+    a type can only be a reset/swap, which this catches): `register_type` is how a test simulates
+    an installed provider app, it is idempotent, and a type with no entry resolves nothing.
     """
-    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.llm import registry as _registry_mod
 
-    entries = getattr(get_default_registry(), "_entries", None)
+    original = _registry_mod.get_default_registry()
+    entries = getattr(original, "_entries", None)
     before = set(entries) if isinstance(entries, dict) else set()
     yield
+    if _registry_mod.get_default_registry() is not original:
+        _registry_mod.set_default_registry(original)
+    entries = getattr(original, "_entries", None)
     if isinstance(entries, dict):
         for name in set(entries) - before:
             entries.pop(name, None)
@@ -585,6 +692,40 @@ def _restore_workflow_def_registry() -> object:
     yield
     for name in set(_defs.list_providers()) - before:
         _defs.unregister_provider(name)
+
+
+@pytest.fixture(autouse=True)
+def _restore_knowledge_provider_registry() -> object:
+    """Snapshot + restore the process-global KNOWLEDGE-SOURCE provider registry around every test.
+
+    `knowledge_providers.registry` keeps ONE module-level dict of source providers keyed by name
+    (`register_provider`/`unregister_provider` mutate it in place). It is the enrolment set the
+    Sources UI and `KnowledgeStore.create_source` read to decide which `watched-*` kinds may be
+    offered, and a cross-test hazard of the same class as `_restore_provider_registry` above: an
+    entry a test registers outlives it and lands in whatever test shares the worker next.
+
+    Measured, invisible in isolation, deterministic-per-schedule in a mix, and the leak #2720's
+    sharding exposed on shard 1: `dashboard.server`'s API-server STARTUP path registers the three
+    core source providers (`DirSourceProvider`/`FeedSourceProvider`/`WebSourceProvider` — the
+    `watched-dir`/`watched-feed`/`watched-page` kinds) and never unregisters them (a gateway
+    registers once for its lifetime, by design). So once a worker has run any test that boots that
+    startup path, the registry stays populated, and `test_knowledge_sources_api.py`'s
+    `test_a_kind_with_no_enrolled_provider_is_not_offered` — which enrols NOTHING and asserts the
+    offered kinds are `[]` — then sees those three and reds. (`test_knowledge_sources_api`'s own
+    `registered` fixture already tears down what IT registers; this covers the startup path and any
+    other leaker.)
+
+    Snapshot-and-restore the whole dict rather than a name list, for the reason the guards above
+    record: a list silently stops covering the next name someone adds. The pre-test state is empty
+    today, so this reduces to dropping leaked entries after each test, but snapshotting keeps it
+    correct if a legitimate import-time registration is ever added.
+    """
+    from personalclaw.knowledge_providers import registry as _kp_registry
+
+    before = dict(_kp_registry._providers)
+    yield
+    _kp_registry._providers.clear()
+    _kp_registry._providers.update(before)
 
 
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
