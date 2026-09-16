@@ -410,53 +410,49 @@ def _refresh_agent_config(cwd: str) -> None:
         print("  ⚠️  Agent config refresh failed — run: personalclaw setup --agent-only")
 
 
-def _confirm_discarding(tracked: list[str]) -> bool:
-    """Ask before `git reset --hard` destroys tracked edits. False ⇒ do not reset.
+def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
+    """Print which tracked edits block *operation* and exit non-zero.
 
-    Non-interactive stdin (cron, a pipe, `< /dev/null`) does NOT prompt. Reading a
-    piped "y" — or letting `input()` raise EOFError into a traceback — would let an
-    unattended caller destroy uncommitted work that nobody agreed to lose. Refusing
-    is recoverable (stash or commit, then re-run); a wrong "yes" is not. The caller
-    turns this refusal into a NON-ZERO exit, because the update the user asked for
-    did not happen; an interactive "n" exits 0, because declining is a choice.
+    RUM-4 advances a checkout by ``git checkout <tag>`` or a fast-forward — both
+    non-destructive, so a dirty tree is refused, never discarded. There is no
+    "discard my work?" prompt any more: the safe answer is always to keep the
+    edits and ask the user to commit or stash. Exits 1 because the update the user
+    asked for did not happen.
     """
-    print("  ⚠️  Local tracked-file changes would be discarded:")
+    print(f"  ⚠️  Local tracked-file changes would block {operation}:")
     for line in tracked[:10]:
         print(f"      {line}")
-    if not sys.stdin.isatty():
-        print("  ❌ Refusing to discard them without confirmation (stdin is not a terminal).")
-        print("     Commit or `git stash` them, or re-run `personalclaw update` in a terminal.")
-        return False
-    try:
-        resp = input("  Continue? [y/N] ").strip().lower()
-    except EOFError:
-        resp = ""  # no answer is not a yes
-    return resp == "y"
+    print("     Commit or `git stash` them, then re-run `personalclaw update`.")
+    sys.exit(1)
 
 
 def _update_git(proj: str) -> None:
-    """Advance a git checkout: fetch → (confirm) reset --hard → build → install.
+    """Advance a git checkout to its release (RUM-4): ride release tags by channel.
 
-    Respects ``dashboard.update_dev_mode`` exactly as the dashboard's apply does:
-    OFF (default) the checkout rides release TAGS like every other install kind, so
-    being on the latest tag is "up to date" even when `main` has newer commits; ON is
-    the contributor "track every commit" behavior.
+    The ``updates`` channel decides the cadence, replacing the retired
+    ``update_dev_mode`` bool: ``stable``/``beta`` (and any pin) ride release TAGS —
+    ``git fetch --tags`` + ``git checkout <tag>`` — so being on the resolved tag is
+    "up to date" even when ``main`` has newer commits. The git-only ``nightly``
+    channel tracks the current branch, advancing by FAST-FORWARD only (clean tree
+    required); it never ``reset --hard``s.
     """
     git_dir = self_update.git_root(proj)
     if not git_dir:
         # Detection said "git" because a .git was found; losing it between then and
-        # now means the tree moved. Say so rather than resetting something else.
+        # now means the tree moved. Say so rather than touching something else.
         print(f"❌ No git repo at {proj}")
         sys.exit(1)
     print(f"  📂 {git_dir}")
 
-    if not AppConfig.load().dashboard.update_dev_mode:
-        latest = _latest_release_version()
-        if _is_current(latest):
-            print(f"\n✅ Already on the latest release (v{latest}).")
-            print("   Enable Developer update mode (Settings → Updates) to track every commit.")
-            return
+    cfg = AppConfig.load()
+    if cfg.updates.channel == "nightly":
+        _update_git_nightly(git_dir)
+    else:
+        _update_git_release(git_dir, cfg.updates.channel, cfg.updates.pin)
 
+
+def _update_git_nightly(git_dir: str) -> None:
+    """Nightly/developer channel: track the current branch by fast-forward only."""
     branch = self_update.resolve_default_branch(git_dir)
     print("  ⬇️  git fetch…")
     fetched = self_update.git_fetch(git_dir, branch)
@@ -470,24 +466,65 @@ def _update_git(proj: str) -> None:
 
     tracked = self_update.git_tracked_changes(git_dir)
     if tracked:
-        interactive = sys.stdin.isatty()
-        if not _confirm_discarding(tracked):
-            # A human who typed "n" made a choice (0). A non-interactive caller made
-            # none and we refused on its behalf, so the update it asked for did not
-            # happen (1) — see _confirm_discarding.
-            if interactive:
-                print("  Aborted.")
-            sys.exit(0 if interactive else 1)
+        _refuse_dirty_tree(tracked, "a fast-forward")
 
-    print(f"  🔄 git reset --hard origin/{branch}…")
-    reset = self_update.git_reset_hard(git_dir, branch)
-    if reset.returncode != 0:
-        print(f"  ❌ git reset failed:\n{(reset.stderr or '').strip()}")
+    print(f"  ⏩ git merge --ff-only origin/{branch}…")
+    ff = self_update.git_fast_forward(git_dir, branch)
+    if ff.returncode != 0:
+        # A diverged branch cannot fast-forward — we do NOT reset over it.
+        print(f"  ❌ fast-forward failed (branch diverged?):\n{(ff.stderr or '').strip()}")
         sys.exit(1)
 
-    # The SPA is built from source here (a checkout has no bundled dist), and both
-    # the build and the editable install run at the PACKAGE root — which is nested
-    # one level under the repo root in the monorepo layout, where git runs.
+    _finish_git_update(git_dir)
+
+
+def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
+    """Release channels (stable/beta) and pins: ride a release TAG, not a branch."""
+    import asyncio
+
+    try:
+        target = asyncio.run(self_update.resolve_target(channel, pin))
+    except Exception:
+        logging.getLogger(__name__).debug("resolve_target failed", exc_info=True)
+        target = ""
+    if not target:
+        print("\n⚠️  No matching release found for this channel/pin (offline?).")
+        print("   Nothing to update to — try again when a release is reachable.")
+        return
+    target_v = self_update.normalize_version(target)
+    if pin:
+        if target_v == self_update.normalize_version(__version__):
+            print(f"\n✅ Already on the pinned release (v{target_v}).")
+            return
+    elif _is_current(target_v):
+        print(f"\n✅ Already on the latest release (v{target_v}).")
+        return
+
+    tracked = self_update.git_tracked_changes(git_dir)
+    if tracked:
+        _refuse_dirty_tree(tracked, f"checking out {target}")
+
+    print("  ⬇️  git fetch --tags…")
+    fetched = self_update.git_fetch_tags(git_dir)
+    if fetched.returncode != 0:
+        print(f"  ❌ git fetch --tags failed:\n{(fetched.stderr or '').strip()}")
+        sys.exit(1)
+    print(f"  🏷  git checkout {target}…")
+    checked = self_update.git_checkout(git_dir, target)
+    if checked.returncode != 0:
+        print(f"  ❌ git checkout {target} failed:\n{(checked.stderr or '').strip()}")
+        sys.exit(1)
+
+    _finish_git_update(git_dir)
+
+
+def _finish_git_update(git_dir: str) -> None:
+    """Rebuild the SPA and reinstall after the tree has been advanced.
+
+    The SPA is built from source here (a checkout has no bundled dist), and both
+    the build and the editable install run at the PACKAGE root — which is nested
+    one level under the repo root in the monorepo layout, where git runs.
+    """
     pkg_root = self_update.package_root(git_dir)
     build_frontend_sync(Path(pkg_root))
     _install(["-e", ".", "--quiet"], cwd=pkg_root, label="install -e .")
@@ -610,8 +647,8 @@ def _update() -> None:
 
     | kind | what happens | exit |
     |---|---|---|
-    | git | fetch + reset --hard + SPA build + editable install; | 0; 1 on failure or an |
-    |  | dev_mode picks commits vs release tags | unconfirmed destructive reset |
+    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure or a |
+    |  | fast-forward) + SPA build + editable install | dirty tree blocking it |
     | pip | resolved installer `-U personalclaw==<latest>`, then | 0; 1 on install failure |
     |  | "restart the gateway" (pip / pipx / uv tool) |  |
     | container | prints `docker compose pull` + `up -d` | 0 |
@@ -632,12 +669,12 @@ def _update() -> None:
 
     kind = self_update.detect_install_kind()
     if kind not in _UPDATE_HANDLED_KINDS:
-        # No silent fall-through to the git pipeline: `reset --hard` on a tree that
-        # this kind may not even own is the worst possible guess.
+        # No silent fall-through to the git pipeline: advancing a tree this kind may
+        # not even own is the worst possible guess.
         print(f"❌ Unrecognized install kind: {kind!r} — refusing to guess how to update it.")
         print("   Check PERSONALCLAW_INSTALL_KIND, or update the way you installed:")
         print("   pip/pipx/uv tool → upgrade the `personalclaw` package;")
-        print("   container → docker compose pull && up -d; git checkout → git pull.")
+        print("   container → docker compose pull && up -d; git checkout → check out the new tag.")
         sys.exit(1)
 
     if kind == "git":

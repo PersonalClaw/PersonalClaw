@@ -394,9 +394,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
         "service: self pip update"
     ),
-    "dashboard/handlers/updates.py::api_update_apply::asyncio.create_subprocess_exec": (
-        "service: update git"
-    ),
+    # RUM-4: the top-level dirty-tree check in api_update_apply moved to
+    # asyncio.to_thread(self_update.git_tracked_changes) — no direct spawn here now.
+    # The nested _apply still spawns pip install (and the tag advance runs through
+    # asyncio.to_thread over self_update's sync git primitives, not a spawn here).
     "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
         "service: update git/pip"
     ),

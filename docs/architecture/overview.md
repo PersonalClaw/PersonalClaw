@@ -185,9 +185,12 @@ in `docs/reference/CONFIG-REFERENCE.md`.
 ## Self-update
 
 `dashboard/handlers/updates.py` (`api_update_apply`) runs the public update
-pipeline: `git pull` → `pip install -e .` (into the running venv) → frontend
-build → graceful re-exec, reporting steps
-`pulling → installing → building → restarting` over `update_progress`
-WebSocket events. A pip failure aborts *before* restart; concurrent applies get
-a 409. This covers the **core repo only** — apps update individually through
-the Store (`POST /api/apps/{name}/update`).
+pipeline. The git kind rides **release tags** by the `updates` channel/pin
+(RUM-4): `git fetch --tags` → `git checkout <resolved tag>` → `pip install -e .`
+(into the running venv) → frontend build → graceful re-exec. The git-only
+`nightly` channel is the one branch-tracking path and advances by fast-forward;
+neither path runs `git pull` or `reset --hard origin/main`. Steps
+`pulling → installing → building → restarting` are reported over
+`update_progress` WebSocket events. A pip failure aborts *before* restart;
+concurrent applies get a 409. This covers the **core repo only** — apps update
+individually through the Store (`POST /api/apps/{name}/update`).

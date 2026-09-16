@@ -1469,17 +1469,6 @@ class DashboardConfig:
             "Open the dashboard URL in the default browser on gateway startup.",
         ),
     )
-    update_dev_mode: bool = field(
-        default=False,
-        metadata=_meta(
-            "Developer Update Mode",
-            "Git checkouts only: update on every new commit on the current branch "
-            "instead of only when a new release TAG exists. Off (default) means the "
-            "in-app updater rides releases like every other install kind; on is the "
-            "contributor 'track main' behavior. No effect on pip/container/desktop "
-            "installs (they always update per release).",
-        ),
-    )
     screen_share_enabled: bool = field(
         default=False,
         metadata=_meta(
@@ -3615,7 +3604,6 @@ class AppConfig:
                 offer_check_work=bool(dashboard_data.get("offer_check_work", True)),
                 stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
-                update_dev_mode=dashboard_data.get("update_dev_mode", False),
                 # Opt-in, read with a False default: a config.json that is missing the
                 # key (every existing install) must NOT arrive with screen capture
                 # available. `bool()` so a truthy-string hand-edit can't smuggle a

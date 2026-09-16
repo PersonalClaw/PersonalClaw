@@ -67,9 +67,9 @@ async def api_update_check(request: web.Request) -> web.Response:
     update_available, commits_behind, apply_method, instructions}) merged with
     the legacy git changelog-diff fields (available/changes) for backward
     compatibility with the existing panel. The git kind still runs the
-    commits-behind probe; every kind gets the release-tag comparison. In git
-    developer update mode a non-zero ``commits_behind`` also sets ``available``,
-    so the check agrees with what the apply would actually do.
+    commits-behind probe; every kind gets the release-tag comparison. On the git
+    ``nightly`` channel (branch-tracking) a non-zero ``commits_behind`` also sets
+    ``available``, so the check agrees with what the apply would actually do.
     """
     await _do_update_check()
     cfg = AppConfig.load()
@@ -83,18 +83,19 @@ async def api_update_check(request: web.Request) -> web.Response:
     merged: dict[str, object] = {**_update_info, **status}
     if status.get("latest"):
         merged["available"] = bool(status.get("update_available"))
-    # Developer update mode tracks COMMITS, not release tags, so on a git checkout
+    # The `nightly` channel tracks COMMITS, not release tags, so on a git checkout
     # being behind the upstream IS an available update — which is precisely what
-    # POST /api/update applies in this mode. Without this clause the two surfaces
-    # contradict each other: the panel reports "up to date" while the apply would
-    # pull. The tag comparison above cannot express it (`main` carries commits with
-    # no newer tag, so `update_available` is False whenever a release is reachable).
-    if cfg.dashboard.update_dev_mode and status.get("kind") == "git":
+    # POST /api/update applies on that channel. Without this clause the two
+    # surfaces contradict each other: the panel reports "up to date" while the
+    # apply would fast-forward. The tag comparison above cannot express it (`main`
+    # carries commits with no newer tag, so `update_available` is False whenever a
+    # release is reachable).
+    if cfg.updates.channel == "nightly" and status.get("kind") == "git":
         _behind = status.get("commits_behind")
         if isinstance(_behind, int) and _behind > 0:
             merged["available"] = True
     merged["auto_update"] = cfg.auto_update
-    merged["update_dev_mode"] = cfg.dashboard.update_dev_mode
+    merged["channel"] = cfg.updates.channel
     merged["version"] = _local_version
     return web.json_response(merged)
 
@@ -296,37 +297,6 @@ async def api_update_auto(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "auto_update": enabled})
 
 
-async def api_update_dev_mode(request: web.Request) -> web.Response:
-    """POST /api/update/dev-mode — toggle git dev-mode (track commits vs tags).
-
-    Persists ``dashboard.update_dev_mode`` (plan 34 T4.5). Only meaningful for a
-    git checkout — for pip/container/desktop the updater always rides releases —
-    but the flag is stored uniformly (the frontend only surfaces the control for
-    the git kind).
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
-    enabled = body.get("enabled", False)
-    if not isinstance(enabled, bool):
-        return web.json_response({"error": "enabled must be a boolean"}, status=400)
-    path = config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except Exception:
-        data = {}
-    dash = data.get("dashboard")
-    if not isinstance(dash, dict):
-        dash = {}
-    dash["update_dev_mode"] = enabled
-    data["dashboard"] = dash
-    atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
-    return web.json_response({"ok": True, "update_dev_mode": enabled})
-
-
 async def api_changelog(request: web.Request) -> web.Response:
     """GET /api/changelog — read full CHANGELOG.md from project."""
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
@@ -431,21 +401,26 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
 
 
 async def api_update_apply(request: web.Request) -> web.Response:
-    """POST /api/update — git pull, reinstall, rebuild, restart gateway.
+    """POST /api/update — advance the checkout to its release, rebuild, restart.
 
-    Public pipeline: ``git pull`` → ``pip install -e .`` (same interpreter)
-    → frontend rebuild (``npm ci && npm run build`` in ``web/``) → graceful
-    re-exec. Progress is broadcast as ``update_progress`` WS events with steps
-    ``pulling`` → ``installing`` → ``building`` → ``restarting``
-    (→ ``error``/``failed`` on failure).
+    Release-based, per the ``updates`` channel/pin (RUM-4): the git kind rides
+    release TAGS like every other install kind — ``git fetch --tags`` +
+    ``git checkout <tag>`` — it never fast-forwards ``main`` nor hard-resets the
+    tree onto a branch. The git-only ``nightly`` channel is the ONE path that
+    tracks the current
+    branch, and it advances by FAST-FORWARD (clean tree required), never a reset.
+    Then ``pip install -e .`` (same interpreter) → frontend rebuild
+    (``npm ci && npm run build`` in ``web/``) → graceful re-exec. Progress is
+    broadcast as ``update_progress`` WS events with steps ``pulling`` →
+    ``installing`` → ``building`` → ``restarting`` (→ ``error``/``failed``).
 
-    Graceful degradation: when there is NOTHING to pull (no upstream
-    configured, or the upstream has zero new commits) the pipeline
-    short-circuits straight to the ``restarting`` step — the user asked for
-    "Update & Restart", and a restart is still meaningful (applies committed
-    local changes). The dirty-tree gate only guards a REAL pull (pulling onto
-    a dirty tree is dangerous); if nothing will be pulled, dirtiness doesn't
-    matter, so the upstream probe runs BEFORE the dirty check.
+    Graceful degradation: when there is NOTHING to advance (already on the
+    resolved release tag / pinned version, no upstream, or offline with no
+    release resolved) the pipeline short-circuits straight to the ``restarting``
+    step — the user asked for "Update & Restart", and a restart is still
+    meaningful (applies committed local changes). The dirty-tree gate only guards
+    a REAL advance (moving HEAD over a dirty tree is dangerous); if nothing will
+    be advanced, dirtiness doesn't matter, so the target probe runs BEFORE it.
     """
     global _apply_in_flight
     state: DashboardState = request.app["state"]
@@ -489,32 +464,10 @@ async def api_update_apply(request: web.Request) -> web.Response:
     if kind == "pip":
         return await _apply_pip_update(request, state)
 
-    # git: the existing source-tree pipeline (below).
+    # git: ride release tags by channel/pin; nightly tracks the branch (RUM-4).
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
     if not proj:
         return web.json_response({"error": "PERSONALCLAW_PROJECT_DIR not set"}, status=400)
-
-    # Ride releases by default vs track every commit: dashboard.update_dev_mode
-    # selects the git updater's cadence. Off (default) = the checkout rides
-    # release TAGS like every other install kind; on = the contributor "track
-    # every commit" behavior. Enforced HERMETICALLY: read the CACHED release view
-    # (no network — the check endpoint refreshes it) and, when dev mode is off and
-    # we're already on the latest release tag, degrade to restart-only instead of
-    # pulling arbitrary main commits.
-    _dev_mode = AppConfig.load().dashboard.update_dev_mode
-    _on_latest_tag = False
-    if not _dev_mode:
-        try:
-            _cached_tag = self_update.normalize_version(
-                str(self_update.read_release_cache().get("tag") or "")
-            )
-            if _cached_tag and self_update.version_tuple(_cached_tag) <= self_update.version_tuple(
-                _local_version
-            ):
-                _on_latest_tag = True
-        except Exception:
-            _on_latest_tag = False
-    logger.debug("git update apply: update_dev_mode=%s on_latest_tag=%s", _dev_mode, _on_latest_tag)
 
     if _apply_in_flight:
         return web.json_response(
@@ -522,30 +475,62 @@ async def api_update_apply(request: web.Request) -> web.Response:
             status=409,
         )
     # Claim the in-flight slot BEFORE the first await below — otherwise two
-    # concurrent POSTs could both pass the check while one parks on the
-    # dirty-tree subprocess. Every return path from here must release it.
+    # concurrent POSTs could both pass the check while one parks on a subprocess.
+    # A rejected concurrent request therefore does NO config read and NO network.
+    # Every return path from here must release it.
     _apply_in_flight = True
 
     # Signal updating state via SSE
     state.push_refresh("updating")
 
-    # Nothing-to-pull probe FIRST (before the dirty gate): "Update & Restart"
-    # with no upstream or an already-up-to-date checkout degrades gracefully
-    # to a plain restart instead of 409ing on tree state that can't matter.
-    # When dev mode is off and we're already on the latest release tag, take the
-    # same restart-only path even if new commits exist (ride tags, not commits).
-    behind = await self_update.commits_behind_upstream(proj)
-    if behind is None or behind == 0 or _on_latest_tag:
-        if _on_latest_tag and behind:
-            note = (
-                "On the latest release — restarting… "
-                "(enable Developer update mode to track commits)"
-            )
-        elif behind is None:
+    # What does "advance" mean for this checkout? The `updates` channel/pin decides,
+    # replacing the retired `update_dev_mode` bool. Every channel but `nightly` rides
+    # a release TAG (fetch --tags + checkout); `nightly` is the ONE branch-tracking
+    # path (fast-forward only). resolve_target reads the ETag-cached releases list
+    # and never raises.
+    _cfg = AppConfig.load()
+    _channel = _cfg.updates.channel
+    _pin = _cfg.updates.pin
+    _target_tag = ""
+    if _channel != "nightly":
+        try:
+            _target_tag = await self_update.resolve_target(_channel, _pin)
+        except Exception:
+            logger.debug("resolve_target failed; treating as no release resolved", exc_info=True)
+            _target_tag = ""
+    logger.debug("git update apply: channel=%s pin=%s target=%s", _channel, _pin, _target_tag)
+
+    # Nothing-to-advance probe FIRST (before the dirty gate): "Update & Restart"
+    # with nothing to advance degrades to a plain restart instead of 409ing on
+    # tree state that can't matter. Nightly rides commits (fast-forward when
+    # behind); every other channel rides the resolved release tag (skip when we
+    # are already on or past it, so an unreleased `main` commit never triggers a
+    # move — the whole point of retiring pull-from-main).
+    advance = False
+    if _channel == "nightly":
+        behind = await self_update.commits_behind_upstream(proj)
+        if behind is None:
             note = "No upstream configured — restarting…"
-        else:
+        elif behind == 0:
             note = "Already up to date — restarting…"
-        logger.info("Update apply: nothing to pull (%s) — restarting only", note)
+        else:
+            advance = True
+            note = ""
+    else:
+        _tgt_norm = self_update.normalize_version(_target_tag)
+        if not _target_tag:
+            note = "No newer release found — restarting…"
+        elif not _pin and self_update.version_tuple(_tgt_norm) <= self_update.version_tuple(
+            self_update.normalize_version(_local_version)
+        ):
+            note = f"On the latest release ({_target_tag}) — restarting…"
+        elif _pin and _tgt_norm == self_update.normalize_version(_local_version):
+            note = f"Already on the pinned release ({_target_tag}) — restarting…"
+        else:
+            advance = True
+            note = ""
+    if not advance:
+        logger.info("Update apply: nothing to advance (%s) — restarting only", note)
         _auth_mode = _live_auth_mode(request)
 
         async def _restart_only() -> None:
@@ -556,7 +541,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 state.push_update_progress("restarting", note)
                 await _graceful_reexec(state, auth_mode=_auth_mode)
             except Exception:
-                logger.exception("Restart (nothing-to-pull update) failed")
+                logger.exception("Restart (nothing-to-advance update) failed")
                 state.push_update_progress("error", "Restart failed — check logs")
             finally:
                 _apply_in_flight = False
@@ -566,29 +551,12 @@ async def api_update_apply(request: web.Request) -> web.Response:
         task.add_done_callback(state._background_tasks.discard)
         return web.json_response({"ok": True, "status": "restarting", "detail": note})
 
-    # Check for dirty working tree before updating
-    dirty = await asyncio.create_subprocess_exec(
-        "git",
-        "status",
-        "--porcelain",
-        cwd=proj,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    try:
-        dirty_out, _ = await asyncio.wait_for(dirty.communicate(), timeout=10)
-    except asyncio.TimeoutError:
-        try:
-            dirty.kill()
-        except ProcessLookupError:
-            pass
-        await dirty.communicate()
-        _apply_in_flight = False
-        return web.json_response(
-            {"error": "Timed out checking working tree status"},
-            status=500,
-        )
-    if dirty_out and dirty_out.strip():
+    # Clean-tree gate before advancing HEAD. Both advance mechanisms are
+    # non-destructive on their own (checkout refuses to clobber, ff-only can't
+    # rewrite history), but requiring a clean tree keeps one clear contract and a
+    # readable message rather than a raw git refusal mid-apply.
+    tracked = await asyncio.to_thread(self_update.git_tracked_changes, proj)
+    if tracked:
         logger.warning("Update skipped: working tree has uncommitted changes")
         _apply_in_flight = False
         return web.json_response(
@@ -599,27 +567,29 @@ async def api_update_apply(request: web.Request) -> web.Response:
     async def _apply() -> None:
         global _apply_in_flight
         try:
-            # git pull
-            state.push_update_progress("pulling", "Pulling latest changes…")
-            pull = await asyncio.create_subprocess_exec(
-                "git",
-                "pull",
-                cwd=proj,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Own group: `git pull` forks fetch's remote helper and a merge, both
-                # inheriting these pipes. See kill_timed_out.
-                start_new_session=True,
-            )
-            try:
-                await asyncio.wait_for(pull.communicate(), timeout=60)
-            except asyncio.TimeoutError:
-                await kill_timed_out(pull)
-                state.push_update_progress("error", "git pull timed out")
-                return
-            if pull.returncode != 0:
-                state.push_update_progress("error", "git pull failed")
-                return
+            if _channel == "nightly":
+                # Nightly: advance the current branch by fast-forward only — never a
+                # silent reset. A diverged branch fails cleanly and is left untouched.
+                branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
+                state.push_update_progress("pulling", f"Fast-forwarding {branch}…")
+                ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
+                if ff.returncode != 0:
+                    state.push_update_progress(
+                        "error", f"Could not fast-forward {branch} (diverged?) — no changes made"
+                    )
+                    return
+            else:
+                # Ride the release tag: fetch tags, then check the resolved tag out
+                # (detaches HEAD onto that exact release). No pull, no reset.
+                state.push_update_progress("pulling", f"Fetching release {_target_tag}…")
+                fetched = await asyncio.to_thread(self_update.git_fetch_tags, proj)
+                if fetched.returncode != 0:
+                    state.push_update_progress("error", "git fetch --tags failed")
+                    return
+                checked = await asyncio.to_thread(self_update.git_checkout, proj, _target_tag)
+                if checked.returncode != 0:
+                    state.push_update_progress("error", f"git checkout {_target_tag} failed")
+                    return
 
             # Reinstall the package into the RUNNING interpreter's env so new
             # dependencies land before the re-exec (sys.executable is the venv
@@ -759,7 +729,8 @@ def _active_work_snapshot(state: DashboardState) -> dict[str, int]:
 
 async def api_restart(request: web.Request) -> web.Response:
     """POST /api/system/restart — bounce the gateway to apply committed backend
-    changes WITHOUT a git pull (the update-free counterpart of ``/api/update``).
+    changes WITHOUT advancing the checkout (the update-free counterpart of
+    ``/api/update``).
 
     GET-style pre-flight: ``?probe=1`` returns the active-work snapshot (running
     agents + sessions) so the UI can warn before confirming, without restarting.

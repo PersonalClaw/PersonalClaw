@@ -407,12 +407,6 @@
     "type": "list[str]"
   },
   {
-    "default": false,
-    "path": "dashboard.update_dev_mode",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
     "default": "",
     "path": "dashboard.url",
     "sensitive": false,

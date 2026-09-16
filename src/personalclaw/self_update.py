@@ -593,8 +593,48 @@ def resolve_default_branch(proj: str) -> str:
 
 
 def git_fetch(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
-    """``git fetch origin <branch>``."""
+    """``git fetch origin <branch>`` — advance the remote-tracking ref for *branch*.
+
+    The nightly (branch-tracking) path uses this; the release paths use
+    :func:`git_fetch_tags`, which also brings the tags a checkout needs.
+    """
     return _run_git(["fetch", "origin", branch], cwd=proj, timeout=60)
+
+
+def git_fetch_tags(proj: str) -> subprocess.CompletedProcess[str]:
+    """``git fetch --tags origin`` — fetch origin's branches AND its release tags.
+
+    The release-based apply resolves a tag from GitHub's releases API and then
+    checks it out locally; the tag has to be present in the local repository
+    first, which a plain ``git fetch origin <branch>`` does not guarantee. This is
+    the fetch half of the "ride release tags" path that replaced pull-from-main.
+    """
+    return _run_git(["fetch", "--tags", "origin"], cwd=proj, timeout=60)
+
+
+def git_checkout(proj: str, ref: str) -> subprocess.CompletedProcess[str]:
+    """``git checkout <ref>`` — move HEAD to a release tag (or any ref).
+
+    Non-destructive by construction: git refuses to overwrite uncommitted local
+    modifications and leaves the tree untouched with a non-zero exit, so this can
+    never silently discard a user's work the way ``reset --hard`` did. Checking out
+    a tag detaches HEAD onto that exact release — which is precisely "ride release
+    tags", the state RUM-4 leaves the git kind in.
+    """
+    return _run_git(["checkout", ref], cwd=proj, timeout=30)
+
+
+def git_fast_forward(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
+    """``git merge --ff-only origin/<branch>`` — advance a branch WITHOUT a reset.
+
+    The nightly/developer channel is the one path that tracks the current branch
+    instead of a release tag. It advances by fast-forward only: this can add new
+    upstream commits but can NEVER rewrite or discard local history — a diverged
+    branch makes it fail with a non-zero exit and an untouched tree, which is the
+    safe answer. There is deliberately no ``reset --hard`` fallback; that silent
+    tracked-change destruction is exactly what RUM-4 retired.
+    """
+    return _run_git(["merge", "--ff-only", f"origin/{branch}"], cwd=proj, timeout=30)
 
 
 def git_is_up_to_date(proj: str, branch: str) -> bool:
@@ -604,11 +644,13 @@ def git_is_up_to_date(proj: str, branch: str) -> bool:
 
 
 def git_tracked_changes(proj: str) -> list[str]:
-    """Porcelain status lines for TRACKED paths only — what a reset would destroy.
+    """Porcelain status lines for TRACKED paths only — what an advance could clobber.
 
-    Untracked entries (``??``) survive ``reset --hard``, so they are excluded:
-    warning about files that are not at risk trains the reader to click through
-    the warning that matters.
+    Untracked entries (``??``) are safe across both an advance mechanism RUM-4
+    uses (``git checkout`` refuses to touch them; a fast-forward leaves them), so
+    they are excluded: warning about files that are not at risk trains the reader
+    to click through the warning that matters. The auto/CLI paths use this to
+    require a clean tree before advancing, so an in-progress edit is never at risk.
     """
     res = _run_git(["status", "--porcelain"], cwd=proj, timeout=10)
     if res.returncode != 0:
@@ -616,11 +658,6 @@ def git_tracked_changes(proj: str) -> list[str]:
     # NOT stripped: porcelain status codes are column-significant (" M" unstaged vs
     # "M " staged), and stripping the blob eats the first line's leading space.
     return [ln for ln in (res.stdout or "").splitlines() if ln.strip() and not ln.startswith("??")]
-
-
-def git_reset_hard(proj: str, branch: str) -> subprocess.CompletedProcess[str]:
-    """``git reset --hard origin/<branch>`` — DESTRUCTIVE to tracked changes."""
-    return _run_git(["reset", "--hard", f"origin/{branch}"], cwd=proj, timeout=10)
 
 
 # ── Git primitives (async; the dashboard's pipeline runs on these) ──────────

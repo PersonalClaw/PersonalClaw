@@ -112,9 +112,14 @@ export function UpdatesPanel() {
       .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
       .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} automatic updates`))
   }
+  // Developer update mode is now the `updates.channel` = 'nightly' lane (RUM-4):
+  // on ⇒ track the current branch (fast-forward), off ⇒ ride stable release tags.
+  // A richer Stable/Beta/Developer selector is the Settings > Updates screen (RUM-10);
+  // this preserves the one control a git user needs to opt into branch-tracking.
   const toggleDevMode = (v: boolean) => {
-    setInfo((p) => p && { ...p, update_dev_mode: v })
-    api.setUpdateDevMode(v)
+    const channel = v ? 'nightly' : 'stable'
+    setInfo((p) => p && { ...p, channel })
+    api.patchConfig('updates.channel', channel)
       .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
       .catch(reportSettingFailure(`${v ? 'enable' : 'disable'} developer update mode`))
   }
@@ -187,10 +192,11 @@ export function UpdatesPanel() {
           <Row label="Auto-update" hint="Download and apply updates automatically when available.">
             <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={info.auto_update} onChange={toggleAuto} label="Auto-update" /></div>
           </Row>
-          {/* Dev-mode toggle: git checkouts only (track every commit vs. ride release tags). */}
+          {/* Dev-mode toggle: git checkouts only — the `nightly` channel (track every
+              commit on the current branch) vs. `stable` (ride release tags). */}
           {isGit && (
             <Row label="Developer update mode" hint="Track every new commit on your branch instead of only tagged releases (contributors).">
-              <div className="flex items-center gap-2"><Toggle on={!!info.update_dev_mode} onChange={toggleDevMode} label="Developer update mode" /></div>
+              <div className="flex items-center gap-2"><Toggle on={info.channel === 'nightly'} onChange={toggleDevMode} label="Developer update mode" /></div>
             </Row>
           )}
         </RowGroup>

@@ -12,6 +12,8 @@ without importing an HTTP handler.
 
 from __future__ import annotations
 
+import subprocess
+
 import aiohttp
 import pytest
 
@@ -571,8 +573,8 @@ def test_run_git_reports_a_missing_git_binary(monkeypatch) -> None:
 
 
 def test_tracked_changes_excludes_untracked_entries(monkeypatch) -> None:
-    # Untracked files survive `reset --hard`, so warning about them would train the
-    # reader to click through the warning that matters.
+    # Untracked files survive a checkout / fast-forward, so warning about them would
+    # train the reader to click through the warning that matters.
     git = _GitScript(**{"status": (0, " M a.py\n?? scratch.txt\nA  b.py\n")})
     monkeypatch.setattr(uk, "_run_git", git)
     assert uk.git_tracked_changes("/x") == [" M a.py", "A  b.py"]
@@ -813,3 +815,126 @@ async def test_fetch_releases_304_returns_cache_and_sends_conditional(
     rels = await uk.fetch_releases()
     assert [r["tag"] for r in rels] == ["v0.2.1"]  # returned the cached list on 304
     assert _FakeSession.last_headers.get("If-None-Match") == 'W/"prev"'  # sent the ETag
+
+
+# ── RUM-4: the release-tag apply primitives, driven on a REAL repo ───────────
+#
+# These exercise the actual `git` binary against throwaway repos in tmp_path — the
+# git layer's one seam under real conditions — proving the RUM-4 apply advances a
+# checkout to a tag / fast-forwards a branch without ever resetting --hard.
+
+
+def _git(cwd, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
+
+
+def _rev(cwd, ref: str = "HEAD") -> str:
+    out = subprocess.run(
+        ["git", "rev-parse", ref], cwd=str(cwd), check=True, capture_output=True, text=True
+    )
+    return out.stdout.strip()
+
+
+def _init_repo(path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q", "-b", "main")
+    _git(path, "config", "user.email", "t@example.com")
+    _git(path, "config", "user.name", "Tester")
+    _git(path, "config", "commit.gpgsign", "false")
+    _git(path, "config", "tag.gpgsign", "false")
+
+
+def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path) -> None:
+    """RUM-4 done_when: driven on a checkout ONE RELEASE BEHIND, the release apply
+    (git fetch --tags + git checkout <tag>) leaves HEAD EXACTLY at the target tag —
+    not at the branch tip, and with no reset."""
+    origin = tmp_path / "origin"
+    _init_repo(origin)
+    (origin / "f.txt").write_text("one\n")
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-qm", "release 0.0.1")
+    _git(origin, "tag", "v0.0.1")
+
+    # Clone and park the checkout on v0.0.1 — one release behind what's coming.
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _git(clone, "checkout", "-q", "v0.0.1")
+    behind_commit = _rev(clone)
+
+    # Origin publishes a newer release the clone has never seen.
+    (origin / "f.txt").write_text("two\n")
+    _git(origin, "commit", "-aqm", "release 0.0.2")
+    _git(origin, "tag", "v0.0.2")
+    target_commit = _rev(origin, "v0.0.2")
+    assert target_commit != behind_commit
+    assert _rev(clone) == behind_commit  # still behind before the apply
+
+    # The RUM-4 release apply: fetch tags, then check the resolved tag out.
+    assert uk.git_fetch_tags(str(clone)).returncode == 0
+    assert uk.git_checkout(str(clone), "v0.0.2").returncode == 0
+
+    # HEAD is EXACTLY the target tag's commit — the whole point of "ride tags".
+    assert _rev(clone) == target_commit
+    assert _rev(clone, "v0.0.2") == target_commit
+
+
+def test_fast_forward_advances_a_branch_without_reset(tmp_path) -> None:
+    """nightly: git merge --ff-only advances the tracked branch to origin,
+    preserving history (no reset)."""
+    origin = tmp_path / "origin"
+    _init_repo(origin)
+    (origin / "f.txt").write_text("a\n")
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-qm", "A")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    start = _rev(clone)
+
+    (origin / "f.txt").write_text("b\n")
+    _git(origin, "commit", "-aqm", "B")
+    ahead = _rev(origin, "main")
+
+    assert uk.git_fetch(str(clone), "main").returncode == 0
+    assert not uk.git_is_up_to_date(str(clone), "main")  # a real advance is pending
+    assert uk.git_fast_forward(str(clone), "main").returncode == 0
+    assert _rev(clone) == ahead  # advanced to origin's tip
+    assert _rev(clone) != start
+    # Still on the branch (fast-forward, not a detached checkout).
+    head = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(clone),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert head == "main"
+
+
+def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(tmp_path) -> None:
+    """A diverged local branch cannot fast-forward: ff-only fails non-zero and
+    leaves HEAD untouched — the safe answer, and why RUM-4 has no reset fallback."""
+    origin = tmp_path / "origin"
+    _init_repo(origin)
+    (origin / "f.txt").write_text("a\n")
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-qm", "A")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(clone.parent / "origin"), str(clone))
+    _git(clone, "config", "user.email", "t@example.com")
+    _git(clone, "config", "user.name", "Tester")
+    _git(clone, "config", "commit.gpgsign", "false")
+
+    # Origin and the clone diverge: each adds a different commit on main.
+    (origin / "f.txt").write_text("origin-b\n")
+    _git(origin, "commit", "-aqm", "origin B")
+    (clone / "g.txt").write_text("local\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", "local C")
+    local_head = _rev(clone)
+
+    assert uk.git_fetch(str(clone), "main").returncode == 0
+    ff = uk.git_fast_forward(str(clone), "main")
+    assert ff.returncode != 0  # cannot fast-forward a diverged branch
+    assert _rev(clone) == local_head  # tree untouched — the local commit survives
