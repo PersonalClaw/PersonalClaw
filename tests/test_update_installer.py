@@ -66,13 +66,30 @@ def spawn(monkeypatch):
     return _install
 
 
-async def _run_apply(state, monkeypatch, *, latest="0.1.2"):
-    """Drive _apply_pip_update's inner coroutine with a stubbed status + re-exec."""
+async def _run_apply(
+    state, monkeypatch, *, latest="0.1.2", channel="stable", pin="", releases=None
+):
+    """Drive _apply_pip_update's inner coroutine with a stubbed release list + re-exec.
 
-    async def _fake_status(_cur):
-        return {"latest": latest}
+    RUM-6: the apply resolves the ``updates`` channel/pin over the releases list and
+    installs ``personalclaw==<resolved tag>``. When *releases* is omitted a one-entry
+    list carrying *latest* stands in, so the simple cases still read as "install
+    ``latest``"; a caller that needs channel/pin distinctions passes an explicit list.
+    Only the network seam (`fetch_releases`) is stubbed — the real
+    `resolve_wheel_target`/`select_target` run.
+    """
+    import types
 
-    monkeypatch.setattr("personalclaw.self_update.build_update_status", _fake_status)
+    if releases is None:
+        releases = [{"tag": f"v{latest}", "prerelease": False}] if latest else []
+
+    cfg = types.SimpleNamespace(updates=types.SimpleNamespace(channel=channel, pin=pin))
+    monkeypatch.setattr(upd.AppConfig, "load", staticmethod(lambda: cfg))
+
+    async def _list():
+        return [dict(r) for r in releases]
+
+    monkeypatch.setattr("personalclaw.self_update.fetch_releases", _list)
 
     async def _fake_reexec(_state, **kw):
         state.progress.append(("reexec", ""))
@@ -134,6 +151,63 @@ async def test_failure_detail_reaches_the_ui(monkeypatch, spawn):
     assert errors, f"no error progress pushed: {state.progress}"
     assert "Could not find a version" in errors[0]
     assert errors[0] != "pip upgrade failed"
+
+
+# ── the pip apply honors the `updates` channel/pin (RUM-6) ──────────────────────
+
+# Adversarial to a "blind latest" apply: the newest release is a PRERELEASE, so
+# stable and beta resolve to DIFFERENT tags and the pin points at an older one. A
+# `-U personalclaw==<releases/latest>` apply would install 0.2.1 for all three and
+# fail beta + pin — the exact bug RUM-6 removes.
+_RUM6_RELEASES = [
+    {"tag": "v0.3.0-rc.1", "prerelease": True},
+    {"tag": "v0.2.1", "prerelease": False},
+    {"tag": "v0.2.0", "prerelease": False},
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel, pin, expected",
+    [
+        ("stable", "", "personalclaw==0.2.1"),
+        ("beta", "", "personalclaw==0.3.0-rc.1"),
+        ("stable", "0.2.0", "personalclaw==0.2.0"),
+    ],
+)
+async def test_pip_apply_installs_the_channel_pin_resolved_spec(
+    monkeypatch, spawn, channel, pin, expected
+):
+    """RUM-6 core (dashboard): POST /api/update upgrades to the channel/pin tag.
+
+    Non-vacuous — beta (0.3.0-rc.1) and the pin (0.2.0) resolve to versions other
+    than stable's latest (0.2.1) over the same list, so a `releases/latest` apply
+    fails the beta and pin rows. Exercises the REAL resolver (`fetch_releases` is the
+    only stub)."""
+    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    seen = spawn(_Proc(0))
+    state = _StateStub()
+
+    await _run_apply(state, monkeypatch, channel=channel, pin=pin, releases=_RUM6_RELEASES)
+
+    assert seen, f"no upgrade subprocess was spawned: {state.progress}"
+    assert expected in seen[0], f"expected {expected}; argv={seen[0]}"
+
+
+@pytest.mark.asyncio
+async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch, spawn):
+    """A pin naming no release must REFUSE — never silently upgrade to the latest wheel."""
+    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    seen = spawn(_Proc(0))
+    state = _StateStub()
+
+    await _run_apply(state, monkeypatch, channel="stable", pin="0.9.9", releases=_RUM6_RELEASES)
+
+    assert not seen, f"installed despite an unmatched pin: {seen}"
+    errors = [d for s, d in state.progress if s == "error"]
+    assert errors and "pin" in errors[0].lower(), f"progress={state.progress}"
 
 
 # ── the UI-facing error summary ────────────────────────────────────────────────

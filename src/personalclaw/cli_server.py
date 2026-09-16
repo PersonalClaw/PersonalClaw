@@ -537,19 +537,48 @@ def _finish_git_update(git_dir: str) -> None:
 def _update_pip() -> None:
     """Upgrade a wheel install (pip / pipx / uv tool) in the running environment.
 
+    Rides the ``updates`` channel/pin (RUM-6): the wheel installed is
+    ``personalclaw==<resolve_wheel_target(channel, pin)>`` — the release the
+    channel/pin selects — NOT a blind ``releases/latest``. A pin installs exactly
+    that version; ``stable``/``beta`` resolve their channel's newest release; the
+    git-only ``nightly`` channel has no published wheel and rides ``stable``.
+
     No source tree is required — that requirement is exactly the dead end this
     replaced. The installer is RESOLVED (uv or pip): a uv-created venv, and a
     `uv tool install`, ship no pip module. Unlike the dashboard's apply there is no
     re-exec: this process is a short-lived CLI, not the gateway, so it prints the
     restart command instead of bouncing a running server nobody asked it to touch.
     """
-    latest = _latest_release_version()
-    if _is_current(latest):
-        print(f"\n✅ Already on the latest release (v{latest}).")
+    import asyncio
+
+    cfg = AppConfig.load()
+    channel = cfg.updates.channel
+    pin = cfg.updates.pin
+    try:
+        target = asyncio.run(self_update.resolve_wheel_target(channel, pin))
+    except Exception:
+        logging.getLogger(__name__).debug("resolve_target failed", exc_info=True)
+        target = ""
+
+    if pin and not target:
+        # A pin naming no release must NEVER silently upgrade to the latest wheel —
+        # that would defeat the whole point of pinning.
+        print("\n⚠️  No release matches the pinned version (offline?).")
+        print(f"   Nothing to install for pin {pin!r} — check `updates.pin` or retry online.")
         return
-    spec = self_update.upgrade_spec(latest)
-    if latest:
-        print(f"  ⬆️  v{__version__} → v{latest}")
+
+    target_v = self_update.normalize_version(target)
+    if pin:
+        if target_v == self_update.normalize_version(__version__):
+            print(f"\n✅ Already on the pinned release (v{target_v}).")
+            return
+    elif _is_current(target_v):
+        print(f"\n✅ Already on the latest release (v{target_v}).")
+        return
+
+    spec = self_update.upgrade_spec(target)
+    if target_v:
+        print(f"  ⬆️  v{__version__} → v{target_v}")
     _install(["-U", spec, "--quiet"], cwd="", label=f"install -U {spec}")
 
     print("\n✅ PersonalClaw updated!")
@@ -604,24 +633,6 @@ def _is_current(latest: str) -> bool:
     )
 
 
-def _latest_release_version() -> str:
-    """The latest published release version (no leading ``v``), or "".
-
-    Offline-tolerant by construction: `fetch_latest_release` degrades to its cache
-    and never raises, and an unknown latest means "don't claim to know", not "fail".
-    """
-    import asyncio
-
-    try:
-        status = asyncio.run(self_update.build_update_status(__version__))
-    except Exception:
-        logging.getLogger(__name__).debug(
-            "release probe failed; continuing without a latest version", exc_info=True
-        )
-        return ""
-    return str(status.get("latest") or "")
-
-
 def _install(args: list[str], *, cwd: str, label: str) -> None:
     """Run the resolved installer with *args*, or exit 1 with a readable reason."""
     from personalclaw._installer import NoInstallerError, install_argv, installer_name
@@ -649,8 +660,8 @@ def _update() -> None:
     |---|---|---|
     | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure or a |
     |  | fast-forward) + SPA build + editable install | dirty tree blocking it |
-    | pip | resolved installer `-U personalclaw==<latest>`, then | 0; 1 on install failure |
-    |  | "restart the gateway" (pip / pipx / uv tool) |  |
+    | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
+    |  | then "restart the gateway" (pip / pipx / uv tool) |  |
     | container | prints `docker compose pull` + `up -d` | 0 |
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |

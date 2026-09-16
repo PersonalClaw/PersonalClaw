@@ -297,12 +297,16 @@ _apply_in_flight = False
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
     """Upgrade a pip/uv/pipx install in place, then graceful re-exec (T4.3).
 
-    Runs ``<installer> install -U personalclaw==<tag>`` (pinned to the latest
-    release tag when known; unpinned ``-U`` otherwise) targeting the SAME
-    interpreter/prefix the gateway runs from — mirrors the git path's editable
-    install step. The installer is RESOLVED (uv or pip), not assumed: a uv-created
-    venv ships no pip module (issue #51). No web build: the wheel already carries
-    the SPA. The 409 concurrent-apply guard is shared with the git path.
+    Runs ``<installer> install -U personalclaw==<resolve_wheel_target(channel,pin)>``
+    — the release the ``updates`` channel/pin selects (RUM-6), NOT a blind
+    ``releases/latest``. A pin installs exactly that version; ``stable``/``beta``
+    resolve their channel's newest release; the git-only ``nightly`` channel has no
+    published wheel and rides ``stable``. When a pin matches no release the apply
+    REFUSES rather than falling back to latest. Targets the SAME interpreter/prefix
+    the gateway runs from — mirrors the git path's editable install step. The
+    installer is RESOLVED (uv or pip), not assumed: a uv-created venv ships no pip
+    module (issue #51). No web build: the wheel already carries the SPA. The 409
+    concurrent-apply guard is shared with the git path.
     """
     global _apply_in_flight
 
@@ -311,16 +315,32 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     _apply_in_flight = True
     state.push_refresh("updating")
 
-    try:
-        status = await self_update.build_update_status(_local_version)
-    except Exception:
-        status = {}
-    spec = self_update.upgrade_spec(str(status.get("latest") or ""))
     auth_mode = _live_auth_mode(request)
 
     async def _apply() -> None:
         global _apply_in_flight
         try:
+            # Ride the resolved release, not a blind `releases/latest`: the `updates`
+            # channel/pin decides the target tag (RUM-6). resolve_wheel_target never
+            # raises and maps the wheel-less `nightly` channel onto `stable`.
+            cfg = AppConfig.load()
+            try:
+                target = await self_update.resolve_wheel_target(
+                    cfg.updates.channel, cfg.updates.pin
+                )
+            except Exception:
+                logger.debug(
+                    "resolve_target failed; treating as no release resolved", exc_info=True
+                )
+                target = ""
+            if cfg.updates.pin and not target:
+                # A pin naming no release must NEVER silently upgrade to latest.
+                state.push_update_progress(
+                    "error", "No release matches the pinned version — check updates.pin."
+                )
+                return
+            spec = self_update.upgrade_spec(target)
+
             # Resolve the installer instead of assuming stdlib pip — a uv venv has
             # none, which made self-update impossible on the uv install path while
             # the UI already labelled this kind "pip / uv install" (issue #51).
