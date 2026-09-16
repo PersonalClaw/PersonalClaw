@@ -77,8 +77,12 @@ EXPECTED = {
     "knowledge-lint",
     "gap-healing",
     # The contradiction judge (§3.2): the free deterministic tier lives in the
-    # knowledge-persist action; this template is where the fast-model tier runs, because a
-    # model call belongs in a `stage` and never inside an action provider.
+    # knowledge-persist action; this template is where the fast-model tier runs, as a metered
+    # `infer` node on the `fast` tier (WF2KNO-10) — a model call belongs in a node the engine
+    # meters, never inside an action provider. `infer` (not `stage`), because the fast-model
+    # pass is ONE bounded call resolved through the standard model-tier resolution
+    # (`one_shot_completion(use_case="background")`); a `stage` spawns a subagent on the
+    # orchestration/standard chain and never touches the tier resolution at all.
     "contradiction-review",
     # The Knowledge Synthesis slate (§7.1). Four of the twelve: the ones whose mechanisms
     # actually ship. See the plan's execution log for which were deferred and why — every
@@ -823,3 +827,46 @@ class TestTheMonitorSlate:
             f"{EGRESS_PROVIDER!r} is missing from ALLOWED_HOOK_PROVIDERS, so a trigger or hook "
             "using one of these templates saves and then fails when it fires"
         )
+
+
+class TestContradictionReviewFastTier:
+    """WF2KNO-10: the fast-model contradiction pass must reach a LIVE model through the
+    STANDARD model-tier resolution on the `fast` tier — not through a `stage` subagent.
+
+    A `stage` node spawns a subagent that resolves the ``orchestration`` (standard) chain and
+    never calls ``resolve_use_case``, so it can neither run on the fast tier nor go through the
+    metered model-tier resolution the plan's dependency contract names for fast-model passes
+    (``one_shot_completion(use_case="background")``). The judge is therefore an ``infer`` node
+    declaring ``model_tier: "fast"``, which the standard resolution maps to the ``background``
+    use case. Before this atom the node was a `stage` with no ``model_tier`` — it ran on the
+    orchestration model, which is exactly why the audit could not observe a "fast-model" pass.
+    """
+
+    def _judge(self) -> Node:
+        root = Node.from_dict(_pipeline(_raw("contradiction-review"))["root"])
+        for _path, node in walk(root):
+            if node.id == "judge_conflicts":
+                return node
+        raise AssertionError("contradiction-review has no judge_conflicts node")
+
+    def test_the_judge_is_a_metered_infer_node_not_a_subagent_stage(self) -> None:
+        judge = self._judge()
+        assert judge.kind.value == "infer", (
+            "the fast-model conflict pass must be a metered LLM node, not a `stage` subagent: a "
+            "stage resolves the orchestration (standard) chain and never touches the model-tier "
+            f"resolution — got kind={judge.kind.value!r}"
+        )
+
+    def test_the_judge_resolves_to_the_fast_background_use_case(self) -> None:
+        from personalclaw.workflows.engine import resolve_use_case
+
+        judge = self._judge()
+        assert (judge.config or {}).get(
+            "model_tier"
+        ) == "fast", (
+            "the judge must declare the `fast` tier so it is the fast-model pass the atom names"
+        )
+        # THE contract: the standard model-tier resolution maps `fast` -> the `background` use
+        # case, which is what `one_shot_completion(use_case="background")` binds to a live model.
+        # The plan names this exact mechanism for fast-model passes.
+        assert resolve_use_case(judge) == "background"
