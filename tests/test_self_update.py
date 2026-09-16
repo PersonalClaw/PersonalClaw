@@ -176,6 +176,153 @@ async def test_fetch_latest_release_offline_returns_cache(monkeypatch, tmp_path)
     assert got["tag"] == "v0.1.2"  # degraded to the cached view, no raise
 
 
+# ── RUM-3: the egress kill switch + the config-driven cadence ────────────────
+#
+# `updates.check_enabled=false` is the privacy/egress opt-out README documents. The
+# proof is not "returns the cached view" (an offline run does that too, and the
+# function swallows exceptions, so a raise inside a monkeypatched HTTP layer would be
+# silently eaten) — it is that the network layer is NEVER TOUCHED. Each negative test
+# uses a RECORDING stub and asserts it was called zero times, which is immune to the
+# swallow; a matching positive control proves the switch is a GATE, not a constant.
+
+
+def _write_updates_config(home, **updates) -> None:
+    """Write a minimal config.json under `home` with an `updates` block."""
+    import json
+
+    (home / "config.json").write_text(json.dumps({"updates": updates}), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_release_kill_switch_makes_zero_calls(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    _write_updates_config(tmp_path, check_enabled=False)
+    uk.write_release_cache({"tag": "v0.1.2", "etag": 'W/"x"'})
+
+    opened: list[str] = []
+
+    class _RecordingSession:
+        def __init__(self, *a, **k):
+            opened.append("ClientSession")
+            raise OSError("network")  # also degrade, in case the guard ever regressed
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+
+    got = await uk.fetch_latest_release()
+    # The immune proof: no session was ever opened. `got == cache` alone would pass even
+    # if a call had been made and swallowed — the empty `opened` is what pins the switch.
+    assert opened == [], "fetch_latest_release opened a network session while check_enabled=false"
+    assert got == {"tag": "v0.1.2", "etag": 'W/"x"'}  # the cached view, untouched
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_release_hits_network_when_enabled(monkeypatch, tmp_path) -> None:
+    # Positive control: with the check ON, the function DOES open a session (so the test
+    # above is a gate, not a constant). We degrade to the cache to keep it hermetic.
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    _write_updates_config(tmp_path, check_enabled=True)
+    uk.write_release_cache({"tag": "v0.1.2", "etag": 'W/"x"'})
+
+    opened: list[str] = []
+
+    class _RecordingSession:
+        def __init__(self, *a, **k):
+            opened.append("ClientSession")
+            raise OSError("network")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+
+    got = await uk.fetch_latest_release()
+    assert opened == ["ClientSession"], "check_enabled=true must attempt the network"
+    assert got == {"tag": "v0.1.2", "etag": 'W/"x"'}  # degraded to cache, no raise
+
+
+class _FakeProc:
+    """A subprocess stand-in whose fetch 'fails' so `_do_update_check` returns after one call."""
+
+    returncode = 1
+
+    async def communicate(self):
+        return (b"", b"git fetch failed")
+
+
+@pytest.mark.asyncio
+async def test_do_update_check_kill_switch_runs_no_subprocess(monkeypatch, tmp_path) -> None:
+    from personalclaw.dashboard.handlers import updates as dash_updates
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    _write_updates_config(tmp_path, check_enabled=False)
+    # A VALID project dir so the kill switch — not the "no project dir" guard — is what
+    # stops the check; otherwise the assertion would pass vacuously.
+    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+    calls: list[tuple] = []
+
+    async def _rec(*a, **k):
+        calls.append(a)
+        return _FakeProc()
+
+    monkeypatch.setattr(dash_updates.asyncio, "create_subprocess_exec", _rec)
+    dash_updates._update_info["checked"] = False
+
+    await dash_updates._do_update_check()
+    assert calls == [], "_do_update_check ran a subprocess while check_enabled=false"
+
+
+@pytest.mark.asyncio
+async def test_do_update_check_runs_git_fetch_when_enabled(monkeypatch, tmp_path) -> None:
+    # Positive control: with the check ON and a valid project dir, `_do_update_check`
+    # runs `git fetch`. Pairs with the kill-switch test to make it a gate.
+    from personalclaw.dashboard.handlers import updates as dash_updates
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    _write_updates_config(tmp_path, check_enabled=True)
+    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+    calls: list[tuple] = []
+
+    async def _rec(*a, **k):
+        calls.append(a)
+        return _FakeProc()  # returncode=1 -> the check returns after this one fetch
+
+    monkeypatch.setattr(dash_updates.asyncio, "create_subprocess_exec", _rec)
+
+    await dash_updates._do_update_check()
+    assert calls, "check_enabled=true must run the git fetch subprocess"
+    assert calls[0][0] == "git" and calls[0][1] == "fetch"
+
+
+def test_scheduled_check_due_reads_interval_hours() -> None:
+    # The cadence is CONFIG-DRIVEN: the boundary moves with `check_interval_hours`, so a
+    # hard-coded 43200s / 12h constant would fail the 6h and 1h cases below.
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.dashboard.handlers.updates import _scheduled_check_due
+
+    now = 1_000_000.0
+    cfg = AppConfig()
+    cfg.updates.check_enabled = True
+
+    cfg.updates.check_interval_hours = 6
+    assert _scheduled_check_due(cfg, now - (6 * 3600 - 1), now) is False  # just under -> not due
+    assert _scheduled_check_due(cfg, now - (6 * 3600 + 1), now) is True  # just over -> due
+
+    cfg.updates.check_interval_hours = 1  # a DIFFERENT interval moves the boundary
+    assert _scheduled_check_due(cfg, now - (3600 - 1), now) is False
+    assert _scheduled_check_due(cfg, now - (3600 + 1), now) is True
+
+
+def test_scheduled_check_due_kill_switch() -> None:
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.dashboard.handlers.updates import _scheduled_check_due
+
+    now = 1_000_000.0
+    cfg = AppConfig()
+    cfg.updates.check_enabled = False
+    cfg.updates.check_interval_hours = 1
+    # Even with an eternity elapsed, a disabled check is never due.
+    assert _scheduled_check_due(cfg, 0.0, now) is False
+
+
 # ── The privacy-claim call site: auto_update gates the APPLY, not the CHECK ───
 #
 # `docs/architecture/network-egress-hosts.txt` says api.github.com is the product's one
@@ -231,14 +378,17 @@ async def _drive_check_for_updates(monkeypatch, *, auto_update: bool):
 
 @pytest.mark.asyncio
 async def test_auto_update_gates_the_apply_not_the_check(monkeypatch) -> None:
-    # auto_update OFF still contacts api.github.com: the check precedes the config read,
-    # so there is no configuration that suppresses the request. This is the fact the
-    # egress census states; if it ever stops being true, fix the census in the same change.
+    # auto_update ONLY gates the APPLY: with it OFF the boot-path check still runs and the
+    # apply is what is suppressed. The check has its OWN, orthogonal kill switch —
+    # updates.check_enabled — proven by test_do_update_check_kill_switch_runs_no_subprocess
+    # and test_fetch_latest_release_kill_switch_makes_zero_calls; here the check is stubbed,
+    # so its internal config read does not appear in `order`. This test isolates the
+    # auto_update -> apply gate only.
     order, applied = await _drive_check_for_updates(monkeypatch, auto_update=False)
     assert order == ["check", "config"], (
-        "the update check must run BEFORE auto_update is consulted — got "
-        f"{order}. If the check is now gated, `docs/architecture/network-egress-hosts.txt` "
-        "no longer describes api.github.com correctly."
+        "the boot-path update check must run BEFORE auto_update is consulted — got "
+        f"{order}. auto_update decides only whether the apply follows, never whether the "
+        "check happens (the check's own switch is updates.check_enabled)."
     )
     assert applied == []  # ...and the apply is what auto_update=False actually suppressed
 

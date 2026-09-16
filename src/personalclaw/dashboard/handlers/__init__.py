@@ -381,7 +381,6 @@ from personalclaw.dashboard.handlers.terminal import (  # noqa: E402, F401
 
 # ── Updates & Logs (handlers/updates.py) ──
 from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
-    _UPDATE_CHECK_INTERVAL,
     _do_update_check,
     _log_ring,
     _QueueLogHandler,

@@ -91,15 +91,18 @@ def _safe_surfaces_flag() -> bool:
 async def api_status(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     uptime = time.time() - state.start_time
+    # Background auto-recheck on the CONFIG-DRIVEN cadence (updates.check_interval_hours),
+    # skipped entirely when the egress kill switch (updates.check_enabled=false) is set.
+    from personalclaw.config.loader import AppConfig
     from personalclaw.dashboard.handlers import (
-        _UPDATE_CHECK_INTERVAL,
         _do_update_check,
         _update_info,
     )
     from personalclaw.dashboard.handlers import updates as _updates_mod
 
-    # Auto-recheck every 12h in background
-    if time.time() - _updates_mod._last_update_check > _UPDATE_CHECK_INTERVAL:
+    if _updates_mod._scheduled_check_due(
+        AppConfig.load(), _updates_mod._last_update_check, time.time()
+    ):
         asyncio.create_task(_do_update_check())
 
     data = state.status_snapshot(update_available=bool(_update_info.get("available")))

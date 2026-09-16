@@ -39,13 +39,25 @@ logger = logging.getLogger(__name__)
 
 # Cached update check result
 _update_info: dict[str, object] = {"available": False, "changes": "", "checked": False}
-_UPDATE_CHECK_INTERVAL = 43200  # 12 hours
 _last_update_check: float = 0.0
 
 
 def get_update_info() -> dict[str, object]:
     """Return a copy of the cached update-check state."""
     return dict(_update_info)
+
+
+def _scheduled_check_due(cfg: AppConfig, last_check: float, now: float) -> bool:
+    """Whether a background release check is due under the configured cadence.
+
+    The cadence is CONFIG-DRIVEN — there is no hard-coded interval literal (RUM-3).
+    Returns ``False`` when the check is disabled (``updates.check_enabled=false``,
+    the egress kill switch); otherwise ``True`` once ``updates.check_interval_hours``
+    have elapsed since ``last_check``.
+    """
+    if not cfg.updates.check_enabled:
+        return False
+    return now - last_check > cfg.updates.check_interval_hours * 3600
 
 
 async def api_update_check(request: web.Request) -> web.Response:
@@ -99,6 +111,14 @@ def _redact_log_text(text: str) -> str:
 async def _do_update_check() -> None:
     """Run git fetch and compare HEAD with remote."""
     global _last_update_check
+
+    # Egress kill switch (RUM-3): with updates.check_enabled=false the updater
+    # makes ZERO outbound calls — no git fetch, no release probe. Read config
+    # FIRST, before any subprocess/network work, so a valid project dir cannot
+    # let the check slip through.
+    if not AppConfig.load().updates.check_enabled:
+        logger.debug("update check disabled (updates.check_enabled=false)")
+        return
 
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
     if not proj:

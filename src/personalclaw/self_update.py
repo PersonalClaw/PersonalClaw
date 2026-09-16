@@ -207,10 +207,22 @@ async def fetch_latest_release() -> dict[str, object]:
     returns the cached view unchanged; a 200 refreshes and re-caches. The
     returned dict has ``{tag, name, body, etag, checked_at}`` (empty ``tag`` when
     nothing has ever been fetched and we're offline).
+
+    Honors the egress kill switch (RUM-3): when ``updates.check_enabled`` is
+    false the updater makes ZERO outbound calls, so this returns the last cached
+    view (or ``{}``) WITHOUT opening a network session — the same offline-tolerant
+    answer, reached before any HTTP. ``api.github.com`` is the product's one
+    unprompted destination; this is the switch that silences it.
     """
-    import aiohttp
+    from personalclaw.config.loader import AppConfig
 
     cache = read_release_cache()
+    if not AppConfig.load().updates.check_enabled:
+        logger.debug("update check disabled (updates.check_enabled=false); using cache")
+        return cache
+
+    import aiohttp
+
     etag = str(cache.get("etag") or "")
     headers = {
         "Accept": "application/vnd.github+json",
