@@ -137,16 +137,25 @@ def detect_install_kind() -> InstallKind:
     return "pip"
 
 
-def container_instructions() -> list[str]:
+_COMPOSE_CMD = "docker compose -f deploy/compose/compose.yaml"
+
+
+def container_instructions(image_tag: str = "") -> list[str]:
     """The two commands that update a container install, in order.
 
-    Pure and network-free so the CLI's container branch needs neither a release
-    probe nor a source tree to print an honest answer.
+    Pure and network-free. When *image_tag* is given (the channel/pin-resolved tag,
+    RUM-7) each command carries an inline ``PERSONALCLAW_IMAGE_TAG=<tag>`` assignment
+    so the pull AND the recreate both target that exact tag. The compose file selects
+    the image via ``ghcr.io/…:${PERSONALCLAW_IMAGE_TAG:-latest}``
+    (``deploy/compose/compose.yaml``), and the two commands run as INDEPENDENT
+    processes — setting the variable on only one would let the other fall back to
+    ``latest`` — so the prefix is repeated on both. An empty tag emits the bare
+    commands (compose's own ``latest`` default), which is the pre-RUM-7 answer a
+    caller that resolved nothing still gets.
     """
-    return [
-        "docker compose -f deploy/compose/compose.yaml pull",
-        "docker compose -f deploy/compose/compose.yaml up -d",
-    ]
+    tag = (image_tag or "").strip()
+    prefix = f"PERSONALCLAW_IMAGE_TAG={tag} " if tag else ""
+    return [f"{prefix}{_COMPOSE_CMD} pull", f"{prefix}{_COMPOSE_CMD} up -d"]
 
 
 def package_root(proj: str) -> str:
@@ -289,7 +298,18 @@ async def build_update_status(current: str) -> dict[str, object]:
             except Exception:
                 commits_behind = None
 
-    instructions: list[str] = container_instructions() if kind == "container" else []
+    # The container kind rides the `updates` channel/pin (RUM-7): the pull+recreate
+    # commands carry the resolved image tag, not a bare `latest`. A pin naming no
+    # release resolves to "" — emit NO commands (the panel/CLI say why) rather than
+    # silently offering `latest`, mirroring the pip pin-miss refusal (RUM-6).
+    image_tag = ""
+    instructions: list[str] = []
+    if kind == "container":
+        from personalclaw.config.loader import AppConfig
+
+        cfg = AppConfig.load()
+        image_tag = await resolve_image_tag(cfg.updates.channel, cfg.updates.pin)
+        instructions = container_instructions(image_tag) if image_tag else []
 
     return {
         "kind": kind,
@@ -299,6 +319,7 @@ async def build_update_status(current: str) -> dict[str, object]:
         "commits_behind": commits_behind,
         "apply_method": _APPLY_METHOD.get(kind, "instructions"),
         "instructions": instructions,
+        "image_tag": image_tag,
         "release_name": str(release.get("name") or ""),
         "release_notes": str(release.get("body") or ""),
     }
@@ -493,6 +514,61 @@ async def resolve_wheel_target(channel: str, pin: str = "") -> str:
     if channel == "nightly" and not (pin or "").strip():
         channel = "stable"
     return await resolve_target(channel, pin)
+
+
+# ── Container image tag resolver (RUM-7) ────────────────────────────────────
+#
+# A container install advances by pulling a new image and recreating; the compose
+# file picks the image tag from ``${PERSONALCLAW_IMAGE_TAG:-latest}``. So the
+# container analogue of :func:`resolve_wheel_target` maps the ``updates``
+# channel/pin onto that IMAGE tag rather than a release tag. The tag scheme is
+# §3.6's: ``:X.Y.Z`` (immutable, for a pin), ``:X.Y`` (moving minor, for stable),
+# ``:beta`` (moving prerelease line), ``:latest`` (stable fallback). RUM-8 publishes
+# the moving ``:X.Y`` / ``:beta`` tags in the release pipeline; RUM-7 emits them.
+
+
+def _moving_minor(tag: str) -> str:
+    """The ``X.Y`` moving-minor image tag for a release *tag*, or "" if unparseable."""
+    vt = version_tuple(tag)
+    return f"{vt[0]}.{vt[1]}" if tag and len(vt) >= 2 else ""
+
+
+def select_image_tag(releases: list[dict[str, object]], channel: str, pin: str = "") -> str:
+    """The container IMAGE tag a *channel*/*pin* selects from *releases* (pure, no I/O).
+
+    Maps RUM-2's release selection onto the container tag scheme §3.6:
+
+    * a non-empty ``pin`` -> the exact ``X.Y.Z`` of the pinned release, or ``""``
+      when no release matches it — a pin-miss must REFUSE, never ride ``latest``
+      (mirrors the pip/wheel pin-miss refusal, RUM-6);
+    * ``beta`` -> the moving ``beta`` tag (newest prerelease line);
+    * ``stable`` — and ``nightly``/unknown, which have no container image of their
+      own — the moving minor ``X.Y`` of the newest stable release, or ``latest``
+      when none resolves (offline / no cache).
+
+    ``""`` is returned ONLY for a pin-miss: every channel path yields a tag, so a
+    caller reads ``""`` as "refuse", never as "offline". Never raises — a malformed
+    cache degrades through :func:`select_target`'s defensive field access.
+    """
+    pin = (pin or "").strip()
+    if pin:
+        tag = select_target(releases, "stable", pin)  # a pin overrides the channel (RUM-2)
+        return normalize_version(tag) if tag else ""
+    if channel == "beta":
+        return "beta"
+    return _moving_minor(select_target(releases, "stable", "")) or "latest"
+
+
+async def resolve_image_tag(channel: str, pin: str = "") -> str:
+    """The container image tag for *channel*/*pin*, from the ETag-cached list.
+
+    The container analogue of :func:`resolve_wheel_target`: fetches the releases
+    list (offline-tolerant) and applies :func:`select_image_tag`. Never raises;
+    returns ``""`` only on a pin-miss (a pinned version naming no release must not
+    silently pull ``latest``).
+    """
+    releases = await fetch_releases()
+    return select_image_tag(releases, channel, pin)
 
 
 # ── Installer diagnostics ───────────────────────────────────────────────────
