@@ -13,7 +13,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 // The half worth testing, as with the other three pointers, is that the handover is the
 // REAL mechanism and not a lookalike:
 //
-//  • the switch must reflect the CONFIG's auto_update value, not a hardcoded default;
+//  • the switch must reflect the CONFIG's `updates.auto` mode (staged ⇒ on), not a hardcoded default;
 //  • flipping it must reach the same write Settings → Updates performs (`setAutoUpdate`);
 //  • a refused write must TELL (the app toast) and not silently fight the control —
 //    UpdatesPanel's documented remedy for this exact switch;
@@ -80,7 +80,7 @@ beforeEach(() => {
   clearOnboardingExit()
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
-  personalclawConfig.mockResolvedValue({ auto_update: true, apps: { registry_source_enabled: true } })
+  personalclawConfig.mockResolvedValue({ updates: { auto: 'staged' }, apps: { registry_source_enabled: true } })
   setAutoUpdate.mockResolvedValue({ ok: true })
 })
 
@@ -136,7 +136,7 @@ describe('the done screen tells what the product does on its own', () => {
   })
 
   it('stays quiet about a source a pre-provisioned opt-out never got', async () => {
-    personalclawConfig.mockResolvedValue({ auto_update: true, apps: { registry_source_enabled: false } })
+    personalclawConfig.mockResolvedValue({ updates: { auto: 'staged' }, apps: { registry_source_enabled: false } })
     await reachDoneScreen()
     await screen.findByRole('switch', { name: 'Update automatically' })
     expect(screen.queryByText(/one community source/)).toBeNull()

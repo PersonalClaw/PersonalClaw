@@ -392,7 +392,6 @@ from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
     api_logs,
     api_restart,
     api_update_apply,
-    api_update_auto,
     api_update_cancel,
     api_update_check,
     api_update_simulate,

@@ -12,12 +12,14 @@ without importing an HTTP handler.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 
 import aiohttp
 import pytest
 
 from personalclaw import self_update as uk
+from personalclaw.dashboard.state import DashboardState
 from personalclaw.self_update import detect_install_kind
 
 
@@ -325,30 +327,82 @@ def test_scheduled_check_due_kill_switch() -> None:
     assert _scheduled_check_due(cfg, 0.0, now) is False
 
 
-# ── The privacy-claim call site: auto_update gates the APPLY, not the CHECK ───
+# ── The opt-in staged auto-update gate: updates.auto decides the APPLY, not the CHECK ──
 #
-# `docs/architecture/network-egress-hosts.txt` says api.github.com is the product's one
-# unprompted destination and that nothing turns the check off. That sentence used to cite a
-# config field `updates.check_enabled` which does not exist anywhere in src/ — a doc claim
-# with no code behind it, and the sort of claim a public comparison/privacy page would copy
-# verbatim (DISCOVERABILITY-LAUNCH `DL-7`). These two tests pin the real behaviour at the
-# call site so the doc cannot drift back: the check runs first and unconditionally, and
-# `auto_update` decides only whether the apply follows.
+# The boot-path check runs first and UNCONDITIONALLY — its own egress kill switch is
+# `updates.check_enabled` (RUM-3), proven by test_do_update_check_kill_switch_runs_no_subprocess
+# / test_fetch_latest_release_kill_switch_makes_zero_calls. `updates.auto` (RUM-5, which RETIRED
+# the legacy `auto_update` bool) then decides what happens to an AVAILABLE update:
+#   • "off" (the default) — NOTIFY ONLY: raise the `update_available` refresh, never apply.
+#   • "staged" — apply at the next safe point: HOLD while a session/subagent is in flight
+#     (`DashboardState.active_work_snapshot`) and fire only once idle, on the resolved tag.
+# These tests pin that gate at the boot-path call site so a doc/behaviour drift reddens here.
 
 
-def _orchestrator_stub(applied: list[str]):
-    """A bare stand-in for the boot-path caller — `_check_for_updates` touches only these."""
+class _FakeAgent:
+    def __init__(self, done: bool) -> None:
+        self.done = done
+
+
+class _StubSubagents:
+    def __init__(self, agents: "list[_FakeAgent]") -> None:
+        self.all_agents = agents
+
+
+class _StubSessions:
+    def __init__(self, n: int) -> None:
+        self._sessions = {f"s{i}": object() for i in range(n)}
+
+
+class _StubDashboardState:
+    """The surfaces `active_work_snapshot` + `_check_for_updates` + `_auto_apply_update`
+    touch, made controllable: a mutable running-agent / session count, a `push_refresh`
+    recorder, and no-op progress hooks. `active_work_snapshot` is the REAL
+    `DashboardState` method bound onto the stub, so the gate runs the production logic."""
+
+    def __init__(self, *, running_agents: int = 0, sessions: int = 0) -> None:
+        self.subagents = _StubSubagents([_FakeAgent(False) for _ in range(running_agents)])
+        self.sessions = _StubSessions(sessions)
+        self.refreshes: list[str] = []
+
+    def drain(self) -> None:
+        self.subagents.all_agents = []
+        self.sessions._sessions = {}
+
+    def push_refresh(self, kind: str) -> None:
+        self.refreshes.append(kind)
+
+    def push_update_progress(self, *_a, **_k) -> None:
+        pass
+
+    def clear_update_progress(self, *_a, **_k) -> None:
+        pass
+
+    active_work_snapshot = DashboardState.active_work_snapshot
+
+
+def _orchestrator_stub(applied: list[str], *, dashboard_state=None):
+    """A stand-in for the boot-path caller carrying the REAL staged-apply methods so the gate
+    under test runs unmodified; only `_auto_apply_update` is a recorder."""
+    from personalclaw.gateway import GatewayOrchestrator
 
     class _Stub:
-        dashboard_state = None
+        _staged_apply_task = None
+
+        def __init__(self) -> None:
+            self.dashboard_state = dashboard_state
 
         async def _auto_apply_update(self) -> None:
             applied.append("apply")
 
+        _work_in_flight = GatewayOrchestrator._work_in_flight
+        _staged_auto_apply = GatewayOrchestrator._staged_auto_apply
+        _await_idle_then_apply = GatewayOrchestrator._await_idle_then_apply
+
     return _Stub()
 
 
-async def _drive_check_for_updates(monkeypatch, *, auto_update: bool):
+async def _drive_check_for_updates(monkeypatch, *, auto: str, dashboard_state=None):
     """Run `GatewayOrchestrator._check_for_updates` against stubs, recording call order."""
     from personalclaw.dashboard import handlers as dash_handlers
     from personalclaw.gateway import GatewayOrchestrator
@@ -359,49 +413,172 @@ async def _drive_check_for_updates(monkeypatch, *, auto_update: bool):
     async def _fake_check() -> None:
         order.append("check")
 
-    class _Cfg:
+    class _Updates:
         pass
 
-    _Cfg.auto_update = auto_update
+    _Updates.auto = auto
+
+    class _Cfg:
+        updates = _Updates()
 
     def _load(*_a, **_k):
         order.append("config")
         return _Cfg()
 
     monkeypatch.setattr(dash_handlers, "_do_update_check", _fake_check)
-    # `available` truthy so the auto_update branch is actually reached; a falsy value would
+    # `available` truthy so the updates.auto branch is actually reached; a falsy value would
     # short-circuit before the config read and make the ordering assertion vacuous.
     monkeypatch.setattr(dash_handlers, "_update_info", {"available": True})
     monkeypatch.setattr("personalclaw.config.AppConfig.load", _load)
 
-    await GatewayOrchestrator._check_for_updates(_orchestrator_stub(applied))
-    return order, applied
+    stub = _orchestrator_stub(applied, dashboard_state=dashboard_state)
+    await GatewayOrchestrator._check_for_updates(stub)
+    return order, applied, stub
 
 
 @pytest.mark.asyncio
-async def test_auto_update_gates_the_apply_not_the_check(monkeypatch) -> None:
-    # auto_update ONLY gates the APPLY: with it OFF the boot-path check still runs and the
-    # apply is what is suppressed. The check has its OWN, orthogonal kill switch —
-    # updates.check_enabled — proven by test_do_update_check_kill_switch_runs_no_subprocess
-    # and test_fetch_latest_release_kill_switch_makes_zero_calls; here the check is stubbed,
-    # so its internal config read does not appear in `order`. This test isolates the
-    # auto_update -> apply gate only.
-    order, applied = await _drive_check_for_updates(monkeypatch, auto_update=False)
+async def test_off_is_notify_only_and_never_applies(monkeypatch) -> None:
+    # RUM-5 done_when: with updates.auto="off" (the default) the boot-path check still runs,
+    # then the available update is NOTIFIED and NEVER applied. The check's own switch is
+    # updates.check_enabled; here the check is stubbed so its config read is absent from
+    # `order`. This isolates the apply gate.
+    state = _StubDashboardState()
+    order, applied, _stub = await _drive_check_for_updates(
+        monkeypatch, auto="off", dashboard_state=state
+    )
     assert order == ["check", "config"], (
-        "the boot-path update check must run BEFORE auto_update is consulted — got "
-        f"{order}. auto_update decides only whether the apply follows, never whether the "
+        "the boot-path update check must run BEFORE updates.auto is consulted — got "
+        f"{order}. updates.auto decides only whether the apply follows, never whether the "
         "check happens (the check's own switch is updates.check_enabled)."
     )
-    assert applied == []  # ...and the apply is what auto_update=False actually suppressed
+    assert applied == []  # "off" NEVER applies
+    assert state.refreshes == ["update_available"]  # ...it ONLY notifies
 
 
 @pytest.mark.asyncio
-async def test_auto_update_on_reaches_the_apply(monkeypatch) -> None:
-    # The other branch, so the test above is a gate and not a constant: the only thing that
-    # changed is `auto_update`, and only the apply moved.
-    order, applied = await _drive_check_for_updates(monkeypatch, auto_update=True)
+async def test_staged_when_idle_reaches_the_apply(monkeypatch) -> None:
+    # The other branch, so the test above is a gate not a constant: with an IDLE tree
+    # (no agents/sessions) "staged" applies inline and does NOT fall back to notify-and-stop.
+    state = _StubDashboardState()  # zero agents, zero sessions => idle
+    order, applied, stub = await _drive_check_for_updates(
+        monkeypatch, auto="staged", dashboard_state=state
+    )
     assert order == ["check", "config"]
-    assert applied == ["apply"]
+    assert applied == ["apply"]  # staged + idle => applied
+    assert state.refreshes == []  # staged applies; it does not notify-and-stop
+    assert stub._staged_apply_task is None  # idle => applied inline, no background hold
+
+
+class _Ret:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+
+class _FakeOkProc:
+    returncode = 0
+
+    async def communicate(self):
+        return (b"", b"")
+
+
+@pytest.mark.asyncio
+async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_tag(
+    monkeypatch, tmp_path
+) -> None:
+    """RUM-5 done_when centerpiece — with a session ACTIVE the staged apply HOLDS (nothing
+    applied, a background waiter parks); once the work DRAINS it fires EXACTLY once, and the
+    apply it runs lands on the RESOLVED release tag (git checkout <tag>), never main / a branch
+    / a reset."""
+    from personalclaw import gateway as gw
+    from personalclaw.gateway import GatewayOrchestrator
+
+    monkeypatch.setattr(gw, "_STAGED_APPLY_POLL_SECS", 0.001)
+
+    # A stable-channel config drives the release-tag path (not nightly branch-tracking).
+    class _Updates:
+        channel = "stable"
+        pin = ""
+
+    class _Cfg:
+        updates = _Updates()
+
+    monkeypatch.setattr("personalclaw.config.AppConfig.load", lambda *_a, **_k: _Cfg())
+
+    # Record the real apply's release-path seams instead of touching git / pip / the process.
+    calls: list[tuple] = []
+
+    async def _resolve(channel, pin=""):
+        calls.append(("resolve", channel, pin))
+        return "v9.9.9"
+
+    def _fetch_tags(_proj):
+        calls.append(("fetch_tags",))
+        return _Ret(0)
+
+    def _checkout(_proj, tag):
+        calls.append(("checkout", tag))
+        return _Ret(0)
+
+    def _reset_or_branch_boom(*_a, **_k):  # the retired branch/reset paths must NEVER run
+        raise AssertionError("staged release apply reached a branch / fast-forward / reset path")
+
+    monkeypatch.setattr(uk, "resolve_target", _resolve)
+    monkeypatch.setattr(uk, "git_tracked_changes", lambda _p: [])  # clean tree => proceeds
+    monkeypatch.setattr(uk, "git_fetch_tags", _fetch_tags)
+    monkeypatch.setattr(uk, "git_checkout", _checkout)
+    monkeypatch.setattr(uk, "git_fast_forward", _reset_or_branch_boom, raising=False)
+    monkeypatch.setattr(uk, "resolve_default_branch", _reset_or_branch_boom, raising=False)
+    monkeypatch.setattr(uk, "package_root", lambda _p: str(tmp_path))
+    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+
+    async def _fake_pip(*_a, **_k):
+        return _FakeOkProc()
+
+    monkeypatch.setattr(gw.asyncio, "create_subprocess_exec", _fake_pip)
+
+    async def _fake_build(*_a, **_k):
+        calls.append(("build",))
+
+    monkeypatch.setattr(gw, "build_frontend_async", _fake_build)
+
+    async def _fake_reexec(_state):
+        calls.append(("reexec",))
+
+    monkeypatch.setattr("personalclaw.dashboard.handlers.updates._graceful_reexec", _fake_reexec)
+
+    # A stub carrying the REAL staged + apply methods, with ONE session live.
+    state = _StubDashboardState(sessions=1)
+
+    class _Stub:
+        _staged_apply_task = None
+
+        def __init__(self) -> None:
+            self.dashboard_state = state
+
+        _work_in_flight = GatewayOrchestrator._work_in_flight
+        _staged_auto_apply = GatewayOrchestrator._staged_auto_apply
+        _await_idle_then_apply = GatewayOrchestrator._await_idle_then_apply
+        _auto_apply_update = GatewayOrchestrator._auto_apply_update
+
+    stub = _Stub()
+
+    # Work is in flight: the staged entry must HOLD — no apply, a waiter parked.
+    await stub._staged_auto_apply()
+    assert stub._staged_apply_task is not None
+    await asyncio.sleep(0.02)  # give the waiter several poll cycles while still busy
+    assert calls == [], f"staged apply fired while work was in flight: {calls}"
+    assert not stub._staged_apply_task.done()
+
+    # Release the work — the waiter must now fire the apply, exactly once, on the tag.
+    state.drain()
+    await asyncio.wait_for(stub._staged_apply_task, timeout=2.0)
+
+    assert ("resolve", "stable", "") in calls  # resolved the channel/pin target
+    assert ("checkout", "v9.9.9") in calls  # ...and checked out THAT tag
+    assert ("build",) in calls and ("reexec",) in calls  # ran the apply tail to completion
+    # Exactly one checkout (fired once, not per poll), and it followed the resolve.
+    assert [c for c in calls if c[0] == "checkout"] == [("checkout", "v9.9.9")]
+    assert calls.index(("resolve", "stable", "")) < calls.index(("checkout", "v9.9.9"))
 
 
 # ── C2 wire-shape conformance (Tier-S once clients read it) ──────────────────

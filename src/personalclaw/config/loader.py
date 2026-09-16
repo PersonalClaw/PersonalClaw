@@ -3126,15 +3126,6 @@ class AppConfig:
         default_factory=dict,
         metadata=_meta("Memory Stores", "Named memory store definitions."),
     )
-    auto_update: bool = field(
-        default=True,
-        metadata=_meta(
-            "Auto Update",
-            "Automatically apply updates when a new version is found "
-            "(update checks always run; this gates the unattended "
-            "pull + rebuild + restart).",
-        ),
-    )
     updates: "UpdatesConfig" = field(
         default_factory=lambda: UpdatesConfig(),
         metadata=_meta(
@@ -3316,6 +3307,9 @@ class AppConfig:
         elif "auto_update" in data and data.get("auto_update"):
             # A legacy unattended-update user (`auto_update=true`) stops riding raw main
             # and rides the resolved stable release tag — hence "staged", channel "stable".
+            # The top-level `auto_update` dataclass field is RETIRED (RUM-5) — this reads the
+            # raw JSON key an old home still carries, so the backfill keeps migrating it even
+            # though nothing writes it any more.
             updates_auto = "staged"
         else:
             updates_auto = "off"
@@ -3738,7 +3732,6 @@ class AppConfig:
             agents=agents,
             default_agent=default_agent_val,
             memory_stores=memory_stores,
-            auto_update=data.get("auto_update", True),
             updates=UpdatesConfig(
                 channel=updates_channel,
                 pin=str(updates_data.get("pin", "") or ""),
@@ -4316,7 +4309,6 @@ class AppConfig:
             "resilience": asdict(self.resilience),
             "voice": asdict(self.voice),
             "timezone": self.timezone,
-            "auto_update": self.auto_update,
             "updates": asdict(self.updates),
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),

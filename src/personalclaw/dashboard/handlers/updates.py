@@ -16,7 +16,6 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
 from personalclaw import self_update, shutdown_event
-from personalclaw.atomic_write import atomic_write
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
@@ -94,7 +93,9 @@ async def api_update_check(request: web.Request) -> web.Response:
         _behind = status.get("commits_behind")
         if isinstance(_behind, int) and _behind > 0:
             merged["available"] = True
-    merged["auto_update"] = cfg.auto_update
+    # `updates.auto` (off | staged) is the opt-in unattended-apply mode that RETIRED the
+    # legacy `auto_update` bool (RUM-5). The panel renders it as the Auto-update control.
+    merged["auto"] = cfg.updates.auto
     merged["channel"] = cfg.updates.channel
     merged["version"] = _local_version
     return web.json_response(merged)
@@ -270,31 +271,6 @@ async def _do_update_check() -> None:
         _last_update_check = time.time()
     except Exception:
         logger.debug("Update check failed", exc_info=True)
-
-
-async def api_update_auto(request: web.Request) -> web.Response:
-    """POST /api/update/auto — toggle auto-update on/off."""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
-    enabled = body.get("enabled", True)
-    if not isinstance(enabled, bool):
-        # Config's `auto_update` gates an unattended git-reset + rebuild + restart
-        # (gateway._check_for_updates); a truthy junk value ("banana") persisted
-        # here would silently ENABLE that. Booleans only.
-        return web.json_response({"error": "enabled must be a boolean"}, status=400)
-    # Read, modify, write config
-    path = config_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except Exception:
-        data = {}
-    data["auto_update"] = enabled
-    atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
-    return web.json_response({"ok": True, "auto_update": enabled})
 
 
 async def api_changelog(request: web.Request) -> web.Response:
@@ -710,23 +686,6 @@ async def _graceful_reexec(state: DashboardState, *, auth_mode: str = "") -> Non
     os.execve(exe, [exe, "-m", "personalclaw"] + sys.argv[1:], child_env)
 
 
-def _active_work_snapshot(state: DashboardState) -> dict[str, int]:
-    """Count in-flight work a restart would interrupt, for the confirm gate:
-    running (not-done) background subagents + live chat sessions."""
-    running_agents = 0
-    subs = getattr(state, "subagents", None)
-    if subs is not None:
-        try:
-            running_agents = sum(1 for a in subs.all_agents if not a.done)
-        except Exception:
-            running_agents = 0
-    try:
-        sessions = len(state.sessions._sessions)
-    except Exception:
-        sessions = 0
-    return {"running_agents": running_agents, "sessions": sessions}
-
-
 async def api_restart(request: web.Request) -> web.Response:
     """POST /api/system/restart — bounce the gateway to apply committed backend
     changes WITHOUT advancing the checkout (the update-free counterpart of
@@ -739,7 +698,7 @@ async def api_restart(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
 
     if request.query.get("probe"):
-        return web.json_response({"ok": True, **_active_work_snapshot(state)})
+        return web.json_response({"ok": True, **state.active_work_snapshot()})
 
     logger.info("Manual gateway restart requested via /api/system/restart")
     state.push_update_progress("restarting", "Restarting gateway…")

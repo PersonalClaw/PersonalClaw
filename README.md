@@ -219,8 +219,10 @@ no usage data, but it is a network request, so GitHub sees your IP, as it would 
 **You can turn that check off.** Set `updates.check_enabled` to `false` in your config and
 PersonalClaw makes **zero** outbound calls to GitHub: no scheduled release check and no egress
 from the updater at all. While the check is on, `updates.check_interval_hours` (1–168) tunes how
-often it runs. `auto_update` is a separate, orthogonal control — it gates whether an available
-update is *applied*, not whether the check happens.
+often it runs. `updates.auto` is a separate, orthogonal control — it gates whether an available
+update is *applied*, not whether the check happens: `off` (the default) only notifies, while
+`staged` applies at the next safe point (held while a session or subagent is running, and only
+ever the resolved release tag, never raw `main`).
 
 ## Supply chain
 

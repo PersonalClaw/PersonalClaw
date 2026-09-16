@@ -1132,6 +1132,30 @@ class DashboardState:
             "no_crons": self.no_crons,
         }
 
+    def active_work_snapshot(self) -> dict[str, int]:
+        """Count in-flight work a restart/apply would interrupt: running (not-done)
+        background subagents + live chat sessions.
+
+        The ONE place "is it safe to restart/apply now?" is answered — reused by the
+        manual-restart confirm gate (``/api/system/restart?probe=1``) and the staged
+        auto-update gate (``gateway._work_in_flight``, RUM-5) so the two never diverge.
+        Lives on ``DashboardState`` (not the HTTP handler) because it reads only this
+        object's own ``subagents``/``sessions``, and the gateway must consult it without
+        importing the dashboard's HTTP surface.
+        """
+        running_agents = 0
+        subs = getattr(self, "subagents", None)
+        if subs is not None:
+            try:
+                running_agents = sum(1 for a in subs.all_agents if not a.done)
+            except Exception:
+                running_agents = 0
+        try:
+            sessions = len(self.sessions._sessions)
+        except Exception:
+            sessions = 0
+        return {"running_agents": running_agents, "sessions": sessions}
+
     _APPROVAL_TIMEOUT = 7200  # 2 hours — interactive default (a human is present)
     # Unattended origins (cron / loop / heartbeat / scheduled) have no human to
     # answer a prompt, so a long wait just hangs the run. They fail CLOSED to

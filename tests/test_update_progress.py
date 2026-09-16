@@ -820,8 +820,7 @@ class TestCheckAgreesWithApplyUnderNightly:
         from personalclaw.dashboard.handlers import updates as U
 
         cfg = types.SimpleNamespace(
-            auto_update=True,
-            updates=types.SimpleNamespace(channel=channel, pin=""),
+            updates=types.SimpleNamespace(channel=channel, pin="", auto="off"),
         )
         monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
         monkeypatch.setattr(U, "_do_update_check", AsyncMock())

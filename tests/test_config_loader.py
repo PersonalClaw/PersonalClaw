@@ -261,7 +261,6 @@ _personalclaw_config_st = st.builds(
         min_size=0,
         max_size=3,
     ),
-    auto_update=st.booleans(),
 )
 
 
@@ -315,7 +314,6 @@ class TestConfigLoaderProperties:
 
         # Compare top-level fields
         assert loaded.hooks == config.hooks
-        assert loaded.auto_update == config.auto_update
 
     # Feature: config-schema, Property 9: Type mismatch falls back to default
     @given(
@@ -491,7 +489,6 @@ class TestConfigLoaderProperties:
         assert isinstance(result.memory, MemoryConfig)
         assert isinstance(result.dashboard, DashboardConfig)
         assert isinstance(result.hooks, dict)
-        assert isinstance(result.auto_update, bool)
 
     # Feature: config-schema, Property 14: Deprecated fields are accepted during loading
     @given(
@@ -632,7 +629,6 @@ class TestAgentBindingsProperties:
         assert loaded.agent.approval_mode == config.agent.approval_mode
         assert loaded.agent.provider == config.agent.provider
         assert loaded.session.timeout_secs == config.session.timeout_secs
-        assert loaded.auto_update == config.auto_update
 
     # Property: Serialization format correctness
     @given(config=_personalclaw_config_st)
