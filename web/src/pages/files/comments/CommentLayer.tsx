@@ -141,6 +141,12 @@ function DeckPortal({ scrollRef, children }: { scrollRef: React.RefObject<HTMLEl
   return createPortal(children, host)
 }
 
+// Shared by the collapsed header's two mutually-exclusive spans (issue 632) so the
+// arbitrary-size literal appears once in source, not twice — the type-role ratchet
+// (`design/typeRoleAdoption.test.ts`) counts source text, and a rendered-once,
+// written-twice string still reads as a new one.
+const META_CLS = 'min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]'
+
 /** Bottom-pinned deck of full-width comment cards stuck to the bottom edge.
  *  Collapsed = the cards stacked on top of each other (the front one fully
  *  shown, the rest peeking just a few px below it). Click → fan out into a
@@ -156,6 +162,17 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
   const ordered = [...comments].reverse()
   const PEEK = 7   // px of each underlying card that pokes out ABOVE the front
   const peekCount = Math.min(ordered.length - 1, 3)
+  // One document count, shared by both branches — issue 632's collapsed deck used
+  // to compute nothing here and just showed the globally-newest comment's own
+  // label, so a comment on an unrelated document sat unmarked atop whatever you
+  // were looking at. Prefer THIS document's own newest comment as the collapsed
+  // front card (a deck pinned to a document should read as belonging to it);
+  // fall back to the newest comment overall — still cross-document, Submit to AI
+  // stays whole-deck — only when this document has none yet.
+  const docCount = new Set(comments.map((c) => c.docId)).size
+  const front = ordered.find((c) => c.docId === activeDocId) ?? ordered[0]
+  const isForeign = front.docId !== activeDocId
+  const rest = ordered.filter((c) => c.id !== front.id)
 
   // The deck spans the whole preview viewport (inset-0) but lays its content out
   // bottom-aligned, so the collapsed stack / expanded panel sit at the bottom
@@ -173,7 +190,7 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
               <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>
                 {comments.length} comment{comments.length === 1 ? '' : 's'}
               </span>
-              <span className="text-on-surface-low text-[0.75rem]">across {new Set(comments.map((c) => c.docId)).size} document{new Set(comments.map((c) => c.docId)).size === 1 ? '' : 's'}</span>
+              <span className="text-on-surface-low text-[0.75rem]">across {docCount} document{docCount === 1 ? '' : 's'}</span>
               <div className="ml-auto flex items-center gap-s">
                 <Button size="sm" onClick={() => setSubmitting(true)}><Send size={14} /> Submit to AI</Button>
                 <IconButton icon={ChevronDown} label="Collapse" size={32} onClick={() => setExpanded(false)} />
@@ -194,17 +211,27 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
             className="pointer-events-auto relative mx-auto block w-full max-w-[var(--content-width)] text-left"
             style={{ paddingTop: peekCount * PEEK }}>
             {/* peeking edges of the underlying cards (up to 3), rising above the front */}
-            {ordered.slice(1, 4).map((c, i) => (
+            {rest.slice(0, 3).map((c, i) => (
               <span key={c.id} aria-hidden
                 className="absolute inset-x-0 rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface-container shadow-md"
                 style={{ bottom: 0, top: (peekCount - 1 - i) * PEEK, zIndex: 3 - i, transform: `scaleX(${1 - (i + 1) * 0.025})` }} />
             ))}
-            {/* the front (most recent) card — pinned to the bottom edge */}
-            <div className="relative z-10 rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface/95 shadow-xl ring-1 ring-black/5 backdrop-blur-md">
+            {/* the front card — this document's own newest comment when it has one,
+                dimmed like the expanded deck's foreign cards when it does not
+                (issue 632: undimmed and unlabelled, this used to read as belonging
+                to whatever was on screen). */}
+            <div className={`relative z-10 rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface/95 shadow-xl ring-1 ring-black/5 backdrop-blur-md ${isForeign ? 'opacity-65' : ''}`}>
               <div className="flex items-center gap-2 px-l pt-2.5">
                 <MessagesSquare size={14} className="text-primary" />
                 <span className="text-on-surface text-[0.75rem]" style={fvs(500)}>{comments.length} comment{comments.length === 1 ? '' : 's'}</span>
-                <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={ordered[0].docLabel}>· {ordered[0].docLabel}</span>
+                {/* Multiple documents in the deck → the same disclosure the expanded
+                    branch gives (issue 632); one document → the label the collapsed
+                    deck always showed, now naming the FRONT card's own document. One
+                    class string for both branches — they're mutually exclusive but the
+                    type-role ratchet counts SOURCE literals, not rendered ones. */}
+                {docCount > 1
+                  ? <span className={META_CLS}>across {docCount} document{docCount === 1 ? '' : 's'}</span>
+                  : <span className={META_CLS} title={front.docLabel}>· {front.docLabel}</span>}
                 {/* Submit straight from the collapsed stack — no need to expand
                     first. role=button (not <button>) since the deck itself is a
                     button; stopPropagation so it submits instead of expanding. */}
@@ -218,8 +245,8 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
                 <ChevronUp size={14} className="text-on-surface-low" />
               </div>
               <div className="px-l pb-2.5 pt-1">
-                <div className="mb-1 truncate text-on-surface-var text-[0.75rem] italic">“{ordered[0].quote}”</div>
-                <div className="line-clamp-1 text-on-surface text-[0.8125rem]">{ordered[0].comment}</div>
+                <div className="mb-1 truncate text-on-surface-var text-[0.75rem] italic">“{front.quote}”</div>
+                <div className="line-clamp-1 text-on-surface text-[0.8125rem]">{front.comment}</div>
               </div>
             </div>
           </motion.button>
