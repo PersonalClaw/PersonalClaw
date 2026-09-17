@@ -14,6 +14,15 @@ These tests assert the CALL SITE, not a helper in isolation: the whole defect wa
 code path ever asked the subagent manager whether the spawn had finished. Every test here
 except `test_an_unknown_subagent_id_does_not_invent_a_verdict` (the fail-safe guard, which
 is vacuous until the reconciliation exists) reds against unmodified `main`.
+
+**The CADENCE half (#259's second defect).** Settling the node did not stop the tick loop
+spinning while it was still live: a dispatched stage has no awaitable in `_inflight` and no
+`wake_at`, so the idle branch had no delay to sleep on and slept `0` — which, now that the
+reconciler polls on every tick, means one `SubagentManager.get` per event-loop turn for the
+whole multi-minute life of the subagent. Measured on `main`: 16737 `_step` calls and as many
+lookups in a 9.00s window (1859/s), 6.14s CPU = 68% of one core, for a single otherwise-idle
+run. The delay and the reconciler read ONE predicate (`_awaiting_out_of_band_work`), and the
+`ast` rail below is what keeps them from drifting back apart.
 """
 
 from __future__ import annotations
@@ -134,6 +143,26 @@ def _drive(controller: RunController) -> RunStatus:
     return asyncio.run(controller.run_to_completion(timeout=RUN_TIMEOUT))
 
 
+def _recorded_sleeps(controller: RunController, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Every delay the tick loop actually awaits, with the wait itself removed.
+
+    The observable for the hot spin is the DELAY the idle branch sleeps on, so the test reads
+    exactly that instead of timing the loop. Nothing here waits on the wall clock: the fake
+    returns immediately and the run still terminates on the fake manager's lookup count, so a
+    passing run and a spinning one take the same (negligible) time and the assertion cannot
+    turn into a host-speed measurement.
+    """
+    real_sleep = asyncio.sleep
+    seen: list[float] = []
+
+    async def _fake_sleep(delay: float, *a: Any, **kw: Any) -> Any:
+        seen.append(delay)
+        return await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    return seen
+
+
 # ── the call site ────────────────────────────────────────────────────────────
 
 
@@ -232,6 +261,118 @@ def test_an_unknown_subagent_id_does_not_invent_a_verdict(wired):
     ), f"an unknown subagent id was turned into {inst.state.value} — a verdict on no evidence"
     assert inst.failure is None, "a failure was invented for a subagent nobody could look up"
     assert not completed, "an unknown subagent was journalled as a completed step"
+
+
+# ── the tick cadence while the stage is live (the hot spin) ──────────────────
+
+
+def test_a_live_stage_gets_a_bounded_poll_delay_not_a_zero_sleep(wired):
+    """The second defect in #259, which the reconciler did not address and made worse.
+
+    A dispatched stage is live work with no awaitable (`_inflight` is empty) and no deadline
+    (`wake_at` is for WAITING), so the tick loop's idle branch had nothing to sleep on and slept
+    `0` — turning the reconciler's per-tick `SubagentManager.get` into a busy poll for the whole
+    multi-minute life of the subagent.
+    """
+    from personalclaw.workflows.controller import TICK_WAKE_SECS
+
+    controller, fake, _ = wired(finish_after=99)
+    inst = controller._instance(STAGE_PATH)
+    inst.state = InstanceState.RUNNING
+    inst.subagent_id = "sub1"
+
+    assert not controller._inflight, "the premise is an EMPTY `_inflight`"
+    assert controller._next_wake_delay() is None, (
+        "`_next_wake_delay` reports a deadline for a RUNNING stage — this test's premise "
+        "(that it cannot see one) no longer holds"
+    )
+    delay = controller._dispatched_poll_delay()
+    assert delay is not None, "a live stage still yields no delay, so the idle branch sleeps 0"
+    assert delay == TICK_WAKE_SECS, (
+        f"the poll delay is {delay}, not the bound in-flight work already gets from "
+        "`_await_progress` — a second cadence constant is a second answer to one question"
+    )
+
+
+def test_a_settled_stage_stops_being_polled(wired):
+    """The delay must vanish with the work. A poll deadline that outlived the RUNNING node
+    would keep a finished run's loop awake, trading a busy poll for a slow leak."""
+    controller, fake, _ = wired()
+    _drive(controller)
+
+    assert controller.instances[STAGE_PATH].state is InstanceState.DONE
+    assert controller._awaiting_out_of_band_work() == []
+    assert controller._dispatched_poll_delay() is None
+
+
+def test_the_idle_tick_branch_never_sleeps_zero_while_a_stage_is_live(
+    wired, monkeypatch: pytest.MonkeyPatch
+):
+    """End to end through the real loop: on `main` every recorded delay is `0`.
+
+    Measured on `main` before this test existed: 16737 `_step` calls and as many manager
+    lookups in a 9.00s window (1859/s), 6.14s CPU = 68% of one core, for one otherwise-idle
+    run holding one RUNNING stage.
+    """
+    from personalclaw.workflows.controller import TICK_WAKE_SECS
+
+    # Three lookups: the run cannot settle on the first reconciliation, so the idle branch is
+    # forced to decide how long to wait at least once.
+    controller, fake, _ = wired(finish_after=3)
+    seen = _recorded_sleeps(controller, monkeypatch)
+    status = _drive(controller)
+
+    assert status is RunStatus.COMPLETE, f"the run did not finish (status={status.value})"
+    assert seen, "the idle branch never ran, so this proves nothing about its delay"
+    assert (
+        0 not in seen
+    ), f"the tick loop slept zero while the stage was live — this is the hot spin: {seen}"
+    assert all(0 < d <= TICK_WAKE_SECS for d in seen), f"an unbounded tick delay: {seen}"
+
+
+def test_the_poll_delay_and_the_reconciler_read_ONE_predicate():
+    """The rail. Both consumers must derive their set from `_awaiting_out_of_band_work`.
+
+    A second copy of the condition is how the pair drifts, and the drift restores exactly this
+    bug: a node kind the reconciler learns to poll but the loop does not learn to wake for is
+    polled at `sleep(0)` frequency. Parsed with `ast` so a mention inside the (long) prose of
+    either docstring cannot satisfy it.
+    """
+    from personalclaw.workflows import controller as controller_mod
+
+    src = Path(controller_mod.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    bodies = {
+        fn.name: fn
+        for fn in ast.walk(tree)
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and fn.name in {"_reconcile_dispatched_stages", "_dispatched_poll_delay"}
+    }
+    assert set(bodies) == {
+        "_reconcile_dispatched_stages",
+        "_dispatched_poll_delay",
+    }, f"a consumer was renamed or removed: {sorted(bodies)}"
+
+    for name, fn in bodies.items():
+        calls = {
+            node.func.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert "_awaiting_out_of_band_work" in calls, (
+            f"`{name}` no longer derives its set from `_awaiting_out_of_band_work` — the "
+            "condition is duplicated, and the two copies will drift"
+        )
+        compared = {
+            sub.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Compare)
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Attribute)
+        }
+        assert (
+            "RUNNING" not in compared
+        ), f"`{name}` re-derives the RUNNING test itself instead of asking the predicate"
 
 
 # ── the non-stage RUNNING path ───────────────────────────────────────────────

@@ -573,8 +573,21 @@ class RunController:
                 else:
                     delay = self._next_wake_delay()
                     if delay is None:
-                        # No in-flight work and no scheduled wake: the next _step call
-                        # decides completion or deadlock. Yield rather than spin.
+                        # A dispatched stage is live work with no awaitable and no deadline, so
+                        # neither `_inflight` nor `_next_wake_delay` can report it — and the
+                        # `sleep(0)` below then polls it as fast as the event loop allows.
+                        # MEASURED on a single otherwise-idle run holding one RUNNING stage:
+                        # 16737 `_step` calls and as many `SubagentManager.get` lookups in a 9.00s
+                        # window (1859/s), 6.14s CPU over 9.00s wall = 68% of one core, for a
+                        # subagent that will take minutes; with this delay, 3 calls and 0.19s CPU
+                        # (2%, flat — the same figure a 3s window costs, i.e. setup, not ticks).
+                        # `min()` is unnecessary: this delay IS `TICK_WAKE_SECS`, which
+                        # is also `_next_wake_delay`'s clamp ceiling, so any deadline it reports
+                        # is already the sooner of the two.
+                        delay = self._dispatched_poll_delay()
+                    if delay is None:
+                        # No in-flight work, no scheduled wake, nothing being polled: the next
+                        # _step call decides completion or deadlock. Yield rather than spin.
                         await asyncio.sleep(0)
                     else:
                         await asyncio.sleep(delay)
@@ -1627,6 +1640,57 @@ class RunController:
             )
         self._persist_state()
 
+    def _awaiting_out_of_band_work(self) -> list[str]:
+        """Paths whose node is RUNNING behind a worker this controller must POLL, not await.
+
+        ONE predicate, two consumers: `_reconcile_dispatched_stages` asks the manager for each
+        one's verdict, and `_dispatched_poll_delay` is why the tick loop wakes up to ask at all.
+        Re-deriving the condition at the second site is how the two drift, and the drift is not
+        cosmetic: a node polled by a reconciler the loop does not know to wake for gets polled at
+        `asyncio.sleep(0)` frequency — measured at 1224-1859 `SubagentManager.get` lookups per
+        second and 65-68% of one core for a SINGLE otherwise-idle run. So the delay is derived
+        from the same set the reconciler walks.
+
+        The membership test is `RUNNING` + a persisted foreign key, not a node-kind list. A kind
+        list would be a second vocabulary to keep in step with the dispatchers (and
+        `test_workflows_stage_completion` already ratchets that `dispatch_stage` is the only
+        producer of RUNNING); "the instance carries a handle to work happening elsewhere" is the
+        property both consumers actually need.
+        """
+        return [
+            path
+            for path, inst in self.instances.items()
+            if inst.state == InstanceState.RUNNING and inst.subagent_id
+        ]
+
+    def _dispatched_poll_delay(self) -> float | None:
+        """How long the idle tick branch may sleep while out-of-band work is live, or None.
+
+        `TICK_WAKE_SECS` — the SAME bound in-flight work gets from `_await_progress`'s
+        `asyncio.wait(timeout=...)`, because a spawned subagent is in-flight work that merely
+        does not live in `_inflight`. Not a new knob: a second constant here would be a second
+        answer to "how often does this run re-derive its frontier".
+
+        The cost is stated plainly, because it is not symmetric with `_await_progress`: there,
+        `TICK_WAKE_SECS` is only a CEILING (a finished task wakes the wait immediately), while a
+        polled subagent has no such signal, so this is real settle LATENCY — up to five seconds
+        per stage, measured at 5.33s for a stage whose fake finished one lookup in. Against a
+        stage that takes minutes that is under 2%, and buying it back means a second writer
+        nudging the controller from the completion side, which is exactly what WF2-R10 (`_apply`
+        is the only place a node reaches terminal) exists to prevent.
+
+        Deliberately NOT folded into `_next_wake_delay`, even though that is where a deadline
+        belongs. `_step` (:926) uses that method as the "nothing will wake this run" oracle for
+        parking a gated run at NEEDS_INPUT, so teaching it about a live subagent would change
+        WHEN a run parks — a lifecycle rule, not a cadence fix. That oracle's blind spot (a run
+        holding both an unanswered gate and a live stage parks as NEEDS_INPUT and orphans the
+        stage) is real and stays open; it is a policy call about what a parked run owes its
+        in-flight workers, not something to settle inside a spin fix.
+        """
+        if not self._awaiting_out_of_band_work():
+            return None
+        return TICK_WAKE_SECS
+
     def _reconcile_dispatched_stages(self) -> None:
         """Settle `stage` nodes whose spawned subagent has finished.
 
@@ -1661,9 +1725,8 @@ class RunController:
         if manager is None or not hasattr(manager, "get"):
             return
         settled = False
-        for path, inst in list(self.instances.items()):
-            if inst.state != InstanceState.RUNNING or not inst.subagent_id:
-                continue
+        for path in self._awaiting_out_of_band_work():
+            inst = self._instance(path)
             try:
                 info = manager.get(inst.subagent_id)
             except Exception:
