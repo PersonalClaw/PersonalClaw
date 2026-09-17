@@ -178,6 +178,14 @@ STOPPABLE_STATUSES: frozenset[LoopStatus] = ACTIVE_STATUSES | frozenset(
     {LoopStatus.INTAKE, LoopStatus.PLANNING}
 )
 
+#: The KEYS are the actions ``PATCH /api/loops/{id}`` dispatches, and the frontend mirrors exactly
+#: those (``web/src/lib/loopStatus.ts:LoopAction``, equality-railed by
+#: `tests/test_loop_action_guard_mirror.py`) — so this table is not the home for a POST family's
+#: source states. The ``/api/loops/{id}/plan/*`` walkthrough routes drive the same status machine
+#: (``advance_plan`` writes ``PLANNING``, ``finalize_plan`` writes ``REVIEW``) and are admissible
+#: from :data:`PRELAUNCH_STATUSES`, enforced through the SAME refusal sentence by
+#: ``dashboard/handlers/loop_routes:_refuse_replan`` (#412). One refusal shape, two admissible
+#: sets, both derived from :data:`LOOP_PHASES`.
 ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
     "start": frozenset({LoopStatus.READY, LoopStatus.REVIEW}),
     "pause": frozenset({LoopStatus.RUNNING}),
