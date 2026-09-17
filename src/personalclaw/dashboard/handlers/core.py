@@ -185,6 +185,47 @@ async def service_worker(request: web.Request) -> web.StreamResponse:
     return _dist_root_file("sw.js", "text/javascript")
 
 
+# Web-font content types, stated explicitly (issue #2916). aiohttp's ``FileResponse``
+# resolves the type from its OWN private ``mimetypes`` table
+# (``web_fileresponse.CONTENT_TYPES``), which lacks the woff/woff2 entries and does not
+# consult ``mimetypes.add_type`` — so a plain static route emits
+# ``application/octet-stream``. Same "state the type, never guess" contract that
+# ``_dist_root_file`` applies to the PWA root files.
+_FONT_CONTENT_TYPES: dict[str, str] = {
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+}
+
+
+async def font_asset(request: web.Request) -> web.StreamResponse:
+    """Serve /fonts/<name> with an explicitly stated Content-Type.
+
+    ``fonts.css`` references these at the absolute path ``/fonts/*.woff2``. Served
+    through ``add_static``, aiohttp's ``FileResponse`` defaults ``.woff2`` to
+    ``application/octet-stream`` (see ``_FONT_CONTENT_TYPES`` above) — an incorrect
+    Content-Type for a first-party asset that diverges from the project's own tested
+    convention and bites under a stricter proxy/CDN or a ``nosniff``-tightening.
+
+    A missing (or non-font) file RETURNS 404, it does not raise: ``spa_fallback`` turns
+    a raised ``HTTPNotFound`` for a non-``/fonts/``-excluded GET into ``index.html``, and
+    HTML decoded as a font is the "invalid sfntVersion" failure this route exists to
+    prevent. Returning the status directly bypasses that middleware.
+    """
+    name = request.match_info["name"]
+    fonts_dir = (_DIST_DIR / "fonts").resolve()
+    path = (fonts_dir / name).resolve()
+    # Containment guard: ``{name}`` is a single URL-decoded segment, so reject anything
+    # that resolves outside the fonts directory before touching the filesystem.
+    if fonts_dir not in path.parents or not path.is_file():
+        return web.Response(status=404, text="font not found", content_type="text/plain")
+    content_type = _FONT_CONTENT_TYPES.get(path.suffix.lower())
+    if content_type is None:
+        return web.Response(status=404, text="unsupported font type", content_type="text/plain")
+    return web.FileResponse(path, headers={"Content-Type": content_type})
+
+
 # ── STT (Speech-to-Text) ──
 
 
