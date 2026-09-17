@@ -52,7 +52,7 @@ MANIFEST_EXCLUDE: dict[str, str] = {
     "/claw.svg": "favicon asset — UI transport",
     "/assets": "static mount for the built React bundle — UI transport",
     "/sprites": "static mount for sprite assets — UI transport",
-    "/fonts": "static mount for web fonts — UI transport",
+    "/fonts/{name}": "web-font asset handler (explicit Content-Type, #2916) — UI transport",
     "/vendor": "static mount for the import-map vendor shims — UI transport",
     "/icons": "static mount for the PWA app icons the manifest declares — UI transport",
     "/manifest.webmanifest": (

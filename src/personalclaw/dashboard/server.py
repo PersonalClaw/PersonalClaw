@@ -1864,9 +1864,10 @@ async def start_dashboard(
         # Web fonts referenced at the absolute path /fonts/*.woff2 by fonts.css. Without
         # this route they fell through to the SPA catch-all (→ index.html, decoded as a
         # font → "invalid sfntVersion"), so the app silently rendered in system-font
-        # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono).
-        if (_DIST_DIR / "fonts").is_dir():
-            app.router.add_static("/fonts", _DIST_DIR / "fonts", show_index=False)
+        # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono). A
+        # dedicated handler (not add_static) so the Content-Type is stated, never guessed
+        # — aiohttp's FileResponse defaults .woff2 to application/octet-stream (#2916).
+        app.router.add_get("/fonts/{name}", handlers.font_asset)
         # PWA app icons the manifest declares at stable, unhashed paths (they are
         # referenced from JSON, so they cannot carry a content hash). Also listed in
         # spa_fallback's exclusions below: a missing icon must 404, because HTML
