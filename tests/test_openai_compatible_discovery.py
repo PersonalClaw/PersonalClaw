@@ -26,6 +26,7 @@ import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +105,35 @@ def allow_loopback_egress(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "personalclaw.sdk.net.egress_policy_for",
         lambda base: CONNECTOR.with_overrides(allow_private=True),
+    )
+
+
+@pytest.fixture()
+def default_egress_posture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The mirror of ``allow_loopback_egress``: pin the DEFAULT public-only posture.
+
+    ``egress_policy_for`` (``net/policy.py``) layers ``security.egress`` over the base
+    profile by calling ``AppConfig.load()`` at call time, so "the default posture" is a fact
+    about whichever config home the process points at — not about this test. Under xdist all
+    workers share one home, so a worker-mate that persists ``allow_private: true`` flipped
+    the premise out from under the one test here that takes no egress fixture, and its
+    assertion fell through to a real socket attempt (#2938: one red test, three otherwise
+    green PRs, reproducible on re-run, passing in isolation).
+
+    So own the state the default is read from: an empty home of this test's own, and assert
+    it really is default before handing it over — a fixture that silently supplied a
+    permissive posture would turn the same pollution into a false PASS instead of a red.
+    """
+    home = tmp_path / "egress-default-home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+
+    from personalclaw.config.loader import AppConfig
+
+    eg = AppConfig.load().security.egress
+    assert not eg.allow_private and not eg.allow_hosts, (
+        "the point of this fixture is a genuinely default egress posture; got "
+        f"allow_private={eg.allow_private} allow_hosts={eg.allow_hosts}"
     )
 
 
@@ -240,9 +270,13 @@ def test_an_unreachable_endpoint_is_not_an_empty_catalog(allow_loopback_egress: 
     assert caught.value.status is None, "no HTTP status was ever received"
 
 
-def test_a_blocked_host_says_how_to_allow_list_it() -> None:
-    """No egress fixture here on purpose: the default public-only posture must refuse a
-    loopback endpoint with an instruction, not with an empty list."""
+def test_a_blocked_host_says_how_to_allow_list_it(default_egress_posture: None) -> None:
+    """No PERMISSIVE egress fixture here on purpose: the default public-only posture must
+    refuse a loopback endpoint with an instruction, not with an empty list.
+
+    ``default_egress_posture`` is not a substitute for that default — it pins it. The real
+    ``egress_policy_for``, config read and guard all still run; only the config home they
+    read is this test's own, so a worker-mate cannot decide what "default" means here."""
     with pytest.raises(ModelDiscoveryError) as caught:
         _run(openai_compatible_discover_models("http://127.0.0.1:9/v1", "sk-test"))
     msg = str(caught.value)
