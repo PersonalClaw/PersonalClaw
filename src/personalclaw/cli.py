@@ -187,39 +187,73 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
     {"eval", "judge-bench", "study", "ablation", "eval-gate", "retrieval-eval"}
 )
 
+#: Subcommands that ``--help`` must never mention: machine-facing entry points a human
+#: never types. Register them with :func:`_add_hidden_parser`, never by hand.
+#:
+#: 🔴 ``help=argparse.SUPPRESS`` DOES NOT HIDE A SUBCOMMAND (#2904). argparse honours
+#: SUPPRESS for ordinary arguments only; for a subparser choice it stores the sentinel
+#: as the choice's help text and renders it verbatim — ``mcp-core  ==SUPPRESS==`` — while
+#: still listing the choice in the ``{chat,run,…}`` metavar. The result is the opposite of
+#: the intent: an internal sentinel on the first surface a CLI user reads, and the command
+#: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
+HIDDEN_COMMANDS = frozenset({"mcp-core"})
 
-def main() -> None:
-    """Entry point — parse args and dispatch to the appropriate subcommand."""
-    # Load .env from the project root (CWD or detected project dir) and from
-    # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
-    # users to manually copy .env into ~/.personalclaw.
-    from dotenv import load_dotenv as _load_dotenv
 
-    _cwd_env = Path.cwd() / ".env"
-    if _cwd_env.is_file():
-        _load_dotenv(_cwd_env, override=False)
-    _home_env = config_dir() / ".env"
-    if _home_env.is_file() and _home_env != _cwd_env:
-        _load_dotenv(_home_env, override=False)
+def _add_hidden_parser(
+    sub: argparse._SubParsersAction, name: str, **kwargs: object
+) -> argparse.ArgumentParser:
+    """Register ``name`` as a subcommand absent from every rendered help surface.
 
-    # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
-    _raw_port = os.environ.get("PERSONALCLAW_PORT")
-    if _raw_port is not None:
-        try:
-            int(_raw_port)
-        except ValueError:
-            print(
-                f"❌ PERSONALCLAW_PORT={_raw_port!r} is not a valid integer.\n"
-                f"   Unset it or provide a numeric port (e.g. PERSONALCLAW_PORT=6777).",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    Half one of hiding: pass no ``help=`` at all, so argparse builds no
+    ``_ChoicesPseudoAction`` and the command gets no row in the command list. (Half two —
+    dropping it from the ``{…}`` choices metavar — is :func:`_hide_internal_commands`,
+    which must run after the whole tree is built.)
 
-    if not os.environ.get("PERSONALCLAW_PROJECT_DIR"):
-        detected = _detect_project_dir()
-        if detected:
-            os.environ["PERSONALCLAW_PROJECT_DIR"] = detected
+    The ``HIDDEN_COMMANDS`` membership check is the guard rail: a name hidden here but not
+    declared there would be silently undocumented rather than deliberately hidden, and
+    ``tests/test_cli_help_surface.py`` would not know to hold it to either standard.
+    """
+    if name not in HIDDEN_COMMANDS:
+        raise ValueError(
+            f"{name!r} is not declared in HIDDEN_COMMANDS — a subcommand is either "
+            f"documented (pass help=) or deliberately hidden (declare it there), never "
+            f"neither"
+        )
+    kwargs.pop("help", None)
+    return sub.add_parser(name, **kwargs)  # type: ignore[arg-type]
 
+
+def _hide_internal_commands(parser: argparse.ArgumentParser) -> None:
+    """Drop :data:`HIDDEN_COMMANDS` from every ``{a,b,c}`` metavar in ``parser``'s tree.
+
+    Half two of hiding. argparse derives that metavar from the subparsers action's
+    ``choices``, which a hidden command is necessarily still in — it has to stay
+    dispatchable. So the metavar is pinned explicitly instead, which is what keeps the
+    hidden name out of the usage line and the positional-args line.
+
+    Recomputed over the finished tree, never at registration time: ``mcp-core`` is
+    registered mid-list, and pinning the metavar there would freeze it before its later
+    siblings existed — silently dropping every command added after it.
+    """
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        if HIDDEN_COMMANDS.intersection(action.choices):
+            visible = [c for c in action.choices if c not in HIDDEN_COMMANDS]
+            action.metavar = "{%s}" % ",".join(visible)
+        # ``choices`` maps every alias to the SAME parser object; dedupe so an aliased
+        # subcommand's tree is not walked twice.
+        for child in dict.fromkeys(action.choices.values()):
+            _hide_internal_commands(child)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the whole ``personalclaw`` argument parser.
+
+    Separate from :func:`main` so the rendered help surface is testable in-process:
+    ``main`` reads ``.env`` files and touches ``PERSONALCLAW_HOME`` before parsing, so a
+    test that had to go through it could not walk the parser tree without side effects.
+    """
     parser = argparse.ArgumentParser(
         prog="personalclaw",
         description="PersonalClaw — personal AI agent",
@@ -1153,8 +1187,8 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     incident_sub.add_parser("off", help="Resume — re-enable unattended work")
     incident_sub.add_parser("status", help="Show incident state")
 
-    # mcp-core (MCP server — spawned by ACP agent, not user-facing)
-    sub.add_parser("mcp-core", help=argparse.SUPPRESS)
+    # mcp-core (MCP server — spawned by an ACP agent, never typed by a user)
+    _add_hidden_parser(sub, "mcp-core")
 
     # learn
     learn_parser = sub.add_parser(
@@ -1292,6 +1326,44 @@ Examples:
         help="Check installed skills' file hashes against their install baseline "
         "(.pclaw-lock.json) — detects a skill mutated/tampered after install",
     )
+
+    _hide_internal_commands(parser)
+    return parser
+
+
+def main() -> None:
+    """Entry point — parse args and dispatch to the appropriate subcommand."""
+    # Load .env from the project root (CWD or detected project dir) and from
+    # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
+    # users to manually copy .env into ~/.personalclaw.
+    from dotenv import load_dotenv as _load_dotenv
+
+    _cwd_env = Path.cwd() / ".env"
+    if _cwd_env.is_file():
+        _load_dotenv(_cwd_env, override=False)
+    _home_env = config_dir() / ".env"
+    if _home_env.is_file() and _home_env != _cwd_env:
+        _load_dotenv(_home_env, override=False)
+
+    # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
+    _raw_port = os.environ.get("PERSONALCLAW_PORT")
+    if _raw_port is not None:
+        try:
+            int(_raw_port)
+        except ValueError:
+            print(
+                f"❌ PERSONALCLAW_PORT={_raw_port!r} is not a valid integer.\n"
+                f"   Unset it or provide a numeric port (e.g. PERSONALCLAW_PORT=6777).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if not os.environ.get("PERSONALCLAW_PROJECT_DIR"):
+        detected = _detect_project_dir()
+        if detected:
+            os.environ["PERSONALCLAW_PROJECT_DIR"] = detected
+
+    parser = build_parser()
 
     args = parser.parse_args()
 
