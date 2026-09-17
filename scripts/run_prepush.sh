@@ -146,6 +146,20 @@ if [ "$needs_gate" -eq 0 ]; then
   exit 0
 fi
 
+# The render-smoke chain is npm/node all the way down (npm ci -> typecheck ->
+# vitest -> vite build -> npx playwright -> render smoke). Those tools are
+# mise-managed here and are NOT on the default PATH, so a local push from a shell
+# without them would die on `npm: command not found` and no frontend-touching
+# branch could ever be pushed from this machine. Mirror the Python lint half
+# above: if the toolchain is absent, say so and let the push through rather than
+# blocking on a missing tool. CI runs this chain with npm/node present and still
+# enforces it in full, so this weakens nothing that ships — it is local graceful
+# degradation only.
+if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+  echo "pre-push: frontend changes outgoing but web toolchain (npm/node) not found — skipping render-smoke locally (CI enforces it)."
+  exit 0
+fi
+
 echo "pre-push: frontend changes outgoing — running the render-smoke gate"
 echo "          (clean npm ci -> typecheck -> vitest -> build -> headless render)."
 
