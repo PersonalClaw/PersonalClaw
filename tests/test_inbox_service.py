@@ -308,3 +308,153 @@ def test_run_maintenance_honors_settings(tmp_path, monkeypatch):
     svc2.inbox.items[old2.id] = old2
     assert svc2.run_maintenance() == 0
     assert old2.id in svc2.inbox.items
+
+
+# ── PR2-11: maintenance retired into the remediation engine ──
+
+
+@pytest.mark.asyncio
+async def test_background_loop_does_not_run_maintenance(tmp_path, monkeypatch):
+    """PR2-11 clean break: the poll loop no longer runs maintenance — that is the remediation
+    engine's `inbox.maintenance` job now. A running loop with an expired item and auto-cleanup
+    on leaves the item in place, and the maintenance body is never called from the loop."""
+    import asyncio
+
+    from personalclaw import inbox_service as mod
+
+    assert not hasattr(mod, "_MAINTENANCE_EVERY_SECS")  # the private 6h timer is deleted
+
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+    )
+    store = InboxStore(tmp_path / "i.json")
+    old = _item(id="C1_old", created_at=time.time() - 90 * 86400)
+    store.items[old.id] = old
+    svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)  # provider=None
+    monkeypatch.setattr(svc, "_poll_interval", lambda: 0.01)
+    spy = {"n": 0}
+    monkeypatch.setattr(svc, "run_maintenance", lambda: spy.__setitem__("n", spy["n"] + 1) or 0)
+
+    svc.start()
+    await asyncio.sleep(0.05)  # several poll intervals
+    svc.stop()
+    await asyncio.sleep(0.02)  # let the cancellation settle
+
+    assert spy["n"] == 0  # the loop never invoked maintenance
+    assert old.id in store.items  # so the expired item was NOT pruned by the loop
+
+
+def test_maintenance_backlog_sums_expired_dismissed_and_retire(tmp_path, monkeypatch):
+    """`maintenance_backlog` is the read-only deficit magnitude: retention-expired items (only
+    when auto-cleanup is on), prunable dismissed IDs, and pending feedback retire candidates."""
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+    )
+    monkeypatch.setattr("personalclaw.feedback.pending_retire_candidate_count", lambda: 2)
+    store = InboxStore(tmp_path / "i.json")
+    store.items["C1_old"] = _item(id="C1_old", created_at=time.time() - 40 * 86400)
+    store.items["C1_new"] = _item(id="C1_new", created_at=time.time())
+    state = InboxState(tmp_path / "s.json")
+    state.dismissed.add(f"D_{time.time() - 200 * 3600:.6f}")  # stale (> 168h)
+    state.dismissed.add(f"D_{time.time():.6f}")  # fresh
+    svc = InboxService(state=state, store=store)
+
+    assert svc.maintenance_backlog() == 1 + 1 + 2  # expired + stale dismissed + retire
+
+    # auto-cleanup off → the expired item is not counted (matching run_maintenance)
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": False, "retention_days": 30},
+    )
+    monkeypatch.setattr("personalclaw.feedback.pending_retire_candidate_count", lambda: 0)
+    assert svc.maintenance_backlog() == 1  # only the stale dismissed
+
+
+def test_run_maintenance_threadsafe_inline_without_a_loop(tmp_path, monkeypatch):
+    """No owning loop captured (headless / direct call): the bounce falls back to an inline run."""
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+    )
+    monkeypatch.setattr("personalclaw.feedback.check_retire_candidates", lambda state=None: [])
+    store = InboxStore(tmp_path / "i.json")
+    old = _item(id="C1_old", created_at=time.time() - 40 * 86400)
+    store.items[old.id] = old
+    svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)
+    assert svc._owner_loop is None
+    assert svc.run_maintenance_threadsafe() == 1
+    assert old.id not in store.items
+
+
+@pytest.mark.asyncio
+async def test_run_maintenance_threadsafe_bounces_onto_the_owning_loop(tmp_path, monkeypatch):
+    """The engine drives maintenance from a worker THREAD; the bounce runs the pass on the loop
+    that owns the store (PR2-11), so the store is never mutated off its owning thread."""
+    import asyncio
+
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+    )
+    monkeypatch.setattr("personalclaw.feedback.check_retire_candidates", lambda state=None: [])
+    store = InboxStore(tmp_path / "i.json")
+    old = _item(id="C1_old", created_at=time.time() - 40 * 86400)
+    store.items[old.id] = old
+    svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)
+    svc.start()  # captures the running loop as the owner
+    seen: dict = {}
+
+    def _call_from_worker_thread() -> int:
+        try:
+            asyncio.get_running_loop()
+            seen["on_loop"] = True
+        except RuntimeError:
+            seen["on_loop"] = False  # a worker thread has no running loop
+        return svc.run_maintenance_threadsafe()
+
+    try:
+        removed = await asyncio.get_running_loop().run_in_executor(None, _call_from_worker_thread)
+    finally:
+        svc.stop()
+        await asyncio.sleep(0.02)
+
+    assert seen["on_loop"] is False  # the caller really was on a worker thread
+    assert removed == 1  # yet the pass ran and pruned the expired item
+    assert old.id not in store.items
+
+
+def test_live_inbox_seam_reaches_the_running_service(tmp_path, monkeypatch):
+    """The remediation seam functions reach the LIVE service via the dashboard state, and no-op
+    to 0 / a plain message when none is running (headless)."""
+    from personalclaw import inbox_service as mod
+    from personalclaw.inbox_providers import native_source
+
+    saved = native_source.get_dashboard_state()
+    native_source.set_dashboard_state(None)
+    try:
+        assert mod.inbox_maintenance_backlog() == 0
+        assert mod.run_live_inbox_maintenance() == "no inbox service running"
+
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.load_inbox_settings",
+            lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+        )
+        monkeypatch.setattr("personalclaw.feedback.pending_retire_candidate_count", lambda: 0)
+        monkeypatch.setattr("personalclaw.feedback.check_retire_candidates", lambda state=None: [])
+        store = InboxStore(tmp_path / "i.json")
+        store.items["C1_old"] = _item(id="C1_old", created_at=time.time() - 40 * 86400)
+        svc = InboxService(state=InboxState(tmp_path / "s.json"), store=store)
+
+        class _State:
+            pass
+
+        st = _State()
+        st._inbox_svc = svc  # type: ignore[attr-defined]
+        native_source.set_dashboard_state(st)
+        assert mod.inbox_maintenance_backlog() == 1
+        assert mod.run_live_inbox_maintenance() == "inbox maintenance: 1 item(s) removed"
+        assert "C1_old" not in store.items
+    finally:
+        native_source.set_dashboard_state(saved)

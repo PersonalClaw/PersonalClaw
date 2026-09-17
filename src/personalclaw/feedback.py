@@ -482,6 +482,27 @@ def check_retire_candidates(state=None) -> list[dict]:
         return []
 
 
+def pending_retire_candidate_count() -> int:
+    """How many producers :func:`check_retire_candidates` would propose on its next pass —
+    the read-only magnitude the remediation engine measures for its inbox-maintenance deficit
+    (PR2-11), computed from the SAME set (``suppressed_producers() | _proposal_only_candidates``
+    minus those already in ``retire_proposed``) but WITHOUT the mutation the check performs.
+
+    Zero when feedback is disabled, and best-effort (a failed read contributes nothing) — a
+    deficit measurement must never raise into the engine's every-pass / every-Doctor-read path."""
+    try:
+        cfg = _config()
+        if not cfg.enabled:
+            return 0
+        proposed = set(_settings().get("retire_proposed", []) or [])
+        stats = producer_stats()
+        pending = suppressed_producers() | _proposal_only_candidates(stats)
+        return sum(1 for (kind, pid) in pending if _producer_key(kind, pid) not in proposed)
+    except Exception:  # noqa: BLE001 — a measurement must never break the engine pass
+        logger.debug("pending_retire_candidate_count failed", exc_info=True)
+        return 0
+
+
 def _proposal_only_candidates(stats: dict[tuple[str, str], dict]) -> set[tuple[str, str]]:
     """Below-threshold producers with NO surfacing gate (inbox prompts, the judge)
     — they can't be suppressed, so they get the proposal only."""

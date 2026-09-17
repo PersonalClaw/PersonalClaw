@@ -2766,8 +2766,9 @@ class GatewayOrchestrator:
             user_name=(self._cfg.dashboard.user_name or "").strip() or "the user",
             style_rules="\n".join(sec.style_rules or []),
         )
-        # Background loop: polls the wired provider (when any) + runs retention
-        # maintenance honoring the inbox entity settings. Cheap when idle.
+        # Background loop: polls the wired provider (when any). Cheap when idle.
+        # Retention/dismissed/feedback maintenance is the remediation engine's
+        # `inbox.maintenance` job now, not a second cadence in this loop (PR2-11).
         self.inbox_svc.start()
         logger.info(
             "Inbox service initialized (provider=%s)", provider.source_name if provider else "none"

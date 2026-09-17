@@ -13,8 +13,13 @@ against core protocols). Paths are relative to
   (muted threads are dropped at ingestion), and evaluates **alerts at
   ingestion time** for both push and poll paths (`evaluate_alert` →
   `notify_inbox_alert`), so an alerting item notifies immediately rather than
-  on the next page view. Maintenance (retention cleanup) runs every 6 hours
-  (`_MAINTENANCE_EVERY_SECS`).
+  on the next page view. **Maintenance** — retention cleanup, dismissed-set
+  pruning, and the feedback retire-candidate check — is no longer a second
+  cadence in this loop: since PR2-11 it is the remediation engine's
+  `inbox.maintenance` job, driven by a measured `inbox_maintenance_backlog`
+  deficit off the live store (`resilience/remediation.py`). `run_maintenance`
+  is the implementation the engine drives, bounced onto the loop that owns the
+  store via `run_maintenance_threadsafe` so nothing mutates it off-thread.
 - **AI drafts** write on behalf of the operator (the `dashboard.user_name`
   identity), not the bot.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;

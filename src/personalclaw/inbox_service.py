@@ -21,10 +21,17 @@ even with no external provider connected.
 
 It also owns the inbox **background loop** (:meth:`start` / :meth:`stop`): each tick
 polls the wired message-source provider for new messages (ingesting them with
-alert evaluation + live WS broadcast) and runs periodic maintenance — retention
-cleanup honoring the entity settings (``auto_cleanup_enabled`` / ``retention_days``)
-plus dismissed-set pruning. Polling no-ops when no provider is wired; maintenance
-always runs so native/push items age out too.
+alert evaluation + live WS broadcast). Polling no-ops when no provider is wired.
+
+Periodic **maintenance** — retention cleanup honoring the entity settings
+(``auto_cleanup_enabled`` / ``retention_days``), dismissed-set pruning, and the
+feedback retire-candidate check — is no longer a second cadence inside this loop.
+Since PR2-11 it is a registered remediation-engine job (``inbox.maintenance``),
+deficit-driven off the LIVE store like every other absorbed maintenance pass, so
+"old maintenance no longer runs independently" (§4.4 criterion #6) holds for the
+inbox too. :meth:`run_maintenance` remains the implementation the engine drives —
+bounced onto this loop via :meth:`run_maintenance_threadsafe` so the store is
+mutated only on the thread that owns it, never from the engine's worker thread.
 """
 
 from __future__ import annotations
@@ -56,9 +63,6 @@ if TYPE_CHECKING:
     from personalclaw.inbox_providers.base import IncomingMessage, MessageSourceProvider
 
 logger = logging.getLogger(__name__)
-
-# Retention cleanup + state pruning cadence within the background loop.
-_MAINTENANCE_EVERY_SECS = 6 * 3600
 
 
 def _dashboard_state():
@@ -170,8 +174,10 @@ class InboxService:
         self._last_poll_ok = True
         self._last_error = ""
         self._poll_count = 0
-        self._last_maintenance_at = 0.0
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # The event loop that owns the store, captured in start(). The remediation engine
+        # drives maintenance from a worker thread (PR2-11) and must bounce onto this loop.
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
 
     # ── health (mirrors what the dashboard status handler expects) ──
     def health(self) -> dict:
@@ -189,6 +195,9 @@ class InboxService:
     def start(self) -> None:
         """Start the background loop. Idempotent."""
         if self._task is None or self._task.done():
+            # Capture the owning loop BEFORE create_task so run_maintenance_threadsafe can
+            # bounce the engine's maintenance call back onto it (the store is mutated only here).
+            self._owner_loop = asyncio.get_running_loop()
             self._task = asyncio.create_task(self._loop())
             logger.info(
                 "Inbox loop started (provider=%s)",
@@ -217,13 +226,8 @@ class InboxService:
                 return  # shutdown signaled
             except asyncio.TimeoutError:
                 pass  # normal wake-up
-            now = time.time()
-            if now - self._last_maintenance_at >= _MAINTENANCE_EVERY_SECS:
-                try:
-                    self.run_maintenance()
-                except Exception:
-                    logger.warning("Inbox maintenance failed", exc_info=True)
-                self._last_maintenance_at = now
+            # Maintenance is NOT run here — it is the remediation engine's `inbox.maintenance`
+            # job now (PR2-11), so this loop only polls. One cadence, one owner per pass.
             if self._provider is not None:
                 try:
                     await self._poll_once()
@@ -346,7 +350,11 @@ class InboxService:
 
     def run_maintenance(self) -> int:
         """Retention cleanup honoring the inbox entity settings + state pruning.
-        Returns the number of items deleted. Safe to call any time."""
+        Returns the number of items deleted. Safe to call any time.
+
+        Driven by the remediation engine's ``inbox.maintenance`` job (PR2-11); callers on a
+        worker thread must go through :meth:`run_maintenance_threadsafe` so this body runs on
+        the loop that owns the store."""
         from personalclaw.providers.entity_routes import load_inbox_settings
 
         settings = load_inbox_settings()
@@ -359,9 +367,10 @@ class InboxService:
             removed = self.inbox.cleanup_by_retention(days)
         if self.state.prune_dismissed():
             self.state.save()
-        # FEEDBACK-SIGNAL (plan 58): the retire-candidate check rides this existing
-        # maintenance cadence (no new loop) — one-time "retire this rule?" proposal
-        # per producer per threshold crossing, notified via the dashboard state.
+        # FEEDBACK-SIGNAL (plan 58): the retire-candidate check rides this maintenance pass —
+        # one-time "retire this rule?" proposal per producer per threshold crossing, notified
+        # via the dashboard state. Its pending count feeds `maintenance_backlog` so the engine
+        # schedules a pass whenever a proposal is due, preserving this cadence (PR2-11).
         try:
             from personalclaw.feedback import check_retire_candidates
 
@@ -369,6 +378,63 @@ class InboxService:
         except Exception:  # noqa: BLE001 — maintenance must never fail on feedback
             logger.debug("feedback retire check failed", exc_info=True)
         return removed
+
+    def maintenance_backlog(self) -> int:
+        """The magnitude a maintenance pass would act on right now — the remediation engine's
+        ``inbox_maintenance_backlog`` deficit count (PR2-11). Read-only, and measured off THIS
+        live store rather than a fresh one (which would fork the in-memory state the service
+        holds — see :func:`personalclaw.inbox.live_store`).
+
+        Sums the three things :meth:`run_maintenance` acts on: retention-expired items (only
+        when auto-cleanup is enabled, matching the pass), prunable dismissed IDs, and pending
+        feedback retire candidates. Each sub-count is best-effort — a measurement runs on the
+        engine's worker thread while the loop may mutate, and must never raise into the pass."""
+        total = 0
+        try:
+            from personalclaw.providers.entity_routes import load_inbox_settings
+
+            settings = load_inbox_settings()
+            if settings.get("auto_cleanup_enabled"):
+                try:
+                    days = max(1, int(settings.get("retention_days") or 90))
+                except (TypeError, ValueError):
+                    days = 90
+                total += self.inbox.count_expired(days)
+        except Exception:  # noqa: BLE001 — a measurement must never raise
+            logger.debug("inbox maintenance: retention count failed", exc_info=True)
+        try:
+            total += self.state.count_prunable_dismissed()
+        except Exception:  # noqa: BLE001
+            logger.debug("inbox maintenance: dismissed count failed", exc_info=True)
+        try:
+            from personalclaw.feedback import pending_retire_candidate_count
+
+            total += pending_retire_candidate_count()
+        except Exception:  # noqa: BLE001
+            logger.debug("inbox maintenance: retire-candidate count failed", exc_info=True)
+        return total
+
+    async def _run_maintenance_on_loop(self) -> int:
+        return self.run_maintenance()
+
+    def run_maintenance_threadsafe(self, *, timeout: float = 60.0) -> int:
+        """Run :meth:`run_maintenance` on the loop that owns the store, callable from any thread.
+
+        The remediation engine drives maintenance from a thread-pool executor, but the store is
+        mutated only on the asyncio loop running the poll/ingest pass (`emit`/`resolve`/dismiss
+        all go through it single-threaded). So a worker thread must NOT mutate it directly —
+        this bounces the call onto the owning loop and blocks for the result. Falls back to an
+        inline run when no loop is running (headless / tests) or when already on that loop."""
+        loop = self._owner_loop
+        if loop is None or not loop.is_running():
+            return self.run_maintenance()
+        try:
+            if asyncio.get_running_loop() is loop:
+                return self.run_maintenance()  # already on the owning loop — no bounce, no deadlock
+        except RuntimeError:
+            pass  # not on any loop (a worker thread) — bounce below
+        future = asyncio.run_coroutine_threadsafe(self._run_maintenance_on_loop(), loop)
+        return future.result(timeout=timeout)
 
     @staticmethod
     def _operator_name() -> str:
@@ -556,6 +622,40 @@ class InboxService:
                 if (it.message or "").strip():
                     lines.append(f"{it.sender_name or 'sender'}: {it.message}")
         return lines
+
+
+def _live_inbox_service() -> "InboxService | None":
+    """The RUNNING inbox service, reached through the process-wide dashboard state — the same
+    seam :func:`personalclaw.inbox.live_store` uses, and for the same reason: the service holds
+    its store in memory, so the remediation engine must drive THIS instance, never a fresh one.
+
+    ``None`` in a headless/CLI process (no gateway, no dashboard state) — where there is no loop
+    running maintenance anyway. isinstance-checked so a test's ``MagicMock`` state is not mistaken
+    for a live service."""
+    state = _dashboard_state()
+    svc = getattr(state, "_inbox_svc", None) if state is not None else None
+    return svc if isinstance(svc, InboxService) else None
+
+
+def inbox_maintenance_backlog() -> int:
+    """The live inbox service's pending-maintenance magnitude, or 0 when none is running — the
+    remediation deficit ``inbox_maintenance_backlog`` (PR2-11). Always safe to call: a bare
+    process has no service, so there is nothing to prune and the count is 0 (the deficit is still
+    emitted, at 0, so the schedulability rail can see it)."""
+    svc = _live_inbox_service()
+    return svc.maintenance_backlog() if svc is not None else 0
+
+
+def run_live_inbox_maintenance() -> str:
+    """Run the live inbox service's maintenance pass — the ``inbox.maintenance`` job entry point
+    (PR2-11). Bounces onto the loop that owns the store so nothing is mutated from the engine's
+    worker thread. A no-op string when no service is running (the deficit would then be 0 and the
+    job unscheduled, but the run-now path can still reach here)."""
+    svc = _live_inbox_service()
+    if svc is None:
+        return "no inbox service running"
+    removed = svc.run_maintenance_threadsafe()
+    return f"inbox maintenance: {removed} item(s) removed"
 
 
 def _parse_classification(raw: str) -> tuple[str, str]:

@@ -382,17 +382,29 @@ class InboxState:
         except OSError:
             logger.warning("Failed to save inbox state")
 
-    def prune_dismissed(self, retention_hours: float = 168.0) -> int:
-        """Remove dismissed IDs older than retention_hours."""
+    def _stale_dismissed(self, retention_hours: float) -> set[str]:
+        """Dismissed IDs older than *retention_hours* — the set behind both the count and
+        the prune, so the read-only magnitude the remediation engine measures (PR2-11) and
+        the mutation it drives can never disagree. Snapshots ``dismissed`` first: the count
+        runs on the engine's worker thread while the loop may add a dismissal."""
         cutoff = time.time() - (retention_hours * 3600)
-        stale = set()
-        for did in self.dismissed:
+        stale: set[str] = set()
+        for did in set(self.dismissed):
             parts = did.rsplit("_", 1)
             try:
                 if float(parts[-1]) < cutoff:
                     stale.add(did)
             except (ValueError, IndexError):
                 stale.add(did)
+        return stale
+
+    def count_prunable_dismissed(self, retention_hours: float = 168.0) -> int:
+        """How many dismissed IDs a prune would drop right now — read-only (PR2-11)."""
+        return len(self._stale_dismissed(retention_hours))
+
+    def prune_dismissed(self, retention_hours: float = 168.0) -> int:
+        """Remove dismissed IDs older than retention_hours."""
+        stale = self._stale_dismissed(retention_hours)
         self.dismissed -= stale
         return len(stale)
 
@@ -475,17 +487,29 @@ class InboxStore:
         """
         return [i for i in self.items.values() if i.status in (ItemStatus.PENDING, ItemStatus.SEEN)]
 
+    def _expired_ids(self, retention_days: int) -> list[str]:
+        """IDs of items older than *retention_days* — the list behind both the count and the
+        delete, so the read-only magnitude the remediation engine measures (PR2-11) and the
+        mutation it drives share one definition. Snapshots ``items`` first: the count runs on
+        the engine's worker thread while the loop may ingest a new item."""
+        cutoff = time.time() - (retention_days * 86400)
+        return [item_id for item_id, item in list(self.items.items()) if item.created_at < cutoff]
+
+    def count_expired(self, retention_days: int = 90) -> int:
+        """How many items a retention cleanup would delete right now — read-only (PR2-11)."""
+        return len(self._expired_ids(retention_days))
+
     def cleanup_by_retention(self, retention_days: int = 90) -> int:
         """Delete items older than *retention_days*, regardless of status.
 
         The single inbox retention mechanism (source-agnostic — items from the
-        native push sink, poll providers, and digests age out uniformly). Runs
-        from the InboxService maintenance loop when auto-cleanup is enabled.
+        native push sink, poll providers, and digests age out uniformly). Driven
+        by the remediation engine's ``inbox.maintenance`` job when auto-cleanup is
+        enabled (PR2-11); the InboxService no longer runs its own maintenance loop.
         """
-        cutoff = time.time() - (retention_days * 86400)
-        expired = [item_id for item_id, item in self.items.items() if item.created_at < cutoff]
+        expired = self._expired_ids(retention_days)
         for item_id in expired:
-            del self.items[item_id]
+            self.items.pop(item_id, None)
         if expired:
             self.save()
             logger.info("Inbox auto-cleanup: deleted %d expired items", len(expired))
