@@ -315,7 +315,12 @@ def _print_findings(findings: list[scanner.Finding], root: Path) -> int:
 def _tracked_files(root: Path) -> list[Path]:
     try:
         out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=False
+            ["git", "ls-files"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
         ).stdout
     except OSError:
         return []

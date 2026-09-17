@@ -8,12 +8,18 @@ touched-area → profile forcing works.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import textwrap
 from pathlib import Path
 
 from harness import scanner
-from harness.diff import _parse_added_lines, has_fix_shaped_commit, touches_specs
+from harness.diff import (
+    _parse_added_lines,
+    compute_diff,
+    has_fix_shaped_commit,
+    touches_specs,
+)
 from harness.selection import forced_profiles
 
 
@@ -203,3 +209,86 @@ def test_parse_added_lines_reads_hunks() -> None:
         """)
     parsed = _parse_added_lines(patch)
     assert parsed == {"x.py": {2, 3}}
+
+
+# ── Undecodable git output (#2960) ───────────────────────────────────────────────
+
+
+def _git_init(root: Path) -> None:
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "t@example.com"],
+        ["config", "user.name", "T"],
+        ["config", "commit.gpgsign", "false"],
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def test_compute_diff_survives_a_text_diffed_binary_file(tmp_path: Path) -> None:
+    """A mostly-ASCII binary fixture must not take the harness down.
+
+    git only calls a file binary if it finds a NUL in the first 8000 bytes, so a PDF whose
+    header line is followed by high non-UTF-8 bytes is diffed as TEXT. Decoding that
+    strictly raised UnicodeDecodeError out of `subprocess.run`, so the whole harness run
+    died with a nameless exit 1 (#2960) instead of scanning the change.
+    """
+    _git_init(tmp_path)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=tmp_path, check=True, capture_output=True)
+
+    # No NUL anywhere, so git text-diffs it; \x93\x8c\x8b\x9e is not valid UTF-8.
+    (tmp_path / "scan.pdf").write_bytes(b"%PDF-1.3\n%\x93\x8c\x8b\x9e\n" + b"A" * 64 + b"\n")
+    (tmp_path / "code.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fix: add"], cwd=tmp_path, check=True, capture_output=True
+    )
+
+    probe = subprocess.run(
+        ["git", "diff", "--unified=0", "HEAD~1"], cwd=tmp_path, capture_output=True, check=False
+    )
+    assert b"%PDF-1.3" in probe.stdout, "git treated the fixture as binary — probe no longer bites"
+
+    diff = compute_diff(tmp_path, base_ref="HEAD~1")
+
+    assert "scan.pdf" in diff.files
+    assert "code.py" in diff.files
+    # The point of surviving: the sibling text file's line data is still there to scan.
+    assert diff.changed_lines.get("code.py") == {1}
+
+
+def _run_call_args(body: str) -> list[tuple[int, str]]:
+    """Every ``subprocess.run(...)`` argument list in ``body`` as (1-based line, args).
+
+    Paren-balanced rather than a regex: a single-line call and a call whose args contain
+    ``)`` are both real shapes here, and a regex that missed either would let the rail below
+    pass while the defect it guards sat in the file.
+    """
+    out: list[tuple[int, str]] = []
+    for match in re.finditer(r"subprocess\.run\(", body):
+        i = match.end()
+        depth = 1
+        while i < len(body) and depth:
+            depth += {"(": 1, ")": -1}.get(body[i], 0)
+            i += 1
+        out.append((body[: match.start()].count("\n") + 1, body[match.end() : i - 1]))
+    return out
+
+
+def test_every_harness_subprocess_declares_a_decode_error_policy() -> None:
+    """`text=True` without `errors=` is the #2960 defect — one rail, so a new call site
+    can't reintroduce it silently."""
+    root = _repo_root()
+    calls = 0
+    offenders: list[str] = []
+    for path in sorted((root / "harness").rglob("*.py")):
+        body = path.read_text(encoding="utf-8", errors="replace")
+        for line, args in _run_call_args(body):
+            if "text=True" not in args:
+                continue
+            calls += 1
+            if "errors=" not in args:
+                offenders.append(f"{path.relative_to(root)}:{line}")
+    assert calls >= 3, f"rail found only {calls} text=True subprocess calls — it stopped matching"
+    assert not offenders, "text=True with no errors= policy (see #2960):\n" + "\n".join(offenders)

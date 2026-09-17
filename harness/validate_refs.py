@@ -107,6 +107,7 @@ def collect_test_ids(*, timeout: int = 180) -> tuple[set[str], int, str]:
             cwd=_repo_root(),
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             check=False,
         )
