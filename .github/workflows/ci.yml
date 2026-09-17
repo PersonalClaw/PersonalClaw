@@ -213,7 +213,17 @@ jobs:
           dash -n deploy/website/install.sh
           shellcheck -s sh deploy/website/install.sh
           # -n0: the truncation sweep is ~170 tiny `sh` invocations; xdist buys nothing.
-          uv run pytest tests/test_website_installer.py -n0 --no-cov
+          # --junitxml: every pytest step in this repo writes one — see `test-shard`'s
+          # "Upload JUnit results" step for why.
+          uv run pytest tests/test_website_installer.py -n0 --no-cov --junitxml=reports/junit-lint-installer.xml
+      - name: Upload JUnit results (installer sweep)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-lint-installer
+          path: reports/junit-lint-installer.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   test-shard:
     # ── Sharded pytest — the throughput fix (#2720) ───────────────────────────────────────────
@@ -284,7 +294,33 @@ jobs:
         # --splits/--group select this shard's disjoint slice; xdist (`-n auto`, from addopts)
         #   then parallelises it across the runner's cores. `least_duration` splits evenly by
         #   count until a `.test_durations` is committed (see the job header).
-        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
+        # --junitxml: WHICH test failed, machine-readably — see the upload step below.
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-test-shard-${{ matrix.shard }}.xml
+      # ── Why a red run must still publish this ────────────────────────────────────────────
+      # MEASURED: a failing `test` produced exactly one legible signal — the annotation
+      # "Process completed with exit code 1". Nothing named the case, so classifying
+      # flake-vs-genuine meant either reading the whole shard log (minutes of scrollback, and
+      # the #2720 truncation can eat the summary outright) or a blind ~40-minute re-run. That
+      # tax was paid once per red, by a human, forever.
+      #
+      # The JUnit XML is a few hundred KB and names every failure with its node id and
+      # traceback, so `gh run download --name junit-test-shard-N` answers "which test" in
+      # seconds. `if: always()` is the whole point: the default `success()` would publish the
+      # report only on the runs that need it least. `-q` keeps the console log small; the XML
+      # is where the detail lives now, so the two levers no longer trade off.
+      #
+      # `name` carries the shard index because artifact names must be unique within a run —
+      # a fixed name would make the four shards collide and only one would survive.
+      - name: Upload JUnit results (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-test-shard-${{ matrix.shard }}
+          path: reports/junit-test-shard-${{ matrix.shard }}.xml
+          # A step that dies before pytest writes anything (a `uv sync` failure, a cancelled
+          # run) must not turn into a second, misleading red on the upload itself.
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
@@ -302,7 +338,9 @@ jobs:
           result='${{ needs.test-shard.result }}'
           if [ "$result" != "success" ]; then
             echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
-                 "(expected 'success'). Open the red 'test-shard (N)' job(s) above for the failing tests."
+                 "(expected 'success'). Open the red 'test-shard (N)' job(s) above, or download the" \
+                 "JUnit report — \`gh run download <run-id> --name junit-test-shard-N\` — to see WHICH" \
+                 "tests failed without reading the log."
             exit 1
           fi
           echo "all 4 test shards passed"
@@ -580,7 +618,18 @@ jobs:
       # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
       # that imports browse_chrome, and that each path it names exists.
       - name: BA-2 behavioural proof in a REAL browser (safety script · redirect re-eval)
-        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0
+        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0 --junitxml=reports/junit-browse-live.xml
+      # Same argument as `test-shard`'s upload step. It bites hardest here: this leg's whole
+      # purpose is that a missing browser must RED instead of skip, and "exit code 1" cannot
+      # tell a broken safety-script assertion apart from an unlaunchable Chromium. The XML can.
+      - name: Upload JUnit results (browse-live)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-browse-live
+          path: reports/junit-browse-live.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   rails:
     # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
@@ -600,7 +649,7 @@ jobs:
       # addopts intact — `-p no:xdist` would break because addopts injects
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
       - name: provider-boundary residue sweep (plan 32)
-        run: uv run pytest tests/test_provider_boundary_residue.py -n0
+        run: uv run pytest tests/test_provider_boundary_residue.py -n0 --junitxml=reports/junit-rails.xml
       # ── The gate AGGREGATE, finally executed ────────────────────────────────────────────────
       # `make gates` (scripts/gate_report.py) is the one surface that reports all six ratchets
       # together — config-baseline, inert-surface, docs-lint, and the three structural gates. It
@@ -614,6 +663,16 @@ jobs:
       # PERSONALCLAW_HOME — consistent with this job's no-global-home contract.
       - name: gate aggregate (make gates)
         run: uv run python scripts/gate_report.py
+      # Same argument as `test-shard`'s upload step. Placed after the aggregate so a red gate
+      # still publishes the residue sweep's report (`always()`, not `success()`).
+      - name: Upload JUnit results (rails)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-rails
+          path: reports/junit-rails.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   harness:
     # Self-verification gate (SELF-VERIFICATION SV-7): the repo-inner harness/ package
@@ -666,7 +725,16 @@ jobs:
         run: |
           uv venv .venv-client
           uv pip install --python .venv-client "packages/personalclaw-client-py[dev]"
-          .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests
+          .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests --junitxml=reports/junit-client.xml
+      # Same argument as `test-shard`'s upload step.
+      - name: Upload JUnit results (client)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-client
+          path: reports/junit-client.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   # dco: moved to its own workflow (.github/workflows/dco.yml). It needs
   # `pull_request_target` so a first-time contributor's PR is checked without a

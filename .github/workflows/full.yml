@@ -100,13 +100,29 @@ jobs:
         #               size shrink proportionally (the direct cause of the truncation).
         #               `least_duration` splits evenly by count until a `.test_durations`
         #               is committed. -q keeps the per-shard log small.
+        #   --junitxml — WHICH test failed, machine-readably (see the upload step below). The
+        #               same #2720 truncation that eats the console summary is exactly why the
+        #               answer must survive outside the log.
         # This leg proves cross-platform correctness, not coverage or raw speed.
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
+            uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
           else
-            uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration
+            uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
           fi
+      # Same argument as ci.yml's `test-shard` upload step: a red must name the failing case
+      # without a log read or a blind re-run. This grid is 24 legs, so the artifact NAME carries
+      # python × os × shard — artifact names are unique per run, and a fixed one would let 24
+      # uploads collide down to whichever finished last. The on-disk filename can stay generic:
+      # every leg is its own runner.
+      - name: Upload JUnit results (py${{ matrix.python }} · ${{ matrix.os }} · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-matrix-${{ matrix.python }}-${{ matrix.os }}-shard${{ matrix.shard }}
+          path: reports/junit-matrix.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   matrix:
     # ── Aggregation gate carrying the stable `matrix` id (CI-RELEASE-ENGINEERING C1) ───────────
@@ -178,9 +194,19 @@ jobs:
       - name: pytest (adversarial scanner corpus)
         run: >
           uv run pytest -n 0 --no-cov
+          --junitxml=reports/junit-security-corpus.xml
           tests/security
           tests/test_supply_chain_scanner.py
           tests/test_supply_chain_gates.py
+      # Same argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (security corpus)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-security-corpus
+          path: reports/junit-security-corpus.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   coverage:
     runs-on: ubuntu-latest
@@ -198,7 +224,19 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: pytest with coverage XML
-        run: uv run pytest --cov=personalclaw --cov-report=xml
+        run: uv run pytest --cov=personalclaw --cov-report=xml --junitxml=reports/junit-coverage.xml
+      # Its OWN upload step, deliberately not folded into "Upload coverage artifacts" below:
+      # that one is `success()`-gated by default (a broken run has no meaningful coverage
+      # number), and the whole point of the JUnit report is that it survives the red. Same
+      # argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (coverage run)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-coverage
+          path: reports/junit-coverage.xml
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Coverage badge (self-owned shields JSON — no third-party service)
         run: |
           uv run python - <<'PY'
