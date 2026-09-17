@@ -898,8 +898,11 @@ def test_list_models_also_discovers_with_the_subscription_token(
         seen.append(api_key)
         return []
 
+    # The STRICT discovery is the seam the catalog calls now (#955: the fail-soft wrapper
+    # cannot tell "serves no models" from "never reached it", so the catalog stopped using
+    # it). The property under test is unchanged — the token is what gets probed.
     monkeypatch.setattr(
-        "personalclaw.sdk.provider_helpers.openai_compatible_list_models", _fake_list
+        "personalclaw.sdk.provider_helpers.openai_compatible_discover_models", _fake_list
     )
     _run(_catalog(spec).list_models())
     assert seen == [SECRET]

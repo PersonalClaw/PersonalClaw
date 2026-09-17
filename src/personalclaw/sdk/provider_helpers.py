@@ -21,6 +21,7 @@ header) does NOT use these — it subclasses the protocol client directly.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 # ── Re-exported from CORE ────────────────────────────────────────────────────
@@ -50,8 +51,10 @@ from personalclaw.llm.capabilities import Capability, ProviderCapability  # noqa
 from personalclaw.llm.catalog import (  # noqa: F401
     ConnectionResult,
     ModelCatalog,
+    ModelDiscoveryError,
     ModelInfo,
     infer_capabilities,
+    openai_compatible_discover_models,
     openai_compatible_list_models,
 )
 from personalclaw.llm.credentials import Credential  # noqa: F401
@@ -69,13 +72,19 @@ from personalclaw.llm.subscription_credentials import (  # noqa: F401
     resolve_subscription_credential,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class BrandedCatalog(ModelCatalog):
-    """Discovery for a branded OpenAI-compatible provider: try the live
-    ``/v1/models`` endpoint, fall back to the spec's curated list so the picker is
-    never empty when the key is set but the endpoint has no models route (some
-    providers don't expose one). Anthropic-compatible providers have no models
-    endpoint, so they always use the fallback list."""
+    """Discovery for a branded OpenAI-compatible provider: try the live models endpoint,
+    fall back to the spec's curated list so the picker is never empty when the key is set
+    but the endpoint has no models route (some providers don't expose one).
+    Anthropic-compatible providers have no models endpoint, so they always use the
+    fallback list.
+
+    A provider with NOTHING to fall back on (the bring-your-own-endpoint apps declare no
+    curated models) reports a discovery failure as a failure instead of as an empty
+    catalog — see :meth:`list_models` and #955."""
 
     def __init__(
         self,
@@ -144,14 +153,38 @@ class BrandedCatalog(ModelCatalog):
         return rows
 
     async def list_models(self) -> list[ModelInfo]:
+        """The models this instance can offer, discovered live where possible.
+
+        A discovery FAILURE (blocked / unreachable / 401 / 404 / non-JSON) is not the
+        same event as "the endpoint serves no models", so it is not reported the same
+        way (#955). When there is a curated fallback or a configured default model, that
+        is still what the picker gets — an empty picker is worse than a stale one — but
+        the failure is logged at WARNING instead of vanishing. When there is NOTHING to
+        fall back on, which is exactly the bring-your-own-endpoint case #955 was filed
+        against, the failure is raised: every caller of this method
+        (``/api/model-providers/{name}/models``, ``/api/models/available``,
+        ``/api/models/chat``) already relays a raised failure onto the provider row, and
+        a silent ``[]`` is the one answer the user cannot act on.
+        """
         if self._spec.protocol == "anthropic":
             return self._fallback()  # no models endpoint on the Anthropic wire
         api_key, _ = self._resolved_key()
-        live = await openai_compatible_list_models(
-            self._endpoint,
-            api_key,
-            default_base=self._spec.default_base_url,
-        )
+        try:
+            live = await openai_compatible_discover_models(
+                self._endpoint,
+                api_key,
+                default_base=self._spec.default_base_url,
+            )
+        except ModelDiscoveryError as exc:
+            fallback = self._fallback()
+            if not fallback:
+                raise
+            logger.warning(
+                "%s: model discovery failed, offering the configured/curated list instead: %s",
+                self._spec.type,
+                exc,
+            )
+            return fallback
         return live if live else self._fallback()
 
     async def test_connection(self) -> ConnectionResult:
@@ -167,9 +200,26 @@ class BrandedCatalog(ModelCatalog):
         # endpoint authenticated.
         if self._spec.protocol == "anthropic":
             return await self._probe_completion(api_key)
-        models = await self.list_models()
+        # The STRICT discovery, not `list_models`: a probe that reported the fallback's
+        # count would answer "connected, 12 models" for an endpoint it never reached, and
+        # the uniform "No models available (check key/endpoint)" it used to print for
+        # every failure is what left #955 unactionable. The resolver's own sentence says
+        # which of blocked / unreachable / 401 / 404 / non-JSON actually happened.
+        try:
+            live = await openai_compatible_discover_models(
+                self._endpoint, api_key, default_base=self._spec.default_base_url
+            )
+        except ModelDiscoveryError as exc:
+            return ConnectionResult(ok=False, detail=str(exc)[:300])
+        models = live or self._fallback()
         if not models:
-            return ConnectionResult(ok=False, detail="No models available (check key/endpoint)")
+            return ConnectionResult(
+                ok=False,
+                detail=(
+                    "Reached the endpoint and it listed no models — set a Default Model on "
+                    "this provider to use it anyway."
+                ),
+            )
         return ConnectionResult(ok=True, model_count=len(models))
 
     async def _probe_completion(self, api_key: str) -> ConnectionResult:
