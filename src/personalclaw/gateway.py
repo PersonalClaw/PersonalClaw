@@ -114,6 +114,13 @@ logger = logging.getLogger(__name__)
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
 
+# Max chars persisted/delivered for a fire's error summary. Sized to fit a rendered
+# AgentError envelope (WHAT/WHY/FIX, ~250 chars) so the FIX line — the actionable
+# remediation PLATFORM-LEGIBILITY §2 adds over a bare ``TypeName: msg`` — survives into
+# the run-ledger row, ``last_error_summary``, and the delivered notification, instead of
+# being cut mid-word (as the old 200-char slice did, dropping FIX from every sink).
+_ERROR_SUMMARY_MAX = 512
+
 # How often the earned-autonomy promotion scan runs (§6.1). Six hours, not the poll
 # interval it rides: one pass reads the SEL tail once per declared action type, and a rung
 # is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
@@ -1251,9 +1258,21 @@ class GatewayOrchestrator:
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            # PLATFORM-LEGIBILITY §2: a provider that RAISES (rather than returning a failed
+            # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
+            # hook (`hooks.py`) and event-trigger (`event_triggers.py`) seams already apply — so
+            # an app-contributed provider surfaces a coded, actionable failure on this (busiest,
+            # unattended: clock/file/webhook/chained) dispatch path instead of a bare
+            # ``TypeName: msg``. Retiring `_run_action_job` (S112) dropped this wrap the way it
+            # dropped the denylist (AG-12): the successor seam inherited neither. Built ONCE and
+            # threaded into BOTH sinks — the persisted run record / `last_error_summary`, and the
+            # delivered notification — so the one envelope is the source of both, not two copies.
+            from personalclaw.action_providers import provider_failure
+
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
-            await self._record_fire_outcome(trigger, exc=exc)
-            self._deliver_fire_outcome(trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
+            rendered = provider_failure(provider_name, exc).render()
+            await self._record_fire_outcome(trigger, exc=exc, error=rendered)
+            self._deliver_fire_outcome(trigger, ok=False, error=rendered)
         finally:
             # 🔴 THE LIVE REFRESH (S107). `ScheduleService._record_run` pushed `cron_history` so
             # the Executions/Logs views update without polling — and `_record_run` is reachable only
@@ -1499,7 +1518,7 @@ class GatewayOrchestrator:
                 trigger_id=str(getattr(trigger, "id", "") or ""),
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
-                summary=error[:200],
+                summary=error[:_ERROR_SUMMARY_MAX],
                 # 🔴 EACH FIRE IS A NEW EVENT (R18 / crit 10 — S161). This passed neither `run_id`
                 # nor `attempt_key`, so `event_id` — derived from exactly those three parts —
                 # produced the SAME id for every fire of a trigger, and `is_duplicate` then dropped
@@ -1529,9 +1548,21 @@ class GatewayOrchestrator:
             logger.debug("could not deliver the fire outcome for %s", trigger, exc_info=True)
 
     async def _record_fire_outcome(
-        self, trigger: Any, *, result: Any = None, exc: BaseException | None = None
+        self,
+        trigger: Any,
+        *,
+        result: Any = None,
+        exc: BaseException | None = None,
+        error: str = "",
     ) -> None:
         """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
+
+        On the raise path the caller passes the pre-rendered WHAT/WHY/FIX envelope as
+        ``error`` (PLATFORM-LEGIBILITY §2); ``exc`` is still passed because the autopause
+        exit is classified by exception TYPE, independent of the human-facing text. So
+        ``error`` is the persisted evidence and ``exc`` is the classification signal — one
+        envelope, built once at the seam, rather than this method re-deriving a bare
+        ``TypeName: msg`` of its own.
 
         🔴 WHY THIS EXISTS. `triggers/autopause.py` ships 13 functions implementing criterion 3 —
         typed exits, a 5-failure budget, parking for transport outages, immediate pause for config
@@ -1584,7 +1615,7 @@ class GatewayOrchestrator:
                     started_at=now,
                     finished_at=now,
                     status="success" if exit_type == autopause.ExitType.OK.value else "failure",
-                    error="" if exc is None else f"{type(exc).__name__}: {exc}"[:200],
+                    error=error[:_ERROR_SUMMARY_MAX],
                 )
             )
             # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
@@ -1631,13 +1662,16 @@ class GatewayOrchestrator:
                 # says why the slot exists: "'paused after 5 consecutive failures' without the
                 # error is an alert the user has to go digging to act on."
                 #
-                # Falls back to the lifecycle reason only when there is no error text at all (a
-                # provider returning `success=False` without raising) — an empty evidence line
-                # would be worse than a redundant one.
-                detail = f"{type(exc).__name__}: {exc}" if exc is not None else ""
+                # On the raise path `error` is the seam's pre-rendered WHAT/WHY/FIX envelope
+                # (PLATFORM-LEGIBILITY §2), whose WHAT line still carries the concrete
+                # ``TypeName: msg`` — so the evidence is richer, not lost. It falls back to the
+                # result's own error string (a provider returning `success=False` without raising),
+                # then to the lifecycle reason — an empty evidence line would be worse than a
+                # redundant one.
+                detail = error
                 if not detail and result is not None:
                     detail = str(getattr(result, "error", "") or "")
-                live.last_error_summary = (detail or decision.reason)[:200]
+                live.last_error_summary = (detail or decision.reason)[:_ERROR_SUMMARY_MAX]
             # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
             # needing attention must stop firing. Leaving `enabled` True while labelling the row
             # "autopaused" would be the inert control this program keeps finding.
