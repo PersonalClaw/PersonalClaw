@@ -87,7 +87,10 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
   it('names the section, the count, and what the proposal would do', async () => {
     renderPanel()
     expect(await screen.findByRole('heading', { name: /Proposed routing changes/ })).toBeTruthy()
-    expect(screen.getByText(/1 proposed change waiting on you/)).toBeTruthy()
+    // The heading is chrome and paints before the queue read resolves, so the count sentence
+    // needs its own wait — a sync `getByText` here passes only when the fetch happens to settle
+    // inside the heading's find, which is not true under the full suite (#2951's failure class).
+    expect(await screen.findByText(/1 proposed change waiting on you/)).toBeTruthy()
     // The sentence carries both refs and the bucket, so the row is legible without expanding it.
     const row = screen.getByRole('listitem')
     expect(row.textContent).toContain('reasoning / summarize')

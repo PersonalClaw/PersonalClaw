@@ -71,6 +71,18 @@ const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
 
+// Every route in `App.tsx` is `lazy(() => import(…))`, so a deep link's first paint waits on a
+// module transform, not on React. In isolation that lands in milliseconds; under the full suite
+// (700 jsdom instances, #2951) it lands well past any `findBy` window, and the failure reads as
+// "the surface never rendered" when the surface was only late. Resolving the routes these tests
+// deep-link into HERE puts them in the module cache, so `lazy` settles in a microtask and each
+// find below waits on the render it is actually asserting about. This changes no assertion.
+await Promise.all([
+  import('../pages/settings/SettingsPage'),
+  import('../pages/tools/ToolsPage'),
+  import('../pages/dashboard/DashboardPage'),
+])
+
 /** The shell in the provider stack `main.tsx` gives it (identity is mocked above). Anything
  *  less and `useAppearance()` hands back null and every page crashes on mount — which would
  *  look exactly like "the surface did not render". */
