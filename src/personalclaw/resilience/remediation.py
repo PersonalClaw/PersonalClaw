@@ -13,9 +13,14 @@ cooldown".
 
 **SOLE ownership of periodic maintenance (§4.4, PR2-11 then PR2-8).** This engine owns the
 maintenance it absorbed — memory FTS reconciliation, the daily history and SEL prunes,
-skill-library aging — and it is the only implementation of each: the heartbeat's duplicate
-per-tick copies were deleted with the engine's re-homing, so there is no second cadence to
-fall back to and none to drift from. ``resilience.remediation.enabled=false`` therefore means
+skill-library aging, and (PR2-11's remainder) the inbox's retention cleanup, dismissed-set
+pruning and feedback retire-candidate check — and it is the only implementation of each: the
+heartbeat's duplicate per-tick copies were deleted with the engine's re-homing, and the
+``InboxService`` 6h maintenance loop was retired into the ``inbox.maintenance`` job, so there is
+no second cadence to fall back to and none to drift from. The one wrinkle the inbox adds is that
+its store is held in memory by the running service, so ``inbox.maintenance`` drives THAT live
+instance (via ``inbox_service.run_live_inbox_maintenance``, bounced onto the loop that owns it)
+rather than a fresh store. ``resilience.remediation.enabled=false`` therefore means
 what "disabled" means for every other automation: the pass does not run, and every job stays
 callable on demand through ``POST /api/doctor/remediation/run``. That is criterion #6 ("the
 old heartbeat maintenance no longer runs independently") at its literal strength.
@@ -246,6 +251,31 @@ def measure_deficits() -> list[Deficit]:
         )
     except Exception:
         logger.debug("deficit: SEL prune measure failed", exc_info=True)
+
+    # Inbox maintenance absorbed from the InboxService's own 6h loop (§4.4, PR2-11 remainder).
+    # Retention cleanup, dismissed-set pruning and the feedback retire-candidate check used to
+    # ride a private `_MAINTENANCE_EVERY_SECS` timer inside `InboxService._loop`; that loop is
+    # now poll-only and this is the sole cadence. Measured off the LIVE store (0 when no gateway
+    # service is up — a fresh InboxStore would fork the running service's in-memory state, the
+    # hazard `inbox.live_store` documents). ALWAYS emitted (at 0 when idle/headless) so the
+    # `test_every_job_bearing_deficit_can_be_scheduled_alone` non-vacuity rail can see it.
+    # Weight 11 → a single expired item / stale dismissal / due retire proposal crosses the
+    # default gate at count 1 (retention is a promise, a proposal is one-shot); max_penalty 15
+    # sits above the 10-point schedulability floor so the job can trigger alone.
+    try:
+        from personalclaw.inbox_service import inbox_maintenance_backlog
+
+        out.append(
+            Deficit(
+                key="inbox_maintenance_backlog",
+                count=inbox_maintenance_backlog(),
+                weight=11.0,
+                max_penalty=15.0,
+                job_id="inbox.maintenance",
+            )
+        )
+    except Exception:
+        logger.debug("deficit: inbox maintenance measure failed", exc_info=True)
 
     # Skill-library tamper (§4.4's `verify_skill_integrity` — finally SCHEDULED, here,
     # on every engine pass and every Doctor read, instead of only when a human opens the
@@ -617,6 +647,15 @@ def _job_prune_sel() -> str:
     return f"pruned {sel().prune()} security-event entr(ies)"
 
 
+def _job_inbox_maintenance() -> str:
+    # Retention cleanup + dismissed prune + feedback retire check on the LIVE inbox service.
+    # The seam bounces onto the loop that owns the store, so this deterministic job never
+    # mutates inbox state from the engine's worker thread (§4.4, PR2-11).
+    from personalclaw.inbox_service import run_live_inbox_maintenance
+
+    return run_live_inbox_maintenance()
+
+
 def _register_builtin_jobs() -> None:
     register_job(
         RemediationJob(
@@ -681,6 +720,19 @@ def _register_builtin_jobs() -> None:
             lane="deterministic",
             cooldown_hours=12.0,
             fixes_deficit="sel_prunable_entries",
+        )
+    )
+    # Inbox maintenance retired from InboxService's own 6h loop (§4.4, PR2-11). Cooldown 6h
+    # matches the fixed cadence it replaces; the deficit is deficit-driven, so a real backlog
+    # can still trigger a pass before the cooldown lapses only after the cooldown clears.
+    register_job(
+        RemediationJob(
+            id="inbox.maintenance",
+            title="Inbox retention cleanup, dismissed prune + feedback retire check",
+            run=_job_inbox_maintenance,
+            lane="deterministic",
+            cooldown_hours=6.0,
+            fixes_deficit="inbox_maintenance_backlog",
         )
     )
 

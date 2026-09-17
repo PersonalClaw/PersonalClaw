@@ -214,6 +214,8 @@ _ABSORBED = {
     "memory.prune-history": "history_over_retention",
     "sel.prune": "sel_prunable_entries",
     "skills.age": "skill_aging_due",
+    # PR2-11 remainder: the inbox's own 6h maintenance loop, retired into the engine.
+    "inbox.maintenance": "inbox_maintenance_backlog",
 }
 
 
@@ -271,6 +273,71 @@ def test_skills_tampered_deficit_is_a_detector_not_a_job(tmp_path, monkeypatch):
     assert d.reachable is False and d.job_id == ""
     assert rem.health_score([d]) == 100.0  # unreachable → excluded from the score
     assert not [j for j in rem.all_jobs() if j.fixes_deficit == "skills_tampered"]
+
+
+def test_inbox_maintenance_deficit_is_emitted_at_zero_headless(tmp_path, monkeypatch):
+    """PR2-11: the inbox deficit is ALWAYS measured (so the schedulability rail above can see
+    it), and reads 0 when no gateway inbox service is running — a headless process has no live
+    store to prune, and a fresh InboxStore would fork the running service's in-memory state."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.inbox_providers import native_source
+
+    saved = native_source.get_dashboard_state()
+    native_source.set_dashboard_state(None)
+    try:
+        by_key = {d.key: d for d in rem.measure_deficits()}
+    finally:
+        native_source.set_dashboard_state(saved)
+    assert "inbox_maintenance_backlog" in by_key, "the inbox deficit must always be emitted"
+    d = by_key["inbox_maintenance_backlog"]
+    assert d.count == 0 and d.job_id == "inbox.maintenance" and d.reachable is True
+    assert d.max_penalty > rem._MIN_SCHEDULABLE_PENALTY  # can trigger its job alone
+
+
+def test_inbox_maintenance_job_prunes_the_live_store(tmp_path, monkeypatch):
+    """The `inbox.maintenance` job does the WORK: it drives the LIVE service (reached through the
+    dashboard-state seam, never a fresh store) and reduces the measured backlog to zero."""
+    import time as _t
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes.load_inbox_settings",
+        lambda: {"auto_cleanup_enabled": True, "retention_days": 30},
+    )
+    monkeypatch.setattr("personalclaw.feedback.pending_retire_candidate_count", lambda: 0)
+    monkeypatch.setattr("personalclaw.feedback.check_retire_candidates", lambda state=None: [])
+    from personalclaw.inbox import InboxItem, InboxState, InboxStore
+    from personalclaw.inbox_providers import native_source
+    from personalclaw.inbox_service import InboxService
+
+    store = InboxStore(tmp_path / "inbox.json")
+    store.items["C1_old"] = InboxItem(
+        id="C1_old",
+        channel="C1",
+        channel_name="#g",
+        thread_ts=None,
+        message="x",
+        sender_id="U",
+        sender_name="U",
+        created_at=_t.time() - 40 * 86400,
+    )
+    svc = InboxService(state=InboxState(tmp_path / "state.json"), store=store)
+
+    class _State:
+        pass
+
+    st = _State()
+    st._inbox_svc = svc  # type: ignore[attr-defined]
+    saved = native_source.get_dashboard_state()
+    native_source.set_dashboard_state(st)
+    try:
+        assert svc.maintenance_backlog() == 1  # one expired item
+        detail = rem._job_inbox_maintenance()
+        assert "1 item(s) removed" in detail
+        assert "C1_old" not in store.items
+        assert svc.maintenance_backlog() == 0
+    finally:
+        native_source.set_dashboard_state(saved)
 
 
 def test_history_prune_job_deletes_expired_files_and_their_index_rows(tmp_path, monkeypatch):
