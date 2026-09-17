@@ -9,7 +9,6 @@ from personalclaw.dashboard.state import (
     DashboardState,
     _fmt_duration,
     _load_notifications,
-    _maybe_trim_notifications,
     _persist_notification,
 )
 
@@ -85,24 +84,66 @@ class TestNotificationPersistence:
         assert loaded[0]["title"] == "Good"
         assert loaded[1]["title"] == "Also good"
 
-    def test_trim_large_file(self, monkeypatch, tmp_path) -> None:
-        """File is trimmed when exceeding 2x max notifications."""
+    def test_trim_fires_at_the_append_seam_on_memory_and_file_together(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """The cap is enforced where rows are BORN: past 2× the cap, memory and the
+        file drop to the newest cap-many rows in the same step — never at load or
+        rewrite, which are lossless mirrors (Issue 420)."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.dashboard.state._MAX_PERSISTED_NOTIFICATIONS", 5)
+        state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
+        for i in range(11):
+            state._append_notification(
+                {"kind": "cron", "title": f"n{i}", "body": "x", "ts": str(i)}
+            )
+
+        remaining = (tmp_path / "notifications.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(remaining) == 5
+        assert json.loads(remaining[0])["title"] == "n6"
+        assert json.loads(remaining[-1])["title"] == "n10"
+        # Memory mirrors the file exactly — the invariant that makes rewrites lossless.
+        assert [n["title"] for n in state._notification_log] == [f"n{i}" for i in range(6, 11)]
+
+    def test_ack_never_deletes_rows_beyond_the_load_window(self, monkeypatch, tmp_path) -> None:
+        """Issue 420's measured repro: a steady-state file holds up to 2× the cap;
+        acking ONE row after a restart must set one flag — not rewrite the file down
+        to a truncated in-memory view, permanently destroying the rest."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("personalclaw.dashboard.state._MAX_PERSISTED_NOTIFICATIONS", 5)
         path = tmp_path / "notifications.jsonl"
-        # Write 11 lines (> 2 * 5)
-        lines: list[str] = []
-        for i in range(11):
-            lines.append(json.dumps({"kind": "cron", "title": f"n{i}", "body": "x"}))
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        rows = [
+            json.dumps({"kind": "cron", "title": f"n{i}", "body": "x", "ts": str(i)})
+            for i in range(9)  # between cap (5) and 2×cap (10): the normal steady state
+        ]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
-        _maybe_trim_notifications(path)
+        state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
+        assert state.ack_notification("8") is True
 
-        remaining = path.read_text(encoding="utf-8").splitlines()
-        assert len(remaining) == 5
-        # Should keep the last 5
-        assert json.loads(remaining[0])["title"] == "n6"
-        assert json.loads(remaining[-1])["title"] == "n10"
+        remaining = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+        assert len(remaining) == 9, "one ack must never shorten the log"
+        assert [n["title"] for n in remaining] == [f"n{i}" for i in range(9)]
+        acked = {n["ts"]: n.get("acked", False) for n in remaining}
+        assert acked["8"] is True
+        assert sum(1 for v in acked.values() if v) == 1
+
+    def test_delete_removes_exactly_one_row(self, monkeypatch, tmp_path) -> None:
+        """Deleting one notification from a beyond-cap file removes that row alone."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.dashboard.state._MAX_PERSISTED_NOTIFICATIONS", 5)
+        path = tmp_path / "notifications.jsonl"
+        rows = [
+            json.dumps({"kind": "cron", "title": f"n{i}", "body": "x", "ts": str(i)})
+            for i in range(8)
+        ]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
+        assert state.delete_notification("3") is True
+
+        remaining = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+        assert [n["ts"] for n in remaining] == ["0", "1", "2", "4", "5", "6", "7"]
 
     def test_notify_persists(self, monkeypatch, tmp_path) -> None:
         """DashboardState.notify() persists to disk."""
