@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fakes import BoundEmbedder
 
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.knowledge_providers.native import NATIVE_TYPES, create_native_provider
@@ -137,7 +138,10 @@ def test_queue_processes_item_end_to_end(store):
         iid = store.create_typed_item(
             item_type="note", title="N", content="queue body", extra={"processing_status": "queued"}
         )
-        q = KnowledgeIngestQueue(store)
+        # The queue resolves its own embedder, so the bound provider is declared HERE:
+        # without one RET-2 files the item `unsearchable`, and this test's subject is the
+        # drain loop reaching a terminal status, not the no-provider verdict.
+        q = KnowledgeIngestQueue(store, embedder_factory=BoundEmbedder)
         q.start()
         q.enqueue(iid)
         # let the drain loop pick it up

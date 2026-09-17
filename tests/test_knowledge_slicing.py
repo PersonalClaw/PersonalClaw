@@ -30,6 +30,7 @@ import asyncio
 import json
 
 import pytest
+from fakes import BoundEmbedder
 
 from personalclaw.knowledge import slicing as sl
 from personalclaw.knowledge.pipeline import ensure_nodes_registered
@@ -696,7 +697,7 @@ def test_an_arxiv_pdf_ingests_into_slice_rows_on_the_one_item(store, paper_pdf_b
             item_type="bookmark", title="", url="https://arxiv.org/abs/2103.00020"
         )
         before = _count_items(store)
-        status = _run(ingest_item(store, item_id))
+        status = _run(ingest_item(store, item_id, embedder=BoundEmbedder()))
     finally:
         monkey.undo()
 
@@ -730,14 +731,14 @@ def test_saving_the_same_paper_twice_opens_no_socket_the_second_time(store, pape
     first = store.create_typed_item(item_type="bookmark", title="", url=url)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("personalclaw.knowledge.slicing._default_fetch", _Fetcher(paper_pdf_bytes))
-        assert _run(ingest_item(store, first)) == "done"
+        assert _run(ingest_item(store, first, embedder=BoundEmbedder())) == "done"
 
     second = store.create_typed_item(item_type="bookmark", title="", url=url)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("personalclaw.knowledge.slicing._default_fetch", _exploding_fetch)
-        assert _run(ingest_item(store, second)) == "done", store.get_item(second).get(
-            "processing_error"
-        )
+        assert _run(ingest_item(store, second, embedder=BoundEmbedder())) == "done", store.get_item(
+            second
+        ).get("processing_error")
     kinds = [row["node_type"] for row in store.get_extracted_contents(second)]
     assert "slice:brief" in kinds and "slice:body" in kinds and "slice:meta" in kinds
     assert (store.get_item(second).get("file_metadata") or {}).get("references")
@@ -761,10 +762,10 @@ def test_re_ingesting_one_fetched_paper_reuses_its_stored_text_and_re_slices_it(
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("personalclaw.knowledge.slicing._default_fetch", _Fetcher(paper_pdf_bytes))
-        assert _run(ingest_item(store, item_id)) == "done"
+        assert _run(ingest_item(store, item_id, embedder=BoundEmbedder())) == "done"
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("personalclaw.knowledge.slicing._default_fetch", _exploding_fetch)
-        assert _run(ingest_item(store, item_id)) == "done"
+        assert _run(ingest_item(store, item_id, embedder=BoundEmbedder())) == "done"
     kinds = [row["node_type"] for row in store.get_extracted_contents(item_id)]
     assert kinds.count("slice:brief") == 1, "a re-ingest must replace rows, not append"
 
@@ -776,7 +777,7 @@ def test_an_uploaded_pdf_gets_the_same_slices_as_a_fetched_one(store, paper_pdf)
     item_id = store.create_typed_item(item_type="pdf", title="Paper", content="")
     store.update_item(item_id, file_path=str(paper_pdf))
     store.db.commit()
-    assert _run(ingest_item(store, item_id)) == "done"
+    assert _run(ingest_item(store, item_id, embedder=BoundEmbedder())) == "done"
     kinds = [row["node_type"] for row in store.get_extracted_contents(item_id)]
     assert {"document_read", "slice:brief", "slice:body", "slice:meta"} <= set(kinds)
 
@@ -790,7 +791,7 @@ def test_a_plain_document_yields_no_slices_and_still_completes(store, tmp_path):
     item_id = store.create_typed_item(item_type="document", title="N", content="")
     store.update_item(item_id, file_path=str(path))
     store.db.commit()
-    assert _run(ingest_item(store, item_id)) == "done"
+    assert _run(ingest_item(store, item_id, embedder=BoundEmbedder())) == "done"
     kinds = [row["node_type"] for row in store.get_extracted_contents(item_id)]
     assert not any(k.startswith("slice:") for k in kinds)
 
@@ -813,7 +814,7 @@ def test_a_plain_web_bookmark_still_takes_the_html_scraper(store, monkeypatch):
     item_id = store.create_typed_item(
         item_type="bookmark", title="", url="https://example.test/blog/post"
     )
-    assert _run(ingest_item(store, item_id)) == "done"
+    assert _run(ingest_item(store, item_id, embedder=BoundEmbedder())) == "done"
     assert "the blog post body" in (store.get_item(item_id).get("content") or "")
 
 

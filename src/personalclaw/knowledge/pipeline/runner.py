@@ -17,6 +17,7 @@ import logging
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
 from personalclaw.knowledge.pipeline.types import NodeContext
+from personalclaw.knowledge.searchability import UNSEARCHABLE, reason_detail, verdict_for_ingest
 from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RAW
 
 logger = logging.getLogger(__name__)
@@ -65,8 +66,13 @@ async def ingest_item(
     publish=None,
 ) -> str:
     """Run the full ingestion graph for *item_id*. Returns the final status
-    (``done`` | ``partial`` | ``failed``). Never raises — a failure is recorded on
-    the item as ``processing_status='failed'`` + ``processing_error``.
+    (``done`` | ``partial`` | ``unsearchable`` | ``unreachable`` | ``failed``). Never
+    raises — a failure is recorded on the item as ``processing_status='failed'`` +
+    ``processing_error``.
+
+    ``unsearchable`` (RET-2) means the item persisted but nothing can retrieve it: no text
+    was extracted, or no vector/chunk was written. It is deliberately NOT ``done`` — see
+    :mod:`personalclaw.knowledge.searchability` for the reason vocabulary.
 
     *publish* (optional) is a ``(event: str, data: dict) -> None`` SSE emitter for
     live progress; *params_for* layers user node-execution-param config.
@@ -176,6 +182,9 @@ async def ingest_item(
         # content-less — no pool entry, no title basis, unsearchable. Synthesize a
         # minimal human-readable line from the structural metadata we DID extract so
         # the item is still identifiable and findable, honoring graceful degradation.
+        # RET-2: captured HERE, before the synthesis below — afterwards nothing downstream
+        # can tell a synthesized descriptor apart from a document that genuinely says that.
+        empty_success_extractors = _lying_extractors(result)
         if not consolidated.strip() and (item.get("file_path") or ""):
             fresh = (
                 store.get_item(item_id) or item
@@ -328,7 +337,34 @@ async def ingest_item(
     node_phases["entities"] = entities_phase
     node_phases["intents"] = intents_phase
     node_phases["embed"] = embed_phase
-    _merge_file_metadata(store, item_id, {"node_phases": node_phases})
+
+    # RET-2 — the searchability verdict, computed from what actually LANDED (rows in
+    # `chunks`, a vector on the item, text in the content) rather than from any stage's
+    # self-report. This is the step that stops an ingest yielding nothing retrievable from
+    # persisting as `done`; the reason token is written beside `node_phases` so the Doctor
+    # row and `knowledge_search` read the SAME recorded fact instead of re-deriving it.
+    unsearchable_reason = _searchability_reason(store, item_id, embedder, empty_success_extractors)
+    meta_updates: dict[str, object] = {"node_phases": node_phases}
+    if unsearchable_reason:
+        meta_updates["unsearchable_reason"] = unsearchable_reason
+        # Only `done`/`partial` are overridden. `failed` and `unreachable` are already loud
+        # and already name their own cause — replacing them would trade a specific reason
+        # for a broader one. `deleted` never reaches here.
+        if status in ("done", "partial"):
+            status = UNSEARCHABLE
+        detail = f"{unsearchable_reason}: {reason_detail(unsearchable_reason)}"
+        if not proc_error:
+            proc_error = detail
+        elif unsearchable_reason not in proc_error:
+            # Lead with the searchability reason: an item nothing can find is the more
+            # actionable fact than a skipped optional node, and the UI suppresses the
+            # benign "Skipped (…)" prefix — so it must never be what a user reads first.
+            proc_error = f"{detail}; {proc_error}"[:500]
+    else:
+        # A re-ingest that NOW lands (a provider was bound, a text version uploaded) must
+        # clear the stale reason, or the item stays on the attention surface forever.
+        meta_updates["unsearchable_reason"] = None
+    _merge_file_metadata(store, item_id, meta_updates)
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
     store.db.commit()
@@ -352,7 +388,11 @@ async def ingest_item(
     # subscriber's obvious reading wrong — the `status` field is not a licence to fire the
     # wrong event. It also makes this consistent with the failure paths ABOVE, which return
     # before reaching here: no failure announces, from any exit.
-    if status in ("done", "partial"):
+    # `unsearchable` is included: the item IS in the library and its content persisted (a
+    # note with no embedding provider is still keyword-reachable), so an app that never
+    # heard about it would be missing a real item. Subscribers get `status` and can branch;
+    # what they must never get is silence about content the user can see.
+    if status in ("done", "partial", UNSEARCHABLE):
         emit_platform_event(KNOWLEDGE_INGESTED, {"item_id": item_id, "status": status})
     return status
 
@@ -405,12 +445,84 @@ def _cleanup_orphaned_artifacts(item_id: str) -> None:
 
 def _merge_file_metadata(store, item_id: str, new_keys: dict) -> None:
     """Merge keys into the item's file_metadata, re-reading current state first so a
-    prior merge (structural metadata) in the same run isn't clobbered."""
+    prior merge (structural metadata) in the same run isn't clobbered.
+
+    A ``None`` value REMOVES the key rather than storing a null. Every key here records
+    something a run observed, so "this run observed nothing" is the absence of the key —
+    storing ``None`` would leave a re-ingest that fixed the condition still carrying the
+    field that says the condition exists."""
     fresh = store.get_item(item_id) or {}
     merged = dict(fresh.get("file_metadata") or {})
-    merged.update(new_keys)
+    for key, value in new_keys.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
     store.update_item(item_id, file_metadata=merged, touch=False)
     store.db.commit()
+
+
+def _lying_extractors(result) -> list[str]:
+    """Pooled nodes that reported SUCCESS and produced no text (RET-2).
+
+    The distinction this draws is the whole basis of the ``no_extractable_text`` verdict:
+    a node that reported ``done`` while yielding nothing LIED, and its item ends up
+    carrying the synthesized descriptor ("Document: scan.pdf (1 pages)") as its entire
+    searchable content. A node that was SKIPPED because its model is absent is a declared
+    degradation the product already reports as ``partial`` — an image ingested with no
+    vision model must NOT be flagged, or the verdict would fire on every graceful
+    degradation and stop meaning anything.
+
+    Non-pooled nodes are excluded because their product never reaches the text pool at all
+    (``exif`` writes structural metadata), so "produced no text" is not a claim about them.
+    """
+    names: list[str] = []
+    for node_type in result.ran:
+        out = result.outputs.get(node_type)
+        if out is None or not getattr(out, "pooled", False):
+            continue
+        if not (getattr(out, "text", "") or "").strip():
+            names.append(node_type)
+    return names
+
+
+def _searchability_reason(store, item_id: str, embedder, empty_success_extractors) -> str | None:
+    """The typed reason this item is not retrievable, or ``None`` (RET-2).
+
+    Reads the LANDED state — a count of the item's rows in ``chunks``, whether its own
+    vector column is populated, whether it has any text at all — because every stage's
+    self-report is exactly what was untrustworthy: ``document_read`` said ``done`` on a
+    scan it read no words from, and ``embed`` wrote zero vectors on a home with no
+    embedding provider. A read failure here reports ``None`` (no verdict) rather than
+    inventing a failure: this function must never be the reason an ingest looks broken.
+    """
+    item = store.get_item(item_id) or {}
+    try:
+        chunk_count = int(
+            store.db.execute(
+                "SELECT COUNT(*) FROM chunks WHERE item_id = ?", (item_id,)
+            ).fetchone()[0]
+            or 0
+        )
+        # Read the COLUMN, not ``get_item``: the item dict deliberately exposes only a
+        # ``has_embedding`` flag (the vector never leaves the DB), so asking it for
+        # ``embedding`` silently answers "absent" for every item and would report a
+        # perfectly indexed library as unsearchable. LENGTH(...) rather than IS NOT NULL so
+        # a zero-length blob counts as no vector, which is what it is.
+        vector_row = store.db.execute(
+            "SELECT COALESCE(LENGTH(embedding), 0) FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        has_item_vector = bool(vector_row and int(vector_row[0] or 0) > 0)
+    except Exception:  # noqa: BLE001 — the verdict is a report, never a new failure mode
+        logger.debug("searchability read failed for %s", item_id, exc_info=True)
+        return None
+    return verdict_for_ingest(
+        chunk_count=chunk_count,
+        has_item_vector=has_item_vector,
+        has_text=bool((item.get("content") or "").strip()),
+        embedder_bound=embedder is not None,
+        empty_success_extractors=empty_success_extractors,
+    )
 
 
 def _persist_structural_metadata(store, item_id: str, item, result) -> None:

@@ -9,6 +9,7 @@ from collections import defaultdict
 from personalclaw.sqlite_compat import sqlite3
 
 from .embedder import floats_to_bytes
+from .searchability import SearchOutcome, degradations_from, unsearchable_rows
 from .store import KnowledgeStore
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,31 @@ class HybridRetriever:
                 }
             )
         return results
+
+    def search_with_diagnostics(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        include_archived: bool = False,
+        arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
+    ) -> SearchOutcome:
+        """:meth:`search`, plus the typed reasons the library could not answer (RET-2).
+
+        The hits are byte-identical to :meth:`search` — this adds a report, it does not
+        change ranking. The degradations are grouped from the items the ingest runner
+        already PERSISTED as unsearchable, so the reason a search reports and the reason
+        the Doctor row reports are literally the same recorded fact; there is no second
+        place a reason can be minted and therefore no way for the two to disagree.
+
+        Callers that only want hits keep using :meth:`search`. Callers that must not
+        answer "nothing found" when the truth is "found nothing it can reach" — the
+        ``knowledge_search`` tool — use this.
+        """
+        results = self.search(query, limit, include_archived=include_archived, arms=arms)
+        return SearchOutcome(
+            results=results, degradations=degradations_from(unsearchable_rows(self.store))
+        )
 
     def _keyword_search(
         self, query: str, limit: int = 20, *, include_archived: bool = False
