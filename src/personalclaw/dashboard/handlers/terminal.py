@@ -45,6 +45,7 @@ from aiohttp import web
 
 from personalclaw import tmux_substrate
 from personalclaw.config import loader as config_loader
+from personalclaw.http_errors import json_error
 
 
 def config_path():
@@ -765,7 +766,10 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
                 resources=f"session={session_id},detached",
             )
             return web.json_response({"deleted": session_id})
-        return web.Response(status=404, text="Session not found")
+        # Unknown session id → the registered JSON error envelope, NOT a bare text/plain
+        # 404 (#2932). Reuses the generic `not_found` wire code so a browser client / saved
+        # SOP branches on the same stable shape every other failed API route emits.
+        return json_error("not_found", message="No such terminal session.", status=404)
 
     if sess.ws and not sess.ws.closed:
         await sess.ws.close()
