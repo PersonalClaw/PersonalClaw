@@ -172,12 +172,16 @@ async def api_autonudge_delete(request: web.Request) -> web.Response:
     loop_id = request.match_info["loop_id"]
     # Capture session_name for audit before removal (loop is gone after remove()).
     existing = next((lp for lp in svc.list_all() if lp.id == loop_id), None)
+    if existing is None:
+        # Match the sibling PATCH and every peer DELETE: a missing id is a 404, not a
+        # silent no-op reported as success (#2929).
+        return web.json_response({"error": "loop not found"}, status=404)
     await svc.remove(loop_id)
     sel().log_tool_invocation(
-        session_key=existing.session_name if existing else "",
+        session_key=existing.session_name,
         source="dashboard",
         tool_name="autonudge_delete",
-        outcome="success" if existing else "noop",
+        outcome="success",
         metadata={"loop_id": loop_id, "caller": request.remote or ""},
     )
     return web.json_response({"ok": True})

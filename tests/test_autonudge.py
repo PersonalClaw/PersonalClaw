@@ -485,3 +485,49 @@ def test_render_nudge_message():
     assert result == "halt: create /tmp/.stop-x"
     assert "{{STOP_FILE}}" not in result
     assert render_nudge_message("create {{STOP_FILE}}", None) == "create "
+
+
+# ── DELETE /api/autonudge/{loop_id}: a missing id is a 404, a real one 200s (#2929) ──
+
+
+async def _delete(loop_id):
+    """Drive api_autonudge_delete directly with a mocked request; return (status, body)."""
+    import json as _json
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    req = make_mocked_request(
+        "DELETE",
+        f"/api/autonudge/{loop_id}",
+        match_info={"loop_id": loop_id},
+        app=web.Application(),
+    )
+    resp = await _h.api_autonudge_delete(req)
+    return resp.status, _json.loads(resp.body.decode())
+
+
+@pytest.mark.asyncio
+async def test_delete_unknown_loop_id_404s(svc, monkeypatch):
+    """A typo'd/already-deleted id must be distinguishable from a real delete — it 404s with
+    the sibling PATCH's exact error shape, not a silent 200 {"ok": true} (#2929)."""
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    monkeypatch.setattr(_h, "_autonudge_get", lambda: svc)
+    status, body = await _delete("nonexistent-loop-xyz")
+    assert status == 404
+    assert body == {"error": "loop not found"}
+
+
+@pytest.mark.asyncio
+async def test_delete_existing_loop_still_200s_and_removes_it(svc, monkeypatch):
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    monkeypatch.setattr(_h, "_autonudge_get", lambda: svc)
+    loop = await svc.add(session_name="chat-1-123", message="go", idle_secs=30)
+    status, body = await _delete(loop.id)
+    assert status == 200
+    assert body == {"ok": True}
+    assert svc.get_by_session("chat-1-123") is None, "a real delete must actually remove the loop"
