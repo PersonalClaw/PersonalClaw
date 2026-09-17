@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -1000,3 +1001,93 @@ def test_describe_app_data_reports_no_unconsumed_copies_on_the_ordinary_path(tmp
     ]
     assert app_manager.install(src, confirm=True).ok  # consumes it
     assert app_manager.describe_app_data(name)["unconsumed"] == []
+
+
+# ── every False names itself: the rung returns a bool, so the log IS the diagnosis ──
+
+_APP_MANAGER_LOGGER = "personalclaw.apps.app_manager"
+
+
+def _loud_records(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Messages this rung logged at WARNING or worse. The whole diagnosis surface."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and r.name == _APP_MANAGER_LOGGER
+    ]
+
+
+def _raise_enospc(*_a, **_k):
+    raise OSError(errno.ENOSPC, "no space left on device")
+
+
+def test_the_keep_data_rung_never_refuses_an_installed_app_in_silence(
+    tmp_path, monkeypatch, caplog
+):
+    """Each refusal/error path of an INSTALLED app leaves a WARNING+ line naming the app.
+
+    This rung answers with a bare ``bool``. So for a user reading ``gateway.log`` — and for
+    CI reading a red — the log line is the ONLY place the reason exists: the return value
+    cannot carry one, and the SEL audit is not on either surface. Two branches used to
+    answer with nothing at all, and the one that fires on an unexplained filesystem fault
+    (the preservation copy) was one of them. Measured: main's ``Full`` run 35248405420
+    (``matrix-shard (3.13, macos-latest, 2)``) recorded a real failure of this rung as
+    ``assert False is True`` with no captured log, no cause and nothing to act on — the
+    branch had deleted its own evidence.
+
+    Held as an INVARIANT over the branches rather than one assertion per branch, because
+    the next branch added here is exactly the one that would be missed: a per-branch test
+    passes while the new path stays mute. Each case drives the real code path (an injected
+    failure at the real call site, or a genuinely unmintable on-disk name), and the pairing
+    below is what keeps the invariant from being satisfiable by logging unconditionally.
+    """
+    name = "notes-fixture"
+    src = _bundle(tmp_path)
+    assert app_manager.install(src, confirm=True).ok
+    _write_note(name, "precious", "must not be lost")
+
+    with caplog.at_level(logging.WARNING, logger=_APP_MANAGER_LOGGER):
+        # 1. The preservation copy fails — the branch that produced the red. Injected at
+        #    the real call site (`shutil.copytree`), the same lever
+        #    `test_preservation_failure_removes_nothing` uses to prove nothing is removed.
+        caplog.clear()
+        with monkeypatch.context() as m:
+            m.setattr(app_manager.shutil, "copytree", _raise_enospc)
+            assert app_manager.uninstall_keep_data(name) is False
+        said = _loud_records(caplog)
+        assert said, (
+            "the preservation copy failed and the rung logged NOTHING — a bare False was "
+            "the user's and CI's entire record of it (main's Full run 35248405420)"
+        )
+        assert any(name in m for m in said), said
+        assert any(f"errno={errno.ENOSPC}" in m for m in said), (
+            "the log must carry the errno: ENOSPC ('free some disk and retry') and EACCES "
+            f"are different next actions, and `data=preserve_failed` cannot tell them "
+            f"apart — saw {said}"
+        )
+
+        # 2. An on-disk app whose dir name can never hold a parked copy. Not injected at
+        #    all: `list_apps` walks real directory names, so this state is reachable, and
+        #    this rung stays refused for that app forever — which it has to say out loud.
+        weird = "Not Kebab"
+        d = manager.apps_dir() / weird
+        d.mkdir(parents=True)
+        (d / "installed.json").write_text(
+            json.dumps({"name": weird, "version": "1.0.0", "enabled": True}), encoding="utf-8"
+        )
+        caplog.clear()
+        assert app_manager.uninstall_keep_data(weird) is False
+        said = _loud_records(caplog)
+        assert said and any(
+            weird in m for m in said
+        ), f"a refusal that leaves the app installed forever said nothing: {said}"
+
+        # 3. THE PAIRING. The ordinary success path must stay SILENT, or every assertion
+        #    above is satisfied by a rung that logs an error on every call — which is worse
+        #    than the silence it replaced, because then no line means anything.
+        caplog.clear()
+        assert app_manager.uninstall_keep_data(name) is True
+        assert _loud_records(caplog) == [], (
+            "the success path logs at WARNING+, so the diagnosis lines above carry no "
+            "information: every keep-data uninstall now reads as a failure"
+        )
