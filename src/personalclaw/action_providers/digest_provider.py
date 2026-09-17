@@ -81,6 +81,7 @@ def reconcile_digest_cron(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.system_singleton import converge_system_singleton
 
     try:
         schedule = notification_rules.digest_settings()["schedule"]
@@ -89,6 +90,14 @@ def reconcile_digest_cron(store: Any) -> None:
         return
 
     try:
+        # An upgraded home can hold this same job under the RANDOM id the legacy
+        # `crons.json` gave it, which the id-keyed lookup below cannot see — so both copies
+        # survived and the job ran twice (issue 396). Converge on the JOB first; the returned
+        # flag is the retired row's `enabled`, so a job the user switched off does not come
+        # back on when the canonical row is created.
+        adopted_enabled = converge_system_singleton(
+            store, canonical_id=DIGEST_JOB_NAME, provider="notification-digest"
+        )
         row = store.get(DIGEST_JOB_NAME)
     except Exception:
         logger.debug("digest cron: could not read the trigger store", exc_info=True)
@@ -100,7 +109,9 @@ def reconcile_digest_cron(store: Any) -> None:
                 id=DIGEST_JOB_NAME,
                 name=DIGEST_JOB_NAME,
                 kind="clock",
-                enabled=True,
+                # True unless a retired duplicate says the user had switched this off — see
+                # `converge_system_singleton`. `None` means nothing was retired: a fresh install.
+                enabled=True if adopted_enabled is None else adopted_enabled,
                 created_by="system",
                 spec={"kind": "cron", "expr": schedule},
                 workflow={"inline": {"provider": "notification-digest", "config": {}}},
