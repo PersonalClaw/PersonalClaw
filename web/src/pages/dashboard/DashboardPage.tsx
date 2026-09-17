@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
-  Package, HardDrive, Orbit, Monitor,
+  Package, HardDrive, Orbit, Monitor, Globe,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
@@ -18,6 +18,7 @@ import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { OnThisMachine } from './widgets/OnThisMachine'
 import { DesktopLiveView } from './widgets/DesktopLiveView'
+import { BrowseMirror } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -178,6 +179,16 @@ export function DashboardPage(route: RouteProps) {
             <EntranceRegion className="min-w-0">
               <Section label="Desktop live view" icon={Monitor}>
                 <DesktopLiveView />
+              </Section>
+            </EntranceRegion>
+
+            {/* Browse live view (BROWSE-AUTOMATION §(b)/(c), BA-5) — the browser-side sibling of
+                the desktop band above: watch an unattended browse step by step, stop it in one
+                click, and see a persistent banner when a saved session expires. Observation +
+                the one stop; the panel drives nothing else. */}
+            <EntranceRegion className="min-w-0">
+              <Section label="Browse live view" icon={Globe}>
+                <BrowseMirror />
               </Section>
             </EntranceRegion>
 
