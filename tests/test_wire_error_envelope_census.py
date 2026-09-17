@@ -244,7 +244,23 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: either row's 214 would silently un-pin the other surface. Measured at rebase time, both with
 #: ``files_scanned`` 1033 and the flat total identical at 1507 on both sides, so ``FLAT_BASELINE``
 #: stays 1507 — shrink-only, not raised. MAIN-RELATIVE, so re-measure at the next rebase.
-UNRESOLVED_PAYLOAD_CEILING = 215
+#: 215 → **216** (SSM-2): one 200-status SUCCESS body on the durable session-map read route —
+#: ``GET /api/chat/sessions/{session}/map`` answers with
+#: ``web.json_response(session_map_marks(prepared))`` in ``dashboard/chat_session_map.py``, and
+#: :func:`~personalclaw.dashboard.chat_session_map.session_map_marks` is the module's own
+#: composer (``-> list[dict[str, Any]]``: the ordered turn/sub-event marks, each with its
+#: ``markIndex``/``kind``/``visibleIndex`` coordinate). Spelling those keys out at the call site
+#: would duplicate the mark schema in two places — the drift this census exists to catch — and
+#: would make the route the second author of a shape the composer owns, which is precisely how
+#: ``visibleIndex`` would come to mean two things. **The slack is not spendable on an error
+#: envelope:** this route's only refusal goes through :func:`json_error`
+#: (``session_not_found`` 404, the line immediately above this site), which needs no payload
+#: dict at all, so no flat ``{"error": …}`` body was added. Measured at rebase time onto
+#: ``87372a21c``: main ``unresolved`` 215 / branch 216, and the flat total is identical at 1478
+#: on both sides, so ``FLAT_BASELINE`` (1499) stays — shrink-only, not raised. The one added
+#: unresolved site is ``dashboard/chat_session_map.py:424``. MAIN-RELATIVE, so re-measure at the
+#: next rebase.
+UNRESOLVED_PAYLOAD_CEILING = 216
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

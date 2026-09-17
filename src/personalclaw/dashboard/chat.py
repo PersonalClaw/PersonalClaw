@@ -15,6 +15,7 @@ The actual implementation lives in:
 - chat_voice.py       — Piper TTS config + synthesis
 - chat_channel.py     — channel link, handoff, channels
 - chat_fork.py        — fork session
+- chat_session_map.py — durable session-map endpoint + per-turn telemetry
 - chat_tags.py        — tag vocabulary + tag-column CRUD
 - chat_plan.py        — chat plan mode bound to the shared planning walkthrough
 """
@@ -103,6 +104,12 @@ from personalclaw.dashboard.chat_runner import (  # noqa: F401
     _expand_prompt_mention,
     _flush_segment,
     run_chat,
+)
+from personalclaw.dashboard.chat_session_map import (  # noqa: F401
+    SESSION_MARK_KINDS,
+    TURN_TELEMETRY_KEY,
+    api_chat_session_map,
+    session_map_marks,
 )
 from personalclaw.dashboard.chat_tags import (  # noqa: F401
     api_chat_session_drop,

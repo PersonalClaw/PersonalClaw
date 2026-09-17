@@ -106,6 +106,39 @@ on the message.
 session into a new tab. App-scoped callers may only fork sessions they own
 (the `app` claim is checked; unscoped sessions are denied to apps).
 
+## The session map (in-session index) + per-turn telemetry
+
+`dashboard/chat_session_map.py` — `GET /api/chat/sessions/{session}/map` answers a
+JSON array of **marks**: one per turn (`user` / `assistant`) plus one per indexable
+sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
+`{markIndex, kind, role, visibleIndex, ts, preview}` and an optional `telemetry`.
+
+- **`visibleIndex` is the jump coordinate** — the index of the turn's LAST message in
+  the backend's visible (`user`/`assistant`) list, i.e. the same inclusive
+  `at_message_index` that `POST .../fork` and edit-resend speak. It is derived from the
+  identical message list `GET /api/chat/sessions/{session}` serves
+  (`chat_utils.full_session_messages` → `_prepare_messages`), because an index into any
+  other list would address a different message than a fork does.
+- **The derivation mirrors the frontend's.** `web/src/pages/chat/sessionMap.ts`
+  (`sessionMapMarks`) derives the same shape from the hydrated turns; the endpoint is a
+  second SOURCE for one contract, not a second contract. Both reproduce
+  `hydrateTurns`'s two collapses — a native-loop prompt re-injection consumes a visible
+  slot without producing a turn, and consecutive assistant messages merge into one turn
+  keyed on the last message folded in.
+- **Two kinds are live-only.** `subagent` and `activity` ride WS streams that are never
+  written to the conversation log, and `permission` rows are dropped on save
+  (`_NON_TRANSCRIPT_ROLES`), so the durable endpoint witnesses
+  `user`/`assistant`/`tool`/`error` after a restart and `approval` only while the row is
+  still in the live buffer.
+- **Per-turn telemetry** (cost, tokens, cache split, duration, context %, event and
+  tool-call counts, model) is stamped by `chat_runner` onto the turn's LAST assistant
+  message as `meta.turn_telemetry`, *before* `save_session_to_history` — that function
+  rewrites the transcript file from the buffer, so a later stamp would be in-memory
+  only. It rides the same `meta` seam as `memory_citations` / `skills_used`: no new file
+  and no new channel. Absent = the turn reported nothing; `priced: false` means the
+  model has no price row (never "free"); `context_pct: null` means the provider measured
+  nothing (never 0%).
+
 ## Channel-linked sessions
 
 A dashboard session can be linked to a channel thread (and vice versa):
