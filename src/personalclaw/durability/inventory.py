@@ -1056,6 +1056,16 @@ IGNORED: tuple[str, ...] = (
     # truth, so a restored stale release list is worse than the empty one the next
     # check refills.
     "update_releases.json",
+    # 🔴 #2906 — the per-day usage/spend fold (`routing/usage.py`, MRT-3). Ignored, not
+    # declared, for the SAME reason as the two update caches directly above: it is a DERIVED
+    # fold carrying no unique truth. `routing.usage.refresh` refolds it from scratch out of
+    # sources that ARE declared — `usage/turns.jsonl` (`usage_ledger`), `model_calls.jsonl`
+    # (`model_calls`) and `spend.json` (`spend`) — and `GET /api/usage` calls that on read, so
+    # a deleted `usage_stats.json` self-heals (`handlers/usage.py`). It is written at first boot,
+    # so leaving it neither claimed nor ignored made `audit_home()` report "1 unclaimed path" and
+    # turned the doctor/health strip coral on every fresh install. A snapshot restoring a stale
+    # copy is worse than the empty one the next read refolds.
+    "usage_stats.json",
     "fixture.yaml",  # test-fixture marker written by `--seed`
     # 🔴 #2539 — the socket this gateway bound, plus the pid that bound it
     # (`gateway_base.RUNTIME_FILE`). MACHINE-LOCAL and process-lifetime-scoped: it is written
