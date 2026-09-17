@@ -1802,6 +1802,16 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     ``data=unconsumed_copy <paths>`` (#2585). This rung never resolves that itself: the
     "cleanup" for each is a delete in a failure path, which is how #2574 happened.
 
+    EVERY ``False`` NAMES ITSELF. This rung returns a bare ``bool``, so the log line is the
+    only place a caller — a user reading ``gateway.log``, or CI reading a red — can learn
+    WHY an app it asked to remove is still installed. Two branches used to answer with
+    nothing at all (the preservation copy failing, and a name that cannot hold a parked
+    copy), which is how a real failure of this rung reached main as ``assert False is True``
+    with no cause anywhere in the output. So each refusal/error path of an INSTALLED app
+    emits a ``logger.error`` naming the app and the reason, and
+    ``tests/test_app_uninstall_preserves_data.py`` holds that as an invariant over the
+    branches rather than per-branch — paired with the success path, which must stay silent.
+
     Because that refusal comes first, the park below needs no ``rmtree`` of its own
     destination — the destination is provably absent — so it is a single
     :meth:`~pathlib.Path.rename`. Both paths live under ``apps/``, always the same
@@ -1828,6 +1838,12 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     try:
         _validate_app_name(name)
     except ValueError as exc:
+        logger.error(
+            "app %s: this name cannot hold a parked copy of data/, so the keep-data "
+            "uninstall is refused; nothing was removed and force_uninstall still works: %s",
+            name,
+            exc,
+        )
         _audit("uninstall_keep_data", "refused", name, caller=caller, error=str(exc))
         return False
 
@@ -1881,13 +1897,38 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
             shutil.copytree(live_data, staged)
     except OSError as exc:
         shutil.rmtree(staged, ignore_errors=True)
+        # LOUD, not audit-only. This was the ladder's ONE invisible failure: it returned
+        # `False` having written nothing to any log, while every sibling below names itself
+        # (`data=unconsumed_copy` and `data=park_failed` both `logger.error`). So the one
+        # branch that fires on an unexplained filesystem fault was also the one branch that
+        # destroyed the evidence for it — measured on main's `Full` run 35248405420
+        # (macos-latest, py3.13), where the whole record of a failed keep-data uninstall was
+        # `assert False is True` with no cause anywhere in the output.
+        #
+        # `errno` rides both the log line and the audit detail because it is the WHOLE
+        # diagnosis here: ENOSPC ("free some disk and retry"), EMFILE/EACCES/EIO and a
+        # metadata-only `shutil.Error` are four different next actions, and `data=
+        # preserve_failed` alone cannot tell them apart. `shutil.copytree` aggregates its
+        # per-entry failures into a `shutil.Error` that carries no errno of its own, so
+        # `none` is a real, distinct answer: read the entry list in the message.
+        code = getattr(exc, "errno", None)
+        logger.error(
+            "app %s: data/ could not be copied out (%s -> %s), so NOTHING was removed and "
+            "the app is intact; errno=%s: %s",
+            name,
+            live_data,
+            staged,
+            code,
+            exc,
+            exc_info=True,
+        )
         _audit(
             "uninstall_keep_data",
             "error",
             name,
             caller=caller,
             error=f"could not preserve data/, so nothing was removed: {exc}",
-            detail="data=preserve_failed",
+            detail=f"data=preserve_failed errno={code if code is not None else 'none'}",
         )
         return False
 
@@ -1900,6 +1941,11 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
             # Nothing was removed, so `live_data` is still there and the stage is a
             # redundant duplicate of it: the one failure below that may still GC.
             shutil.rmtree(staged, ignore_errors=True)
+            logger.error(
+                "app %s: the removal this rung delegates to refused, so nothing was "
+                "deleted and data/ is untouched",
+                name,
+            )
             _audit(
                 "uninstall_keep_data",
                 "error",
