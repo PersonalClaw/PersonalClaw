@@ -1,45 +1,19 @@
 """WebSocket PTY handler for the built-in CLI panel."""
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
+import pty as _pty
 import shutil
 import signal
 import struct
-import sys
+import termios
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-
-# POSIX-only PTY substrate. The built-in terminal is a real pseudo-terminal, and
-# ``fcntl``/``pty``/``termios`` exist only on POSIX — native Windows has none.
-# Guard the import so this module still LOADS there: the terminal feature is then
-# ABSENT (its routes are never registered and no PTY is ever opened), rather than
-# a bare ``import`` that ``ImportError``s and takes the whole dashboard — and the
-# gateway — down at boot. Mirrors the guarded ``import resource`` seam (WIN-1).
-# ``TYPE_CHECKING`` sees the real modules (so the PTY code below type-checks); at
-# runtime they are ``None`` on a platform that lacks them, and ``terminal_supported()``
-# is what keeps the feature cleanly absent there.
-if TYPE_CHECKING:
-    import fcntl
-    import pty as _pty
-    import termios
-
-    _PTY_SUPPORTED = True
-else:
-    try:
-        import fcntl
-        import pty as _pty
-        import termios
-
-        _PTY_SUPPORTED = True
-    except ImportError:  # native Windows: no fcntl/pty/termios
-        fcntl = None
-        _pty = None
-        termios = None
-        _PTY_SUPPORTED = False
 
 from aiohttp import web
 
@@ -61,21 +35,6 @@ if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
 
 logger = logging.getLogger(__name__)
-
-
-def terminal_supported() -> bool:
-    """Whether the PTY-backed terminal feature can run on this platform.
-
-    ``False`` on native Windows, whose ``fcntl``/``pty``/``termios`` are absent
-    (the guarded import above set ``_PTY_SUPPORTED = False``). The module still
-    imports there; this probe is what makes the dashboard OMIT the terminal routes
-    and the orphan reaper, so the feature is cleanly absent rather than a broken
-    import at boot. Fail-closed: available only when the POSIX substrate is present
-    AND the platform is not Windows — the ``sys.platform`` clause both belt-and-
-    suspenders the check and makes the guard exercisable by forcing the platform
-    in a test (no real Windows host required)."""
-    return _PTY_SUPPORTED and not sys.platform.startswith("win")
-
 
 _MAX_SESSIONS = 3
 _ORPHAN_TIMEOUT_S = 300  # 5 min with no WS → reap PTY
