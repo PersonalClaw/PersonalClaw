@@ -365,7 +365,7 @@ rather than ignoring them.
 | `personalclaw consolidate KEY \| --all` | Run skill/memory extraction over a session transcript now (the same path the idle poll and session-end triggers use). |
 | `personalclaw discover [--timeout SECS] [--json]` | Find PersonalClaw gateways advertising themselves on the local network (mDNS/DNS-SD `_personalclaw._tcp`). Prints each one's name and base URL. Finding nothing is a normal result and exits 0 — discovery is opt-in, is a no-op on a loopback-only gateway, and many networks filter multicast. See [Companion apps](../guides/companion-apps.md). |
 | `personalclaw eval [SCENARIOS...] [--all] [--judge]` | Run multi-session evaluation scenarios (default: a ~30s smoke test; `--judge` enables LLM scoring). |
-| `personalclaw mcp-schedule` / `personalclaw mcp-core` | Internal MCP server entry points spawned by ACP agents — not user-facing (hidden from `--help`). |
+| `personalclaw mcp-core` | The internal MCP server entry point spawned by ACP agents — not user-facing, and genuinely hidden from `--help` (`cli.HIDDEN_COMMANDS`). Still dispatchable; it just is not advertised. (`personalclaw mcp-schedule` was retired with the `schedule_*` tool aliases in #328 and no longer exists.) |
 
 ---
 
