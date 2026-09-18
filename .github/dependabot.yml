@@ -64,6 +64,27 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
+      # React is excluded from `js-deps` below so it arrives as its own PR and gets
+      # individually validated — but excluding the four names SEPARATELY produced two
+      # PRs that are each unmergeable BY CONSTRUCTION: #2834 moved `react` +
+      # `@types/react` to 19.3.0 while #2835 moved `react-dom` + `@types/react-dom` to
+      # 19.3.0, and either one alone leaves the pair skewed, so `web`, `e2e-a11y` and
+      # `e2e-pwa` fail on both. react and react-dom ship as one release train and their
+      # @types follow it; a version of one is only ever meaningful against the matching
+      # version of the other. Grouping the four keeps the ORIGINAL intent — a React bump
+      # is still its own PR, still individually validated, still never riding in a
+      # minor/patch group — while making that PR a thing that CAN go green.
+      #
+      # Order is load-bearing: dependabot assigns a dependency to the FIRST group whose
+      # patterns match, so this must precede `js-deps` (`patterns: ["*"]`). The four
+      # names stay in `js-deps`'s exclude list as well — redundant given the ordering,
+      # kept so the exclusion reads as deliberate rather than as an ordering accident.
+      react-family:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       js-deps:
         patterns: ["*"]
         exclude-patterns:
