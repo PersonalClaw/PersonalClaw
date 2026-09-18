@@ -18,15 +18,35 @@ end to end:
   bound to, so :func:`~personalclaw.browse.loop.run_browse_loop` parks within one step — the same
   per-step seam BA-5's kill switch uses. **Distinct from** :mod:`personalclaw.browse.killswitch`:
   that flag stops ALL unattended browse; this ends ONE attended run when its own tab closes.
-* SEL audit — ``browser_grant`` at grant/deny, ``browser_revoked`` at run-end / close / kill. The
-  row carries the task label, the site scope (hostnames), and a reason ONLY; NEVER a credential,
-  cookie, or session token (§5.2's no-credential invariant, restated for the audit trail).
+* SEL audit — ``browser_grant`` when the grant is REQUESTED and again when it resolves,
+  ``browser_revoked`` at run-end / close / kill. The row carries the task label, the site scope
+  (hostnames), and a reason ONLY; NEVER a credential, cookie, or session token (§5.2's
+  no-credential invariant, restated for the audit trail).
+
+  **Two rows per grant, on purpose.** The request row was missing, and its absence was a real
+  hole: an authorization request against the operator's OWN logged-in browser that nobody answered
+  — or that the run abandoned — left NO trace at all, because the only row was written after the
+  gate resolved. "Somebody asked to drive your browser" is the fact an audit trail most needs, and
+  it is exactly the fact that disappeared when the request was cancelled. The request row's outcome
+  is ``needs_confirm`` — already a declared word in :data:`personalclaw.sel.AUDIT_OUTCOME_FAMILIES`
+  (the ``needs_confirm`` family, tone ``warning``: "the control stopped and asked"), so this adds
+  no new vocabulary and the families' coverage ceiling does not move.
 
 **Why a module-level gate rather than a per-session one.** A grant is keyed by a unique request
 id, and one :class:`ApprovalGate` serves many concurrent request ids by construction. The browse
 grant channel is therefore ONE process-global gate — the same "a live attachment is a process
 property" reasoning :mod:`personalclaw.browse.target` uses for the connector — and
 :func:`approve_grant` / :func:`reject_grant` resolve a specific pending request on it.
+
+**How a human reaches that gate.** :func:`pending_grants` is the read and
+:func:`approve_grant` / :func:`reject_grant` are the writes;
+:mod:`personalclaw.dashboard.handlers.browse_mirror` exposes all three (the grant set rides the
+``GET /api/browse/status`` read model the browse panel already polls, and
+``POST /api/browse/grants/{request_id}/{action}`` answers one). This gate is deliberately NOT the
+native-session tool-approval dict behind ``GET /api/approvals``: that one is keyed by tool +
+tool_input with an ORIGIN-AWARE timeout, and routing a browse grant through it would let
+``_approval_timeout_for`` silently redefine the 300s fail-closed ceiling this control declares.
+Two gates, because they gate two different things — one store each, and neither mirrors the other.
 """
 
 from __future__ import annotations
@@ -54,8 +74,10 @@ SEL_OP_REVOKE = "browser_revoked"
 
 #: SEL outcome words — every value is one the audit-log vocabulary ALREADY classifies
 #: (``sel.AUDIT_OUTCOME_SUCCESS`` / ``AUDIT_OUTCOME_FAMILIES``): ``granted`` and ``ok`` are success
-#: words, ``rejected`` is a "denied" family word. So a browse grant row is filterable on the audit
-#: surface and ``test_audit_outcome_families``'s unclassified-remainder ceiling does not move.
+#: words, ``rejected`` is a "denied" family word, and ``needs_confirm`` is the whole family key for
+#: "the control stopped and asked". So a browse grant row is filterable on the audit surface and
+#: ``test_audit_outcome_families``'s unclassified-remainder ceiling does not move.
+_OUTCOME_REQUESTED = "needs_confirm"
 _OUTCOME_GRANTED = "granted"
 _OUTCOME_REJECTED = "rejected"
 _OUTCOME_REVOKED = "ok"
@@ -70,7 +92,22 @@ _MISSING = object()
 _gate = ApprovalGate()
 #: request_id → the scope-naming metadata a pending grant carries, so an approval surface can show
 #: the human WHICH task and WHICH sites before they answer. Populated for the duration of a wait.
+#:
+#: ONE store. :func:`pending_grants` projects :data:`_PUBLIC_FIELDS` out of it rather than handing
+#: the row over, because this dict also carries the ``answered`` provenance note below — internal
+#: bookkeeping that has no business on the wire.
 _pending: dict[str, dict[str, object]] = {}
+
+#: The keys :func:`pending_grants` publishes. An explicit allowlist so a field added here for
+#: bookkeeping cannot reach an HTTP response (or a UI) by default.
+_PUBLIC_FIELDS = ("request_id", "task", "scope", "group", "requested_at", "timeout")
+
+#: The ``_pending`` key recording that a HUMAN answered, as opposed to the clock running out.
+#: :class:`ApprovalGate` reports both as ``REJECT`` — it cannot tell them apart — and until a human
+#: could answer at all the distinction did not exist, so every refusal really WAS a timeout. Now
+#: that :func:`reject_grant` has a caller, writing "not approved within 300s" on a deny a human made
+#: in one second would be the audit log asserting a timeout that never happened.
+_ANSWERED = "answered"
 
 
 def grant_gate() -> ApprovalGate:
@@ -81,21 +118,36 @@ def grant_gate() -> ApprovalGate:
 
 
 def approve_grant(request_id: str) -> bool:
-    """Resolve a pending grant as APPROVED — the seam a human's "allow this task" answer calls (the
-    dashboard browser-control prompt / VB). Returns ``False`` if nothing was waiting on that id."""
+    """Resolve a pending grant as APPROVED — the seam a human's "allow this task" answer calls
+    (``POST /api/browse/grants/{request_id}/approve``, bound to the browse panel's Allow button).
+    Returns ``False`` if nothing was waiting on that id."""
     return _gate.approve(str(request_id))
 
 
 def reject_grant(request_id: str) -> bool:
-    """Resolve a pending grant as REJECTED. Returns ``False`` if nothing was waiting on that id."""
-    return _gate.reject(str(request_id))
+    """Resolve a pending grant as REJECTED — a human's explicit "no", not the clock.
+
+    Records that provenance on the pending row BEFORE resolving the gate, so the audit row and the
+    typed refusal say a person declined rather than claiming a timeout that never happened. Returns
+    ``False`` if nothing was waiting on that id."""
+    rid = str(request_id)
+    meta = _pending.get(rid)
+    if meta is not None:
+        meta[_ANSWERED] = REJECT
+    return _gate.reject(rid)
 
 
 def pending_grants() -> list[dict[str, object]]:
-    """The grants awaiting a human answer right now — ``{request_id, task, scope, group}`` each, so
-    an approval surface can render the scope before the operator decides. A snapshot copy: a caller
-    iterating it cannot be tripped by a concurrent grant resolving."""
-    return [dict(meta) for meta in _pending.values()]
+    """The grants awaiting a human answer right now, so an approval surface can render the scope
+    before the operator decides: ``{request_id, task, scope, group, requested_at, timeout}`` each.
+
+    ``requested_at`` is wall-clock epoch seconds and ``timeout`` the fail-closed ceiling, which
+    together are what let a surface count down to the REJECT — deliberately not a pre-computed
+    "seconds left", which would be stale by the time it was rendered.
+
+    A snapshot PROJECTION: a caller iterating it cannot be tripped by a concurrent grant resolving,
+    and it sees only :data:`_PUBLIC_FIELDS` — never the internal ``answered`` note."""
+    return [{k: meta[k] for k in _PUBLIC_FIELDS if k in meta} for meta in _pending.values()]
 
 
 def scope_for_url(url: str) -> tuple[str, ...]:
@@ -156,7 +208,11 @@ async def request_grant(
     Routed through the shipped :class:`ApprovalGate` (``timeout`` seconds → REJECT). REJECTS — and
     so the run never starts — when the gate is absent (``gate=None``), the answer is REJECT, the
     wait times out, or ANYTHING raises: a run that cannot prove a human authorized it does not
-    touch the operator's browser. Emits a ``browser_grant`` SEL row either way.
+    touch the operator's browser.
+
+    Emits a ``browser_grant`` SEL row TWICE: ``needs_confirm`` the moment the request is raised,
+    and the decision (``granted``/``rejected``) when it resolves. The first row is why a request
+    nobody answered — or one the run abandoned — is still auditable; see the module docstring.
 
     ``gate`` omitted uses the process-global channel (:func:`grant_gate`); pass an explicit gate to
     inject one, or an explicit ``None`` to model "no approval channel available".
@@ -168,7 +224,25 @@ async def request_grant(
 
     decision = REJECT
     reason = ""
-    _pending[rid] = {"request_id": rid, "task": group, "scope": list(scope), "group": group}
+    _pending[rid] = {
+        "request_id": rid,
+        "task": group,
+        "scope": list(scope),
+        "group": group,
+        "requested_at": time.time(),
+        "timeout": float(timeout),
+    }
+    # Audited and surfaced BEFORE the await, not after it: a row written only on resolution cannot
+    # describe a request that was never resolved, and a prompt broadcast only on resolution would
+    # reach the human exactly when it stopped being answerable.
+    _audit(
+        SEL_OP_GRANT,
+        _OUTCOME_REQUESTED,
+        task=group,
+        scope=scope,
+        reason=f"awaiting a human answer; unanswered within {int(timeout)}s is a refusal",
+    )
+    _signal_grants()
     try:
         if the_gate is None:
             reason = "no approval channel is available to authorize this task"
@@ -178,7 +252,14 @@ async def request_grant(
         else:
             decision = await the_gate.request(rid, timeout=timeout)
             if decision != APPROVE:
-                reason = f"the grant was not approved within {int(timeout)}s"
+                # Read BEFORE the `finally` pops the row. A human's deny and an unanswered prompt
+                # are the same REJECT to the gate and two different facts to a reader.
+                denied_by_human = (_pending.get(rid) or {}).get(_ANSWERED) == REJECT
+                reason = (
+                    "a person declined this task"
+                    if denied_by_human
+                    else f"the grant was not approved within {int(timeout)}s"
+                )
     except Exception:
         # Fail-closed: ANY gate failure is a REJECT, never an open door.
         logger.debug("browse grant: gate failed → reject", exc_info=True)
@@ -186,6 +267,9 @@ async def request_grant(
         reason = "the approval gate failed, so the task was refused"
     finally:
         _pending.pop(rid, None)
+        # The prompt is gone from the read model now, so tell every watching surface at once
+        # instead of leaving a resolved card on screen until the panel's next poll.
+        _signal_grants()
 
     granted = decision == APPROVE
     grant = BrowserGrant(
@@ -199,7 +283,13 @@ async def request_grant(
         bound_device_id=bound_device_id if granted else "",
         bound_cdp_url=bound_cdp_url if granted else "",
     )
-    _audit(SEL_OP_GRANT, _OUTCOME_GRANTED if granted else _OUTCOME_REJECTED, grant=grant)
+    _audit(
+        SEL_OP_GRANT,
+        _OUTCOME_GRANTED if granted else _OUTCOME_REJECTED,
+        task=grant.group_name,
+        scope=grant.scope,
+        reason=grant.reason,
+    )
     return grant
 
 
@@ -211,7 +301,7 @@ def revoke_grant(grant: BrowserGrant, *, reason: str) -> None:
     row for a task that never ran would be a false entry in the audit trail."""
     if not grant.granted:
         return
-    _audit(SEL_OP_REVOKE, _OUTCOME_REVOKED, grant=grant, reason=reason)
+    _audit(SEL_OP_REVOKE, _OUTCOME_REVOKED, task=grant.group_name, scope=grant.scope, reason=reason)
 
 
 def make_close_check(grant: BrowserGrant, *, status_reader=None):
@@ -259,25 +349,49 @@ def grant_denied_error(grant: BrowserGrant) -> AgentError:
             or "the user_browser target requires a fresh per-task grant, and one was not given"
         ),
         fix=(
-            "run the task again and approve the browser-control prompt when it appears — it names "
-            "the sites the task will touch; a grant left unanswered for 5 minutes is refused"
+            "run the task again and answer the browser-control prompt in the dashboard's Browse "
+            "live view — it names the sites the task will touch; a grant left unanswered for 5 "
+            "minutes is refused"
         ),
     )
 
 
-def _audit(operation: str, outcome: str, *, grant: BrowserGrant, reason: str = "") -> None:
-    """One SEL row per grant/revoke. Task label + scope hosts + reason ONLY — NEVER a credential,
-    cookie, or token (§5.2). Never raises: an audit failure must not break a run (killswitch style).
+def _signal_grants() -> None:
+    """Tell watching surfaces the pending-grant set changed. Never raises: losing a UI relay must
+    not break a run, and must never turn into a fail-OPEN — a human who never sees the prompt gets
+    the 300s refusal, which is the same answer the control would give with no surface at all."""
+    try:
+        from personalclaw.browse.mirror import broadcast_grants
+
+        broadcast_grants(len(_pending))
+    except Exception:
+        logger.debug("browse grant: pending-grant signal failed", exc_info=True)
+
+
+def _audit(
+    operation: str,
+    outcome: str,
+    *,
+    task: str,
+    scope: tuple[str, ...] = (),
+    reason: str = "",
+) -> None:
+    """One SEL row per grant request / decision / revoke. Task label + scope hosts + reason ONLY —
+    NEVER a credential, cookie, or token (§5.2). Never raises: an audit failure must not break a run
+    (killswitch style).
+
+    Takes the FIELDS rather than a :class:`BrowserGrant`, because the request row is written before
+    any grant object exists — and a provisional grant built just to satisfy an audit signature would
+    have to claim ``granted=False``, which on the request row would be a decision nobody made.
     """
     try:
         from personalclaw.sel import sel
 
-        parts = [f"task={grant.group_name}"]
-        if grant.scope:
-            parts.append("scope=" + ",".join(grant.scope))
-        detail = reason or grant.reason
-        if detail:
-            parts.append("reason=" + detail)
+        parts = [f"task={task}"]
+        if scope:
+            parts.append("scope=" + ",".join(scope))
+        if reason:
+            parts.append("reason=" + reason)
         sel().log_api_access(
             caller="browse",
             operation=operation,

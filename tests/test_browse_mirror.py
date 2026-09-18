@@ -288,6 +288,16 @@ class TestTheSeam:
     def test_broadcast_is_a_noop_without_a_live_state(self):
         """No gateway up → the relay silently no-ops rather than raising into the loop."""
         bmirror.broadcast_browse_step({"step_n": 1}, state=None)  # must not raise
+        bmirror.broadcast_grants(1, state=None)  # must not raise
+
+    def test_the_grant_signal_carries_a_count_and_not_the_grant(self):
+        """BA-9. `browse_grant` is a SIGNAL: the panel refetches `GET /api/browse/status`, which is
+        owner-authenticated. The frame must NOT carry the task label or the site scope, because an
+        app-scoped socket that declares this event in its manifest would receive it."""
+        st = _FakeState()
+        bmirror.broadcast_grants(2, state=st)
+        frames = [payload for t, payload in st.ws if t == bmirror.WS_BROWSE_GRANT]
+        assert frames == [{"pending": 2}]
 
     def test_surface_auth_expired_raises_banner_and_needs_input(self):
         st = _FakeState()

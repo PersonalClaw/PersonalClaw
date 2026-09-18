@@ -14,6 +14,14 @@ one place (:func:`_resolve_state`):
   panel updates without waiting for its next poll. The ``/api/browse/kill`` routes that engage the
   switch call it; the switch itself lives in :mod:`personalclaw.browse.killswitch`.
 
+* **The pending-grant signal.** :func:`broadcast_grants` relays "the set of grants awaiting a human
+  answer changed" at both ends of a BA-9 per-task grant — when one is raised and when it resolves —
+  so the panel renders the prompt at once instead of up to one poll interval late. A pure SIGNAL:
+  the frame carries a COUNT only and the panel refetches ``GET /api/browse/status``, which owns the
+  grant read. That is not just doctrine here, it is the boundary — an app-scoped socket that
+  declares ``browse_grant`` in its manifest events would receive this frame, and the grant's task
+  label and site scope must stay behind the owner-authenticated GET rather than ride a broadcast.
+
 * **The auth_needed surfacing.** :func:`surface_auth_expired` runs at the moment
   ``handoff.mark_expired`` writes ``auth_state=expired``: it raises a persistent banner (a
   ``browse_auth_expired`` frame + the ``GET /api/browse/status`` read the banner polls) and a
@@ -46,6 +54,7 @@ logger = logging.getLogger(__name__)
 WS_BROWSE_STEP = "browse_step"
 WS_BROWSE_KILL = "browse_kill"
 WS_BROWSE_AUTH_EXPIRED = "browse_auth_expired"
+WS_BROWSE_GRANT = "browse_grant"
 
 #: One inbox row per expired site, keyed so a scheduled watcher hitting the same wall every tick
 #: re-uses the row instead of stacking one per tick (the dedup `emit_attention_item` honours).
@@ -95,6 +104,23 @@ def broadcast_kill(kill: Any, *, state: Any = None) -> None:
         )
     except Exception:
         logger.debug("browse mirror: kill broadcast failed", exc_info=True)
+
+
+def broadcast_grants(pending: int, *, state: Any = None) -> None:
+    """Signal that the pending per-task grant set changed (BA-9). Best-effort; never raises.
+
+    ``pending`` is how many grants await an answer right now, and it is DIAGNOSTIC — a number a
+    developer can read in the socket log. The panel must refetch ``GET /api/browse/status`` rather
+    than render from it, because only that read carries the task label and site scope a human needs
+    in order to answer, and only that read is owner-authenticated.
+    """
+    st = _resolve_state(state)
+    if st is None:
+        return
+    try:
+        st.broadcast_ws(WS_BROWSE_GRANT, {"pending": int(pending)})
+    except Exception:
+        logger.debug("browse mirror: grant signal failed", exc_info=True)
 
 
 def surface_auth_expired(url: str, *, state: Any = None) -> None:
@@ -152,7 +178,9 @@ __all__ = [
     "WS_BROWSE_STEP",
     "WS_BROWSE_KILL",
     "WS_BROWSE_AUTH_EXPIRED",
+    "WS_BROWSE_GRANT",
     "broadcast_browse_step",
     "broadcast_kill",
+    "broadcast_grants",
     "surface_auth_expired",
 ]

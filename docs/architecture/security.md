@@ -224,10 +224,27 @@ rules are load-bearing controls, not UX:
   (`agents/native/approval.py`) before the browser is touched. No answer within 300s, no approval
   channel, or any gate error is a **REJECT** — the run never starts, never falls open, and never
   silently retargets the gateway profile (`browse/grant.py`).
+- **Where the human answers.** The pending grant surfaces in the dashboard's **Browse live view**
+  band — the same panel that shows the run step by step and carries the kill switch — naming the
+  task, the hostnames it will touch, and the fact that not answering is a refusal. It reads
+  `GET /api/browse/status` and answers `POST /api/browse/grants/{request_id}/{action}`, both of
+  which resolve the ONE gate in `browse/grant.py`. This is deliberately **not** the native-session
+  tool-approval gate behind `GET /api/approvals`: that one is keyed by tool + tool_input and its
+  timeout is origin-aware, so routing a browse grant through it would let a different table
+  silently redefine the 300s ceiling stated above. Two gates, because they gate two different
+  things.
 - **No-credential-access invariant.** The agent drives an already-authenticated browser; it never
   reads, stores, or transmits a password field's value, a 2FA code, or a cookie jar. The grant and
   revoke audit rows (`browser_grant`, `browser_revoked` in the SEL) carry only the task label, the
-  host scope, and a reason — never a credential, cookie, or token.
+  host scope, and a reason — never a credential, cookie, or token. The live `browse_grant` WebSocket
+  frame carries a bare COUNT for the same reason: the label and scope stay behind the
+  owner-authenticated read rather than riding a broadcast an app-scoped socket could be permitted
+  to see.
+- **The request is audited, not just the decision.** A `browser_grant` row is written when the grant
+  is **requested** (`outcome=needs_confirm`) and again when it resolves (`granted`/`rejected`). The
+  request row is what makes an authorization attempt against the operator's own logged-in browser
+  auditable even when nobody answers it or the run abandons it — a request whose only row was
+  written after resolution left no trace at all in exactly that case.
 - **Close-to-kill.** The task runs in a tab group named after the task; the user closing it is a
   hard stop the run observes within one step. This is distinct from the browse kill switch
   (`browse/killswitch.py`), which stops *all* unattended browse via a flag.

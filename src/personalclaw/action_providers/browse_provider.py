@@ -351,82 +351,91 @@ class BrowseActionProvider(ActionProvider):
             session_state,
         )
 
-        state_before = session_state(start_url)
-        if state_before != SESSION_FRESH and (
-            state_before != SESSION_ABSENT or looks_like_login_url(start_url)
-        ):
-            reason = (
-                REASON_SESSION_EXPIRED if state_before == SESSION_EXPIRED else REASON_NO_SESSION
-            )
-            return self._login_park(start_url, reason=reason, ctx=ctx, started=started)
-        # Create the profile directory before the run rather than after, so a run that authenticates
-        # mid-flight has somewhere to persist the session it just earned.
-        ensure_profile(start_url)
-
-        try:
-            max_steps = int(action_config.get("max_steps") or MAX_STEPS_DEFAULT)
-        except (TypeError, ValueError):
-            max_steps = MAX_STEPS_DEFAULT
-        max_steps = max(1, max_steps)
-
-        session, page, closer = None, None, None
-        try:
-            session, page, closer = await self._open(action_config, ctx, cdp_url=cdp_url)
-        except BrowseUnavailable as exc:
-            return self._error(
-                str(exc),
-                why="browse needs a Chrome DevTools page target to drive",
-                fix=(
-                    "set `cdp_url` on the action config to a page target "
-                    "(ws://127.0.0.1:9222/devtools/page/…)"
-                ),
-                started=started,
-                code="ERR_BROWSE_NO_TARGET",
-            )
-        except Exception as exc:
-            return self._error(
-                f"the browse session could not be opened: {exc}",
-                why="connecting to the CDP page target failed",
-                fix="check that the browser is running and the `cdp_url` is current",
-                started=started,
-                code="ERR_BROWSE_CONNECT_FAILED",
-            )
-
+        # ── BA-9: one task, one grant — and the authorization is spent on EVERY exit ──
+        #
+        # The revoke used to sit in the browse-loop's own `finally`, which three return paths below
+        # never reach: the login park, and both `_open` failures. Measured on a live gateway — an
+        # approved grant whose CDP open failed left a `browser_grant granted` row with NO
+        # `browser_revoked` beside it, so the audit trail said the operator's browser was authorized
+        # and never said the authorization ended. This `finally` spans from the grant to the return,
+        # so the trail closes however the task exits.
         result = None
         try:
-            result = await run_browse_loop(
-                goal=goal,
-                start_url=start_url,
-                session=session,
-                page=page,
-                decide=_decide,
-                max_steps=max_steps,
-                budget_check=_budget_check,
-                on_step=self._mirror_sink(ctx),
-                kill_check=_kill_check,
-                close_check=close_check,
+            state_before = session_state(start_url)
+            if state_before != SESSION_FRESH and (
+                state_before != SESSION_ABSENT or looks_like_login_url(start_url)
+            ):
+                reason = (
+                    REASON_SESSION_EXPIRED if state_before == SESSION_EXPIRED else REASON_NO_SESSION
+                )
+                return self._login_park(start_url, reason=reason, ctx=ctx, started=started)
+            # Create the profile directory before the run rather than after, so a run that
+            # authenticates mid-flight has somewhere to persist the session it just earned.
+            ensure_profile(start_url)
+
+            try:
+                max_steps = int(action_config.get("max_steps") or MAX_STEPS_DEFAULT)
+            except (TypeError, ValueError):
+                max_steps = MAX_STEPS_DEFAULT
+            max_steps = max(1, max_steps)
+
+            session, page, closer = None, None, None
+            try:
+                session, page, closer = await self._open(action_config, ctx, cdp_url=cdp_url)
+            except BrowseUnavailable as exc:
+                return self._error(
+                    str(exc),
+                    why="browse needs a Chrome DevTools page target to drive",
+                    fix=(
+                        "set `cdp_url` on the action config to a page target "
+                        "(ws://127.0.0.1:9222/devtools/page/…)"
+                    ),
+                    started=started,
+                    code="ERR_BROWSE_NO_TARGET",
+                )
+            except Exception as exc:
+                return self._error(
+                    f"the browse session could not be opened: {exc}",
+                    why="connecting to the CDP page target failed",
+                    fix="check that the browser is running and the `cdp_url` is current",
+                    started=started,
+                    code="ERR_BROWSE_CONNECT_FAILED",
+                )
+
+            try:
+                result = await run_browse_loop(
+                    goal=goal,
+                    start_url=start_url,
+                    session=session,
+                    page=page,
+                    decide=_decide,
+                    max_steps=max_steps,
+                    budget_check=_budget_check,
+                    on_step=self._mirror_sink(ctx),
+                    kill_check=_kill_check,
+                    close_check=close_check,
+                )
+            finally:
+                if closer is not None:
+                    try:
+                        await closer()
+                    except Exception:
+                        logger.debug("browse: session close failed", exc_info=True)
+
+            return self._to_result(
+                result, started=started, ctx=ctx, start_url=start_url, session_before=state_before
             )
         finally:
-            if closer is not None:
-                try:
-                    await closer()
-                except Exception:
-                    logger.debug("browse: session close failed", exc_info=True)
             if grant is not None and grant.granted:
-                # BA-9: one task, one grant — the authorization is spent when the task ends
-                # (completed, parked, closed, or killed), so it is revoked HERE with the reason the
-                # run stopped for. In the finally so a close/kill or an exception still records the
-                # browser_revoked row; best-effort so an audit hiccup never masks the run's result.
+                # The reason distinguishes a normal finish from the user closing the tab (BA-9) or a
+                # kill-switch stop (BA-5); a task that never reached the loop reads `run_ended`.
+                # Best-effort so an audit hiccup never masks the run's own result.
                 from personalclaw.browse.grant import revoke_grant
 
                 try:
                     revoke_grant(grant, reason=_revoke_reason(result))
                 except Exception:
                     logger.debug("browse: grant revoke failed", exc_info=True)
-
-        return self._to_result(
-            result, started=started, ctx=ctx, start_url=start_url, session_before=state_before
-        )
 
     # ── plumbing ─────────────────────────────────────────────────────────────
 
