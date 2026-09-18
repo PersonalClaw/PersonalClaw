@@ -29,6 +29,7 @@ DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lint test test-e2e test-visual build clean harness-validate gates \
+        mutation-check \
         serve serve-fresh serve-web \
         web-build backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
@@ -107,6 +108,14 @@ test-visual:
 ## harness-validate: shape-validate + reference-resolve the self-dev harness specs
 harness-validate:
 	$(PYTHON) -m harness validate
+
+## mutation-check: fail if a mutation run died mid-mutation and left the mutation in the
+## source (#2710). The signal is the on-disk session directory scripts/mutation_harness.py
+## writes BEFORE its first edit, so a SIGKILL — which runs no `finally:` — cannot erase it.
+## `.githooks/pre-commit` runs this too; restore with
+## `python scripts/mutation_harness.py restore`.
+mutation-check:
+	$(PYTHON) scripts/mutation_harness.py check
 
 ## gates: run the platform-hardening drift/inert/structural gates (config-baseline,
 ## inert-surface, docs-lint, structural-size, structural-import-direction,
