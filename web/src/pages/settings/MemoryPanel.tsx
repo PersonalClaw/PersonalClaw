@@ -4,7 +4,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
   Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon,
-  Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, type LucideIcon,
+  Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, Sparkles, type LucideIcon,
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
 import {
@@ -15,6 +15,7 @@ import {
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
+  type RecallRanking,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
@@ -1122,11 +1123,18 @@ function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
 function InspectTab() {
   const [q, setQ] = useState('')
   const [result, setResult] = useState<{ semantic: string; episodic: string } | null>(null)
+  // Same disclosure as the Recall tab: the preview runs the same hybrid scorer, so a
+  // preview that hides its degradation misreports what a real turn would be given.
+  const [ranking, setRanking] = useState<RecallRanking | null>(null)
   const [busy, setBusy] = useState(false)
   const run = async () => {
     setBusy(true)
-    try { const p = await api.memoryContextPreview(q); setResult({ semantic: p.semantic_context, episodic: p.episodic_context }) }
-    catch { setResult({ semantic: '', episodic: '' }) }
+    try {
+      const p = await api.memoryContextPreview(q)
+      setResult({ semantic: p.semantic_context, episodic: p.episodic_context })
+      setRanking(p.ranking)
+    }
+    catch { setResult({ semantic: '', episodic: '' }); setRanking(null) }
     setBusy(false)
   }
   return (
@@ -1139,6 +1147,7 @@ function InspectTab() {
         </div>
         <Button size="sm" onClick={run} loading={busy}>Preview</Button>
       </div>
+      {ranking && <RankingNote ranking={ranking} className="mb-2" />}
       {result && (
         <div className="flex flex-col gap-3">
           <InspectBlock title="Semantic context" body={result.semantic} />
@@ -1161,6 +1170,30 @@ function InspectBlock({ title, body }: { title: string; body: string }) {
   )
 }
 
+// ── How this recall ranked (the ONE frontend renderer of that disclosure) ─────
+/** The server-composed "how did this actually rank" sentence — see
+ *  `personalclaw/memory_ranking.py`, which owns the wording for every surface.
+ *
+ *  This component only picks the TONE from `degraded` and renders `summary` verbatim.
+ *  It never composes its own phrasing: three surfaces (this Recall tab, Inspect, and
+ *  the entity-graph section) render the same object, and the reason issue 521 existed
+ *  at all is that each surface used to be free to describe recall in its own words —
+ *  or, in the Recall tab's case, in none. `MemoryPanel.rankingDisclosure.test.tsx`
+ *  keeps that rail. */
+function RankingNote({ ranking, className = '' }: { ranking: RecallRanking; className?: string }) {
+  const Icon = ranking.degraded ? AlertTriangle : Sparkles
+  return (
+    <p
+      data-type="body-s"
+      data-testid="recall-ranking"
+      className={`flex items-start gap-1.5 ${ranking.degraded ? 'text-warn' : 'text-on-surface-low'} ${className}`}
+    >
+      <Icon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{ranking.summary}</span>
+    </p>
+  )
+}
+
 // ── Recall (deep query-scored recall) ────────────────────────────────────────
 /** "Ask my memory" — a query-scored deep recall over the whole store. Unlike
  *  Inspect (which previews the turn-injection context), this runs the ranked
@@ -1168,12 +1201,16 @@ function InspectBlock({ title, body }: { title: string; body: string }) {
 function RecallTab() {
   const [q, setQ] = useState('')
   const [result, setResult] = useState<string | null>(null)
+  // The recall's OWN ranking, not the panel's guess at it. Kept beside `result` and set
+  // from the same response so the note can never describe a different recall than the
+  // one on screen. `null` = no recall has run yet, or one ran under a memory-read block.
+  const [ranking, setRanking] = useState<RecallRanking | null>(null)
   const [busy, setBusy] = useState(false)
   const run = async () => {
     if (!q.trim()) return
     setBusy(true)
-    try { const r = await api.memoryRecall(q.trim()); setResult(r.result) }
-    catch { setResult('') }
+    try { const r = await api.memoryRecall(q.trim()); setResult(r.result); setRanking(r.ranking) }
+    catch { setResult(''); setRanking(null) }
     setBusy(false)
   }
   return (
@@ -1187,6 +1224,7 @@ function RecallTab() {
         <Button size="sm" onClick={run} loading={busy} disabled={busy || !q.trim()}
           disabledReason={!q.trim() ? 'Type a question first' : undefined}>Recall</Button>
       </div>
+      {ranking && <RankingNote ranking={ranking} className="mb-2" />}
       {result !== null && (result
         ? <pre data-type="caption" className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface whitespace-pre-wrap">{result}</pre>
         : <p data-type="caption" className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low italic">Nothing recalled for that query.</p>)}
@@ -1433,8 +1471,13 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
   if (error) return <Section title="Entity graph"><LoadError what="entity graph" error={error} onRetry={reload} /></Section>
   if (data === undefined) return <ListSkeleton rows={3} what="entity graph" />
   if (!data.enabled) {
+    // The consequence line is the SERVER's sentence (`data.ranking.summary`), not a local
+    // string. It used to be hand-written here — and it was the only surface in the product
+    // that said what a degraded recall costs, which is exactly why the Recall tab could go
+    // on rendering identically in both states (issue 521).
     return (
-      <Section title="Entity graph" hint="Off — memory recall falls back to search alone.">
+      <Section title="Entity graph" hint="Off — see what that costs recall below.">
+        <RankingNote ranking={data.ranking} className="mb-2" />
         <p data-type="body-s" className="text-on-surface-low">
           Turn on <span className="text-on-surface-var">Entity graph</span> in Settings to link
           memories to the people, projects and tools they mention.
@@ -1455,6 +1498,11 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
         <Button size="sm" variant="ghost" onClick={exportGraph} loading={busy === 'export'} loadingLabel="Rendering…"><Download size={14} /> Export as HTML
         </Button>
       </div>
+      {/* Graph ON is not the same as recall being whole: with no embedding model bound the
+          vector arm is still missing, and Health was the one place that never said so. Only
+          rendered when something IS degraded — a healthy store needs no notice here, the
+          Recall and Inspect tabs already report their own runs. */}
+      {data.ranking.degraded && <RankingNote ranking={data.ranking} className="mt-2" />}
       <p data-type="caption" className="mt-2 text-on-surface-low">
         {summary.entities ?? 0} entit{(summary.entities ?? 0) === 1 ? 'y' : 'ies'} · {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
         {'. '}

@@ -291,17 +291,17 @@ async def _status(arguments: dict, state: Any) -> str:
         except Exception:  # noqa: BLE001
             lines.append("tasks: unavailable")
         try:
+            from personalclaw.memory_ranking import recall_ranking
             from personalclaw.memory_service import MemoryService
             from personalclaw.vector_memory import VectorMemoryStore
 
             store = VectorMemoryStore()
             store.init()
             caps = MemoryService.over_vector_store(store).capabilities()
-            lines.append(
-                "memory: "
-                + ("vector search" if caps.vector else "keyword search")
-                + (" + entity graph" if getattr(caps, "entity_graph", False) else "")
-            )
+            # Same owner the dashboard's recall disclosure reads (memory_ranking): this
+            # line used to compose its own "vector search"/"keyword search" wording, which
+            # made it a second vocabulary for one fact.
+            lines.append("memory: " + recall_ranking(caps).label)
         except Exception:  # noqa: BLE001
             lines.append("memory: unavailable")
         try:

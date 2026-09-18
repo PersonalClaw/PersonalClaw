@@ -3620,7 +3620,11 @@ export interface MemoryEvent {
   old_value?: string; new_value?: string; source?: string; created_at?: string
   undone_at?: string | null
 }
-export interface MemoryContextPreview { semantic_context: string; episodic_context: string }
+export interface MemoryContextPreview {
+  semantic_context: string
+  episodic_context: string
+  ranking: RecallRanking
+}
 // Memory health lint: auto-fixed counts + per-flag advisories (near-dup / stale / orphan / contradiction).
 export interface MemoryLintFlag { check: string; key: string; detail: string }
 export interface MemoryLint { auto_fixed: Record<string, number>; flags: MemoryLintFlag[]; flag_count: number }
@@ -3660,6 +3664,7 @@ export interface MemoryEntitiesResponse {
   entities: MemoryEntity[]
   summary: MemoryGraphSummary | Record<string, never>
   enabled: boolean
+  ranking: RecallRanking
 }
 export interface MemoryGraphRebuild {
   ok: boolean
@@ -3716,10 +3721,24 @@ export interface MemoryEntityEdge {
   provenances: string[]
   confidence: number
 }
+/** HOW a memory recall actually ranked — served by every recall-ish endpoint, composed
+ *  by ONE backend owner (`personalclaw/memory_ranking.py`). `summary` is a whole sentence
+ *  to render verbatim; never re-word it client-side, or the panels drift apart again.
+ *  `mode` is the closed vocabulary to branch on (`semantic` | `keyword` | `unranked`). */
+export interface RecallRanking {
+  vector: boolean
+  full_text_search: boolean
+  entity_graph: boolean
+  mode: 'semantic' | 'keyword' | 'unranked'
+  degraded: boolean
+  label: string
+  summary: string
+}
 export interface MemoryEntityGraph {
   nodes: MemoryEntityNode[]
   edges: MemoryEntityEdge[]
   enabled: boolean
+  ranking: RecallRanking
 }
 /** A record's outbound entity link. `entity_name` is resolved server-side — a row holding
  *  only `ent_9f2c` names nothing, and the name IS the evidence tag the inspect view shows. */
@@ -5539,7 +5558,10 @@ export const api = {
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),
   memoryLint: () => get<MemoryLint>('/api/memory/lint'),
   memoryObservability: () => get<MemoryObservability>('/api/memory/observability'),
-  memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
+  // `ranking` is null ONLY when no recall ran (a temporary session blocks memory reads);
+  // otherwise it always describes the recall that produced `result`. `deep` is the request's
+  // own depth flag echoed back — it says nothing about how the results were scored.
+  memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean; ranking: RecallRanking | null }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
   memoryPromote: () => post<{ ok: boolean; promoted: number }>('/api/memory/promote'),
   // Entity graph (MEMORY-GRAPH-AND-VAULT §1) — the typed links under recall.
   memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
