@@ -2,8 +2,46 @@
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.tasks import reconcile, registry
 from personalclaw.tasks.models import Task
+
+# Every refusal these routes add answers with the ONE wire envelope (`json_error`), not the
+# flat `{"error": "<prose>"}` several of the handlers below still carry: a client that has
+# to branch on a parameter it got wrong needs a code, and the flat population is
+# shrink-only (`tests/test_wire_error_envelope_census.py`).
+
+
+def _page_window(request: web.Request) -> tuple[int, int]:
+    """The (limit, offset) this route will actually apply.
+
+    Clamped with the idiom every sibling paginated list route uses — ``triggers``,
+    ``workflows``, ``sessions``, ``files`` — because this one passed both straight into a
+    Python slice and answered 200 with a silently short page (#2984). The ceiling lives
+    here rather than in the registry: a page cap is the serving surface's business, and the
+    internal projections legitimately read the whole corpus.
+
+    Raises ``ValueError`` for a non-numeric value, which the caller turns into the wire
+    envelope. That refusal is the route's OWN — relying on the global request-shape
+    middleware to convert an unhandled ``ValueError`` leaves the route a bare 500 in any
+    app (a test app, an embedded mount) that has not installed it.
+    """
+    limit = max(1, min(int(request.query.get("limit", "50")), registry.MAX_TASK_PAGE))
+    offset = max(0, int(request.query.get("offset", "0")))
+    return limit, offset
+
+
+def _bad_page(name: str = "limit/offset") -> web.Response:
+    return json_error("bad_request", message=f"{name} must be integers", status=400)
+
+
+def _unknown_provider(exc: registry.UnknownTaskProvider) -> web.Response:
+    """The refusal for a ``provider`` this registry does not recognize (#2983).
+
+    ``bad_request`` + a message naming the provider, which is exactly how the artifacts
+    routes already answer the identical input on the identical registry design.
+    """
+    return json_error("bad_request", message=str(exc), status=400)
 
 
 def _with_block_reason(task: Task, task_map: dict[str, Task]) -> dict:
@@ -22,8 +60,10 @@ async def api_tasks_list(request: web.Request) -> web.Response:
     project = request.query.get("project")
     task_list = request.query.get("task_list") or request.query.get("task_list_id")
     provider = request.query.get("provider")
-    limit = int(request.query.get("limit", "50"))
-    offset = int(request.query.get("offset", "0"))
+    try:
+        limit, offset = _page_window(request)
+    except ValueError:
+        return _bad_page()
 
     # `mine=1` — the "mine vs everyone" view (TEAM-SHARED-ENTITIES §2.1). Resolved
     # server-side from the configured username rather than taking a name from the
@@ -31,15 +71,18 @@ async def api_tasks_list(request: web.Request) -> web.Response:
     # which the `assignee` filter alone cannot express.
     mine = str(request.query.get("mine", "")).strip().lower() in ("1", "true", "yes")
 
-    tasks, total = await registry.list_all_tasks(
-        status=status,
-        assignee=assignee,
-        project=project,
-        task_list_id=task_list,
-        provider_filter=provider,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        tasks, total = await registry.list_all_tasks(
+            status=status,
+            assignee=assignee,
+            project=project,
+            task_list_id=task_list,
+            provider_filter=provider,
+            limit=limit,
+            offset=offset,
+        )
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     if mine:
         from personalclaw.identity import current_username
 
@@ -127,6 +170,11 @@ async def api_tasks_search(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        limit = min(int(body.get("limit", 50)), registry.MAX_TASK_PAGE)
+        offset = int(body.get("offset", 0))
+    except (TypeError, ValueError):
+        return _bad_page()
     tasks, total = await registry.search_tasks(
         query=body.get("query", ""),
         statuses=body.get("status") or body.get("statuses"),
@@ -135,8 +183,8 @@ async def api_tasks_search(request: web.Request) -> web.Response:
         project=body.get("project") or body.get("project_id"),
         task_list_id=body.get("task_list_id"),
         sort_by=body.get("sort_by", "relevance"),
-        limit=int(body.get("limit", 50)),
-        offset=int(body.get("offset", 0)),
+        limit=limit,
+        offset=offset,
     )
     task_map = {t.id: t for t in tasks}
     return web.json_response(
@@ -171,6 +219,15 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
         # exactly as the single-item handlers reach them with `**body`.
         if op in ("create", "update") and _supplies_author(item):
             errors.append({"index": i, "error": _SUPPLIED_AUTHOR_ERROR})
+        if op in ("create", "update"):
+            # And the same parent rule (#2977), for the same reason the attribution rule is
+            # here: bulk is the cheapest way to mint many rows, and it reaches
+            # `create_task`/`update_task` with `**item` exactly as the single-item handlers
+            # reach them with `**body`. In PHASE 1, so one dangling parent aborts the batch
+            # instead of landing an orphan alongside sound rows.
+            dangling = _dangling_parent(item)
+            if dangling:
+                errors.append({"index": i, "error": dangling})
         if op == "create":
             if not isinstance(item, dict) or not str(item.get("title", "")).strip():
                 errors.append({"index": i, "error": "title required"})
@@ -231,12 +288,46 @@ async def api_tasks_get(request: web.Request) -> web.Response:
     """GET /api/tasks/{task_id}"""
     task_id = request.match_info["task_id"]
     provider = request.query.get("provider")
-    task = await registry.get_task(task_id, provider_name=provider)
+    try:
+        task = await registry.get_task(task_id, provider_name=provider)
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     if not task:
         return web.json_response({"error": "not found"}, status=404)
     d = task.to_dict()
     d["comment_count"] = getattr(task, "_comment_count", 0)
     return web.json_response(d)
+
+
+def _dangling_parent(body: object) -> str | None:
+    """The reason a task write names a parent that does not exist, or None (#2977).
+
+    Neither parent id was validated, so ``POST /api/tasks`` answered 201 for a nonexistent
+    ``task_list_id`` and STORED it — a task born straight into the orphan state the project
+    and task-list cascades exist to prevent (#457/#2976) — while ``project_id`` was worse
+    still: ``_attach_project_general_list`` caught the store's own rejection and dropped it,
+    so the user's project choice was silently discarded at 201. The sibling
+    ``POST /api/task-lists`` refuses the identical ``project_id``, and that is the reference
+    behavior here; this is not a new convention.
+
+    Returns the message rather than a response so the two single-item verbs and bulk's
+    validate-all phase share one implementation of the rule instead of three.
+
+    An explicitly EMPTY id is "no parent chosen" (the payload ``TaskForm.draftToPayload``
+    always sends), never a lookup that fails.
+    """
+    if not isinstance(body, dict):
+        return None
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    store = HierarchyStore()
+    project_id = str(body.get("project_id") or "").strip()
+    if project_id and store.get_project(project_id) is None:
+        return f"no project with id '{project_id}'"
+    task_list_id = str(body.get("task_list_id") or "").strip()
+    if task_list_id and store.get_task_list(task_list_id) is None:
+        return f"no task list with id '{task_list_id}'"
+    return None
 
 
 def _attach_project_general_list(body: dict) -> None:
@@ -266,10 +357,13 @@ def _attach_project_general_list(body: dict) -> None:
         default=None,
     )
     if general is None:
-        try:
-            general = store.create_task_list(name="General", project_id=project_id)
-        except ValueError:
-            return
+        # No `except ValueError` here any more. It used to swallow `create_task_list`'s
+        # "no project with id '…'" and leave `task_list_id` unset, so a bad `project_id`
+        # answered 201 having discarded the choice this function exists to honor (#2977).
+        # `_dangling_parent` has already refused that id upstream; anything this call raises
+        # now is a real fault, and both callers run it inside their `except ValueError` →
+        # 400 arm rather than dropping it.
+        general = store.create_task_list(name="General", project_id=project_id)
     body["task_list_id"] = general.id
 
 
@@ -285,11 +379,18 @@ async def api_tasks_create(request: web.Request) -> web.Response:
     title = raw_title.strip() if isinstance(raw_title, str) else ""
     if not title:
         return web.json_response({"error": "title required"}, status=400)
-    provider_name = body.pop("provider", "native")
-    if provider_name == "native":
-        _attach_project_general_list(body)
+    dangling = _dangling_parent(body)
+    if dangling:
+        return json_error("invalid_request", message=dangling, status=400)
+    # An empty `provider` is an unset parameter, not a name to look up — the same reading
+    # the by-id routes give it, where it means "search them all".
+    provider_name = body.pop("provider", "") or "native"
     try:
+        if provider_name == "native":
+            _attach_project_general_list(body)
         task = await registry.create_task(provider_name=provider_name, **body)
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     except reconcile.DependencyCycleError as e:
         return web.json_response({"error": str(e), "cycle": e.cycle}, status=400)
     except ValueError as e:
@@ -306,6 +407,9 @@ async def api_tasks_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if _supplies_author(body):
         return web.json_response({"error": _SUPPLIED_AUTHOR_ERROR}, status=400)
+    dangling = _dangling_parent(body)
+    if dangling:
+        return json_error("invalid_request", message=dangling, status=400)
     provider_name = body.pop("provider", None)
     # The SAME resolution the create path does. `project_id` is not a `Task` field, so without this
     # it reached `update_task`, was ignored, and the edit answered 200 having changed nothing — the
@@ -313,9 +417,11 @@ async def api_tasks_update(request: web.Request) -> web.Response:
     # by the create page and the detail page, so the identical payload worked on one and was a no-op
     # on the other. Idempotent and already a no-op when a list was chosen, so the create path's
     # behaviour is the whole specification.
-    _attach_project_general_list(body)
     try:
+        _attach_project_general_list(body)
         task = await registry.update_task(task_id, provider_name=provider_name, **body)
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     except reconcile.DependencyCycleError as e:
         return web.json_response({"error": str(e), "cycle": e.cycle}, status=400)
     except ValueError as e:
@@ -338,6 +444,11 @@ async def api_tasks_delete(request: web.Request) -> web.Response:
     provider = request.query.get("provider")
     try:
         deleted = await registry.delete_task(task_id, provider_name=provider)
+    except registry.UnknownTaskProvider as e:
+        # The sharpest form of #2983: this answered `{"ok": true}` for `?provider=jira` and
+        # deleted the NATIVE task — a call scoped to a provider that does not exist still
+        # destroyed a record it had not addressed.
+        return _unknown_provider(e)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     if not deleted:
@@ -349,7 +460,10 @@ async def api_tasks_comments_get(request: web.Request) -> web.Response:
     """GET /api/tasks/{task_id}/comments"""
     task_id = request.match_info["task_id"]
     provider = request.query.get("provider")
-    comments = await registry.get_comments(task_id, provider_name=provider)
+    try:
+        comments = await registry.get_comments(task_id, provider_name=provider)
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     return web.json_response({"comments": [c.to_dict() for c in comments]})
 
 
@@ -382,9 +496,12 @@ async def api_tasks_comments_post(request: web.Request) -> web.Response:
     provider = body.get("provider")
     # Attribution comes from the server's own view of who is acting — the same handle
     # `Task.author` is stamped with on create, so a task and its comments agree.
-    comment = await registry.add_comment(
-        task_id, body=message, author=_owner_username(), provider_name=provider
-    )
+    try:
+        comment = await registry.add_comment(
+            task_id, body=message, author=_owner_username(), provider_name=provider
+        )
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     if not comment:
         return web.json_response({"error": "task not found"}, status=404)
     return web.json_response(comment.to_dict(), status=201)
@@ -401,6 +518,8 @@ async def api_tasks_comments_delete(request: web.Request) -> web.Response:
     provider = request.query.get("provider")
     try:
         deleted = await registry.delete_comment(task_id, comment_id, provider_name=provider)
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     if not deleted:

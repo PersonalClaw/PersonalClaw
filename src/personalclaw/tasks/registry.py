@@ -13,6 +13,21 @@ logger = logging.getLogger(__name__)
 
 _providers: dict[str, TaskProvider] = {}
 
+#: The widest page any single caller may take, and the width each provider is asked for.
+#: One number because the HTTP route and the agent's ``task_list`` tool are two doors onto
+#: this same aggregation: a page cap they each picked separately is how ``limit`` came to
+#: mean two different things on the two surfaces (#2984).
+MAX_TASK_PAGE = 500
+
+
+class UnknownTaskProvider(ValueError):
+    """A ``provider`` name this registry does not recognize.
+
+    A ``ValueError`` subclass so the write paths' existing ``except ValueError`` handling
+    still catches it, and its own type so a handler can answer 400 *naming the provider*
+    rather than matching prose.
+    """
+
 
 def register_provider(provider: TaskProvider) -> None:
     _providers[provider.name] = provider
@@ -37,6 +52,74 @@ def _ensure_native() -> None:
         register_provider(NativeTaskProvider())
 
 
+def _resolve(name: str | None) -> TaskProvider | None:
+    """One provider name → the provider it addresses, or ``None`` meaning "every provider".
+
+    This function exists because the same ``if name and name in _providers … else <all
+    providers>`` shape was written out in seven places, and it conflated two inputs that
+    are not alike: **no provider given** (legitimately "search them all") and **a name I
+    do not recognize** (only ever a client error). Reading the second as the first meant a
+    scoped call silently acted on a record it had not addressed — ``DELETE
+    /api/tasks/{id}?provider=jira`` deleted the *native* task and answered ``{"ok": true}``
+    (#2983). ``create_task`` was the one door that raised on an unknown name; this is that
+    behavior, once, for all eight.
+
+    The sibling artifacts registry already resolves the same pluggable-provider design this
+    way (``_providers.get(name or "native")`` → a handler refusal), so the shape is being
+    made consistent rather than invented.
+    """
+    _ensure_native()
+    if not name:
+        return None
+    prov = _providers.get(name)
+    if prov is None:
+        raise UnknownTaskProvider(f"Unknown task provider: {name}")
+    return prov
+
+
+def _resolve_one(name: str | None) -> TaskProvider:
+    """The single provider a call that must name exactly one addresses; falsy → native.
+
+    ``create_task`` cannot mean "all providers", so an absent or empty name is the DEFAULT
+    provider here rather than a wildcard — the one place the two readings differ.
+    """
+    _ensure_native()
+    prov = _providers.get(name or "native")
+    if prov is None:
+        raise UnknownTaskProvider(f"Unknown task provider: {name}")
+    return prov
+
+
+async def _routed(task_id: str, provider_name: str | None) -> TaskProvider | None:
+    """The provider a by-id call addresses: the one NAMED, or whichever holds the id.
+
+    Raises :class:`UnknownTaskProvider` for a name that is not registered. The
+    holder search is what "no name given" *means*; it is never what an unrecognized
+    name degrades to — with two providers registered that fallback would let
+    ``?provider=A`` mutate a task owned by B.
+    """
+    prov = _resolve(provider_name)
+    if prov is not None:
+        return prov
+    for candidate in _providers.values():
+        if await candidate.get_task(task_id):
+            return candidate
+    return None
+
+
+def _page(limit: int, offset: int) -> tuple[int, int]:
+    """A slice window that cannot address the far end of the list.
+
+    ``all_tasks[offset : offset + limit]`` with ``limit=-1`` is ``[0:-1]`` — a silently
+    SHORT page, returned 200 beside a ``total`` computed before the slice, so the response
+    advertised 6 while carrying 5 (#2984). With ``offset=-2`` it is ``[-2:0]``, an empty
+    page. Floors only, no ceiling: the page cap belongs to the surface that serves a page,
+    and the internal projections (``ready_tasks``, ``search_tasks``) legitimately ask for
+    the whole corpus through here.
+    """
+    return max(1, int(limit)), max(0, int(offset))
+
+
 async def list_all_tasks(
     status: str | None = None,
     assignee: str | None = None,
@@ -47,17 +130,14 @@ async def list_all_tasks(
     offset: int = 0,
 ) -> tuple[list[Task], int]:
     """Aggregate tasks from all providers (or a specific one)."""
-    _ensure_native()
+    limit, offset = _page(limit, offset)
+    named = _resolve(provider_filter)
+    sources = [named] if named is not None else list(_providers.values())
     all_tasks: list[Task] = []
-    sources = (
-        {provider_filter: _providers[provider_filter]}
-        if provider_filter and provider_filter in _providers
-        else _providers
-    )
-    for prov in sources.values():
+    for prov in sources:
         try:
             tasks, _ = await prov.list_tasks(
-                status=status, assignee=assignee, project=project, limit=500, offset=0
+                status=status, assignee=assignee, project=project, limit=MAX_TASK_PAGE, offset=0
             )
             all_tasks.extend(tasks)
         except Exception:
@@ -72,99 +152,56 @@ async def list_all_tasks(
 
 async def get_task(task_id: str, provider_name: str | None = None) -> Task | None:
     """Get a single task. If provider_name is given, query only that provider."""
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        return await _providers[provider_name].get_task(task_id)
-    for prov in _providers.values():
-        task = await prov.get_task(task_id)
-        if task:
-            return task
-    return None
+    prov = await _routed(task_id, provider_name)
+    return await prov.get_task(task_id) if prov is not None else None
 
 
 async def create_task(provider_name: str = "native", **fields: Any) -> Task:
-    _ensure_native()
-    prov = _providers.get(provider_name)
-    if not prov:
-        raise ValueError(f"Unknown task provider: {provider_name}")
+    prov = _resolve_one(provider_name)
     if prov.readonly:
-        raise ValueError(f"Provider '{provider_name}' is read-only")
+        raise ValueError(f"Provider '{prov.name}' is read-only")
     return await prov.create_task(**fields)
 
 
 async def update_task(task_id: str, provider_name: str | None = None, **fields: Any) -> Task | None:
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        prov = _providers[provider_name]
-    else:
-        for p in _providers.values():
-            t = await p.get_task(task_id)
-            if t:
-                prov = p
-                break
-        else:
-            return None
+    prov = await _routed(task_id, provider_name)
+    if prov is None:
+        return None
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
     return await prov.update_task(task_id, **fields)
 
 
 async def delete_task(task_id: str, provider_name: str | None = None) -> bool:
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        prov = _providers[provider_name]
-    else:
-        for p in _providers.values():
-            t = await p.get_task(task_id)
-            if t:
-                prov = p
-                break
-        else:
-            return False
+    prov = await _routed(task_id, provider_name)
+    if prov is None:
+        return False
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
     return await prov.delete_task(task_id)
 
 
 async def get_comments(task_id: str, provider_name: str | None = None) -> list[TaskComment]:
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        return await _providers[provider_name].get_comments(task_id)
-    for prov in _providers.values():
-        t = await prov.get_task(task_id)
-        if t:
-            return await prov.get_comments(task_id)
-    return []
+    prov = await _routed(task_id, provider_name)
+    return await prov.get_comments(task_id) if prov is not None else []
 
 
 async def add_comment(
     task_id: str, body: str, author: str = "", provider_name: str | None = None
 ) -> TaskComment | None:
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        return await _providers[provider_name].add_comment(task_id, body, author)
-    for prov in _providers.values():
-        t = await prov.get_task(task_id)
-        if t:
-            return await prov.add_comment(task_id, body, author)
-    return None
+    prov = await _routed(task_id, provider_name)
+    if prov is None:
+        return None
+    return await prov.add_comment(task_id, body, author)
 
 
 async def delete_comment(task_id: str, comment_id: str, provider_name: str | None = None) -> bool:
     """Remove one comment. Routes exactly like the other write paths, including the
     read-only refusal — a projection provider must not be asked to forget a record it
     does not own."""
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        prov = _providers[provider_name]
-    else:
-        for p in _providers.values():
-            t = await p.get_task(task_id)
-            if t:
-                prov = p
-                break
-        else:
-            return False
+    prov = await _routed(task_id, provider_name)
+    if prov is None:
+        return False
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
     return await prov.delete_comment(task_id, comment_id)
@@ -175,6 +212,11 @@ async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
 
     Only the native provider owns a mutable DAG; read-only providers (project
     runtime) don't participate in dependency analysis.
+
+    The fallback below is DELIBERATE and is the one door :func:`_resolve` is not applied
+    to: an unaddressable ``provider_filter`` here means "this provider has no graph", which
+    is a true statement about a registered provider too, so answering the native graph is
+    the honest read rather than a refusal.
     """
     _ensure_native()
     prov = _providers.get(provider_filter or "native")
@@ -303,6 +345,9 @@ async def search_tasks(
     """Full task search: case-folded substring over title+description, plus
     status/priority/tag/project/task-list filters and a sort key
     (relevance|created_at|updated_at|priority)."""
+    # The same slice, so the same window (#2984) — this door reached it through its own
+    # `int(body.get("limit", 50))` with no clamp at all.
+    limit, offset = _page(limit, offset)
     tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
     q = (query or "").strip().lower()
     status_set = {s for s in (statuses or []) if s}

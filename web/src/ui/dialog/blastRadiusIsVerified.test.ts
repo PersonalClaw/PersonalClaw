@@ -292,7 +292,15 @@ describe('the project delete, and the two workflow bodies', () => {
     const del = handler.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(del, 'found the delete handler').not.toBe('')
     expect(del, 'it resolves every task in the project').toMatch(/list_all_tasks\(project=/)
-    expect(del, 'and deletes each one').toMatch(/delete_task\(t\.id\)/)
+    // The deletion loop is now shared with the task-list door as `_cascade_delete_tasks`, so the
+    // caller-not-callee rule above is satisfied by pinning the HANDOFF as well as the loop: the
+    // handler passes every doomed task in this project, and the helper deletes each id. One hop, both
+    // ends nailed down, which is what keeps this from sliding back into certifying a callee.
+    expect(del, 'and hands every one of them to the shared cascade')
+      .toMatch(/_cascade_delete_tasks\(\[t\.id for t in doomed\]\)/)
+    const cascade = handler.match(/async def _cascade_delete_tasks[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(cascade, 'found the shared cascade').not.toBe('')
+    expect(cascade, 'which deletes each task').toMatch(/delete_task\(tid\)/)
 
     // The callee facts, kept: still true, and the list-unlink half of the copy still rests on them.
     const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
