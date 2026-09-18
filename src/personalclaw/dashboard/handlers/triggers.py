@@ -961,8 +961,14 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     row = store.get(raw_id)
     if row is not None:
         trigger = row.trigger
+        # 🔴 THE FALSY BRANCH NAMES THE ROUTE (#450). It used to mint `""`, which is not a member of
+        # the `delivery` vocabulary, and every reader coerced that blank back to `"none"` — the
+        # SILENT value — so "Silent OFF, no channel" created a trigger the user could not un-mute.
+        # `"inbox"` is the vocabulary's "deliver normally", and it is what the same field's failure
+        # peer already defaults to (`Trigger.failure_delivery`). Written identically in
+        # `_update_schedule`: two endpoints that accept one field must encode it the same way.
         trigger.delivery = (
-            "none" if body.get("silent") else (f"channel:{channel}" if channel else "")
+            "none" if body.get("silent") else (f"channel:{channel}" if channel else "inbox")
         )
         # Set here rather than through `tools.create`, for the same reason `delivery` is: the
         # constructor takes the schedule mechanism and the action, and delivery is what the entity
@@ -1290,8 +1296,13 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
         if "channel" in kwargs or "silent" in kwargs:
             silent = bool(kwargs.get("silent", row.trigger.delivery == "none"))
             channel_id = kwargs.get("channel", channel_of(row.trigger))
+            # 🔴 `"inbox"`, not `""` — the same encoding `_create_schedule` writes (#450). This is
+            # where the latch bit hardest: on a `"none"` row, `channel_of` returns `""`
+            # (prefix-only), so `PUT {"silent": false}` derived `silent=False, channel_id=""` and
+            # landed in this else branch, which minted the blank that read back as `"none"`. Silent
+            # OFF therefore never took, and the only escape was to also supply a channel.
             patch["delivery"] = (
-                "none" if silent else (f"channel:{channel_id}" if channel_id else "")
+                "none" if silent else (f"channel:{channel_id}" if channel_id else "inbox")
             )
         if "failure_delivery" in kwargs:
             patch["failure_delivery"] = str(kwargs["failure_delivery"] or "").strip()
