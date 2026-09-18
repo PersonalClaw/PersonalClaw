@@ -24,7 +24,8 @@ import { thinkingGlow } from '../../design/gradients'
 import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
-import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { reportActionFailure } from '../../app/reportingWrite'
 import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
 import { downloadText, safeFilename } from '../../lib/download'
@@ -222,8 +223,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // knows quality assessment is degraded, not silently never-completing.
   // Transient lifecycle flags folded through the SHARED, unit-tested foldReducer
   // (P16) — one place computes judge-degraded/gate/stall from lifecycle events, so
-  // this cockpit can't drift from the reducer's contract. This cockpit only surfaces
-  // judgeDegraded today (gate/stall are the code cockpit's), read off the folded state.
+  // this cockpit can't drift from the reducer's contract.
   const [runFlags, setRunFlags] = useState<RunFlags>(emptyRunFlags)
   const judgeDegraded = runFlags.judgeDegraded
   const [linkCopied, setLinkCopied] = useState(false)
@@ -278,7 +278,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     let t = 0
     const TERMINAL = ['complete', 'stopped', 'failed']
     const load = async () => {
-      const raw = await api.uLoop(id).catch(() => null)
+      // A 404 and a dropped connection both used to collapse into `null`, which is why the
+      // post-load branch below could only treat a null as a blip: it had no way to tell "this
+      // loop is gone" from "the network hiccuped". Only a 404 is authoritative.
+      let gone = false
+      const raw = await api.uLoop(id).catch((e) => {
+        if (e instanceof ApiError && e.status === 404) gone = true
+        return null
+      })
       const gl = raw ? loopToGoalLoop(raw) : null
       if (!alive) return
       if (gl) {
@@ -291,10 +298,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         // — those legitimately transition.)
         if (t && TERMINAL.includes(gl.status)) { clearInterval(t); t = 0 }
       }
-      // A null before we've ever loaded means the id is unknown/deleted —
-      // surface a not-found instead of spinning forever. Once loaded, a null
-      // is just a transient poll blip and is ignored (SSE keeps `c` live).
-      else if (!everLoaded.current) {
+      // Gone, or never there. A 404 is authoritative at ANY point — a loop deleted in another
+      // tab (or from the Loops list, or a project's linked-work row) reaches this branch even
+      // though it loaded fine a minute ago, which is the case this cockpit used to render
+      // forever. A null WITHOUT a 404 after a successful load is still just a poll blip and is
+      // still ignored, because SSE keeps `c` live.
+      else if (gone || !everLoaded.current) {
         setNotFound(true)
         // The loop is permanently gone (never loaded → deleted/bad id). Stop the
         // fallback poll so a stale cockpit tab doesn't spam GET /api/loops/<id>
@@ -307,6 +316,18 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     t = window.setInterval(load, 30_000)  // fallback only; SSE drives live
     return () => { alive = false; if (t) clearInterval(t) }
   }, [id])
+
+  // 🔑 THE READER `runFlags.deleted` NEVER HAD. `foldReducer` has set it on the `deleted`
+  // lifecycle event since it was written, and no component ever looked — so a loop deleted in
+  // another tab left this cockpit rendering it indefinitely. A written-and-never-read control
+  // flag is #370's shape exactly; the fold was already correct, the wire was missing.
+  //
+  // This is the FAST path: SSE delivers `deleted` immediately, while the 30s fallback poll's
+  // 404 (handled above) is the backstop for a tab whose stream is down. Both land on the same
+  // `notFound` state the component already renders, so there is one gone-state, not two.
+  useEffect(() => {
+    if (runFlags.deleted) setNotFound(true)
+  }, [runFlags.deleted])
 
   // Instant-paint seed: re-opening a loop should show its last snapshot
   // immediately instead of a cold spinner. This PEEKS the shared cache (which
@@ -413,16 +434,19 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   }, [id])
   useChatSocket(onWs)
 
-  if (!c) {
-    if (notFound) return (
-      <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
-        <div className="text-on-surface text-[1.0625rem]" style={fvs(500)}>Loop not found</div>
-        <p data-type="body-s" className="max-w-md text-on-surface-low">This loop doesn’t exist — it may have been deleted, or the link is out of date.</p>
-        <Button size="sm" onClick={onBack}><ArrowLeft size={15} /> Back to loops</Button>
-      </div>
-    )
-    return <div className="flex h-full items-center justify-center text-on-surface-low">Loading…</div>
-  }
+  // 🔴 GONE OUTRANKS A STALE SNAPSHOT. This screen used to be nested inside `if (!c)`, so it was
+  // reachable ONLY for a loop that never loaded — the one case #558 is *not* about. A loop that
+  // loaded fine and was then deleted set `notFound` and kept rendering itself, which made every
+  // upstream signal (the folded `deleted` event, the poll's 404, an action's 404) unobservable no
+  // matter how correctly it was wired. `notFound` is terminal, so it is checked FIRST.
+  if (notFound) return (
+    <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
+      <div className="text-on-surface text-[1.0625rem]" style={fvs(500)}>Loop not found</div>
+      <p data-type="body-s" className="max-w-md text-on-surface-low">This loop doesn’t exist — it may have been deleted, or the link is out of date.</p>
+      <Button size="sm" onClick={onBack}><ArrowLeft size={15} /> Back to loops</Button>
+    </div>
+  )
+  if (!c) return <div className="flex h-full items-center justify-center text-on-surface-low">Loading…</div>
   const active = ACTIVE_LOOP_STATUSES.has(c.status)
   const running = c.status === 'running'
   const findings = [...(c.findings ?? [])].sort((a, b) => b.cycle - a.cycle)
@@ -468,7 +492,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const curCycleElapsed = active ? Math.max(0, now - lastTs) : 0
 
   async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
-    const next = await api.uLoopAction(id, a).catch(() => null); if (next) setC(loopToGoalLoop(next))
+    // 🪤 This used to be `.catch(() => null)`, so every failure was invisible: on a deleted loop
+    // the buttons stayed live and each click did nothing, with no way to learn why. The sibling
+    // Design cockpit already routes its actions through the reporting helpers for exactly this
+    // reason — `reportActionFailure` is the form for a call whose RESULT the caller needs.
+    const next = await api.uLoopAction(id, a).catch((e) => {
+      if (e instanceof ApiError && e.status === 404) setNotFound(true)
+      reportActionFailure(`${a} this loop`)(e)
+      return null
+    })
+    if (next) setC(loopToGoalLoop(next))
   }
   async function sendNudge() {
     const t = nudgeText.trim(); if (!t || nudgeSending) return
