@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fakes import BoundEmbedder
 
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
@@ -326,7 +327,7 @@ def test_video_classify_propagates_frames_to_vision_ocr(monkeypatch):
 def test_runner_passthrough_note(store):
     ensure_nodes_registered()
     iid = store.create_typed_item(item_type="note", title="N", content="the body text")
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "done"
     pool = store.get_extracted_contents(iid)
     assert any(p["node_type"] == "passthrough" and "body text" in p["text"] for p in pool)
@@ -391,16 +392,6 @@ def test_runner_persists_node_phases(store):
     assert phases.get("embed") == "skipped"
 
 
-class _VectorEmbedder:
-    """An embedder that actually yields a vector, so `embed` has something to write."""
-
-    def is_available(self):
-        return True
-
-    def embed_for_item(self, title, summary, content=None):
-        return [0.5, 0.25, 0.125, 0.0625]
-
-
 def test_embed_phase_is_skipped_when_no_vector_is_written(store):
     """The regression this locks (#481): the terminal phases were force-set to 'done'
     regardless of outcome, so an instance with embeddings OFF reported `embed: done` for
@@ -421,7 +412,7 @@ def test_embed_phase_is_skipped_when_no_vector_is_written(store):
 
     # An embedder that is present but yields nothing (unbound/unavailable model returns
     # None rather than raising) is equally a no-op → still not 'done'.
-    class _NoVector(_VectorEmbedder):
+    class _NoVector(BoundEmbedder):
         def embed_for_item(self, title, summary, content=None):
             return None
 
@@ -434,7 +425,7 @@ def test_embed_phase_is_skipped_when_no_vector_is_written(store):
     # And the positive control: a real vector WAS written → 'done' is the truthful phase,
     # so the fix reports the outcome rather than merely never saying 'done'.
     on = store.create_typed_item(item_type="note", title="On", content="body text")
-    _run(ingest_item(store, on, embedder=_VectorEmbedder()))
+    _run(ingest_item(store, on, embedder=BoundEmbedder()))
     phases = (store.get_item(on).get("file_metadata") or {}).get("node_phases") or {}
     assert phases.get("embed") == "done"
     assert store.get_item(on).get("has_embedding")
@@ -473,7 +464,7 @@ def test_runner_document_reads_file(store, tmp_path):
     iid = store.create_typed_item(item_type="document", title="D", content="")
     store.update_item(iid, file_path=str(f))
     store.db.commit()
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "done"
     # content backfilled from the file via document_read → consolidate
     item = store.get_item(iid)
@@ -527,7 +518,7 @@ def test_runner_persists_document_page_count_to_file_metadata(store, tmp_path, m
 
     monkeypatch.setattr(readers_mod.FileReader, "read", _fake_read)
 
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "done"
     meta = store.get_item(iid)["file_metadata"]
     assert meta.get("page_count") == 7 and meta.get("format") == "pdf"
@@ -601,7 +592,7 @@ def test_runner_seeds_ai_tags_from_topics(store):
         item_type="note", title="N", content="the body text about caching"
     )
     pool = _FakePool('{"summary": "s", "topics": ["caching", "redis", "lru"]}')
-    status = _run(ingest_item(store, iid, insights_pool=pool))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder(), insights_pool=pool))
     assert status == "done"
     # Tags are rows now and read back in NAME order, not the order the model listed
     # them — the set is the contract, the sequence is not.
@@ -682,7 +673,7 @@ def test_runner_marks_partial_when_insights_model_unavailable(store, monkeypatch
 
     monkeypatch.setattr(runner_mod, "_run_insights", _insights_unavailable)
 
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "partial"
     item = store.get_item(iid)
     assert item["processing_status"] == "partial"
@@ -717,7 +708,7 @@ def test_a_failing_model_really_does_downgrade_the_item_to_partial(store, monkey
     pool._workers.append(ProviderWorker())
     pool._available.put_nowait(0)
 
-    status = _run(ingest_item(store, iid, insights_pool=pool))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder(), insights_pool=pool))
 
     assert status == "partial"
     item = store.get_item(iid)
@@ -732,7 +723,7 @@ def test_a_model_that_returns_nothing_still_leaves_the_item_done(store):
     ensure_nodes_registered()
     iid = store.create_typed_item(item_type="note", title="N", content="body text")
 
-    status = _run(ingest_item(store, iid, insights_pool=_FakePool("")))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder(), insights_pool=_FakePool("")))
 
     assert status == "done"
     assert store.get_item(iid)["processing_status"] == "done"
@@ -760,7 +751,7 @@ def test_runner_insights_failure_not_masked_by_optional_skips(store, tmp_path, m
 
     monkeypatch.setattr(runner_mod, "_run_insights", _insights_unavailable)
 
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "partial"
     item = store.get_item(iid)
     err = item.get("processing_error") or ""
@@ -935,7 +926,7 @@ def test_runner_entity_stage_populates_graph(store):
         '{"entities": [{"name": "Redis", "type": "technology"}, {"name": "API", "type": "service"}],'  # noqa: E501
         ' "relations": [{"source": "API", "target": "Redis", "type": "uses"}]}'
     )
-    status = _run(ingest_item(store, iid, insights_pool=pool))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder(), insights_pool=pool))
     assert status == "done"
     names = {r["name"] for r in store.db.execute("SELECT name FROM entities").fetchall()}
     assert {"Redis", "API"} <= names
@@ -974,7 +965,7 @@ def test_bookmark_scrape_node_fetches_and_titles(store, monkeypatch):
         "personalclaw.knowledge.connectors.web_url.WebUrlConnector.fetch", _fake_fetch
     )
     iid = store.create_typed_item(item_type="bookmark", title="", url="https://example.com/")
-    status = _run(ingest_item(store, iid))
+    status = _run(ingest_item(store, iid, embedder=BoundEmbedder()))
     assert status == "done"
     item = store.get_item(iid)
     assert "Example Domain" in (item["content"] or "")
@@ -1192,7 +1183,9 @@ def test_runner_records_skip_reason_on_partial(store, tmp_path, monkeypatch):
     iid = store.create_typed_item(item_type="image", title="px.png")
     store.update_item(iid, file_path=str(img))
     store.db.commit()
-    status = _run(ingest_item(store, iid, insights_pool=None))  # no model → vision/ocr skip
+    status = _run(
+        ingest_item(store, iid, embedder=BoundEmbedder(), insights_pool=None)
+    )  # no model → vision/ocr skip
     item = store.get_item(iid)
     assert status == "partial"
     err = item.get("processing_error") or ""

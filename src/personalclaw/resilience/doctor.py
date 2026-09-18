@@ -1140,6 +1140,98 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
+    """knowledge — which ingested items CANNOT be found by search? (RET-2)
+
+    🔴 WHY THIS EXISTS. Measured before RET-2: an image-only PDF and a document ingested
+    with no embedding provider both persisted ``processing_status='done'`` while nothing
+    could retrieve either — the AnythingLLM #6143 shape, where the app reports success and
+    RAG returns no sources. The ingest runner now persists ``unsearchable`` + a typed reason
+    instead; this is the surface that makes those items VISIBLE rather than a status value
+    in a table nobody opens.
+
+    **Reports failed, not degraded**, and that is the deliberate half. Doctor's other
+    knowledge probes report degraded because a slower-but-correct search is not an outage.
+    An item the user uploaded and can never find is not slower — it is absent, while the
+    library says it is there. A row a user must act on (bind an embedder, add a text
+    version, re-ingest) is exactly what ``ok=False`` is for. Per §1.3 it still degrades only
+    this capability: it never marks the gateway unhealthy and never justifies a restart.
+
+    **One row per item.** The count is exact; ``items`` carries a row each so the surface
+    names WHICH document is unreachable — a bare "3 items are unsearchable" cannot be acted
+    on. Read-only throughout: ``knowledge.db`` is opened ``mode=ro`` with ``create=False``,
+    so a health check on an install that has never used knowledge creates nothing.
+    """
+    from personalclaw.knowledge.searchability import UNSEARCHABLE, degradations_from, rows_from
+    from personalclaw.knowledge.store import knowledge_db_path
+    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
+
+    db_path = knowledge_db_path(ctx.home, create=False)
+
+    def _read() -> dict[str, Any]:
+        ev: dict[str, Any] = {"db_present": db_path.exists()}
+        if not db_path.exists():
+            return ev
+        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            has = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='items'"
+            ).fetchone()
+            if not has:
+                # Created by the store's schema block, so its absence means this install has
+                # never opened the knowledge store — not that an ingest broke.
+                ev["items_table"] = False
+                return ev
+            ev["items_table"] = True
+            records = [
+                (r[0], r[1], r[2])
+                for r in conn.execute(
+                    "SELECT id, title, file_metadata FROM items "
+                    "WHERE processing_status = ? AND COALESCE(is_archived, 0) = 0 "
+                    "ORDER BY created_at, id",
+                    (UNSEARCHABLE,),
+                ).fetchall()
+            ]
+        finally:
+            conn.close()
+        rows = rows_from(records)
+        ev["unsearchable"] = len(rows)
+        ev["items"] = [r.to_dict() for r in rows]
+        ev["by_reason"] = {d.reason: d.item_count for d in degradations_from(rows)}
+        ev["reasons"] = [d.detail for d in degradations_from(rows)]
+        return ev
+
+    try:
+        ev = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(
+            ok=False, detail=f"knowledge searchability probe failed: {exc}", evidence={}
+        )
+
+    if not ev.get("db_present") or not ev.get("items_table"):
+        return ProbeResult(ok=True, detail="no knowledge library on disk", evidence=ev)
+    count = int(ev.get("unsearchable") or 0)
+    if not count:
+        return ProbeResult(
+            ok=True, detail="every ingested item is reachable by search", evidence=ev
+        )
+    reasons = ", ".join(sorted((ev.get("by_reason") or {}).keys()))
+    ev["remedy"] = (
+        "Each item under `items` is in your library but cannot be found by search. Fix its "
+        "named reason — bind an embedding model (Settings → Providers) and re-index for "
+        "`no_embedding_provider`/`not_indexed`; for `no_extractable_text` the file is a scan, "
+        "so add a text version or bind an OCR/vision model — then re-ingest the item."
+    )
+    return ProbeResult(
+        ok=False,
+        detail=(
+            f"{count} ingested item{'s' if count != 1 else ''} cannot be found by search "
+            f"({reasons}) — they are in the library and no query can reach them"
+        ),
+        evidence=ev,
+    )
+
+
 async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
     """knowledge — is any markdown projection waiting on the OWNER? (KL-20)
 
@@ -1532,6 +1624,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_knowledge_vector_index,
             "Knowledge chunk ANN index (sqlite-vec)",
+        )
+    )
+    register_probe(
+        Probe(
+            "knowledge.searchability",
+            "knowledge",
+            Tier.CAPABILITY,
+            _probe_knowledge_searchability,
+            "Ingested items that no search can reach",
         )
     )
     register_probe(

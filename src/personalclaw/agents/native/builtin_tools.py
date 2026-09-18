@@ -1798,10 +1798,24 @@ class NativeBuiltinToolProvider(ToolProvider):
             # retrieval, not a keyword-only degrade. None (embeddings off) falls back cleanly.
             emb = get_knowledge_embedder()
             embed_fn = emb.embed if emb and emb.is_available() else None
-            results = HybridRetriever(store, embedder=embed_fn).search(query, limit=limit)
+            outcome = HybridRetriever(store, embedder=embed_fn).search_with_diagnostics(
+                query, limit=limit
+            )
+            results = outcome.results
+            # RET-2: never answer with a bare empty result set while the library holds
+            # items nothing can reach. "(no matching knowledge items)" is a claim about the
+            # library's CONTENT; an unretrievable item makes that claim false, and an agent
+            # that believes it will tell the user their document isn't there. The typed
+            # reason rides along with hits too — a keyword hit on an item with no vector is
+            # still a library whose semantic half is missing.
+            notes = [
+                f"({d.reason}: {d.item_count} item{'s' if d.item_count != 1 else ''} "
+                f"cannot be found by search — {d.detail})"
+                for d in outcome.degradations
+            ]
             if not results:
-                return "(no matching knowledge items)"
-            lines = []
+                return "\n".join(["(no matching knowledge items)"] + notes)
+            lines = list(notes)
             for r in results[:limit]:
                 item = store.get_item(r["id"])
                 if not item:

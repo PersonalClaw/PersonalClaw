@@ -332,11 +332,19 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
 
 #: The heuristic-tier stamp, as it actually exists (KNOW-R17's ``extraction: heuristic``
 #: by another name): the LLM-free ingest graph completes, the insights stage finds no
-#: model, and the runner downgrades the item to ``partial`` recording exactly that reason.
+#: model, and the runner downgrades the item recording exactly that reason.
 #: Archived items are excluded for the same reason the batch regen route excludes them —
 #: a drain should not spend the model the user just got back on content they put away.
+#:
+#: ``unsearchable`` is in the status set alongside ``partial`` because the stamp this
+#: matches on is the *reason*, not the status. The no-provider first-run home is the case:
+#: with neither an insights model nor an embedding model bound, RET-2's searchability
+#: verdict is the louder of the two facts, so the runner files the item ``unsearchable``
+#: and the insights reason rides along in ``processing_error``. Matching ``partial`` alone
+#: would have silently emptied this backlog on exactly the homes it exists for — the drain
+#: would report zero and binding a model would re-enrich nothing.
 _HEURISTIC_ITEMS_SQL = (
-    "SELECT id FROM items WHERE processing_status = 'partial' "
+    "SELECT id FROM items WHERE processing_status IN ('partial', 'unsearchable') "
     "AND COALESCE(processing_error, '') LIKE '%model unavailable%' "
     "AND status = 'active' AND COALESCE(is_archived, 0) = 0"
 )

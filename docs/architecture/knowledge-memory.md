@@ -62,15 +62,47 @@ project's private items never appear. The project tag is the same one
 embedding path: it wraps
 `embedding_providers/registry.py::get_active_embed_fn()`, which resolves the
 `embedding` use-case binding (Settings → Models). Nothing bound → embeddings
-are gracefully off (no crash; vector search simply doesn't participate). Any
-provider works: the native `apps/sentence-transformers` app or any bound
-remote model.
+are gracefully off (no crash; vector search simply doesn't participate) — but
+**gracefully off is not silently off**: an item ingested with nothing bound
+wrote no vector and no chunk, so it is recorded `unsearchable` rather than
+`done` (see [Searchability](#searchability)). Any provider works: the native
+`apps/sentence-transformers` app or any bound remote model.
 
 ### Search
 
 `knowledge/retrieval.py` — `HybridRetriever`: FTS5 keyword + graph traversal +
 optional vector search, fused with reciprocal-rank fusion (RRF). A minimum
 cosine floor keeps weak vector hits from polluting precise keyword queries.
+`search()` returns hits only; `search_with_diagnostics()` returns the same hits
+plus the typed reasons the library could not answer.
+
+### Searchability
+
+`knowledge/searchability.py` owns ONE vocabulary for "this item persisted and
+nothing can find it" (RET-2). Two failures used to persist as
+`processing_status: "done"` with no error: an image-only PDF, where
+`document_read` reported success and extracted no text (leaving only the
+synthesized structural descriptor — none of the document's words), and any
+document ingested with no embedding provider bound (zero rows in `chunks`, no
+item vector).
+
+- **The named status** is `unsearchable` — a distinct value, because `partial`
+  already means "an OPTIONAL step was skipped" and is routinely benign.
+- **The typed reasons** are closed: `no_extractable_text`,
+  `no_embedding_provider`, `not_indexed`.
+- **The verdict is computed from what LANDED** — the item's rows in `chunks`,
+  its `embedding` column, its stored text — never from a stage's self-report,
+  since the self-reports are what were untrustworthy.
+- `pipeline/runner.py` persists the status plus the reason at
+  `file_metadata.unsearchable_reason`; a re-ingest that lands clears both.
+- Two surfaces READ that one recorded fact rather than re-deriving it, so they
+  cannot drift: the `knowledge.searchability` Doctor probe (one row per
+  affected item) and `knowledge_search` (the typed reason instead of a bare
+  empty result set).
+- **A skipped extractor is not flagged.** An image with no OCR/vision model
+  skips its extractors — the declared degradation described above, reported
+  `partial`. Only a node that claimed success while producing no text is the
+  lie this names.
 
 ## Memory
 

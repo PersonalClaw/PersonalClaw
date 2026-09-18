@@ -22,10 +22,15 @@ when one ships):**
 
 **Ground truth (measured on a live no-provider gateway, ``origin/main`` @ ``df5f59b56``,
 2026-09-16).** 1+2 already surface the calm signal (their point-fixes merged). 3+4 ingest
-to ``processing_status='partial'`` + ``"insights: model unavailable"`` — OU-3's 2026-08-16
-``status:'done'``/empty observation is **STALE**: the runner's ``insights_ok`` →
-``partial`` downgrade (``knowledge/pipeline/runner.py``) already fixed those two, so they
-are regression guards, not must-fail anchors. **Only 5 still failed open** — it returned
+to a non-``done`` status + a named reason — OU-3's 2026-08-16 ``status:'done'``/empty
+observation is **STALE**: the runner's ``insights_ok`` → ``partial`` downgrade
+(``knowledge/pipeline/runner.py``) already fixed those two, so they are regression guards,
+not must-fail anchors. *(Updated 2026-09-17 by RET-2: on a home with no EMBEDDING provider
+the same ingest now lands ``processing_status='unsearchable'`` + ``no_embedding_provider``
+rather than ``partial`` + ``"insights: model unavailable"`` — a strictly louder verdict for
+the same condition. This rail asserts "not a silent done", which both satisfy;
+``tests/test_knowledge_searchability.py`` owns the searchability clauses.)*
+**Only 5 still failed open** — it returned
 ``200 {"classified": false}`` with no no-model signal, indistinguishable from "the model
 returned garbage". This atom adds the ``model_unresolved`` preflight to
 ``api_loop_classify``; the rail below FAILS on ``origin/main`` (surface 5 answers 200) and
@@ -296,14 +301,29 @@ async def test_knowledge_ingest_no_provider_is_not_silent_done(tmp_path, reinges
 @pytest.mark.asyncio
 async def test_knowledge_ingest_with_provider_bound_reaches_done(tmp_path):
     """No behaviour change when a provider IS bound: the SAME ingest reaches ``done`` with
-    real insights. This is the known-good half that keeps the guard above honest."""
+    real insights. This is the known-good half that keeps the guard above honest.
+
+    BOTH providers are bound here, and that is the point of the assertion. This test used to
+    pass ``embedder=None`` while claiming "a bound provider must reach done" — a premise it
+    did not satisfy. RET-2 made the missing embedder its own named failure
+    (``processing_status='unsearchable'``: no vector, no chunk, nothing semantic can reach
+    the item), so binding an embedder is what makes the docstring true rather than a
+    relaxation of it."""
+
+    class _Embedder:
+        def is_available(self):
+            return True
+
+        def embed_for_item(self, title, summary, content=None):
+            return [0.5, 0.25, 0.125, 0.0625]
+
     store = KnowledgeStore(str(tmp_path / "knowledge.db"))
     item_id = store.create_typed_item(
         item_type="note",
         title="OU12 note",
         content="A note about distributed consensus and the Raft algorithm.",
     )
-    status = await ingest_item(store, item_id, insights_pool=_AnswerPool(), embedder=None)
+    status = await ingest_item(store, item_id, insights_pool=_AnswerPool(), embedder=_Embedder())
     item = store.get_item(item_id)
     assert status == "done", f"a bound provider must reach done, got {status}: {item!r}"
     assert item["processing_status"] == "done"
