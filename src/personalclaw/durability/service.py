@@ -644,6 +644,89 @@ def _cfg_evals_enabled() -> bool:
     return bool(AppConfig.load().evals.enabled)
 
 
+async def _prune_expired_runs() -> int:
+    """Apply ``workflows.retention_per_def`` to every def that has runs (RET-3).
+
+    This is the run-retention pruner's only caller. Before RET-3 it had NONE: `prune_runs` was
+    shipped, tested and documented as "the path that fires without anyone watching", and nothing
+    watched because nothing called it — `workflows.retention_per_def` was likewise declared,
+    clamped, loaded and PATCH-writable with zero readers. A knob wired to nothing and a pruner
+    called by nothing are the same bug seen from two ends, and this function is the seam.
+
+    ASYNC because `prune_runs` is: retention is the second deletion path workspace teardown has
+    to cover, so pruning a run stops its services before sweeping its directory.
+    """
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.workflows import store as wf_store
+    from personalclaw.workflows.watchdog import prune_runs
+
+    keep = int(AppConfig.load().workflows.retention_per_def)
+    pruned = 0
+    for name in wf_store.def_names():
+        pruned += await prune_runs(name, keep=keep)
+    return pruned
+
+
+async def _tick_footprint_maintenance() -> None:
+    """One footprint-maintenance tick (RET-3): prune expired runs, reclaim the bytes their
+    deletion freed, and record a footprint sample.
+
+    **The three steps are one job because the first two are useless apart.** Deleting rows from a
+    SQLite store does not shrink the file — the pages are marked free and reused later — so a
+    pruner without a reclaim frees nothing a user can see on disk, and a reclaim without a pruner
+    has no free pages to return. The sample is recorded LAST, so the series measures the
+    steady-state footprint rather than the pre-compaction peak.
+
+    Rides the durability loop for the reason `_tick_graph_maintenance` does — one dispatch path
+    rather than two that drift — and sits OUTSIDE the ``durability.auto_backup`` gate for the
+    reason that one does: a user who turns off scheduled backups must not silently also stop
+    reclaiming disk. They mitigate unrelated failures.
+
+    Never raises: a reclaim pass that can break the backup loop is worse than one that skips a
+    cadence. The prune half runs every tick (it is a bounded query and a delete); the reclaim half
+    is gated on ``footprint.RECLAIM_SECS`` because VACUUM rewrites every store.
+    """
+    from personalclaw.concurrency import single_flight
+    from personalclaw.durability import footprint
+
+    home = active_home()
+    try:
+        pruned = await _prune_expired_runs()
+        if pruned:
+            logger.info("run retention pruned %d expired run(s)", pruned)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — a def that will not prune must not cost the reclaim
+        logger.warning("run retention pruning failed", exc_info=True)
+
+    if not footprint.reclaim_due(home):
+        return
+    try:
+        # Two VACUUMs racing on one store is the one way this job can lose data, and the CLI's
+        # `--reclaim` shares the key so a user running it by hand cannot collide with the tick.
+        with single_flight("footprint-reclaim") as acquired:
+            if not acquired:
+                logger.debug("footprint reclaim already running elsewhere — skipping")
+                return
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: footprint.reclaim(home)
+            )
+        footprint.stamp_reclaim(home)
+        if result.freed_bytes:
+            logger.info(
+                "footprint reclaim freed %s across %d store(s)",
+                footprint.human_bytes(result.freed_bytes),
+                result.stores,
+            )
+        for store_id, reason in result.skipped.items():
+            logger.debug("footprint reclaim skipped %s: %s", store_id, reason)
+        footprint.record(home)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — reclaim must never break the backup tick
+        logger.warning("footprint reclaim failed", exc_info=True)
+
+
 def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) -> list[JobResult]:
     """Run whatever is due. Returns one result per job attempted.
 
@@ -861,6 +944,17 @@ class DurabilityService:
                 raise
             except Exception:  # noqa: BLE001 — evals must never break the backup tick
                 logger.warning("evals maintenance tick failed", exc_info=True)
+            # RET-3: run retention + footprint reclaim. Awaited rather than pushed to an executor
+            # like its two neighbours, because the run-retention pruner is genuinely async — it
+            # tears a run's workspace down before sweeping its directory — and it pushes its own
+            # blocking half (the VACUUM) to an executor from inside. Also outside the `enabled()`
+            # gate below: `durability.auto_backup` must not quietly stop reclaiming disk.
+            try:
+                await _tick_footprint_maintenance()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — reclaim must never break the backup tick
+                logger.warning("footprint maintenance tick failed", exc_info=True)
             if not enabled():
                 continue
             try:
