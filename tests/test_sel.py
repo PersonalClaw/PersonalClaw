@@ -618,6 +618,26 @@ class TestLogApiAccessExtras:
         assert len(e["resources"]) == 500  # _MAX_ARG_LEN
         assert len(e["error"]) == 500
 
+    def test_metadata_reason_persisted_without_touching_error(self, tmp_path: Path) -> None:
+        """#2948: an allow reason on a successful outcome belongs in ``metadata``,
+        not ``error`` — ``error`` must stay empty so a reader never mistakes a
+        granted/ok row for a failure."""
+        log = SecurityEventLog(base_dir=tmp_path)
+        log.log_api_access(
+            caller="local-net:127.0.0.1",
+            operation="dashboard.token_auth",
+            outcome="ok",
+            metadata={"reason": "local-network bypass"},
+        )
+        e = log.recent()[0]
+        assert e["error"] == ""
+        assert e["metadata"] == {"reason": "local-network bypass"}
+
+    def test_metadata_defaults_to_empty_dict(self, tmp_path: Path) -> None:
+        log = SecurityEventLog(base_dir=tmp_path)
+        log.log_api_access(caller="alice", operation="op", outcome="ok")
+        assert log.recent()[0]["metadata"] == {}
+
 
 class TestRecentExtras:
     def test_respects_limit(self, tmp_path: Path) -> None:

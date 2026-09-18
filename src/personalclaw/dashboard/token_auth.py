@@ -34,9 +34,30 @@ from aiohttp import web
 
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
+from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
 from personalclaw.sel import sel as _sel_fn
 
 logger = logging.getLogger(__name__)
+
+
+def _sel_reason_kwargs(outcome: str, reason: str) -> dict[str, Any]:
+    """Route an auth decision's explanatory text to the SEL field it belongs in.
+
+    A denied outcome's text IS the failure, so it belongs in ``error``. A
+    granted/ok outcome's text is context for WHY access was allowed, not a
+    failure — putting it in ``error`` is what made ``personalclaw security
+    events`` print "error: local-network bypass" under an `-> ok` row (#2948).
+    Centralizing the routing here (keyed off the same
+    :data:`personalclaw.sel.AUDIT_OUTCOME_SUCCESS` vocabulary the audit surface
+    itself uses) means a future call site cannot reintroduce the bug just by
+    passing a reason string positionally.
+    """
+    if not reason:
+        return {}
+    if outcome in AUDIT_OUTCOME_SUCCESS:
+        return {"metadata": {"reason": reason}}
+    return {"error": reason}
+
 
 # The signing key is loaded LAZILY, not at import: this module is imported long before
 # PERSONALCLAW_HOME is necessarily settled (CLI parsing, test collection), and reading the key
@@ -959,7 +980,7 @@ def token_auth_middleware(
                 outcome="granted",
                 source="token_auth",
                 resources=path,
-                error="cookie auth (no secret header)",
+                metadata={"reason": "cookie auth (no secret header)"},
             )
             _log_auth(request, "internal", "granted", f"cookie auth for {_uid}")
             return await handler(request)  # type: ignore[operator]
@@ -1014,7 +1035,7 @@ def token_auth_middleware(
                     outcome="granted",
                     source="token_auth",
                     resources=path,
-                    error="mixed non-loopback cookie auth",
+                    metadata={"reason": "mixed non-loopback cookie auth"},
                 )
                 _log_auth(
                     request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}"
@@ -1322,14 +1343,20 @@ def _deny(request: web.Request, reason: str) -> web.Response:
     )
 
 
-def _log_auth(request: web.Request, user_id: str, outcome: str, error: str) -> None:
+def _log_auth(request: web.Request, user_id: str, outcome: str, reason: str) -> None:
+    """Log an auth decision to the SEL.
+
+    ``reason`` is context for the decision, not necessarily a failure — see
+    :func:`_sel_reason_kwargs`, which decides whether it lands in ``error`` or
+    ``metadata`` based on ``outcome``.
+    """
     try:
         _sel_fn().log_api_access(
             caller=user_id or request.remote or "unknown",
             operation="dashboard.token_auth",
             outcome=outcome,
             resources=request.path,
-            error=error,
+            **_sel_reason_kwargs(outcome, reason),
         )
     except Exception:
         logger.warning("Failed to log auth event to SEL", exc_info=True)
