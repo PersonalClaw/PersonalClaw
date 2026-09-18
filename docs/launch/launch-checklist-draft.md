@@ -119,6 +119,61 @@ front-door items below them are also blocking because a launch reader hits them 
    [limitations.md](../security/limitations.md).
 5. **Disclose authorship** in every thread (HN and both subreddits expect it).
 
+## Channel evidence (measured 2026-09-17/18) — read before re-ordering the sequence above
+
+The sequence above is fenced by measurement, not intuition. A seven-peer pass compared each peer's
+**fork-count inflection** against every dated channel event within ±30 days of it. Three findings, with
+their numbers, so a future editor can re-derive them instead of re-guessing.
+
+> **Read every line below as CO-OCCURRENCE, never causation.** The instrument can place a channel
+> event beside an inflection on a calendar; it cannot show the event produced the inflection, and for
+> 6 of the 7 peers the co-occurrence is causally empty. Nothing here licenses "channel X grew peer Y."
+>
+> **These peer names are planning evidence and must not travel into any public draft** — the pre-1.0
+> name-scrub ruling in *Honesty rails* below still governs every posted word.
+
+**(a) Directory presence LAGS traction — it does not lead it.** Of the 5 peers listed on
+awesome-self-hosted, 4 were added months to years *after* their own fork inflection; only one was
+added while it was ramping:
+
+| Peer | Fork inflection | Added to the list | Delta |
+|---|---|---|---|
+| dify | 2023-05-15 | 2023-12-27 | **+7mo** |
+| open-webui | 2023-12-05 | 2025-04-17 | **+16mo** |
+| anything-llm | 2023-06-08 | 2025-06-13 | **+2yr** |
+| LibreChat | — | later still | later still |
+| n8n | 2019-10-08 | 2019-10-18 | +10d (the only near-simultaneous one) |
+
+So a directory row is evidence a project *already* had traction, not a mechanism that supplies it.
+
+**(b) Where a channel event does co-occur, ENGAGEMENT is the variable — and only one peer has any.**
+The single engagement-backed co-occurrence in the set is **n8n's 728-point / 196-comment Show HN**
+(`21191676`, 2019-10-08), landing exactly on its ramp day. Every other "hit" is a **2–23-point** post,
+and for two of them the ramp was **already climbing before** the post went up:
+
+| Peer | Post | Points/comments | Offset from inflection |
+|---|---|---|---|
+| n8n | `21191676`, 2019-10-08 | **728**/196 | 0d |
+| open-webui | `38236857`, 2023-11-12 | 23/1 | −8d |
+| langflow | `35168096`, 2023-03-15 | 6/1 | +0–1d |
+| dify | `36053688`, 2023-05-24 | 4/1 | +9d — ramp began 05-15, *before* the post |
+| Flowise | `35579504`, 2023-04-15 | 2/0 | +2–3d — ramp began 04-12, *before* the post |
+
+A 728-point reception is not an action a 4-star project can take; it is an outcome. Treat the
+low-point rows as the realistic prior for our own post.
+
+**(c) The consequence for sequencing.** The directories open to us right now (selfh.st, AlternativeTo,
+awesome-ai-agents) buy **presence, not traction** — list them because being findable is worth having,
+not because listing is expected to move adoption. And **no awesome-list row may be sequenced before its
+own calendar gate**: the awesome-self-hosted submission stays held until **2026-11-23** on its 4-month
+age gate (the date is timezone-ambiguous — see
+[`listing-submissions-draft.md`](listing-submissions-draft.md) §1 before touching it), and no ordering
+in this checklist may place it earlier.
+
+**What this evidence cannot do:** rank channels by contribution. Only one of seven peers has an
+engagement-backed co-occurrence, so any ranking would be manufactured. Two peers (anything-llm,
+LibreChat) have no channel event near their inflection at all.
+
 ## Honesty rails (apply to all drafts below)
 
 - **Not "zero telemetry."** Use "no analytics, no crash reporting, no usage telemetry, plus one
