@@ -4636,6 +4636,12 @@ export interface Loop {
   spend?: LoopSpend
   intake_rigor?: string
   plan?: LoopPhase[]; phase_status?: Record<string, string>
+  /** Whether this kind's engine ever ADVANCES `phase_status` — declared by the kind
+   *  strategy (`tracks_phases`) and derived onto both redacted views by the store, so the
+   *  FE never re-enumerates the phase-tracking kinds. Every kind may carry a descriptive
+   *  `plan`; only code + design maintain per-phase done-state, and asking `kind !== 'goal'`
+   *  instead made a completed 20-cycle research run read "0/5 stages" (#448). */
+  phase_tracked?: boolean
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   strategy_config?: Record<string, unknown>
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
@@ -4739,7 +4745,14 @@ export interface NudgeLoop {
 }
 
 // ── files + artifacts ──
-export interface FsEntry { name: string; path: string; is_dir: boolean; size?: number; mtime?: number }
+export interface FsEntry {
+  name: string; path: string; is_dir: boolean; size?: number; mtime?: number
+  /** This directory is a git repo ROOT (validated server-side, gitdir included). The
+   *  listing hides `.git`, so this is the only way a client can tell a checked-out project
+   *  from an ordinary folder — without it the explorer's git surface is invisible from the
+   *  default view, since no root tab is itself a repo (#428). Always false for files. */
+  repo?: boolean
+}
 export interface FsRoot { label: string; path: string; name: string; is_dir: boolean }
 export interface FileListResp { roots: FsRoot[]; entries: FsEntry[]; path: string }
 export interface GitStatusResp { repoRoot: string; branch: string; statuses: Record<string, string> }

@@ -19,7 +19,11 @@
 
 import { activePhaseIndex, phaseForCycle, type Phase } from './loopPhases'
 
-export type RunStepState = 'done' | 'active' | 'todo'
+/** `untracked` = this step is REAL but its done-state is not maintained by any writer, so
+ *  no claim is made about it (a research objective, a goal sub-goal). Distinct from `todo`,
+ *  which asserts "tracked, and not yet done" — rendering an untracked step as `todo` is what
+ *  drew every stage of a finished research run as outstanding (#448). */
+export type RunStepState = 'done' | 'active' | 'todo' | 'untracked'
 export interface RunStep { label: string; state: RunStepState; key: string }
 
 export interface GateFailure { label: string; command: string; output: string }
@@ -40,7 +44,9 @@ export const emptyRunFlags = (): RunFlags => ({ gate: null, stall: null, judgeDe
 export interface RunViewModel {
   id: string
   kind: string
-  /** true for a phase-planned kind (code/design/general); false for a goal loop. */
+  /** true iff this kind's engine ACTUALLY advances `phase_status` (code/design) — read
+   *  from the run's `phase_tracked`, never re-derived from `kind`. Gates the stage
+   *  fraction + the done/total bar: a kind with no phase writer must claim neither. */
   phased: boolean
   status: string
   /** Parked = sitting AT its stage, not progressing — color warn (matches the cockpit). */
@@ -49,7 +55,9 @@ export interface RunViewModel {
   maxCycles: number
   phaseDone: number
   phaseTotal: number
-  /** "N/M stages" for phased kinds, the goal-type label for a goal loop, else "". */
+  /** "N/M stages" for a PHASE-TRACKED kind, the goal-type label for a goal loop, else ""
+   *  — a kind whose phases nobody advances gets no fraction, because the cycle count
+   *  rendered beside this label is the honest measure of its progress. */
   progressLabel: string
   steps: RunStep[]
   activePhase: number
@@ -80,6 +88,10 @@ export interface RunSnapshot {
   max_cycles?: number
   plan?: Phase[]
   phase_status?: Record<string, string>
+  /** Declared by the kind strategy (`tracks_phases`), carried on both redacted loop views.
+   *  Absent ⇒ not tracked: a snapshot that cannot say its phases are advanced must not have
+   *  a stage fraction invented for it (#448). */
+  phase_tracked?: boolean
   kind_config?: Record<string, unknown>
   elapsed_seconds?: number
   best_score?: number
@@ -96,19 +108,29 @@ export type RunSnapshotViewModel = Omit<RunViewModel, keyof RunFlags>
 /** Derive everything the persisted snapshot determines (no transient flags). */
 export function foldRunSnapshot(loop: RunSnapshot): RunSnapshotViewModel {
   const kind = loop.kind
-  const phased = kind !== 'goal'
+  // 🔴 TWO DIFFERENT QUESTIONS, conflated by the single `kind !== 'goal'` test this replaces:
+  //   • `phased`  — does anything ADVANCE phase_status for this kind? (code/design only)
+  //   • `planned` — does the step list come from plan[] or from kind_config.sub_goals?
+  // Every kind except goal is plan-bearing, but only code + design have a phase WRITER
+  // (`set_phase_status`, called from their `on_new_cycle`). Answering the first question with
+  // the second put research + general in the tracked set: a COMPLETED 20-cycle research run
+  // with `phase_status: {}` folded to "0/5 stages" with all five stages drawn outstanding —
+  // the worst possible summary of a finished deliverable (#448).
+  //
+  // `phased` is READ, never re-derived: `phase_tracked` is the kind strategy's own
+  // `tracks_phases` declaration, carried onto the redacted view by the store. Enumerating the
+  // phase-tracking kinds here is exactly what drifted, so this file no longer names any kind
+  // for that purpose.
+  const phased = loop.phase_tracked === true
+  const planned = kind !== 'goal'
   const kc = (loop.kind_config || {}) as Record<string, unknown>
   const totalCycles = loop.total_cycles ?? 0
   const plan = loop.plan || []
 
   let phaseDone = 0, phaseTotal = 0, progressLabel = ''
   const steps: RunStep[] = []
-  if (phased) {
-    // code/design/general: real per-phase done-state from plan[] + phase_status{}.
+  if (planned) {
     const ss = loop.phase_status || {}
-    phaseTotal = plan.length
-    phaseDone = Object.values(ss).filter((s) => s === 'done').length
-    progressLabel = plan.length ? `${phaseDone}/${phaseTotal} stages` : ''
     for (const s of plan) {
       // Key EXACTLY as the backend's phase_key: `stage.trim() || title.trim()`. The old
       // nullish `s.stage ?? s.title` kept an EMPTY-string stage (deliberately emitted for
@@ -119,15 +141,26 @@ export function foldRunSnapshot(loop: RunSnapshot): RunSnapshotViewModel {
       steps.push({
         key: skey,
         label: String((s as Record<string, unknown>).title || (s as Record<string, unknown>).stage || ''),
-        state: st === 'done' ? 'done' : (st === 'active' || st === 'running') ? 'active' : 'todo',
+        // Untracked when no writer maintains this map: the plan is a real, listable set of
+        // objectives, but 'todo' would assert "tracked, not yet done" about each one.
+        state: !phased ? 'untracked'
+          : st === 'done' ? 'done' : (st === 'active' || st === 'running') ? 'active' : 'todo',
       })
+    }
+    // The fraction + the done/total bar are claims about advancement, so ONLY a tracked kind
+    // gets them. An untracked run leaves progressLabel empty and its surfaces fall back to
+    // the cycle count they already render beside it — the measure its work actually has.
+    if (phased) {
+      phaseTotal = plan.length
+      phaseDone = Object.values(ss).filter((s) => s === 'done').length
+      progressLabel = plan.length ? `${phaseDone}/${phaseTotal} stages` : ''
     }
   } else {
     // goal: no per-step done-state (advances by cycles) → show the goal TYPE as progress,
-    // list sub-goals as todo rows.
+    // list sub-goals as untracked rows.
     progressLabel = GOAL_TYPE_LABEL[String(kc.goal_type ?? '')] ?? ''
     const subs = Array.isArray(kc.sub_goals) ? (kc.sub_goals as string[]) : []
-    for (const g of subs) steps.push({ key: g, label: g, state: 'todo' })
+    for (const g of subs) steps.push({ key: g, label: g, state: 'untracked' })
   }
 
   // best/last rubric score rides kind_config on the unified Loop (not a top-level field);
@@ -139,7 +172,9 @@ export function foldRunSnapshot(loop: RunSnapshot): RunSnapshotViewModel {
 
   // The active phase index (cumulative min_cycles windows) — same helper the cockpit +
   // goals-list peek share, so the fold agrees with them.
-  const activePhase = phased ? activePhaseIndex(totalCycles, plan) : phaseForCycle(totalCycles, plan)
+  // Keyed on `planned` (where the steps came from), NOT on `phased`: this is an index into
+  // plan[], not a claim about done-state, so every plan-bearing kind keeps the value it had.
+  const activePhase = planned ? activePhaseIndex(totalCycles, plan) : phaseForCycle(totalCycles, plan)
 
   return {
     id: loop.id,

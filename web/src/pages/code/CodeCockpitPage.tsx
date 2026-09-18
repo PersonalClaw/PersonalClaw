@@ -2324,6 +2324,23 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
     window.addEventListener('ne:code-file-saved', onSaved)
     return () => window.removeEventListener('ne:code-file-saved', onSaved)
   }, [gitWs])
+  // 🔴 A NEGATIVE ABOUT THE ROOT IS NOT A NEGATIVE ABOUT THE WORKSPACE. `repoRoot` is empty
+  // whenever the bound root ITSELF is not a repo — but a project checked out one level down
+  // is the normal layout, and this panel then told the user their work "isn't version-tracked"
+  // when it is (#428). The Files page merely showed nothing; this surface stated the negative.
+  // So on that branch, ask the listing which children ARE repo roots (the flag api_file_list
+  // now returns) and name them instead of denying version control outright. One request, only
+  // on the branch that would otherwise make a false claim.
+  const [nestedRepos, setNestedRepos] = useState<string[]>([])
+  useEffect(() => {
+    if (isProjectDir || !ws || state !== 'loaded' || repoRoot) { setNestedRepos([]); return }
+    let alive = true
+    api.fileList(ws)
+      .then((r) => { if (alive) setNestedRepos((r.entries || []).filter((e) => e.is_dir && e.repo).map((e) => e.name)) })
+      .catch(() => { if (alive) setNestedRepos([]) })
+    return () => { alive = false }
+  }, [ws, state, repoRoot, isProjectDir])
+
   // The per-stage commit history (the supervisor checkpoints each passed stage,
   // C58) — a reviewable timeline of what each stage produced.
   const [commits, setCommits] = useState<{ hash: string; subject: string; relative: string }[]>([])
@@ -2343,7 +2360,17 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
   // there's no branch/diff/history to show, and "working tree is clean" would be a
   // lie (it's just not version-controlled). Say so honestly — distinct from a clean
   // repo + from a transient read error.
-  if (state === 'loaded' && !repoRoot) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">This workspace isn’t a git repository — changes aren’t version-tracked. Browse the files in the Files tab.</p>
+  if (state === 'loaded' && !repoRoot) {
+    return (
+      <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">
+        {nestedRepos.length > 0
+          // Says what is TRUE (the root isn't a repo) and where the version control actually
+          // is, instead of asserting the workspace has none.
+          ? <>The workspace <em>root</em> isn’t a git repository, but {nestedRepos.length === 1 ? 'a repository inside it is' : `${nestedRepos.length} repositories inside it are`}: {nestedRepos.slice(0, 4).join(', ')}{nestedRepos.length > 4 ? ', …' : ''}. Open one in the Files tab to see its branch and changes.</>
+          : <>This workspace isn’t a git repository — changes aren’t version-tracked. Browse the files in the Files tab.</>}
+      </p>
+    )
+  }
   const entries = Object.entries(statuses)
   // git status codes → a short, readable label + tone.
   const label = (code: string): { text: string; color: string } => {

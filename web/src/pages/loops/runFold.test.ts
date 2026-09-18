@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { foldRun, foldRunSnapshot, foldReducer, emptyRunFlags, type RunSnapshot } from './runFold'
 
-// A minimal phased (code/design/general) run snapshot.
+// A minimal PHASE-TRACKED (code/design) run snapshot. `phase_tracked` is the kind
+// strategy's `tracks_phases` declaration as the store puts it on the redacted view — a code
+// loop is one of the two kinds that actually advances phase_status.
 const phased = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
   id: 'r1', kind: 'code', status: 'running', total_cycles: 3, max_cycles: 30,
+  phase_tracked: true,
   plan: [
     { stage: 'design', title: 'Design', min_cycles: 1 },
     { stage: 'build', title: 'Build', min_cycles: 2 },
@@ -16,6 +19,22 @@ const phased = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
 const goal = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
   id: 'g1', kind: 'goal', status: 'running', total_cycles: 5, max_cycles: 30,
   kind_config: { goal_type: 'open_ended', sub_goals: ['find sources', 'synthesize'] },
+  ...over,
+})
+
+// The completed research loop from #448, exactly as `/api/loops/f8f8ca9f` reported it: a
+// real five-objective plan, `phase_status` never written, 20 cycles of findings, complete.
+const research = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
+  id: 'f8f8ca9f', kind: 'research', status: 'complete', total_cycles: 20, max_cycles: 30,
+  phase_tracked: false,
+  plan: [
+    { title: 'Scope the comparison', min_cycles: 1 },
+    { title: 'Gather RAIDZ2 sources', min_cycles: 1 },
+    { title: 'Gather dRAID sources', min_cycles: 1 },
+    { title: 'Compare resilver behaviour', min_cycles: 1 },
+    { title: 'Write the report', min_cycles: 1 },
+  ],
+  phase_status: {},
   ...over,
 })
 
@@ -53,6 +72,44 @@ describe('foldRunSnapshot — phased kinds', () => {
   })
 })
 
+// #448: `phased = kind !== 'goal'` put research + general in the tracked set while only
+// code + design have a phase writer, so a FINISHED run reported zero progress.
+describe('foldRunSnapshot — a kind with no phase writer claims no stage progress', () => {
+  it('a completed 20-cycle research run shows NO stage fraction (was "0/5 stages")', () => {
+    const vm = foldRunSnapshot(research())
+    expect(vm.phased).toBe(false)
+    expect(vm.progressLabel).toBe('')       // the header falls back to "20 cycles"
+    expect(vm.phaseTotal).toBe(0)           // → RunProgress hides the done/total bar
+    expect(vm.phaseDone).toBe(0)
+    expect(vm.progressLabel).not.toContain('stages')
+  })
+
+  it('still LISTS the plan — the objectives are real, only their done-state is unclaimed', () => {
+    const vm = foldRunSnapshot(research())
+    expect(vm.steps).toHaveLength(5)
+    expect(vm.steps.map((s) => s.label)[4]).toBe('Write the report')
+    // Not 'todo': that would assert "tracked, and not yet done" about a finished run's work.
+    expect(vm.steps.every((s) => s.state === 'untracked')).toBe(true)
+    expect(vm.steps.some((s) => s.state === 'todo')).toBe(false)
+  })
+
+  it('is decided by the kind DECLARATION, not by the kind name or by an empty map', () => {
+    // A tracked kind mid-run legitimately has an empty phase_status → it keeps its fraction,
+    // so "empty map ⇒ untracked" would have been the wrong derivation.
+    const fresh = foldRunSnapshot(phased({ phase_status: {}, total_cycles: 0 }))
+    expect(fresh.phased).toBe(true)
+    expect(fresh.progressLabel).toBe('0/3 stages')
+    // And a kind name the FE has never heard of gets no fraction rather than a guess.
+    expect(foldRunSnapshot(research({ kind: 'brand-new-kind' })).progressLabel).toBe('')
+    // Absent (not merely false) is also untracked — no snapshot gets a fraction invented.
+    expect(foldRunSnapshot(research({ phase_tracked: undefined })).phased).toBe(false)
+  })
+
+  it('a research plan keeps its activePhase index (that is a plan index, not a done-claim)', () => {
+    expect(foldRunSnapshot(research()).activePhase).toBe(foldRunSnapshot(research({ phase_tracked: true })).activePhase)
+  })
+})
+
 describe('foldRunSnapshot — goal kind', () => {
   it('shows the goal-type label (not stage progress) + lists sub-goals as todo', () => {
     const vm = foldRunSnapshot(goal())
@@ -60,7 +117,9 @@ describe('foldRunSnapshot — goal kind', () => {
     expect(vm.progressLabel).toBe('Open-ended')
     expect(vm.phaseTotal).toBe(0)
     expect(vm.steps.map((s) => s.label)).toEqual(['find sources', 'synthesize'])
-    expect(vm.steps.every((s) => s.state === 'todo')).toBe(true)
+    // 'untracked', not 'todo' — a goal advances by cycles, so no sub-goal has a done-state
+    // to report. The render reads this state to pick a neutral dot over a checkbox.
+    expect(vm.steps.every((s) => s.state === 'untracked')).toBe(true)
   })
 
   it('maps each goal_type to its label; unknown → empty', () => {
