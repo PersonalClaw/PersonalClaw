@@ -10,7 +10,7 @@ Chat, autonomous goal loops, long-term memory, a knowledge base, skills, schedul
 automation, and channel integrations — all behind one gateway process and one web
 dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 
-[![CI](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml/badge.svg)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml)
+[![Full verification on main](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml/badge.svg?branch=main)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![No analytics](https://img.shields.io/badge/analytics-none-brightgreen.svg)](#privacy)
@@ -258,6 +258,7 @@ run on every push to `main`.
 - [Build a channel app](docs/guides/build-a-channel-app.md) — bringing a new chat app or mailbox to PersonalClaw: the transport/delivery obligations, trust and pairing, and the conformance kit.
 - [The desktop app](docs/guides/desktop.md) — the native capabilities a browser tab cannot offer: global push-to-talk (what it captures, when, and how you can always tell), and why system audio is microphone-only.
 - [Use it from your editor](docs/guides/use-from-your-ide.md) — exposing six read-only MCP tools to your editor's assistant: minting the surface token, the client config, why it is same-machine-only, and the kill switch.
+- [Writing skills](docs/guides/skills.md) — turning a procedure you keep restating into a skill: when it is the right container, the four tiers and which two are install sources rather than search paths, and how trigger phrases and semantic surfacing decide what the model actually sees.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md)
 - Roadmap — maintainer-owned and deliberately not in this repo; the written way in is the
