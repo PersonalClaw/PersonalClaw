@@ -35,6 +35,12 @@ import pytest
 
 from personalclaw.apps import app_manager, manager
 
+# Git's own directory inside the app's data — the app writes real history there, so it is
+# part of what must SURVIVE, but it is git's to write and never the product's. Named once
+# because the census oracles below exclude it and the two git-level oracles read it; see
+# `_content_files` for why counting files inside it is a race rather than a measurement.
+_GIT_DIRNAME = ".git"
+
 # The app's own tool. A real script, run as a real subprocess, doing real `git` work in
 # `data/` — the same shape as the `notes` bundle whose measured cycle opened #2541. If
 # this were a `Path.write_text` in the test body it would prove the test can write files,
@@ -129,7 +135,7 @@ def _notes(name: str) -> dict[str, str]:
 
 
 def _git_log_at(book: Path) -> list[str]:
-    if not (book / ".git").is_dir():
+    if not (book / _GIT_DIRNAME).is_dir():
         return []
     proc = subprocess.run(
         ["git", "log", "--format=%s"], cwd=str(book), capture_output=True, text=True, timeout=60
@@ -666,19 +672,70 @@ def test_deactivate_rung_is_unchanged_and_still_keeps_the_files(tmp_path):
 # ── #2585: two unlabelled copies, and the four ways a site guessed which was which ──
 
 
+def _content_files(root: Path) -> list[Path]:
+    """Every file under *root* that is the USER's, walked with pathlib — never ``.git``.
+
+    ``.git`` is excluded deliberately, and that exclusion is what makes the two census
+    oracles below a measurement rather than a race. Git writes inside its own directory
+    on its own schedule and for its own reasons — a ``*.lock`` it holds for the duration
+    of a write, a ``tmp_obj_*`` placeholder, whatever an auto-maintenance run that
+    ``git commit`` detached is doing — so a file census that walks a live ``.git``
+    reports a number that depends on WHEN it was taken rather than on what the product
+    did, and comparing two such numbers compares two moments of git's bookkeeping.
+
+    Measured: main's run 35366025552, ``matrix-shard (3.12, macos-latest, 4)``, reported
+    ``live data/ was touched`` with 28 files before and 27 after, IDENTICAL bytes
+    (28 003), identical notes and identical history — a zero-byte git artifact present at
+    the first reading and gone by the second, in a window whose only product code was a
+    refusal that writes nothing at all. 27 is the settled count for the fixture's repo, so
+    the reading that was wrong is the FIRST one. 23 of that run's 24 legs passed.
+
+    Nothing is conceded by dropping ``.git`` from the count, because the repository is
+    measured at the git level instead and more strictly than a count can manage:
+    :func:`_git_log_at` reads the history back and :func:`_git_fsck_ok` proves the object
+    store is COMPLETE — a truncated or missing object has the same file count as a whole
+    one, and #2585's "non-empty is not complete" is exactly that trap.
+    """
+    if not root.is_dir():
+        return []
+    return [
+        p for p in root.rglob("*") if p.is_file() and _GIT_DIRNAME not in p.relative_to(root).parts
+    ]
+
+
 def _files_at(root: Path) -> int:
-    """File count under *root*, walked with pathlib — not asked of the product."""
-    return sum(1 for p in root.rglob("*") if p.is_file()) if root.is_dir() else 0
+    """User-file count under *root* — not asked of the product."""
+    return len(_content_files(root))
 
 
 def _bytes_at(root: Path) -> int:
-    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) if root.is_dir() else 0
+    return sum(p.stat().st_size for p in _content_files(root))
 
 
-def _shape(root: Path) -> tuple[int, int, dict[str, str], list[str]]:
-    """A copy's whole observable shape: files, bytes, notes read back, git history.
+def _git_fsck_ok(book: Path) -> bool | None:
+    """Is *book*'s object store COMPLETE and readable? ``None`` when there is no repo.
 
-    Four independent oracles, none of them ``app_manager``: a directory that merely
+    The oracle that replaces counting files inside ``.git``, and a stronger one: a copy
+    that lost or truncated an object keeps its file count and fails here. ``None`` rather
+    than ``False`` for "no repo there" keeps absent and broken apart — the same
+    distinction the rung itself refuses to merge.
+    """
+    if not (book / _GIT_DIRNAME).is_dir():
+        return None
+    proc = subprocess.run(
+        ["git", "fsck", "--no-progress", "--no-dangling"],
+        cwd=str(book),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return proc.returncode == 0
+
+
+def _shape(root: Path) -> tuple[int, int, dict[str, str], list[str], bool | None]:
+    """A copy's whole observable shape: files, bytes, notes read back, history, integrity.
+
+    Five independent oracles, none of them ``app_manager``: a directory that merely
     exists, or one whose entry COUNT matches, is not evidence the user's work is in it —
     which is precisely the trap #2585 names ("non-empty is not complete").
     """
@@ -687,6 +744,7 @@ def _shape(root: Path) -> tuple[int, int, dict[str, str], list[str]]:
         _bytes_at(root),
         _notes_at(root / "notebook"),
         _git_log_at(root / "notebook"),
+        _git_fsck_ok(root / "notebook"),
     )
 
 
@@ -721,7 +779,11 @@ def test_a_failed_park_leaves_no_partial_copy_at_the_parked_path(tmp_path, monke
     exists" was being read as "the parked copy is finished".
 
     Measured before the fix, with one file failing mid-copy: parked 34 files / 28 044 B,
-    stage 35 files / 28 060 B, and the reinstall handed the user the 34.
+    stage 35 files / 28 060 B, and the reinstall handed the user the 34. Those two counts
+    were taken with a census that walked ``.git`` as well; ``_content_files`` no longer
+    does, so they will not reproduce as ``_files_at`` numbers today — the incompleteness
+    they recorded is now caught by ``_git_fsck_ok`` instead, which a count could not
+    distinguish from a truncated object anyway.
 
     The fix is not a completeness check. The destination is provably absent (the rung
     refuses otherwise), both paths are under ``apps/``, so the park is one
