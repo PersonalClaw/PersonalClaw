@@ -79,6 +79,38 @@ hold:
   the declaration is surfaced honestly at install consent but is not a
   gateway-enforced boundary — see the threat model's limitations section).
 
+## Governance stability
+
+Some of what a self-hosted tool promises you is not a control in the code — it is who owns
+the project and on what terms. Those promises are worth as little as the licence they sit on,
+so as of **2026-09-18** they are stated plainly and enforced by CI:
+
+- **MIT only.** PersonalClaw has been MIT since its first commit and has never carried any
+  other licence. No dual licensing, no open-core tier, no source-available variant.
+- **No CLA.** There is no contributor licence agreement and none is planned. Contributions
+  arrive under the DCO sign-off and stay MIT; no contributor assigns copyright, so the
+  paperwork a relicensing move would need does not exist here.
+- **No telemetry.** No analytics, no crash reporting, no usage pings. The product makes one
+  unprompted outbound call — a GitHub release check, documented in the README's Privacy
+  section — and `updates.check_enabled=false` reduces it to zero.
+- **No relicensing of already-published releases.** Everything already published to PyPI,
+  GHCR and the GitHub releases page is MIT permanently. A future licence change could apply
+  only to new releases; it could not reach the version you already installed and trusted.
+
+**These are rails, not just prose.** `tests/test_licence_governance.py` fails CI if a licence
+identifier anywhere in the tree stops saying MIT, if `LICENSE`'s grant text is rewritten (the
+copyright year is excluded, the grant is not), or if a `CLA` /
+`CONTRIBUTOR_LICENSE_AGREEMENT` file appears; `tests/test_network_egress_hosts.py` fails it if
+a new outbound host is added. Each of those checks is itself proven to fail on an injected
+violation, so none of them is a green light that never turns red. The census of every place
+this project declares its licence is
+[`docs/architecture/licence-identity.txt`](docs/architecture/licence-identity.txt).
+
+Changing any of the four is therefore a governance decision requiring an explicit edit to
+committed artifacts and this section — which is the point. It is not a promise that the
+licence can never change; it is a guarantee that it cannot change *quietly*, and that a
+release you already have cannot change at all.
+
 ## Apps and third-party bundles
 
 Installable apps go through a separate supply-chain path (quarantine → scan →

@@ -288,4 +288,28 @@ rather than by PR'ing the owner's internal roadmap (not in this repo). See
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — and, as of **2026-09-18**, four commitments about keeping it that way:
+
+- **MIT only.** PersonalClaw has been MIT since its first commit and has never been under any
+  other licence. No dual licensing, no "open core" tier, no source-available or
+  sustainable-use variant.
+- **No CLA.** There is no contributor licence agreement and none is planned. Contributions
+  come in under the [DCO sign-off](CONTRIBUTING.md) and stay MIT — nobody is asked to assign
+  copyright, which means nobody here holds the paperwork it would take to relicense your work.
+- **No telemetry.** No analytics, no crash reporting, no usage pings. See
+  [Privacy](#privacy) for the single outbound call the product makes and how to switch it off.
+- **No relicensing of already-published releases.** Every version already on PyPI, GHCR and
+  the GitHub releases page is MIT permanently. A hypothetical future licence change could
+  only ever apply to *new* releases; it could not reach back to the one you installed.
+
+These are commitments, not a legal instrument — but they are **enforced against the tree**,
+which is the part a promise usually lacks. `tests/test_licence_governance.py` reds CI on a
+licence identifier that stops saying MIT anywhere in the repo, on a rewrite of `LICENSE`'s
+grant text, and on a `CLA`/`CONTRIBUTOR_LICENSE_AGREEMENT` file appearing;
+`tests/test_network_egress_hosts.py` reds it on a new outbound host. So changing any of the
+four takes a deliberate, reviewable edit to committed artifacts — never a quiet one.
+
+Why say this at all: several self-hosted AI projects have relicensed, added a CLA, reserved
+stricter future terms, or been acquired without a licence commitment, and their users left
+over it. PersonalClaw wins that comparison by having done none of it — which is invisible
+unless it is written down.

@@ -104,6 +104,18 @@ playwright-responses/
 # workspace root (outside every repo); this rule is belt-and-braces.
 .secrets.env
 
+# SQLite sidecars beside the COMMITTED test fixtures. The fixture homes ship real `.db`
+# files, and every store opens with `PRAGMA journal_mode=WAL`, so merely booting a gateway
+# or opening one of those databases in place drops a `-wal`/`-shm` next to it. Those are
+# runtime residue, never fixture content: the generator folds the WAL back in with
+# `PRAGMA wal_checkpoint(TRUNCATE)` (scripts/generate_six_month_home_fixture.py::_checkpoint)
+# precisely so the committed `.db` is self-contained. Ignored because a `git add -A` that
+# swept them in would pin a half-checkpointed fixture — the silent-emptying the six-month
+# home exists to catch. If a fixture ever looks EMPTY, re-run the generator; do not commit
+# a sidecar to carry the missing rows.
+src/personalclaw/tests_fixtures/**/*.db-wal
+src/personalclaw/tests_fixtures/**/*.db-shm
+
 # Outstanding mutation session (scripts/mutation_harness.py): pristine copies of the
 # files a mutation run is holding, plus its journal. Ignored so the residue-detection
 # directory never becomes a staged file — but NOT ignored by the rail: `pre-commit`
