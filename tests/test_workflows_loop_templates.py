@@ -11,6 +11,7 @@ at runtime is a template that was authored wrong.
 """
 
 import json
+import re
 
 import pytest
 
@@ -640,11 +641,15 @@ def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
     a node to manufacture a binding site would be inventing template structure this atom has no
     mandate to design.
     """
+    # Matched as an OPEN PREFIX (no closing `}}`) so a binding that carries a pipe still
+    # counts. `{{last.output.verdict | default("...")}}` binds the same value; the pipe is
+    # the first-iteration guard `test_first_iteration_last_refs_carry_a_default` requires,
+    # and asserting the unpiped spelling here would make the two rails contradict each other.
     bound = {
-        "code-project": "{{nodes.judge.output.verdict}}",
-        "general-project": "{{last.output.verdict}}",
-        "goal-pursuit-open-ended": "{{last.output.verdict}}",
-        "goal-pursuit-verifiable": "{{last.output.verdict}}",
+        "code-project": "{{nodes.judge.output.verdict",
+        "general-project": "{{last.output.verdict",
+        "goal-pursuit-open-ended": "{{last.output.verdict",
+        "goal-pursuit-verifiable": "{{last.output.verdict",
     }
     for name, binding in bound.items():
         raw = json.dumps(_spec(name))
@@ -653,3 +658,59 @@ def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
             "produced and discarded again"
         )
         assert "shortfalls" in raw, f"{name} stopped carrying the judge's shortfalls"
+
+
+#: A `{{last.*}}` reference is only resolvable once an iteration has completed:
+#: `loop_should_continue` is called AFTER a body run (controller.py, `has_last=True`), so a
+#: loop's own `config.condition` may reference `last` safely. Everywhere ELSE inside a loop
+#: body, the FIRST iteration has no `last` at all.
+_LAST_REF = re.compile(r"\{\{\s*last\.[A-Za-z0-9_.]+\s*\}\}")
+
+
+def _unguarded_last_refs(node: object) -> list[str]:
+    """Every bare `{{last.*}}` (no `| default(...)`) reachable on iteration 1.
+
+    Walks the WHOLE node tree of every bundled template rather than a hand-listed set of
+    templates or node ids: an enumerated rail cannot see a template added after it was
+    written, and this defect is exactly the kind an author reintroduces by copying a
+    neighbouring prompt. A loop's `config.condition` is skipped for the reason above.
+    """
+    found: list[str] = []
+    if isinstance(node, dict):
+        is_loop = node.get("kind") == "loop"
+        for key, value in (node.get("config") or {}).items():
+            if is_loop and key == "condition":
+                continue
+            found += _LAST_REF.findall(json.dumps(value))
+        for key, value in node.items():
+            if key == "config":
+                continue
+            found += _unguarded_last_refs(value)
+    elif isinstance(node, list):
+        for item in node:
+            found += _unguarded_last_refs(item)
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(template_names()))
+def test_first_iteration_last_refs_carry_a_default(name: str) -> None:
+    """A loop-body prompt may not reference `last` without a `default(...)` fallback.
+
+    Measured live on the standing validation instance 2026-09-18: `general-project` failed its
+    very first iteration with `binding failed: unresolved reference at 'last' (in
+    {{last.output.summary}})`, so the template could never run ANY iteration on ANY home.
+    Ten such references were shipped across four templates while `goal-pursuit-monitor` already
+    used the guarded idiom for the same field — so this was drift, not a design choice.
+
+    It fails at BINDING, before the stage's subagent is even spawned, which is why it was
+    mistaken for a downstream effect of a subagent-cwd refusal. Nothing at runtime can catch
+    it: the spec is simply wrong, and the engine's own remediation text ("add a `| default(...)`
+    pipe if the value is genuinely optional") names the fix.
+    """
+    refs = _unguarded_last_refs(_spec(name).get("root"))
+    assert not refs, (
+        f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's FIRST "
+        "iteration has no `last`, so this template fails at binding before it runs anything. "
+        "Add a default, or move the reference into the loop's `config.condition` (evaluated "
+        "only after an iteration)."
+    )
