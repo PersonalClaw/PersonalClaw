@@ -330,10 +330,23 @@ export function TriageDigestCard() {
 
 function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; onReply: (text: string) => void }) {
   const n = row.ordinal
+  // 🪤 THE ROW IS THE UNIT A SCREEN READER NAVIGATES, AND IT HAD NO NAME. Its two sibling lists
+  // (`Proposals that need you`, `This run's ledger rows`) name themselves, but a list item is
+  // announced by its own content — and this row's content is a `#{n}` span, a verb span and a title
+  // in one `<p>`, then a badge, a source and two links. Landing on it announced the whole subtree in
+  // reading order, so the verb and title arrived after the ordinal and before three controls, with
+  // nothing distinguishing "which proposal is this" from "what can I do to it".
+  //
+  // The name is assembled from the SAME fields the visible row shows, in the same order, through the
+  // same `verbFor` and the same `item ${n}` fallback — so the announced row and the seen row cannot
+  // disagree. In particular the verb is NOT conditional on `action_type`: `verbFor('')` answers
+  // 'Acted on', which is what the paragraph below prints, and a guard here would have named the row
+  // differently from the row itself in exactly the case where the field is missing.
+  const label = `Proposal ${n}: ${verbFor(row.action_type)} ${row.title || `item ${n}`}${row.source ? `, ${row.source}` : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
-    <li className="flex flex-col gap-s rounded-lg bg-surface-high px-m py-s sm:flex-row sm:items-center">
+    <li aria-label={label} className="flex flex-col gap-s rounded-lg bg-surface-high px-m py-s sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
         <p data-type="body-s" className="truncate text-on-surface">
           <span className="mr-1 text-on-surface-low">#{n}</span>
