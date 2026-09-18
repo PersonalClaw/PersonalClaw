@@ -166,13 +166,105 @@ def test_engaged_knowledge_reads_stats():
 def test_engaged_memory_uses_initialized_provider_only():
     # Reads the already-initialized vector store off the context builder; must not
     # touch any standalone-store creation path.
-    vs = SimpleNamespace(memory_stats=lambda: {"semantic_active": 2, "episodic_active": 0})
+    #
+    # Machine-written rows (auto-consolidation) do NOT count — only the memory
+    # editor's user_explicit rows evidence "review and curate" (issue 458 defect 4:
+    # every row on the measured instance was machine-written, yet the tip hid).
+    vs = SimpleNamespace(
+        memory_stats=lambda: {"semantic_active": 2, "episodic_active": 3, "user_curated": 0}
+    )
     state = SimpleNamespace(
         context_builder=SimpleNamespace(memory=SimpleNamespace(vector_store=vs))
     )
-    assert dc._engaged_memory(state) is True
+    assert dc._engaged_memory(state) is False
+    curated = SimpleNamespace(
+        memory_stats=lambda: {"semantic_active": 2, "episodic_active": 3, "user_curated": 1}
+    )
+    state_curated = SimpleNamespace(
+        context_builder=SimpleNamespace(memory=SimpleNamespace(vector_store=curated))
+    )
+    assert dc._engaged_memory(state_curated) is True
     # No context builder → not engaged, no crash.
     assert dc._engaged_memory(SimpleNamespace()) is False
+
+
+def test_engaged_automation_ignores_system_triggers(monkeypatch: pytest.MonkeyPatch):
+    """The boot-registered digest trigger (created_by='system') must not read as the
+    user having automated anything — issue 458 defect 1: the tip was unreachable on
+    every install because boot filled the store before the first interaction."""
+    monkeypatch.setattr(
+        "personalclaw.event_triggers.EventTriggerStore",
+        lambda _p: SimpleNamespace(load=lambda: []),
+    )
+
+    def _store_with(rows):
+        return lambda base_dir: SimpleNamespace(load=lambda: rows)
+
+    system_row = SimpleNamespace(trigger=SimpleNamespace(created_by="system"))
+    monkeypatch.setattr("personalclaw.triggers.store.TriggerStore", _store_with([system_row]))
+    assert dc._engaged_automation(None) is False
+
+    user_row = SimpleNamespace(trigger=SimpleNamespace(created_by="user"))
+    monkeypatch.setattr(
+        "personalclaw.triggers.store.TriggerStore", _store_with([system_row, user_row])
+    )
+    assert dc._engaged_automation(None) is True
+
+    # Agent-created counts: the agent wrote it inside a user conversation.
+    agent_row = SimpleNamespace(trigger=SimpleNamespace(created_by="agent"))
+    monkeypatch.setattr(
+        "personalclaw.triggers.store.TriggerStore", _store_with([system_row, agent_row])
+    )
+    assert dc._engaged_automation(None) is True
+
+
+def test_engaged_inbox_requires_a_user_gesture(monkeypatch: pytest.MonkeyPatch):
+    """A store full of untouched system items is NOT engagement (issue 670: one
+    system-generated proposal hid the tip). A user gesture — any status off
+    pending, or a favorite — is. FILTERED is system-written and never counts."""
+
+    def _inbox_with(items):
+        store = SimpleNamespace(items={str(i): it for i, it in enumerate(items)})
+        store.load = lambda: None
+        return lambda: store
+
+    pending = SimpleNamespace(status="pending", favorited=False)
+    filtered = SimpleNamespace(status="filtered", favorited=False)
+    monkeypatch.setattr("personalclaw.inbox.InboxStore", _inbox_with([pending, pending, filtered]))
+    assert dc._engaged_inbox(None) is False
+
+    seen = SimpleNamespace(status="seen", favorited=False)
+    monkeypatch.setattr("personalclaw.inbox.InboxStore", _inbox_with([pending, seen]))
+    assert dc._engaged_inbox(None) is True
+
+    favorited = SimpleNamespace(status="pending", favorited=True)
+    monkeypatch.setattr("personalclaw.inbox.InboxStore", _inbox_with([favorited]))
+    assert dc._engaged_inbox(None) is True
+
+    monkeypatch.setattr("personalclaw.inbox.InboxStore", _inbox_with([]))
+    assert dc._engaged_inbox(None) is False
+
+
+def test_engaged_skills_ignores_bundled_baseline(monkeypatch: pytest.MonkeyPatch):
+    """Passive turn-time injection of bundled skills is not the user teaching one
+    (issue 458 defect 2: a single plain chat message hid 'Teach it a reusable
+    skill'). Engaged = a skill exists beyond what the install ships."""
+    from personalclaw.skills.loader import _BUILTIN_SKILLS_DIR
+
+    bundled_names = [p.name for p in _BUILTIN_SKILLS_DIR.iterdir() if p.is_dir()]
+    assert bundled_names, "baseline sanity: bundled skills ship with the code"
+
+    def _loader_with(keys):
+        return lambda: SimpleNamespace(list_skills=lambda: [{"key": k} for k in keys])
+
+    monkeypatch.setattr("personalclaw.skills.loader.SkillsLoader", _loader_with(bundled_names))
+    assert dc._engaged_skills(None) is False
+
+    monkeypatch.setattr(
+        "personalclaw.skills.loader.SkillsLoader",
+        _loader_with([*bundled_names, "my-own-skill"]),
+    )
+    assert dc._engaged_skills(None) is True
 
 
 # ── dismissal persistence (entity_settings/legibility.json) ──────────────────

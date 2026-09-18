@@ -2641,7 +2641,8 @@ class VectorMemoryStore(MemoryProvider):
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0) AS ep_active, "
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=1) AS ep_deleted, "
             "(SELECT COUNT(*) FROM memory_events) AS events_count, "
-            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NOT NULL) AS ep_with_vec"  # noqa: E501
+            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NOT NULL) AS ep_with_vec, "  # noqa: E501
+            "(SELECT COUNT(*) FROM semantic_memory WHERE source='user_explicit') AS user_curated"
         ).fetchone()
         faiss_size = len(self._faiss_id_map) if self._faiss_id_map else 0
         return {
@@ -2652,6 +2653,10 @@ class VectorMemoryStore(MemoryProvider):
             "events_count": row[4],
             "faiss_index_size": faiss_size,
             "embedded_count": row[5],
+            # Rows the human explicitly wrote or tombstoned through the memory
+            # editor — deleted rows INCLUDED, since curating away is curation.
+            # The Discover engagement probe reads this.
+            "user_curated": row[6],
         }
 
     # ── Episodic Helpers ──

@@ -675,6 +675,20 @@ class TestMemoryStats:
         assert stats["semantic_active"] == 1
         assert stats["episodic_active"] == 1
         assert stats["faiss_index_size"] == 0  # no FAISS without numpy/faiss
+        assert stats["user_curated"] == 1
+
+    def test_user_curated_excludes_machine_sources(self, tmp_path: Path) -> None:
+        """Auto-consolidation rows never count as curation; a human-typed line does,
+        and stays counted after it is tombstoned (curating away is curation)."""
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        store.set_semantic("working.topic", "deploys", 0.5, "working_memory")
+        store.set_semantic("consolidated.fact", "x", 0.5, "consolidation:daily")
+        assert store.memory_stats()["user_curated"] == 0
+        store.set_semantic("pref.editor", "vim", 1.0, "user_explicit")
+        assert store.memory_stats()["user_curated"] == 1
+        store.db.execute("UPDATE semantic_memory SET is_deleted=1 WHERE key='pref.editor'")
+        assert store.memory_stats()["user_curated"] == 1
 
 
 class TestStemWords:
