@@ -84,7 +84,7 @@ function LossList({ loss }: { loss: DocumentLossReport }) {
   )
 }
 
-export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEditorProps) {
+export function DocumentEditor({ slug, title, readOnly, onDirty, onSaved }: DocumentEditorProps) {
   const [loaded, setLoaded] = useState<{ model: DocumentModelJson; loss: DocumentLossReport; version: number } | null>(null)
   const [model, setModel] = useState<DocumentModelJson | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -183,6 +183,10 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
       // Re-baseline on what the server accepted: the next save must carry the NEW version
       // or it would fail its own If-Match.
       setLoaded({ ...loaded, model, version: res.version })
+      // …and tell the HOST, which owns the version/event summary this save is the only receipt
+      // for. Re-baselining above kept the next If-Match correct and left the surrounding page
+      // reading v1 until a reload.
+      onSaved?.(res.version)
     } catch (e) {
       const stale = e instanceof ApiError && e.status === 409
       setSaveError(

@@ -71,7 +71,10 @@ const LOSSY: DocumentLossReport = {
 
 const CLEAN: DocumentLossReport = { lossless: true, kinds: [], summary: 'Nothing was lost.', items: [] }
 
-function mount(loss: DocumentLossReport, over: { readOnly?: boolean; onDirty?: (d: boolean) => void } = {}) {
+function mount(
+  loss: DocumentLossReport,
+  over: { readOnly?: boolean; onDirty?: (d: boolean) => void; onSaved?: (v: number) => void } = {},
+) {
   artifactModel.mockResolvedValue({ slug: 'report', kind: 'docx', version: 4, mime: 'x', model: structuredClone(MODEL), loss })
   return render(<DocumentEditor slug="report" title="Report" mode="dark" {...over} />)
 }
@@ -237,6 +240,39 @@ describe('the host learns about unsaved work', () => {
     await waitFor(() => expect(onDirty).toHaveBeenCalledWith(true))
     await userEvent.click(screen.getByRole('button', { name: /^Save/ }))
     await waitFor(() => expect(onDirty).toHaveBeenLastCalledWith(false))
+  })
+
+  // ── issue 2753: the host also has to learn about SAVED work ──────────────────────────
+  //
+  // The editor owns its own persistence, so `onDirty` was the host's ONLY signal — and it
+  // reports the draft going clean, not a version being cut. The artifact detail's header
+  // therefore kept reading `· v4 · 1 event` after a successful save, which for a binary
+  // document is the whole save receipt: there is no visible content diff, and a lossless
+  // document gets no confirmation dialog either, so nothing on screen acknowledged the write.
+  //
+  // 🪤 THE VERSION HAS TO BE THE SERVER'S, NOT `loaded.version + 1`. A host that advances a
+  // counter itself would drift the moment another writer lands a version in between — which is
+  // the same tab-race the If-Match above exists to catch.
+  it('reports the version the SERVER cut, so the host can refresh its own summary', async () => {
+    const onSaved = vi.fn()
+    mount(CLEAN, { onSaved })
+    await userEvent.type(await paragraph(), '!')
+    // VACUITY FLOOR: nothing is reported before the save settles, or "was called" below would
+    // pass on a callback fired at mount.
+    expect(onSaved).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }))
+    // 5, from the mocked write's response — NOT 4 (the loaded version) and not 4+1.
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(5))
+  })
+
+  it('a REFUSED save reports nothing — a receipt for a write that never landed is a lie', async () => {
+    saveArtifactModel.mockRejectedValue(new ApiError('stale', 409))
+    const onSaved = vi.fn()
+    mount(CLEAN, { onSaved })
+    await userEvent.type(await paragraph(), '!')
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }))
+    expect(await screen.findByText(/changed somewhere else/)).toBeInTheDocument()
+    expect(onSaved).not.toHaveBeenCalled()
   })
 })
 

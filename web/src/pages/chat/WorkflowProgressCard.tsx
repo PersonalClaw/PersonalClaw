@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ArrowUpRight, Workflow } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
 import { messageEnter } from '../../design/motion'
+import { accentChip } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
 import { Button } from '../../ui/Button'
@@ -133,6 +134,22 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">
             {vm.doneCount}/{vm.totalCount}
           </span>
+          {/* Cache-origin (WF2-A1) as a COUNT, which is the shape this surface can carry. The card
+              renders one node — the active one — and an active node is by definition never a cache
+              hit, so a per-row chip here would be dead code. The count answers the question the
+              flag exists for ("did my edit re-run anything?") at the run level, which is the level
+              it was asked at. Same word as the run view's row chip and the inspector's badge. */}
+          {vm.cachedCount > 0 && (
+            <span
+              data-testid="run-cached-count"
+              data-type="caption"
+              className="shrink-0 rounded-pill px-2 py-0.5 tabular-nums"
+              style={accentChip}
+              title={`${vm.cachedCount} step${vm.cachedCount === 1 ? '' : 's'} served from the resume cache rather than re-run`}
+            >
+              {vm.cachedCount} cached
+            </span>
+          )}
         </div>
       )}
 

@@ -2341,6 +2341,17 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             "degraded_reason": inst.degraded_reason,
             "failure": inst.failure.to_dict() if inst.failure else None,
         }
+        # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
+        # the run's own node list rather than by opening a per-node drawer on each row in turn.
+        #
+        # TERMINAL-ONLY, and only when True. `NodeInstance.cached` is stamped at dispatch, so
+        # between a rewind and the re-dispatch a PENDING instance still carries the previous
+        # epoch's answer — reporting it then would mark a row cached before it has run. Omitted
+        # rather than sent as False for the same reason `item_index` is: absence already means
+        # "freshly produced", and a `cached: false` on all twenty rows of a normal run is twenty
+        # fields carrying no information.
+        if inst.cached and inst.state in TERMINAL_STATES:
+            row["cached"] = True
         # Per-item foreach context (WF2-R5), included only for an actually-iterated instance:
         # an `item_index` on a lone node would render "[1/1]", which is noise.
         suffix = re.search(r"[#@](\d+)$", path)

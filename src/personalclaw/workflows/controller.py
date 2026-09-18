@@ -2419,6 +2419,11 @@ class RunController:
             inst.state = state
             inst.output_ref = str(hit.get("output_ref", "") or "")
             inst.completed_at = _now()
+            # …and on the INSTANCE, not only in the ledger. The `step_cached` event below is the
+            # durable record, but a status read would have to scan the whole ledger to answer
+            # "was this row cached?" — so the projection is stamped here, one of the two places
+            # that decide a node's outcome-origin (the fresh dispatch below is the other).
+            inst.cached = True
             if item.node.id:
                 self._outputs[item.node.id] = store.read_output(self.run.id, item.path)
             self.journal.step_cached(
@@ -2448,6 +2453,10 @@ class RunController:
         inst.state = InstanceState.RUNNING
         inst.started_at = _now()
         inst.attempt += 1
+        # The other half of the cache-origin stamp. Cleared here rather than at each of the six
+        # rewind reset sites: every path to a terminal state runs through this dispatch, so a
+        # re-run after a rewind cannot leave the previous epoch's `cached` behind.
+        inst.cached = False
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable
