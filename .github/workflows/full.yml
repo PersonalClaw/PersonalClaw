@@ -14,9 +14,35 @@ on:
     - cron: "0 7 * * *"  # nightly 07:00 UTC
   workflow_dispatch: {}
 
+# ── main's verification must not be cancelled by the next merge (#2946) ───────────────────────
+# `cancel-in-progress: true` here meant every merge KILLED the verification run of the commit
+# before it. MEASURED 2026-09-18 from the Actions API over this workflow's last 400 runs on main:
+# 324 cancelled · 46 failure · 29 success — 81% cancelled. Of the last 40: 38 cancelled, 1
+# failure, 1 still queued, ZERO success. The last main run that completed successfully was
+# #1215 at 2026-09-17T15:40Z, so the branch every release ships from had gone ~20 hours with no
+# completed verification, and nothing said so — a cancelled run carries no `conclusion` a reader
+# treats as red, so the gap is invisible to everything that reads a conclusion. The README badge
+# (`full.yml?branch=main`, pointed here by #212) was rendering that as "cancelled".
+#
+# `false` makes this group QUEUE rather than cancel. An in-flight verification of main now always
+# runs to completion, so a merge can no longer erase the answer it was computing.
+#
+# 🪤 WHY NOT A PER-SHA GROUP, which is the obvious way to verify EVERY commit and is wrong here.
+# It removes the cap: at today's cadence (main moved 6 times in two hours) it fans a 24-leg
+# matrix out per merge, and the runner concurrency this repo actually has is what made ci.yml's
+# duplicate runs the binding constraint on merge rate in the first place (#2595). GitHub holds at
+# most ONE pending run per concurrency group, so `false` bounds the cost at roughly today's
+# level: one in flight, one waiting.
+#
+# 🪤 WHAT THIS DOES NOT PROMISE. Not every commit on main gets its own completed run. Under a
+# fast cadence an intermediate commit is superseded while still QUEUED — no job ever starts, so
+# nothing in flight is thrown away and no red is manufactured (see the `matrix` gate below for
+# the other half of that). The promise is narrower and is the one "main is verified" needs:
+# main's HEAD converges on a COMPLETED run, and no running verification is ever killed. Naming
+# which of a batch of merges broke something is bisect's job, not this workflow's.
 concurrency:
   group: full-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -126,15 +152,31 @@ jobs:
 
   matrix:
     # ── Aggregation gate carrying the stable `matrix` id (CI-RELEASE-ENGINEERING C1) ───────────
-    # Green only when every sharded matrix leg passed; `if: always()` so a failed leg reports red
-    # rather than skipped. Needs no checkout or toolchain — it only reads the matrix result.
+    # Green only when every sharded matrix leg passed; a failed leg reports RED rather than
+    # skipped, because `fail-fast: false` above means a shard failure never cancels the run.
+    # Needs no checkout or toolchain — it only reads the matrix result.
+    #
+    # 🪤 `!cancelled()`, NOT `always()` — #2946. `always()` runs a job even when the RUN was
+    # cancelled, and the step below then turned `result == 'cancelled'` into `exit 1`, publishing
+    # a `matrix` FAILURE from a run nobody was waiting for an answer from. That is a verdict
+    # manufactured out of the absence of one, and it lands on the same commit as the real answer
+    # because check-runs key on the SHA. Under `!cancelled()` a cancelled run reports NO `matrix`
+    # verdict at all, which is the honest statement: nothing was measured.
     needs: [matrix-shard]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: every matrix shard passed
         run: |
           result='${{ needs.matrix-shard.result }}'
+          # Reachable only when a LEG was cancelled while the run itself lived on. That is an
+          # unanswered question on a live run, so it is red — the doctrine install-smoke's legs
+          # already state: an inconclusive run must cost a red, never arrive as a green check.
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=matrix shards unproven::a matrix leg was cancelled while this run" \
+                 "was still live, so this platform grid measured nothing. Re-run."
+            exit 1
+          fi
           if [ "$result" != "success" ]; then
             echo "::error title=matrix shards failed::the sharded matrix result was '$result'" \
                  "(expected 'success'). Open the red 'matrix-shard (...)' leg(s) above."
