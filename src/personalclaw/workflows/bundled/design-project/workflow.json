@@ -170,7 +170,7 @@
           "kind": "stage",
           "id": "iterate",
           "config": {
-            "prompt": "Refine the selected design with a MINIMAL DIFF against the last approved version.\n\nSelected design:\n{{nodes.evaluate.output.synthesis}}\n\nIssues to resolve:\n{{last.output.remaining_issues}}\n\nChange what the issues require and nothing else. Regenerating the whole design each round loses the parts that were already right, and the reviewer cannot tell what actually changed.\n\nSet issues_resolved true only when remaining_issues is genuinely empty.\n\nReturn JSON: {\"refined\": string, \"changed\": string, \"remaining_issues\": [string], \"issues_resolved\": boolean}",
+            "prompt": "Refine the selected design with a MINIMAL DIFF against the last approved version.\n\nSelected design:\n{{nodes.evaluate.output.synthesis}}\n\nIssues to resolve:\n{{last.output.remaining_issues | default(\"(first pass — the review has not run yet)\")}}\n\nChange what the issues require and nothing else. Regenerating the whole design each round loses the parts that were already right, and the reviewer cannot tell what actually changed.\n\nSet issues_resolved true only when remaining_issues is genuinely empty.\n\nReturn JSON: {\"refined\": string, \"changed\": string, \"remaining_issues\": [string], \"issues_resolved\": boolean}",
             "schema": {
               "refined": "string",
               "changed": "string",
