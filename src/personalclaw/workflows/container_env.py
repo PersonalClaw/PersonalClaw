@@ -39,6 +39,7 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.workflows.workspace import SpecIssue
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,7 @@ async def _run_cli(
     argv: list[str], *, timeout: float = _VERB_TIMEOUT_SECS, cwd: str = ""
 ) -> BackendResult:
     """One subprocess, no shell, bounded. The pattern `effects.run_teardown` set."""
+    proc = None
     try:
         from personalclaw.sandbox import create_subprocess_limited
 
@@ -242,6 +244,14 @@ async def _run_cli(
     except FileNotFoundError:
         return BackendResult(False, reason=f"{argv[0]} is not installed")
     except asyncio.TimeoutError:
+        # "Bounded" was only half true: the WAIT was bounded, the CHILD was not. This arm
+        # returned the refusal without signalling the CLI, so a `docker`/`nerdctl` verb
+        # that stopped answering kept running with its deadline already spent. No
+        # start_new_session — this client streams to the daemon rather than forking a
+        # tree, which is the leaf judgment `tests/test_spawn_ceiling_audit.py` already
+        # records for this site, so the owner's single-pid fallback is the right signal.
+        if proc is not None:
+            await kill_timed_out(proc)
         return BackendResult(False, reason=f"{argv[0]} timed out after {timeout:.0f}s")
     except Exception as exc:  # noqa: BLE001 - a backend failure is a result, not a crash
         return BackendResult(False, reason=str(exc))

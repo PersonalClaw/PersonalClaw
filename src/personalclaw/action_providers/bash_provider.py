@@ -18,6 +18,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
+from personalclaw.cancellation import kill_timed_out
 
 logger = logging.getLogger(__name__)
 
@@ -259,14 +260,15 @@ class BashActionProvider(ActionProvider):
                 blocked=exit_code == 2,
             )
         except asyncio.TimeoutError:
-            import signal
-
-            try:
-                if proc is not None and proc.returncode is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    await proc.communicate()
-            except Exception:
-                pass
+            # kill_timed_out is the ONE owner of this path. It replaced a hand-rolled
+            # `os.killpg(proc.pid, SIGKILL)` followed by an UNBOUNDED
+            # `await proc.communicate()`. Two things the owner does that the copy did
+            # not: it CHECKS group leadership before signalling a group (a bare killpg
+            # on a child that is not its own leader signals the gateway itself), and its
+            # reap is bounded — an unbounded drain hands the command its own runtime
+            # back whenever a grandchild survives the signal, wearing the timeout's name.
+            if proc is not None:
+                await kill_timed_out(proc)
             return ActionResult(
                 success=False,
                 error=f"Timed out after {timeout}s",

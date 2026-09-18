@@ -32,6 +32,7 @@ from aiohttp import web
 from personalclaw import gateway_base, notification_kinds, shutdown_event
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -113,6 +114,13 @@ logger = logging.getLogger(__name__)
 
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
+
+# The auto-update install deadline, named so a test can inject one instead of sleeping on
+# it. It was an inline literal, which made the only timeout path left in this function
+# untestable except by waiting it out — and an untested timeout path is how it ended up
+# with no teardown at all (2 orphans per timed-out install, measured: the `pip` child and
+# its build-backend grandchild).
+_AUTOUPDATE_PIP_TIMEOUT = 400.0  # `pip install -e .` — forks build backends
 
 # Max chars persisted/delivered for a fire's error summary. Sized to fit a rendered
 # AgentError envelope (WHAT/WHY/FIX, ~250 chars) so the FIX line — the actionable
@@ -4104,8 +4112,33 @@ class GatewayOrchestrator:
                 cwd=pkg_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Own group: pip forks build backends / compilers, all inheriting these
+                # pipes. Without it kill_timed_out CORRECTLY refuses to signal a group —
+                # this child would share the gateway's — and falls back to a single-pid
+                # kill, which leaves the build backend holding the pipe. Measured: the
+                # grandchild survived the teardown. Same reason as the twin in
+                # dashboard/handlers/updates.py.
+                start_new_session=True,
             )
-            _, pip_err = await asyncio.wait_for(pip_install.communicate(), timeout=400)
+            try:
+                _, pip_err = await asyncio.wait_for(
+                    pip_install.communicate(), timeout=_AUTOUPDATE_PIP_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                # The deadline is the WHOLE teardown: `wait_for` cancels the read but
+                # leaves the child (and pip's forked build backends) running, so without
+                # this the timeout left two live processes behind per fire — on the
+                # auto-update poll, which means they accumulate for the gateway's life.
+                # kill_timed_out is the ONE owner of that path: it checks group
+                # leadership before signalling a group and its reap is bounded.
+                await kill_timed_out(pip_install)
+                logger.error(
+                    "Auto-update: pip install timed out after %.0fs; child killed and reaped",
+                    _AUTOUPDATE_PIP_TIMEOUT,
+                )
+                if self.dashboard_state:
+                    self.dashboard_state.push_update_progress("error", "pip install timed out")
+                return
             if pip_install.returncode != 0:
                 logger.error(
                     "Auto-update: pip install failed (rc=%d): %s",
