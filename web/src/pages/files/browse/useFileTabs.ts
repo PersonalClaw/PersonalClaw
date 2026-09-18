@@ -12,6 +12,39 @@ const DEFAULT_TABS_KEY = 'files-open-tabs'
 // the focused tab, and any unsaved edits are always kept.
 const MAX_TABS = 12
 
+/** Restore the persisted tab list — validating ELEMENT SHAPE, not just the container.
+ *
+ *  The old read was `Array.isArray(v) ? v : []` inside a `try/catch`, which guards JSON *syntax*
+ *  and nothing else. Anything structurally valid got through, and a tab without a string `path`
+ *  reached `baseName(path)` → `TypeError: Cannot read properties of undefined (reading
+ *  'lastIndexOf')`, so the error boundary replaced the whole page. Measured in issue 515: `[{name}]`,
+ *  `['a.md']`, `[null]`, `[[…]]` — every malformed shape crashed. Because the poison is PERSISTED,
+ *  the boundary's Retry re-read it and navigating away and back re-read it too; the only escape was
+ *  devtools. So this list is untrusted input: it outlives releases (a shape change ships a poisoned
+ *  key to every existing user) and any script on the origin can write it.
+ *
+ *  Drops what it cannot repair and repairs what it can (a missing/blank `name` is re-derived from
+ *  the path, which is what `open()` does), so a partly-bad list costs the bad tabs, not the page. */
+function restoreTabs(key: string): OpenTab[] {
+  let raw: unknown
+  try { raw = JSON.parse(localStorage.getItem(key) || '[]') } catch { return [] }
+  if (!Array.isArray(raw)) return []
+  const out: OpenTab[] = []
+  const seen = new Set<string>()
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue
+    const { path, name } = t as Partial<OpenTab>
+    // A duplicate path is as bad as a missing one: tabs are keyed by path, so two would
+    // mount under one React key and the strip would offer two tabs that close as one.
+    if (typeof path !== 'string' || !path || seen.has(path)) continue
+    seen.add(path)
+    out.push({ path, name: typeof name === 'string' && name ? name : baseName(path) })
+  }
+  // `open()` bounds the list at MAX_TABS; a persisted list is the OTHER way into the same state,
+  // so it gets the same bound — keeping the most recent, which is what open()'s eviction does.
+  return out.length > MAX_TABS ? out.slice(-MAX_TABS) : out
+}
+
 /** Multi-tab open-file state, persisted to localStorage and restored on load.
  *  Holds only {path,name} per tab — content/draft live in the FileViewer keyed
  *  by path, so each tab keeps its own editor instance + dirty state.
@@ -23,10 +56,17 @@ const MAX_TABS = 12
 export function useFileTabs(scope = '') {
   const tabsKey = scope ? `${DEFAULT_TABS_KEY}:${scope}` : DEFAULT_TABS_KEY
   const activeKey = `${tabsKey}-active`
-  const [tabs, setTabs] = useState<OpenTab[]>(() => {
-    try { const v = JSON.parse(localStorage.getItem(tabsKey) || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+  const [tabs, setTabs] = useState<OpenTab[]>(() => restoreTabs(tabsKey))
+  const [activePath, setActivePath] = useState<string>(() => {
+    // The two keys are written independently, so a restored active path can name a tab that
+    // isn't in the list (it was dropped as malformed, or the write of one key lost a race with
+    // the other). `active` would then be null with tabs open — a host renders its no-file
+    // state over a populated tab strip. Fall back to the most recent tab, as closeNow does.
+    const saved = localStorage.getItem(activeKey) || ''
+    const restored = restoreTabs(tabsKey)
+    if (saved && restored.some((t) => t.path === saved)) return saved
+    return restored.length ? restored[restored.length - 1].path : ''
   })
-  const [activePath, setActivePath] = useState<string>(() => localStorage.getItem(activeKey) || '')
   // Per-path dirty flags, surfaced by the viewer so the tab strip can show a dot
   // and the close-guard can prompt.
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
