@@ -3260,6 +3260,28 @@ export interface ComputerUseLiveView {
   snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
 }
 
+// ── The browse mirror (BROWSE-AUTOMATION §(b)/(c), BA-5) ─────────────────────
+// The read model the live BrowseMirror panel polls: the kill-switch state and the sites whose
+// saved session has EXPIRED. One GET so the kill button and the persistent auth banner cannot show
+// a stale pair (see dashboard/handlers/browse_mirror.py:api_browse_status). Values never carry a
+// credential — `expired` is site slugs + a key-PRESENCE boolean, never the profile-encryption key.
+export interface BrowseKillState { active: boolean; reason: string; started_at: string }
+export interface BrowseExpiredSite {
+  site: string
+  /** True when the site's profile-encryption key is in the credential store, so the panel can say
+   *  re-auth will REUSE the existing profile rather than establish a new one. */
+  key_present: boolean
+}
+export interface BrowseStatus { kill: BrowseKillState; expired: BrowseExpiredSite[] }
+// One live browse step, off the `browse_step` WS frame (browse/mirror.py:WS_BROWSE_STEP). This is a
+// genuine PAYLOAD, not a refetch signal: the step stream has one producer and no GET slice to read
+// it back from, so the panel reads the frame's fields directly. `screenshot` is a filesystem PATH
+// under the run workspace — rendered as a `[SCREENSHOT: path]` reference, never fetched as bytes
+// (the §1 screenshot-as-path discipline; the `url` is already credential-screened by the loop).
+export interface BrowseStepFrame {
+  run_id: string; step_n: number; url: string; action: string; screenshot: string; note: string
+}
+
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
@@ -5270,6 +5292,14 @@ export const api = {
   incidentOn: (reason: string) =>
     post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
+
+  // ── Browse mirror + kill switch (BA-5) ──
+  // The mirror's read model (kill state + expired sites) and the one-click stop. `browseKill` needs
+  // no confirm — a safety stop is one click by design; `browseKillRelease` (the undo) is confirm-
+  // gated like incidentResume so a stray request cannot silently re-enable a stop a human chose.
+  browseStatus: () => get<BrowseStatus>('/api/browse/status'),
+  browseKill: (reason = '') => post<{ kill: BrowseKillState }>('/api/browse/kill', { reason }),
+  browseKillRelease: () => post<{ kill: BrowseKillState }>('/api/browse/kill/release', { confirm: true }),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
       '/api/models/health',
