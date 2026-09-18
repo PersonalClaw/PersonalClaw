@@ -32,6 +32,14 @@ Deliberately NOT a new wire error code: no request failed. An item that is prese
 unretrievable is a *state* the surfaces report, so it lives in the status vocabulary the
 store already carries (``queued`` / ``processing`` / ``done`` / ``partial`` / ``failed``
 / ``unreachable``) rather than in ``http_errors.HTTP_ERROR_CODES``.
+
+**RET-4 extends the vocabulary with one READ-TIME reason.** :data:`STALE_INDEX` names an
+item whose chunk vectors came from a different embedding model than the one bound now
+(:mod:`personalclaw.knowledge.embedding_fingerprint`). It is minted by a comparison at
+query time rather than persisted at ingest, because the fact that changed is the *bound
+model*, not the item — so it must never be written into the item's ``processing_status``.
+:data:`INGEST_REASONS` is the subset an ingest may persist; :data:`REASONS` is every reason
+a surface may display.
 """
 
 from __future__ import annotations
@@ -62,9 +70,30 @@ NO_EMBEDDING_PROVIDER = "no_embedding_provider"
 #: (the embed attempt errored, or the provider returned nothing).
 NOT_INDEXED = "not_indexed"
 
+#: The item's chunk vectors were written by a DIFFERENT embedding model than the one bound
+#: now, so they are not comparable to the current query vector (RET-4). Unlike the three
+#: above, this reason is NOT persisted on the item at ingest time — it is a fact about the
+#: bound model, which changes under an item that never changed, so it is derived at read
+#: time from the chunk fingerprints (:mod:`personalclaw.knowledge.embedding_fingerprint`).
+#: The item is otherwise healthy; a re-index fixes it without re-ingesting anything.
+STALE_INDEX = "stale_index"
+
 #: The closed reason vocabulary. Matched explicitly by every consumer: an unknown value
 #: must read as "unknown reason", never fall into a default branch that reports health.
-REASONS: tuple[str, ...] = (NO_EXTRACTABLE_TEXT, NO_EMBEDDING_PROVIDER, NOT_INDEXED)
+#: :data:`STALE_INDEX` is last because it is the only member no ingest can mint — see
+#: :data:`INGEST_REASONS` for the subset ``verdict_for_ingest`` can return.
+REASONS: tuple[str, ...] = (
+    NO_EXTRACTABLE_TEXT,
+    NO_EMBEDDING_PROVIDER,
+    NOT_INDEXED,
+    STALE_INDEX,
+)
+
+#: The subset an INGEST can persist under ``file_metadata['unsearchable_reason']``. Split
+#: out so a test can assert the read-time-only reason never reaches the persisted status
+#: vocabulary — a stale index is not a broken ingest and must not mark the item
+#: ``unsearchable``, because the very next re-index makes it retrievable again.
+INGEST_REASONS: tuple[str, ...] = (NO_EXTRACTABLE_TEXT, NO_EMBEDDING_PROVIDER, NOT_INDEXED)
 
 #: One human sentence per reason — what happened, and what the user can do about it.
 #: Shared so the Doctor row, the item's ``processing_error`` and the ``knowledge_search``
@@ -84,6 +113,12 @@ REASON_DETAIL: dict[str, str] = {
         "the embedding step produced no vector for this item, so it is missing from the "
         "chunk index — semantic search cannot reach it. Re-ingest it, and check the "
         "embedding provider's health in Doctor."
+    ),
+    STALE_INDEX: (
+        "this item's passage vectors were written by a different embedding model than the "
+        "one bound now, so they cannot be compared to your query — semantic search skips "
+        "them rather than scoring them against the wrong model. Run the embedding "
+        "re-index (Settings → Models) to rebuild them; nothing needs re-ingesting."
     ),
 }
 

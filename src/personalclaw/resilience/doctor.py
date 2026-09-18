@@ -1141,7 +1141,7 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
-    """knowledge — which ingested items CANNOT be found by search? (RET-2)
+    """knowledge — which ingested items CANNOT be found by search? (RET-2, RET-4)
 
     🔴 WHY THIS EXISTS. Measured before RET-2: an image-only PDF and a document ingested
     with no embedding provider both persisted ``processing_status='done'`` while nothing
@@ -1161,7 +1161,20 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
     names WHICH document is unreachable — a bare "3 items are unsearchable" cannot be acted
     on. Read-only throughout: ``knowledge.db`` is opened ``mode=ro`` with ``create=False``,
     so a health check on an install that has never used knowledge creates nothing.
+
+    **RET-4 folds in one more way to be unreachable**: an item whose PASSAGE vectors came
+    from a different embedding model than the one bound now (``stale_index``). It is the same
+    user-visible fact — content in the library that no query reaches — so it belongs in this
+    row rather than in a second probe a user has to correlate. Its remedy is different and
+    the row says so: a re-index, not a re-ingest.
     """
+    from personalclaw.knowledge.embedding_fingerprint import (
+        active_fingerprint,
+        count_stale_chunks,
+        has_fingerprint_columns,
+        stale_chunk_items,
+        stale_rows,
+    )
     from personalclaw.knowledge.searchability import UNSEARCHABLE, degradations_from, rows_from
     from personalclaw.knowledge.store import knowledge_db_path
     from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
@@ -1173,6 +1186,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         if not db_path.exists():
             return ev
         conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        stale: list = []
         try:
             has = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='items'"
@@ -1192,9 +1206,19 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
                     (UNSEARCHABLE,),
                 ).fetchall()
             ]
+            # RET-4 — items whose PASSAGE vectors came from a different embedding model.
+            # Read here, on the same read-only connection, so one probe answers "what in my
+            # library cannot be found" completely. `has_fingerprint_columns` is the guard a
+            # ``mode=ro`` reader needs: it cannot run the store's migration, so a database
+            # written by an older build must report "cannot tell" instead of raising.
+            fp = active_fingerprint()
+            if fp is not None and has_fingerprint_columns(conn):
+                ev["active_embedding_model"] = str(fp)
+                ev["stale_chunk_vectors"] = count_stale_chunks(conn, fp)
+                stale = stale_rows(stale_chunk_items(conn, fp))
         finally:
             conn.close()
-        rows = rows_from(records)
+        rows = rows_from(records) + stale
         ev["unsearchable"] = len(rows)
         ev["items"] = [r.to_dict() for r in rows]
         ev["by_reason"] = {d.reason: d.item_count for d in degradations_from(rows)}
@@ -1220,7 +1244,9 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         "Each item under `items` is in your library but cannot be found by search. Fix its "
         "named reason — bind an embedding model (Settings → Providers) and re-index for "
         "`no_embedding_provider`/`not_indexed`; for `no_extractable_text` the file is a scan, "
-        "so add a text version or bind an OCR/vision model — then re-ingest the item."
+        "so add a text version or bind an OCR/vision model — then re-ingest the item. For "
+        "`stale_index` the item is fine and its vectors are not: they came from a different "
+        "embedding model, so run the embedding re-index — nothing needs re-ingesting."
     )
     return ProbeResult(
         ok=False,

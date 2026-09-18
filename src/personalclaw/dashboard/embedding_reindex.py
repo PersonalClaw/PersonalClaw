@@ -5,8 +5,15 @@ from a different model and live in a different space (often a different
 dimension). This module re-indexes both embedding stores as a background job
 with SSE progress, mirroring :mod:`personalclaw.dashboard.model_downloads`:
 
-  * **Knowledge** — ``KnowledgeStore`` items (clear ``embedding`` → re-embed each
-    from preserved title/summary/content).
+  * **Knowledge items** — ``KnowledgeStore`` items (clear ``embedding`` → re-embed
+    each from preserved title/summary/content).
+  * **Knowledge passages** — the ``chunks`` layer, re-embedded in place and
+    re-stamped with the new model's fingerprint (RET-4). This half used to be
+    missing entirely: the item pass never touched ``chunks``, so after a
+    same-dimension model swap every passage vector stayed in the previous model's
+    space where nothing could detect it. The job now reports the integer count it
+    re-embedded and refuses to report ``done`` while any chunk is still on the old
+    model.
   * **Episodic memory** — ``VectorMemoryStore`` episodic rows (clear → re-embed
     from preserved text → rebuild FAISS). Semantic memory embeds lazily at query
     time, so clearing is enough there.
@@ -50,6 +57,15 @@ class ReindexJob:
     total: int = 0
     knowledge: int = 0
     memory: int = 0
+    #: RET-4 — chunk vectors this job actually RE-EMBEDDED, counted from the rows it wrote.
+    #: Not a "chunks were handled" flag: it is the integer a user can compare against
+    #: ``chunks_stale``, which is read back from the table after the pass.
+    chunks: int = 0
+    #: Chunk vectors STILL carrying a previous model's fingerprint when the job finished.
+    #: Non-zero forces ``status='error'`` — a re-index that reports success while part of
+    #: the passage layer is still on the old model is the write-reported-success-and-did-
+    #: not-land failure this exists to prevent.
+    chunks_stale: int = 0
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +78,8 @@ class ReindexJob:
             "total": self.total,
             "knowledge": self.knowledge,
             "memory": self.memory,
+            "chunks": self.chunks,
+            "chunks_stale": self.chunks_stale,
             "error": self.error,
         }
 
@@ -148,6 +166,23 @@ class ReindexRegistry:
                 self._reindex_sync, run, knowledge_store, vector_store, embedder, embed_fn
             )
 
+            if job.chunks_stale:
+                # RET-4: refuse to report done while any chunk vector still wears the
+                # previous model's fingerprint. The re-embed left those rows recoverable
+                # (their text and old vector are intact), so the honest terminal state is a
+                # named failure the user can retry — not a green job over a half-converted
+                # passage layer that semantic search will keep skipping.
+                job.status = "error"
+                job.phase = "incomplete"
+                job.error = (
+                    f"{job.chunks_stale} chunk vector(s) are still on the previous "
+                    f"embedding model ({job.chunks} re-embedded). Semantic search skips "
+                    "them until they are rebuilt — check the embedding provider's health "
+                    "in Doctor and run the re-index again."
+                )
+                self._publish(job, "error")
+                return
+
             job.status = "done"
             job.phase = "done"
             self._publish(job, "done")
@@ -183,6 +218,19 @@ class ReindexRegistry:
             res = knowledge_store.reembed_all(embedder, on_progress=lambda d, _t: _progress(d, 0))
             job.knowledge = res.get("reembedded", 0)
             k_done = res.get("total", 0)
+
+            # ── Chunk vectors (RET-4) ──
+            # `clear_embeddings` + `reembed_all` above rewrite only the ITEM vectors. The
+            # passage layer is where deep-document recall lives, and before this it survived
+            # a model switch untouched: same dimension, same row count, so neither the
+            # dimension guard nor the ANN index's row-count reconciliation could tell that
+            # every chunk vector now belonged to another model's space.
+            job.phase = "reindexing passages"
+            self._publish(job, "progress")
+            chunk_res = knowledge_store.reembed_stale_chunks(embedder)
+            job.chunks = int(chunk_res.get("reembedded", 0))
+            job.chunks_stale = int(chunk_res.get("stale_remaining", 0))
+            self._publish(job, "progress")
 
         # ── Episodic memory ── (continue the bar after the knowledge items)
         if vector_store is not None:
