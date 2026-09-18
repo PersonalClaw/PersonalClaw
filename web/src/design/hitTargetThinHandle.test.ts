@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ── A thin vertical control needs a 24px band, not a 24px box ─────────────────────────────────
@@ -38,6 +38,27 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 const css = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
 const navRail = readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8')
+const sidePanel = readFileSync(join(SRC, 'ui/SidePanel.tsx'), 'utf8')
+
+/** 🔑 `.hit-24-x` HAS TWO ADOPTERS NOW, which is what makes it a primitive rather than speculative API.
+ *
+ *  Both are thin VERTICAL window-splitters, and the second was found by the reflow tier this repo did
+ *  not have until #2270's finding earned it (`surfaces.json`'s `reflow` = 320px, WCAG SC 1.4.10):
+ *
+ *    `ui/NavRail.tsx`     4×900 desktop / 4×1112 tablet — reachable 4px → 24px  (a clean pass)
+ *    `ui/SidePanel.tsx`   6×732 at 320px, on 46 consumers — reachable 6px → 15px (NOT a pass)
+ *
+ *  🪤 THE SECOND ONE DOES NOT REACH THE FLOOR, AND THAT IS RECORDED RATHER THAN ROUNDED UP. Its handle
+ *  sits on the panel's INNER edge (`left-0`) with two `overflow: hidden` ancestors, so the band's
+ *  outward half is clipped: growth is entirely rightward (R2→R11, L unchanged at 3). Reaching 24px was
+ *  measured and REJECTED — a full inward band swallows clicks from four named controls at the panel's
+ *  left edge (`Mark criterion incomplete`, `Mark step incomplete`, `Mark step done`, `Edit`), which is
+ *  the stolen-target defect this repo already has on file. Getting to 24px means indenting panel
+ *  content across all 46 consumers, which is the owner's call. */
+const ADOPTERS: [string, string][] = [
+  ['ui/NavRail.tsx', navRail],
+  ['ui/SidePanel.tsx', sidePanel],
+]
 
 // Comments stripped BEFORE any matching, and this is load-bearing rather than tidiness: the
 // `.hit-24-x` block carries a comment explaining why it must not set `position`, and that prose
@@ -124,5 +145,36 @@ describe('the thin-handle hit target', () => {
       readFileSync(join(SRC, 'ui/BoardCollapse.tsx'), 'utf8'),
       'BoardCollapse must still use the symmetric idiom, not this one',
     ).toMatch(/\bhit-24\b(?!-x)/)
+  })
+
+  it('every adopter is already positioned — the precondition the utility requires', () => {
+    // `.hit-24-x` sets no `position`, so a statically-positioned adopter would anchor its
+    // pseudo-element to the wrong box silently. Asserted per adopter, not just for the first one.
+    for (const [rel, src] of ADOPTERS) {
+      const at = src.indexOf('hit-24-x')
+      expect(at, `${rel} must actually adopt the utility`).toBeGreaterThan(-1)
+      const openTag = src.lastIndexOf('<', at)
+      const tag = src.slice(openTag, src.indexOf('>', at) + 1)
+      expect(tag, `${rel}: an adopter must establish its own containing block`).toMatch(/\babsolute\b/)
+      expect(tag, `${rel}: and must still be the thin splitter this utility is for`)
+        .toMatch(/role="separator"|cursor-(col|ew)-resize/)
+    }
+  })
+
+  it('the adopter list matches the tree — a new adopter must be named here', () => {
+    // Derived, so a third adopter cannot appear without this rail noticing. The named list carries the
+    // per-site measurement (one passes at 24px, one is clipped at 15px); a bare grep could not.
+    const files = readdirSync(join(SRC, 'ui')).filter((n) => /\.tsx$/.test(n) && !/\.test\./.test(n))
+    const found = files.filter((n) => readFileSync(join(SRC, 'ui', n), 'utf8').includes('hit-24-x'))
+    expect(found.sort(), 'an adopter of .hit-24-x exists that this rail does not measure')
+      .toEqual(ADOPTERS.map(([rel]) => rel.replace('ui/', '')).sort())
+  })
+
+  it('SidePanel keeps the reason it stops at 15px, and the rejected option', () => {
+    // Without this, the next pass reasonably "finishes the job" by widening the band to 24px — which
+    // was measured to swallow four named controls. The rejection has to outlive the measurement.
+    expect(sidePanel, 'the clipping caveat must stay').toMatch(/clipped at the panel boundary|overflow: hidden/)
+    expect(sidePanel, 'and the four controls a 24px band would steal').toMatch(/Mark criterion incomplete/)
+    expect(sidePanel, 'and that reaching 24px is the owner\'s call').toMatch(/owner call/i)
   })
 })

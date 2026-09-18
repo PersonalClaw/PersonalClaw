@@ -191,7 +191,22 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
       <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
         tabIndex={0} aria-label="Resize panel — arrow keys to resize"
         aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group">
+        // 🔑 6px WIDE, ON 46 CONSUMERS. Measured at the reflow tier (320px, WCAG SC 1.4.10): the hit
+        // area is 6×732 and only 6px is reachable, against the 24px floor of SC 2.5.8. `hit-24-x`
+        // centres a 24px band on it without moving a pixel — the outer div is a PURE hit area (no
+        // background; the visible seam is the `motion.span` below at 1px), so nothing here paints.
+        //
+        // 🪤 IT DOES NOT REACH 24px, AND THE REASON IS WORTH KEEPING. This handle sits on the panel's
+        // INNER edge (`left-0`) and two ancestors are `overflow: hidden`, so the band's outward half is
+        // clipped at the panel boundary. Measured: 6px → 15px reachable, and the growth is entirely
+        // rightward (R2→R11, L unchanged at 3). A strict 2.5× improvement, not a pass.
+        //
+        // 🔴 REACHING 24px IS AN OWNER CALL, NOT A BIGGER BAND. Widening the hit area to a full 24px
+        // inward was measured and REJECTED: it swallows clicks from four named controls at the panel's
+        // left edge — `Mark criterion incomplete`, `Mark step incomplete`, `Mark step done`, `Edit` —
+        // which is the stolen-target defect this repo already has on file, made worse. Getting to 24px
+        // needs the panel content indented by ~18px, which changes layout across all 46 consumers.
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group hit-24-x">
         <motion.span
           className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
           initial={false}
