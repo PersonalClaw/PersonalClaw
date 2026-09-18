@@ -1637,6 +1637,11 @@ async def api_file_list(request: web.Request) -> web.Response:
                         "is_dir": is_dir,
                         "size": size,
                         "mtime": mtime,
+                        # Is this child a git repo ROOT? The listing hides `.git`, so without
+                        # this the explorer cannot tell a checked-out project from any other
+                        # folder and its whole git surface stays dark on the default view
+                        # (#428). One extra stat per DIRECTORY child only.
+                        "repo": is_dir and _is_git_repo_root(de.path),
                     }
                 )
     except OSError:
@@ -1701,6 +1706,32 @@ def _gitfile_target(marker: str) -> str | None:
     if not os.path.isabs(target):
         target = os.path.join(os.path.dirname(marker), target)
     return os.path.realpath(target)
+
+
+def _is_git_repo_root(path: str) -> bool:
+    """Is *path* ITSELF a git repo root — the one-level test, no upward walk.
+
+    The explorer hides ``.git`` from every listing, so a directory holding a checked-out
+    project was rendered identically to one that was not, and the whole git surface (branch
+    chip, porcelain badges) only lit up if the user already knew to type the repo's own path
+    into "Go to path". The three root tabs are never repos, so the default landing view
+    showed nothing — a complete feature, invisible in practice (#428). Marking the repo
+    ROOTS in the listing makes it discoverable without changing what status is fetched.
+
+    Same gitdir validation as :func:`_git_repo_root` (a ``.git`` FILE naming a gitdir outside
+    the dashboard roots is refused), so this cannot advertise a repo the git endpoints would
+    then decline to read — a marker on a row whose branch never loads is worse than no
+    marker. Deliberately does NOT walk up: it is called once per directory child, and the
+    walk would make a listing O(children x depth) in stat calls.
+    """
+
+    marker = os.path.join(path, ".git")
+    if os.path.isdir(marker):
+        return True
+    if not os.path.exists(marker):
+        return False
+    gitdir = _gitfile_target(marker)
+    return gitdir is not None and _within_roots_resolved(gitdir)
 
 
 def _git_repo_root(path: str) -> str | None:

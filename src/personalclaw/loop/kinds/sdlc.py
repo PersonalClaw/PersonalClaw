@@ -107,6 +107,7 @@ class CodeKind(LoopKindStrategy):
     wants_workspace = True
     default_agent = "personalclaw-coder"
     provisions_tasks = True  # task-driven: stages → per-stage TaskLists + seeded tasks at launch
+    tracks_phases = True  # on_new_cycle advances the SDLC stage (set_phase_status below)
 
     def __init__(self) -> None:
         # Per-(loop:task) merge-conflict auto-resolve budget (in-memory; the loser

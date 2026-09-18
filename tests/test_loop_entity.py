@@ -85,6 +85,57 @@ class TestKindRegistry:
         kinds.ensure_loaded()
         assert {k.value for k in LoopKind} == set(kinds.registered_kinds())
 
+    # #448: the frontend decided "is this kind phase-tracked?" with `kind !== 'goal'` while
+    # only code + design ever call `set_phase_status`. Three kinds sat in the reader's set
+    # and not the writer's, so a COMPLETED 20-cycle research run rendered "0/5 stages". The
+    # declaration now travels from the kind to the FE — this pins it to the CODE, so a kind
+    # that gains or loses phase writers cannot leave `tracks_phases` behind.
+    def test_tracks_phases_matches_the_real_set_phase_status_writers(self):
+        import inspect
+
+        kinds.ensure_loaded()
+        declared: set[str] = set()
+        writes: set[str] = set()
+        for kind in kinds.registered_kinds():
+            s = kinds.get(kind)
+            if bool(getattr(s, "tracks_phases", False)):
+                declared.add(kind)
+            # The kind's own module plus everything it inherits from (ResearchKind extends
+            # GoalKind), so an inherited writer counts as this kind writing.
+            for klass in type(s).__mro__:
+                mod = inspect.getmodule(klass)
+                src = (
+                    inspect.getsource(mod)
+                    if mod and mod.__name__.startswith("personalclaw.loop.kinds")
+                    else ""
+                )
+                if "set_phase_status(" in src:
+                    writes.add(kind)
+                    break
+        assert declared == writes, (
+            f"tracks_phases declares {sorted(declared)} but set_phase_status is called for "
+            f"{sorted(writes)} — a reader told a stage fraction it cannot substantiate"
+        )
+        # Non-vacuity: this rail is worthless if BOTH sides are empty, or if every kind is
+        # the same. The split is the whole point — assert it is a real split.
+        assert declared == {
+            "code",
+            "design",
+        }, f"expected the writer set to be code+design, got {sorted(declared)}"
+        assert set(kinds.registered_kinds()) - declared, "some kind must be NOT phase-tracked"
+
+    def test_redacted_views_carry_phase_tracked(self):
+        """The declaration must actually REACH the frontend, on both loop views."""
+        from personalclaw.loop.store import _phase_tracked
+
+        kinds.ensure_loaded()
+        assert _phase_tracked("code") is True
+        assert _phase_tracked("design") is True
+        for kind in ("goal", "general", "research"):
+            assert _phase_tracked(kind) is False, f"{kind} declares no phase writers"
+        # An unregistered kind cannot substantiate a fraction either.
+        assert _phase_tracked("no-such-kind") is False
+
     @pytest.mark.parametrize("kind", ["general", "goal", "code", "design", "research"])
     def test_strategy_contract(self, kind):
         import asyncio

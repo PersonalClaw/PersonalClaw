@@ -19,6 +19,8 @@ class GeneralKind(LoopKindStrategy):
     description = "A generic iterative goal — loop until done, no domain specialization."
     wants_workspace = False
     default_agent = "personalclaw-loop"
+    # No on_new_cycle hook, so nothing ever advances phase_status for a general loop.
+    tracks_phases = False
 
     def default_kind_config(self) -> dict:
         # Optional deterministic check; otherwise the loop relies on the judge /

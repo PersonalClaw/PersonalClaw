@@ -67,6 +67,25 @@ class TransitionError(RuntimeError):
     """Raised on an illegal status transition (e.g. out of a terminal state)."""
 
 
+def _phase_tracked(kind: str) -> bool:
+    """Whether loops of ``kind`` ever advance ``phase_status`` — the kind's own
+    ``tracks_phases`` declaration, carried onto the redacted view so the frontend has ONE
+    source of truth for it.
+
+    The FE used to decide with ``kind !== 'goal'`` while only code + design write the map,
+    so a COMPLETED 20-cycle research run rendered "0/5 stages" (#448). Two enumerations of
+    one fact, in two languages, with nothing tying them together. Now the writer declares
+    it and every reader is told.
+
+    Unknown kind ⇒ False: no strategy means no ``on_new_cycle``, so nothing can advance a
+    phase, and claiming a stage fraction we cannot substantiate is the bug being fixed.
+    """
+    from personalclaw.loop import kinds as loop_kinds
+
+    strategy = loop_kinds.get_or_none(kind)
+    return bool(getattr(strategy, "tracks_phases", False)) if strategy else False
+
+
 def _redact_loop(row: dict) -> dict:
     """Redact the free-text + capability fields a worker/LLM could echo a secret
     into (task/summary/success_criteria/error + kind_config text)."""
@@ -663,6 +682,9 @@ def get_redacted(loop_id: str) -> dict | None:
     if loop is None:
         return None
     view = _redact_loop(loop.to_dict())
+    # Whether this kind advances phase_status (#448) — declared by the kind strategy, so
+    # the FE never re-enumerates the phase-tracking kinds itself.
+    view["phase_tracked"] = _phase_tracked(loop.kind)
     view["findings"] = files.get_findings(loop_id)
     # `total_cycles` is DERIVED here, not stored (PP-16 seam 4a): it is the length of the
     # projection already in hand, so the API keeps the field every loop surface reads while the
@@ -754,6 +776,9 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
         if kind and loop.kind != kind:
             continue
         d = _redact_loop(loop.to_dict())
+        # Same declaration as the detail view (#448) — the list rows fold a run through the
+        # SAME runFold, so withholding it here would make the cards disagree with the cockpit.
+        d["phase_tracked"] = _phase_tracked(loop.kind)
         d["findings"] = files.get_findings(loop.id)
         # Derived, same as the detail view (PP-16 seam 4a) — and free here, because the row
         # already carries the projection it counts.

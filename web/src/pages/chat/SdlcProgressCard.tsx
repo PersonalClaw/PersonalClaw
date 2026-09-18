@@ -203,7 +203,10 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
         <Icon size={15} className="shrink-0 text-primary" />
         <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(600)}>{title}</span>
         {progress && <span data-type="caption" className="shrink-0 text-on-surface-low">{progress}</span>}
-        {typeof cycles === 'number' && cycles > 0 && <span data-type="caption" className="shrink-0 text-on-surface-low/70">· {cycles} cycles</span>}
+        {/* The "·" is a SEPARATOR, so it only appears when there is a preceding label to
+            separate from. An untracked kind now has no progress label (its cycle count IS
+            its progress), and a hard-coded "·" left the header opening with a bare bullet. */}
+        {typeof cycles === 'number' && cycles > 0 && <span data-type="caption" className="shrink-0 text-on-surface-low/70">{progress ? '· ' : ''}{cycles} cycles</span>}
         {elapsed > 0 && <span data-type="caption" className="shrink-0 inline-flex items-center gap-0.5 text-on-surface-low/70" title="Elapsed (running time)"><Clock size={10} />{fmtE(elapsed)}</span>}
         {/* lifecycle controls (hub only) — gated by the RAW status, same as the Loops
             list: pause a running loop, resume a parked one, stop any active run, delete
@@ -258,11 +261,14 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
           <ul className="flex flex-col gap-0.5">
             {steps.map((s, i) => (
               <li key={i} data-type="caption" className="flex items-center gap-1.5">
-                {/* Phased kinds (code/design/general) have real per-stage status
-                    (done/active/todo) → checkbox icons. Only GOAL sub-goals have no
-                    completion tracking (the loop progresses by cycles, not a checklist),
-                    so a checkbox would falsely imply trackable done-state — neutral dot. */}
-                {dispKind === 'goal'
+                {/* A checkbox asserts trackable done-state, so only a step whose done-state
+                  * someone actually WRITES may get one; everything else gets a neutral dot.
+                  * That test comes off the fold's step state now — this used to ask
+                  * `dispKind === 'goal'`, a THIRD place enumerating the untracked kinds, and
+                  * it was wrong in the same way runFold's was: research and general have no
+                  * phase writer either, so a finished research run drew five empty
+                  * checkboxes beside a "Complete" badge (issue 448). */}
+                {s.state === 'untracked'
                   ? <span className="size-1 shrink-0 rounded-full bg-on-surface-low/50" />
                   : s.state === 'done' ? <CheckCircle2 size={12} className="shrink-0" style={{ color: 'var(--color-ok)' }} />
                   // Active stage warns when the project is PARKED at it (blocked/needs_input/
