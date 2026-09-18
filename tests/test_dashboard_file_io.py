@@ -279,6 +279,93 @@ class TestFileCreate:
             assert resp.status == 400
 
 
+class TestOneNameContractAtBothEnds:
+    """#296 — create and read/write governed the same namespace and disagreed.
+
+    The explorer's inline "New file" field wrote `notes (draft).md` through the lax
+    create path, and then `file-read` / `file-write` / `file-watch` refused that exact
+    path with `400 invalid input` because their schema pinned a charset allowlist
+    (`^[~/][-\\w.@~/ ]+$`) that create never applied. The UI produced files it could
+    not reopen, edit, watch or download — and every rejection also logged a false SEL
+    `denied`. The property under test is the round trip, not the regex: anything
+    create accepts must be readable and writable.
+    """
+
+    #: Ordinary names from the issue's own reproduction. Every one is legal on ext4,
+    #: APFS and NTFS, arrives from git checkouts / uploads / agent writes, and was
+    #: refused by the old allowlist.
+    NAMES = [
+        "notes (draft).md",
+        "Q3 (final).md",
+        "costs 50%.md",
+        "it's mine.md",
+        "a&b.md",
+        "issue #363.md",
+        "a+b,c.md",
+        "list[0]=1.md",
+        "12:30 standup.md",
+        "lévël-ünï-🎮.md",
+    ]
+
+    @pytest.mark.parametrize("name", NAMES)
+    @pytest.mark.asyncio
+    async def test_a_name_create_accepts_can_be_read_and_written(self, name, mock_sel, home_patch):
+        async with TestClient(TestServer(_make_app())) as client:
+            created = await client.post(
+                "/api/file-create",
+                json={"path": str(home_patch), "name": name, "kind": "file", "content": "hi"},
+            )
+            assert created.status == 200, f"create refused {name!r}"
+
+            target = str(home_patch / name)
+            read = await client.get("/api/file-read", params={"path": target})
+            body = await read.text()
+            assert read.status == 200, f"create wrote {name!r} but file-read refused it: {body}"
+            assert "hi" in body
+
+            written = await client.post(
+                "/api/file-write", json={"path": target, "content": "edited"}
+            )
+            assert (
+                written.status == 200
+            ), f"create wrote {name!r} but file-write refused it: {await written.text()}"
+            assert (home_patch / name).read_text() == "edited"
+
+    @pytest.mark.asyncio
+    async def test_both_ends_refuse_a_control_character(self, mock_sel, home_patch):
+        """The one character rule the two ends now SHARE.
+
+        `sanitize_string` deliberately preserves `\\n`/`\\r`/`\\t`, so a path carrying
+        one reaches SEL's `resources=` field and every log line built from it. Refusing
+        it on only one end is what #296 was; refusing it on neither would be worse.
+        """
+        async with TestClient(TestServer(_make_app())) as client:
+            created = await client.post(
+                "/api/file-create",
+                json={"path": str(home_patch), "name": "a\nb.md", "kind": "file"},
+            )
+            assert created.status == 400
+            assert "control characters" in (await created.json())["error"]["message"]
+            assert not (home_patch / "a\nb.md").exists()
+
+            read = await client.get("/api/file-read", params={"path": str(home_patch) + "/a\nb.md"})
+            assert read.status == 400
+
+    @pytest.mark.asyncio
+    async def test_a_relative_path_is_still_refused_with_a_remedy(self, mock_sel, home_patch):
+        """The anchor survives the loosening, and the message finally names the fix.
+
+        `invalid input` named no field and offered no remedy; the panel rendered it
+        verbatim ("Couldn't open this file. / invalid input").
+        """
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get("/api/file-read", params={"path": "notes.md"})
+            assert resp.status == 400
+            message = (await resp.json())["error"]
+            assert "path" in message
+            assert "resolve=1" in message
+
+
 def _make_send_app(state) -> web.Application:
     app = web.Application()
     app.router.add_post("/api/send-message", api_send_message)

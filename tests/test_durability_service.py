@@ -377,6 +377,65 @@ class TestNightlySnapshot:
         assert len(snaps) == 1
         assert "kept" in result.extra
 
+    def test_a_zeroed_tier_is_disabled_not_reset_to_the_default(self):
+        """0 means 0 (#363).
+
+        Three surfaces promise "0 disables a tier" — the panel hint, the PATCH
+        allowlist comment, and ``plan_retention``'s ``max(0, …)``. The apply path read
+        the configured 0 through an ``or`` chain, so it substituted DEFAULT_DAILY=14 and
+        kept a fortnight of dailies the user had asked it to stop keeping.
+        """
+        from personalclaw.config.loader import config_dir
+
+        home = Path(config_dir())
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.json").write_text(
+            json.dumps({"durability": {"keep_daily": 0, "keep_weekly": 8, "keep_monthly": 12}})
+        )
+        snap_dir = home / "snapshots"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        # Two dailies inside a single week+month, so only the weekly/monthly promotion
+        # may keep anything: a working daily=0 keeps exactly one of them, the `or` chain
+        # (daily=14) keeps both.
+        base = datetime.now(timezone.utc) - timedelta(days=1)
+        _snap(snap_dir, base)
+        _snap(snap_dir, base - timedelta(days=1))
+        result = service.run_nightly_snapshot()
+        assert result.ok, result.detail
+        assert result.extra["tiers"]["daily"] == 0, "the configured 0 must reach apply_retention"
+        assert result.extra["pruned"], "daily=0 must disable the daily tier, not restore 14"
+
+    def test_all_tiers_zero_retains_nothing(self):
+        """The boundary the `or` chain hid completely: every tier disabled."""
+        from personalclaw.config.loader import config_dir
+
+        home = Path(config_dir())
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.json").write_text(
+            json.dumps({"durability": {"keep_daily": 0, "keep_weekly": 0, "keep_monthly": 0}})
+        )
+        snap_dir = home / "snapshots"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        _snap(snap_dir, datetime.now(timezone.utc) - timedelta(days=3))
+        result = service.run_nightly_snapshot()
+        assert result.ok, result.detail
+        assert result.extra["kept"] == []
+        assert not list(snap_dir.glob("*.tar.gz"))
+
+    def test_an_explicit_zero_override_still_disables_a_tier(self):
+        """The override is None-sentinelled, so a caller can pass 0 and mean it."""
+        from personalclaw.config.loader import config_dir
+
+        home = Path(config_dir())
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.json").write_text(json.dumps({"durability": {"keep_daily": 14}}))
+        snap_dir = home / "snapshots"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        result = service.run_nightly_snapshot(daily=0, weekly=0, monthly=0)
+        assert result.ok, result.detail
+        assert result.extra["tiers"] == {"daily": 0, "weekly": 0, "monthly": 0}
+        assert result.extra["kept"] == []
+
     def test_a_failing_snapshot_is_reported_not_raised(self, monkeypatch):
         import personalclaw.snapshot as snap_mod
 
@@ -623,6 +682,45 @@ class TestEndpoints:
         assert body["last_drill"]["ran"] is False
         # Inspecting the plan must not delete anything.
         assert len(list(snap_dir.glob("*.tar.gz"))) == 40
+
+    @pytest.mark.asyncio
+    async def test_preview_and_apply_agree_at_a_zeroed_tier(self):
+        """#363's user-visible half: the panel promises keep-vs-prune BEFORE deletion.
+
+        The preview passed the config straight through (0 honoured) while the apply path
+        ran it through an ``or`` chain (0 → 14), so the panel listed a zeroed tier's
+        snapshots as ``would_prune`` and the nightly run then kept them. This drives both
+        real surfaces over one fixture and asserts they name the same files.
+        """
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from personalclaw.config.loader import config_dir
+
+        home = Path(config_dir())
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.json").write_text(
+            json.dumps({"durability": {"keep_daily": 0, "keep_weekly": 1, "keep_monthly": 1}})
+        )
+        snap_dir = home / "snapshots"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        base = datetime.now(timezone.utc) - timedelta(days=1)
+        for i in range(5):
+            _snap(snap_dir, base - timedelta(days=i))
+        async with TestClient(TestServer(self._app())) as client:
+            preview = await (await client.get("/api/durability/archive")).json()
+        assert preview["tiers"]["daily"] == 0
+        predicted = set(preview["would_prune"])
+        assert predicted, "daily=0 with a 1-week/1-month budget must prune something"
+
+        applied = service.run_nightly_snapshot()
+        assert applied.ok, applied.detail
+        # The run adds one fresh snapshot of its own, so compare only over the fixture.
+        fixture = {p for p in predicted}
+        assert fixture <= set(applied.extra["pruned"]), (
+            "apply must delete every snapshot the preview promised to delete: "
+            f"preview={sorted(predicted)} applied={sorted(applied.extra['pruned'])}"
+        )
+        assert fixture.isdisjoint(set(applied.extra["kept"]))
 
     @pytest.mark.asyncio
     async def test_run_rejects_an_unknown_job(self):

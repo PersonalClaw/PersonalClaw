@@ -1050,6 +1050,32 @@ def _is_dashboard_root(path: str) -> bool:
 MAX_NAME_BYTES = 255
 
 
+def _path_rejection(exc: "ValidationError") -> str:
+    """Why a file-I/O `path` was refused, in words that name a remedy (#296).
+
+    Every one of these endpoints answered a flat ``invalid input``: no field, no rule, no
+    fix. That was survivable while the rule was arbitrary (a charset allowlist the create
+    side did not share); now that the two ends agree, the remaining rejections are all
+    actionable, so say which one fired.
+    """
+    if exc.field != "path":
+        return f"{exc.field}: {exc.message}"
+    if exc.message == "invalid format":
+        return (
+            "path must start with '/' or '~' and contain no control characters "
+            "(pass resolve=1 to resolve a relative path)"
+        )
+    return f"path: {exc.message}"
+
+
+#: C0 controls + DEL — the ONLY characters this area refuses in a name or a path (#296).
+#: Kept as an explicit frozenset rather than a regex because `_reject_name` reports WHICH
+#: rule refused a name, and the identical rule is expressed on the read/write side as
+#: `validation._FILE_PATH_RE`'s `[^\x00-\x1f\x7f]`. The two must stay the same set; the
+#: whole point of #296 was that the two ends of this namespace disagreed about characters.
+_CONTROL_CHARS = frozenset(chr(c) for c in list(range(0x20)) + [0x7F])
+
+
 def _validate_dashboard_path(raw: str) -> str | None:
     """Validate a file path for dashboard file I/O.
 
@@ -1215,11 +1241,11 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
         raw_path = _resolve_relative_path(raw_path)
     try:
         validate_tool_args({"path": raw_path}, FILE_READ_SCHEMA)
-    except ValidationError:
+    except ValidationError as exc:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_watch", outcome="denied", resources=raw_path
         )
-        return web.json_response({"error": "invalid input"}, status=400)
+        return web.json_response({"error": _path_rejection(exc)}, status=400)
 
     path = _validate_dashboard_path(raw_path)
     if not path:
@@ -1341,14 +1367,14 @@ async def api_file_read(request: web.Request) -> web.Response:
 
     try:
         validate_tool_args({"path": raw_path}, FILE_READ_SCHEMA)
-    except ValidationError:
+    except ValidationError as exc:
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_read",
             outcome="denied",
             resources=raw_path,
         )
-        return web.json_response({"error": "invalid input"}, status=400)
+        return web.json_response({"error": _path_rejection(exc)}, status=400)
 
     path = _validate_dashboard_path(raw_path)
     if not path:
@@ -1517,14 +1543,14 @@ async def api_file_write(request: web.Request) -> web.Response:
         validate_tool_args(
             {"path": body.get("path", ""), "content": body.get("content", "")}, FILE_WRITE_SCHEMA
         )
-    except ValidationError:
+    except ValidationError as exc:
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_write",
             outcome="denied",
             resources=body.get("path", ""),
         )
-        return web.json_response({"error": "invalid input"}, status=400)
+        return web.json_response({"error": _path_rejection(exc)}, status=400)
 
     path = _validate_dashboard_path(body.get("path", ""))
     if not path:
@@ -2249,6 +2275,16 @@ def _reject_name(name: str) -> str:
     One function because the rules were duplicated: `api_file_create` and `api_file_upload`
     each had their own copy of the same three conditions, which is how a fourth rule reaches
     one site and not the other.
+
+    🔴 The control-character rule is the OTHER half of #296. This function and
+    `validation._FILE_PATH_RE` (which `file-read`/`file-write`/`file-watch` enforce) govern
+    the same namespace, and they used to disagree: create had NO charset rule at all while
+    read/write pinned `^[~/][-\\w.@~/ ]+$`, so the explorer wrote `notes (draft).md` and then
+    400'd on every attempt to reopen it. The fix drops the read side's allowlist — it was
+    never the traversal defence — and both ends now refuse exactly one thing about the
+    characters: C0 controls and DEL. `sanitize_string` preserves `\\n`/`\\r`/`\\t`, so without
+    this a created name could carry a newline into SEL's `resources=` field and into every
+    log line composed from the path.
     """
     if not name:
         return "a name is required"
@@ -2256,6 +2292,8 @@ def _reject_name(name: str) -> str:
         return "a name may not contain a path separator"
     if name in (".", ".."):
         return "a name may not be '.' or '..'"
+    if any(ch in name for ch in _CONTROL_CHARS):
+        return "a name may not contain control characters"
     encoded = len(name.encode("utf-8"))
     if encoded > MAX_NAME_BYTES:
         return f"a name may be at most {MAX_NAME_BYTES} bytes; this one is {encoded}"

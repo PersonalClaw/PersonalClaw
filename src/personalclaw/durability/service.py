@@ -278,11 +278,21 @@ def run_history_commit() -> JobResult:
     )
 
 
-def run_nightly_snapshot(*, daily: int = 0, weekly: int = 0, monthly: int = 0) -> JobResult:
+def run_nightly_snapshot(
+    *, daily: int | None = None, weekly: int | None = None, monthly: int | None = None
+) -> JobResult:
     """Nightly: a full tar snapshot, then tiered retention.
 
     Reuses the existing `snapshot_main` path rather than reimplementing archiving —
     one snapshot format, one restore path, one thing to keep correct.
+
+    The tier overrides are ``None``-sentinelled, not ``0``-sentinelled, because ``0``
+    is a MEANINGFUL budget: the panel, the PATCH allowlist and
+    ``GET /api/durability/archive``'s keep-vs-prune preview all promise "0 disables a
+    tier", and ``plan_retention``'s ``max(0, …)`` implements exactly that. An ``or``
+    chain here read 0 as "unset" and substituted the built-in default, so the preview
+    listed a zeroed tier's snapshots as ``would_prune`` and the nightly run then kept
+    them — the two surfaces disagreed at precisely the value the copy calls out.
     """
     import argparse
 
@@ -320,11 +330,14 @@ def run_nightly_snapshot(*, daily: int = 0, weekly: int = 0, monthly: int = 0) -
                 duration_secs=time.monotonic() - started,
             )
         cfg = _cfg()
+        # `_cfg()` already falls back to `DurabilityConfig()` when config is unreadable,
+        # and `load()` clamps each tier to a concrete int, so the config value IS the
+        # effective budget — including 0. No second default layer here.
         plan = retention.apply_retention(
             Path(out_dir),
-            daily=daily or cfg.keep_daily or retention.DEFAULT_DAILY,
-            weekly=weekly or cfg.keep_weekly or retention.DEFAULT_WEEKLY,
-            monthly=monthly or cfg.keep_monthly or retention.DEFAULT_MONTHLY,
+            daily=cfg.keep_daily if daily is None else daily,
+            weekly=cfg.keep_weekly if weekly is None else weekly,
+            monthly=cfg.keep_monthly if monthly is None else monthly,
         )
     _audit(
         "durability_snapshot",

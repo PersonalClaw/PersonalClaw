@@ -490,6 +490,16 @@ class TestDeliverableArtifact:
         def find_by_source_path(self, source_path):
             return None
 
+        # `list` + `get` are what the same-deliverable dedupe (#290) consults. Present so
+        # the dedupe runs for real against this fake instead of being swallowed by its
+        # own AttributeError guard — a fake missing them would make every test here pass
+        # for the wrong reason.
+        def list(self, **kw):
+            return []
+
+        def get(self, slug, **kw):
+            return None
+
         def create(self, **kw):
             self.created.append(kw)
             return type("A", (), {"slug": "s"})()
@@ -570,6 +580,138 @@ class TestDeliverableArtifact:
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: prov)
         _wd()._register_deliverable_artifact(c.id)
         assert prov.created == []
+
+
+class TestOneArtifactPerDeliverable:
+    """#290 — a completed loop produced TWO byte-identical artifacts for one document.
+
+    Both writers are real and both are asked for by the design: the kind brief tells the
+    worker to `artifact_save` its output *tagged* `loop:<id>` (`kinds/goal.py`), and the
+    watchdog graduates the same on-disk file to an artifact carrying that same tag. The
+    dedupe that should have caught it keyed on `source_path`, which `artifact_save` has no
+    parameter for and never sets — so the check could not fire in EITHER order.
+
+    Driven end-to-end through the REAL provider, because the defect lives in what the two
+    writers can see of each other, which a fake cannot represent.
+    """
+
+    def _real(self, monkeypatch, tmp_path):
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        real = NativeArtifactProvider(root=tmp_path / "artifacts")
+        monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: real)
+        return real
+
+    def test_graduation_adopts_the_workers_artifact_instead_of_twinning_it(
+        self, monkeypatch, tmp_path
+    ):
+        """Worker-first: the order the issue reproduced against."""
+        real = self._real(monkeypatch, tmp_path)
+        c = _running(kind_config={"goal_type": "open_ended"})
+        body = "# Findings\nThe one and only deliverable body."
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(body)
+        # The worker's own save: same bytes, same loop tag, a DIFFERENT name — which is
+        # why `find_similar`'s name-slug match cannot see it either.
+        worker = real.create(
+            name="Morning tier fix — options and tradeoffs",
+            content=body,
+            kind="markdown",
+            source="chat",
+            tags=[f"loop:{c.id}"],
+            actor="agent",
+        )
+        assert worker.source_path == ""
+
+        _wd()._register_deliverable_artifact(c.id)
+
+        rows = real.list(tag=f"loop:{c.id}")
+        assert len(rows) == 1, f"one deliverable must be one artifact, got {[r.slug for r in rows]}"
+        adopted = real.get(rows[0].slug)
+        assert adopted is not None and adopted.slug == worker.slug
+        # Adopted, not merely left alone: it is now the LIVE pointer to the file, so the
+        # next completion takes the pre-existing `find_by_source_path` path.
+        assert adopted.source_path == str((loop_files.loop_dir(c.id) / "REPORT.md").resolve())
+        assert (adopted.content or "") == body
+
+    def test_a_worker_save_after_graduation_updates_instead_of_twinning(
+        self, monkeypatch, tmp_path
+    ):
+        """Framework-first: the order the issue's own timestamps showed (26s apart).
+
+        A one-sided fix would leave this direction duplicating, so the same rule is
+        consulted from `artifact_save` too.
+        """
+        real = self._real(monkeypatch, tmp_path)
+        monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: real)
+        c = _running(kind_config={"goal_type": "open_ended"})
+        body = "# Findings\nWritten by the worker, graduated by the framework."
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(body)
+        _wd()._register_deliverable_artifact(c.id)
+        assert len(real.list(tag=f"loop:{c.id}")) == 1
+
+        from personalclaw import mcp_artifacts
+
+        monkeypatch.setattr(mcp_artifacts, "_resolve_session_key", lambda: f"loop-{c.id}")
+        out = mcp_artifacts._call_tool_inner(
+            "artifact_save",
+            {
+                "name": "Morning tier fix — options and tradeoffs",
+                "content": body,
+                "kind": "markdown",
+                "tags": [f"loop:{c.id}"],
+            },
+        )
+        assert "updated it in place" in out, out
+        rows = real.list(tag=f"loop:{c.id}")
+        assert len(rows) == 1, f"one deliverable must be one artifact, got {[r.slug for r in rows]}"
+
+    def test_a_genuinely_different_output_under_the_same_loop_tag_is_kept(
+        self, monkeypatch, tmp_path
+    ):
+        """The bound on the rule: same tag is NOT enough — the bytes must match too.
+
+        A multi-deliverable goal loop is told to save each output separately under the
+        same `loop:<id>` tag. Folding those together would lose the user's work, which is
+        strictly worse than the duplicate this issue is about.
+        """
+        real = self._real(monkeypatch, tmp_path)
+        c = _running(kind_config={"goal_type": "open_ended"})
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("# Findings\nThe report.")
+        real.create(
+            name="Companion chart",
+            content="# Chart\nA different document entirely.",
+            kind="markdown",
+            tags=[f"loop:{c.id}"],
+            actor="agent",
+        )
+        _wd()._register_deliverable_artifact(c.id)
+        rows = real.list(tag=f"loop:{c.id}")
+        assert len(rows) == 2
+        assert sum(1 for r in rows if r.source_path) == 1
+
+    def test_a_readonly_match_is_never_the_adoption_target(self, monkeypatch, tmp_path):
+        """A frozen artifact (SM-9) refuses every content mutation with PermissionError.
+
+        Adopting one would convert a duplicate into a FAILED save/graduation, which is
+        strictly worse than the duplicate. It is skipped, and the caller creates its own.
+        """
+        real = self._real(monkeypatch, tmp_path)
+        c = _running(kind_config={"goal_type": "open_ended"})
+        body = "# Findings\nFrozen elsewhere."
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(body)
+        real.create(
+            name="A shared transcript",
+            content=body,
+            kind="markdown",
+            tags=[f"loop:{c.id}"],
+            actor="agent",
+            readonly=True,
+        )
+        _wd()._register_deliverable_artifact(c.id)
+        rows = real.list(tag=f"loop:{c.id}")
+        assert len(rows) == 2, "the frozen row must be left alone, not adopted"
+        fresh = [r for r in rows if r.source_path]
+        assert len(fresh) == 1 and fresh[0].readonly is False
 
 
 class TestStageAdvanceNotify:
