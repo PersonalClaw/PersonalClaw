@@ -5797,9 +5797,114 @@ class TestAcpProcessDiedRecovery:
 
         await run_chat(state, session, "test message", _prompt_depth=1)
 
-        assert session._acp_pipe_death_retries == 1
+        assert session._acp_pipe_death_retries == 0
         error_msgs = [m for m in session.messages if m.get("role") == "error"]
         assert any("please retry" in m.get("content", "").lower() for m in error_msgs)
+
+    @pytest.mark.asyncio
+    async def test_nested_failure_does_not_inherit_exhausted_retry_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """A nested prompt failure is not a failed top-level automatic retry."""
+        from personalclaw.acp.client import AcpProcessDied
+
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
+        session._acp_pipe_death_retries = 3
+        self._make_stream_raise(client, AcpProcessDied("pipe broken"))
+
+        await run_chat(state, session, "test message", _prompt_depth=1)
+
+        assert session._acp_pipe_death_retries == 3
+        state.sessions.reset.assert_awaited_once()
+        assert session.task is None
+        error_msgs = [m for m in session.messages if m.get("role") == "error"]
+        assert any("please retry" in m.get("content", "").lower() for m in error_msgs)
+        assert not any("stuck" in m.get("content", "").lower() for m in error_msgs)
+
+    @pytest.mark.asyncio
+    async def test_nested_stop_reason_does_not_inherit_exhausted_retry_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """An error stop reason cannot exhaust a nested prompt's top-level budget."""
+        from personalclaw.llm.base import EVENT_COMPLETE, LLMEvent
+
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
+        session._acp_pipe_death_retries = 3
+
+        async def _error_stop(msg):
+            yield LLMEvent(kind=EVENT_COMPLETE, stop_reason="error: process unavailable")
+
+        client.stream = _error_stop
+        client.stream_command = _error_stop
+
+        await run_chat(state, session, "test message", _prompt_depth=1)
+
+        assert session._acp_pipe_death_retries == 3
+        assert session.task is None
+        error_msgs = [m for m in session.messages if m.get("role") == "error"]
+        assert any("please retry" in m.get("content", "").lower() for m in error_msgs)
+        assert not any("stuck" in m.get("content", "").lower() for m in error_msgs)
+
+    @pytest.mark.asyncio
+    async def test_nested_prompt_busy_does_not_inherit_exhausted_retry_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """Prompt-busy exhaustion stays outside the top-level retry streak."""
+        from personalclaw.llm_helpers import PromptBusyExhaustedError
+
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
+        session._prompt_busy_retries = 3
+        self._make_stream_raise(client, PromptBusyExhaustedError("prompt busy"))
+
+        await run_chat(state, session, "test message", _prompt_depth=1)
+
+        assert session._prompt_busy_retries == 3
+        state.sessions.reset.assert_awaited_once()
+        assert session.task is None
+        error_msgs = [m for m in session.messages if m.get("role") == "error"]
+        assert any("please retry" in m.get("content", "").lower() for m in error_msgs)
+        assert not any("stuck" in m.get("content", "").lower() for m in error_msgs)
+
+    @pytest.mark.asyncio
+    async def test_nested_retryable_acp_error_resets_without_consuming_budget(
+        self, tmp_path: Path
+    ) -> None:
+        """A nested ACP transient resets the provider but not the top-level budget."""
+        from personalclaw.acp.client import AcpError
+
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
+        session._prompt_busy_retries = 3
+        self._make_stream_raise(client, AcpError("ACP process exited"))
+
+        await run_chat(state, session, "test message", _prompt_depth=1)
+
+        assert session._prompt_busy_retries == 3
+        state.sessions.reset.assert_awaited_once()
+        assert session.task is None
+        error_msgs = [m for m in session.messages if m.get("role") == "error"]
+        assert any("please retry" in m.get("content", "").lower() for m in error_msgs)
+        assert not any("stuck" in m.get("content", "").lower() for m in error_msgs)
+
+    @pytest.mark.asyncio
+    async def test_successful_turn_resets_retry_streaks(self, tmp_path: Path) -> None:
+        """An intervening successful turn makes later failures a new streak."""
+        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+
+        state, session, client, run_chat = self._make_state_and_session(tmp_path)
+        session._acp_pipe_death_retries = 2
+        session._prompt_busy_retries = 2
+
+        async def _succeed(msg):
+            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="done")
+            yield LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")
+
+        client.stream = _succeed
+        client.stream_command = _succeed
+
+        await run_chat(state, session, "test message")
+
+        assert session._acp_pipe_death_retries == 0
+        assert session._prompt_busy_retries == 0
 
     @pytest.mark.asyncio
     async def test_partial_assistant_text_redacted(self, tmp_path: Path) -> None:
