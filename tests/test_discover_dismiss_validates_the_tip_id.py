@@ -55,6 +55,23 @@ JUNK = (
     "../../etc/passwd",
     "chat\nchat",
 )
+#: Explicit ASCII ids, for the reason `NUL_IDS` in
+#: ``tests/test_path_validators_refuse_rather_than_raise.py`` spells out (#2720). Without them
+#: pytest derives each id from the param string, so the 200_000-char entry above becomes a
+#: ~200 KB node id. MEASURED 2026-09-18: 200,043 chars on one console line under `--verbose`
+#: (which ``pyproject.toml`` addopts sets) and 200,393 bytes in the `--junitxml` report, twice
+#: over — once per decorator below. `-q` hides it on the sharded CI legs but NOT in the
+#: `coverage` job (`.github/workflows/full.yml`), which runs the full suite without `-q`, nor in
+#: any local run. An AST scan of all 947 parametrize decorators on main found this the only
+#: remaining un-`ids=`'d case over 500 chars; the two already-fixed siblings are at 100k.
+JUNK_IDS = (
+    "not-a-tip",
+    "script-tag",
+    "200k-chars",
+    "wrong-case",
+    "path-traversal",
+    "embedded-newline",
+)
 
 
 @pytest.fixture
@@ -86,7 +103,7 @@ async def _post(body: object) -> tuple[int, dict]:
 # ── the refusal ──────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("junk", JUNK)
+@pytest.mark.parametrize("junk", JUNK, ids=JUNK_IDS)
 def test_an_id_outside_the_catalog_is_not_persisted(junk: str, home: Path):
     """🔑 The defect itself, at the layer that owns the write."""
     with pytest.raises(dc.UnknownTipError):
@@ -95,7 +112,7 @@ def test_an_id_outside_the_catalog_is_not_persisted(junk: str, home: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("junk", JUNK)
+@pytest.mark.parametrize("junk", JUNK, ids=JUNK_IDS)
 async def test_the_endpoint_refuses_it_with_400_and_stores_nothing(junk: str, home: Path):
     """The issue's own ask: reject with 400, and leave the stored list unchanged."""
     dc.dismiss("tasks")  # a real prior dismissal, so "unchanged" means something
