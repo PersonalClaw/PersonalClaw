@@ -48,16 +48,29 @@ LOADER = SRC / "config" / "loader.py"
 #: docs' proxy table name them and make the rail meaningless.
 _FORWARDED_RE = re.compile(r"\b(X-Forwarded-[A-Za-z-]+|X-Real-IP|Forwarded)\b")
 
-#: `request.headers.get("<name>")` — how the code reads one.
-_HEADER_READ_RE = re.compile(r'headers\.get\(\s*"(X-[A-Za-z-]+|Forwarded)"')
+#: How the code reads one. BOTH forms, deliberately. `headers.get("N")` is the form RUA-6's own
+#: grep knew about, but `headers["N"]` is live in this tree too (`token_auth.py` reads
+#: `X-Internal-Secret` that way), so a forwarded-header reader written as a subscript must not
+#: slip past. MEASURED, not hypothesised: with only the `.get` form, adding a real
+#: `request.headers["X-Forwarded-For"]` fallback to `_resolved_client_ip` left all four tests in
+#: this file GREEN — the gateway would have started trusting a header these docs call ignored,
+#: invisibly, which is precisely the defect RUA-6 exists to prevent. The `(?!\s*=)` excludes
+#: assignments: `resp.headers["X-Accel-Buffering"] = "no"` SETS a response header, it does not
+#: trust an incoming one.
+_HEADER_READ_RES = (
+    re.compile(r'headers\.get\(\s*"(X-[A-Za-z-]+|Forwarded)"'),
+    re.compile(r'headers\[\s*"(X-[A-Za-z-]+|Forwarded)"\s*\](?!\s*=)'),
+)
 
 
 def _forwarded_headers_read_by_code() -> set[str]:
     found: set[str] = set()
     for path in sorted(SRC.rglob("*.py")):
-        for name in _HEADER_READ_RE.findall(path.read_text(encoding="utf-8")):
-            if _FORWARDED_RE.fullmatch(name):
-                found.add(name)
+        text = path.read_text(encoding="utf-8")
+        for pattern in _HEADER_READ_RES:
+            for name in pattern.findall(text):
+                if _FORWARDED_RE.fullmatch(name):
+                    found.add(name)
     return found
 
 
@@ -75,6 +88,57 @@ def _doc_trusted_proxy_section() -> str:
     start = text.index("Setting `public_url` changes three things:")
     end = text.index("### Step 3", start)
     return text[start:end]
+
+
+#: A header name written as markdown code (`X-Real-IP`). Requiring the backticks keeps a
+#: sentence-initial English "Forwarded" out of the promise set.
+_MD_CODE_SPAN = re.compile(r"`([^`]+)`")
+
+
+def _doc_effects_row() -> str:
+    """JUST the effects-table row that states the forwarded-header trust rule.
+
+    Narrower than :func:`_doc_trusted_proxy_section`, and the narrowness IS the point. The
+    section-scoped checks below accept a header named as "ignored" anywhere in the surrounding
+    prose, which is right for prose (an operator searching for the header they configured must
+    find that sentence) and far too loose for the TABLE row, whose entire grammar is "honored
+    **only** from `trusted_proxies`". Located by content and required unique, so a duplicated or
+    split table cannot leave the rail checking half the promise.
+    """
+    rows = [
+        line
+        for line in DOC.read_text(encoding="utf-8").splitlines()
+        if line.lstrip().startswith("|") and "trusted_proxies" in line
+    ]
+    assert len(rows) == 1, (
+        "expected exactly one table row in docs/guides/remote-access.md stating the "
+        f"forwarded-header trust rule, found {len(rows)}: {rows!r}"
+    )
+    return rows[0]
+
+
+def test_the_effects_table_row_itself_promises_exactly_what_the_code_reads():
+    """The table row gets NO "say it is ignored" escape hatch.
+
+    The row's grammar is "honored **only** from `trusted_proxies`", so every header it names is
+    named as HONORED — a two-cell table row has no room for a disclaimer. MEASURED: restoring the
+    row to RUA-6's original defect, `| X-Forwarded-Proto / X-Forwarded-For | honored **only** from
+    trusted_proxies |`, left all four of this file's other tests GREEN, because the corrected
+    prose below the table still contains the word "ignored". Strict equality on the row alone is
+    what actually keeps RUA-6's clause closed.
+    """
+    read = _forwarded_headers_read_by_code()
+    promised = {h for h in _MD_CODE_SPAN.findall(_doc_effects_row()) if _FORWARDED_RE.fullmatch(h)}
+    assert promised, (
+        "the guide's forwarded-header table row names no header — a reader is told a trust rule "
+        "with no way to act on it"
+    )
+    assert promised == read, (
+        "the remote-access guide's effects-table row and the code disagree about which forwarded "
+        f"headers are honored: the row says {sorted(promised)}, src/ reads {sorted(read)}. A "
+        "header named in that row is named as HONORED; move any ignored-header note into the "
+        "prose below the table."
+    )
 
 
 def test_the_config_help_names_exactly_the_headers_the_code_reads():

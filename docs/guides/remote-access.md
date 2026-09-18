@@ -424,11 +424,25 @@ changes.
   leaks your session cookie on the wire — see the `Secure`-cookie note under *What this does not
   protect you from*. A tailnet sidesteps this entirely (it is encrypted end to end); a public
   tunnel must terminate TLS.
+- **Never combine `PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1` with a proxy in front of the gateway.**
+  This is the one combination on this page that hands the whole internet a token-free dashboard,
+  and it does it silently. The variable is a dev convenience: it skips the token for any request
+  whose client address is private. On a home LAN "private address" really does mean "someone in my
+  house". Behind a reverse proxy it does not — the address the gateway sees is the *proxy's own*
+  (`127.0.0.1` for a local tunnel daemon, `172.18.x.x` on a Docker bridge), and both are private.
+  So every request the proxy forwards, from anywhere, is admitted with no token. Leave the variable
+  unset whenever `trusted_proxies` or `public_url` is set. `personalclaw doctor` fails the `remote`
+  row when it sees both, naming the variable and the config together.
 
 If `personalclaw doctor` reports `remote: ❌ bound beyond loopback with auth OFF`, you have hit the
 first two anti-patterns at once (a `PERSONALCLAW_BIND_HOST` override with `AUTH_MODE=none`). Fix it
 before exposing anything: either bind loopback again, or set a password and use one of the two
 supported paths.
+
+If it reports the `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` row instead, unset that variable (or clear
+`trusted_proxies`/`public_url`) before you expose anything. Note what that row does **not** do: it
+reports, it does not block. Nothing about who is admitted changes when it appears, so an exposed
+instance stays exposed until you act on it.
 
 ## What this does not protect you from
 
