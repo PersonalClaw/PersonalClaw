@@ -654,10 +654,28 @@ async def api_artifact_model(request: web.Request) -> web.Response:
     if result is None:
         return json_error("not_found", message=f"artifact {slug!r} has no body", status=404)
     data, mime = result
+    from personalclaw.documents.limits import DocumentTooLarge
+
     try:
         # Parsing walks a zip + the whole document tree; off the event loop like every
         # other CPU-bound artifact operation.
         model, loss = await asyncio.to_thread(codec.parse, data)
+    except DocumentTooLarge as exc:
+        # #2747. Its OWN code, ahead of the generic catch: the bytes are a perfectly good
+        # document that this build refuses to open, and answering `model_parse_failed`
+        # would tell the user their file is corrupt. The message names the way out (the
+        # raw route serves the same bytes), because a refusal a user cannot get past is
+        # the outage the cap was meant to prevent.
+        logger.info("artifact model refused as too large for %s: %s", slug, exc)
+        return json_error(
+            "document_too_large",
+            message=(
+                f"artifact {slug!r} is too large to open in the editor — {exc}. "
+                f"Read the whole file from /api/artifacts/{slug}/raw instead."
+            ),
+            status=413,
+            error_extra={"kind": art.kind},
+        )
     except Exception:  # noqa: BLE001 — an unparseable document is a 400, not a 500
         logger.info("artifact model parse failed for %s", slug, exc_info=True)
         return json_error(

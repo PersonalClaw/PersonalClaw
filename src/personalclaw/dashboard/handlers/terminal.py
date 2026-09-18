@@ -240,7 +240,28 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         - Client→Server: {"type":"resize","cols":N,"rows":N}
         - Client→Server: {"type":"ping"}
         - Server→Client: {"type":"pong"}
+
+    🔴 OWNER-ONLY, checked here as well as in the app-permission middleware (#2964). This
+    handler used to authorize on ``request.get("user")`` plus the feature flag and never
+    look at ``request["app"]`` — both of which an app-scoped request satisfies — so an app
+    that declared ``permissions.api: ["/api/ws"]`` (the shipped ``menu-bar-companion``
+    does) got a 101 here and ran commands as the owner in the owner's ``$HOME``. The
+    registry (``apps/permissions.OWNER_ONLY_API_PATHS``) is the fix and refuses in the
+    middleware for every route under ``/api/ws/terminal``; this check is the seam's own,
+    on the same reasoning ``computer_use`` and ``security_credentials`` state for theirs —
+    a shell is not a thing to lose on a middleware-ordering refactor.
     """
+    app_name = request.get("app", "")
+    if app_name:
+        _sel().log_api_access(
+            caller=f"app:{app_name}",
+            operation="terminal.ws.open",
+            outcome="denied",
+            source="app_permissions",
+            resources=request.path,
+            error="the terminal is owner-only",
+        )
+        return web.Response(status=403, text="The terminal is owner-only")
     caller = request.get("user")
     if not caller:
         _sel().log_api_access(

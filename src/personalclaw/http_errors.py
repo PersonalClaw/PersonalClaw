@@ -437,6 +437,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "model_parse_failed": (
         "The stored bytes could not be parsed as a document of this artifact's kind."
     ),
+    # DISTINCT from `model_parse_failed` on purpose (#2747): the document is intact, it is
+    # merely too large to open in the editor without spending minutes of CPU and gigabytes
+    # of RAM, and calling that "could not be parsed" would tell a user their file is
+    # corrupt. Carries the way OUT in its own sentence, because a cap with no escape is the
+    # outage: the raw route still serves the whole file.
+    "document_too_large": (
+        "The document's compressed XML exceeds this build's parse caps, so it was not "
+        "opened. Fix: read the original bytes through the artifact's raw route."
+    ),
     "invalid_model": (
         "The posted document model is not a valid model. The message names the offending path."
     ),

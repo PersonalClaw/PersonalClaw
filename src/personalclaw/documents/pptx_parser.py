@@ -24,6 +24,11 @@ import io
 from typing import Any
 
 from personalclaw.documents.docx_parser import LossReport
+from personalclaw.documents.limits import (
+    MAX_SLIDES,
+    assert_archive_within_limits,
+    truncation_detail,
+)
 from personalclaw.documents.model import DECK_LAYOUTS, Bullet, DeckModel, ShapeBox, Slide
 from personalclaw.documents.pptx_shapes import body_placeholder, title_index
 
@@ -37,12 +42,27 @@ _SNIP = 80
 
 
 def parse_pptx(data: bytes) -> tuple[DeckModel, LossReport]:
-    """Parse *data* into a :class:`DeckModel` plus everything that did not fit."""
+    """Parse *data* into a :class:`DeckModel` plus everything that did not fit.
+
+    Raises :class:`~personalclaw.documents.limits.DocumentTooLarge` before python-pptx
+    sees the bytes when the package's XML exceeds the archive caps (#2747); a deck of more
+    than :data:`~personalclaw.documents.limits.MAX_SLIDES` slides TRUNCATES with a
+    ``size_limit`` loss instead, for the same reason the docx block cap does — "too big,
+    here is what fit" is the honest answer, and "broken" is not.
+    """
     from pptx import Presentation
 
+    assert_archive_within_limits(data)
     report = LossReport()
     prs = Presentation(io.BytesIO(data))
     slides = list(prs.slides)
+    if len(slides) > MAX_SLIDES:
+        report.add(
+            "size_limit",
+            truncation_detail("slides", MAX_SLIDES, f"This deck declares {len(slides)}."),
+            location=f"slide {MAX_SLIDES + 1}",
+        )
+        slides = slides[:MAX_SLIDES]
     title = ""
     if slides and _is_cover(slides[0]):
         # The writer emits a deck title AS a cover slide, so reading one back into the

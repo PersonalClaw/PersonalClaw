@@ -58,6 +58,20 @@ declares `network: false` is not presented as one the platform has blocked. An a
 *gateway-mediated* reach is separately bounded by its `api` permission; what is
 **not** bounded is the app's own outbound traffic.
 
+That `api` bound has two halves, and the second is worth knowing because a path
+prefix says nothing about power. The allowlist half is what the app declares and
+what the Store shows you. The other half is a closed **owner-only** registry
+(`apps/permissions.OWNER_ONLY_API_PATHS`) of capabilities no declaration reaches at
+all, not even `"*"`: the terminal and its sessions, computer-use, the credential
+store and secrets vault, the security audit log and SEL rotation, your login
+password and second factor, gateway restart, and local token minting. Holding any
+of those would make every other line in a manifest moot, so there is nothing to
+scope — and before it existed, an app declaring `/api/ws` (the event socket)
+prefix-matched `/api/ws/terminal/{id}` and got an interactive shell running as you.
+A manifest that names one of these paths now fails to install. None of this touches
+your own access to those surfaces; the refusal applies only to requests carrying an
+app identity.
+
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose
 to run — not as a sandbox that prevents the app from talking to the network. The
