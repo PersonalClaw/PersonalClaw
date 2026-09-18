@@ -364,6 +364,18 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               // them apart on its own.
               draftStore={editable ? artifactDrafts : undefined}
               onSave={editable ? onSave : undefined}
+              // 🔴 A document save cut a version on disk and this header kept reading `· v1 · 1
+              // event` until a reload (issue 2753). A binary artifact has no visible content diff
+              // and a LOSSLESS one gets no confirm dialog either, so this counter is the entire
+              // save receipt — and it said the save had not happened.
+              //
+              // Reuses the AE-10 live-refresh call exactly: `quiet` so the mounted editor is not
+              // torn down mid-session (that would flash empty and drop the user's place), and
+              // `keepVersion` so a `?v=N` pin survives. `onChanged` keeps the library card in step,
+              // the same pairing the socket path uses.
+              onDocumentSaved={() => {
+                reload({ keepVersion: true, quiet: true }).then(() => onChanged()).catch(() => {})
+              }}
               // Renderer-driven iteration (AS-3): an EDITMODE tweak saves through the
               // SAME snapshot path the Snapshot action uses, so the new version and
               // its restore are inherited machinery rather than a second write path.

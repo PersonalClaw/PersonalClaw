@@ -1390,6 +1390,12 @@ export interface WorkflowNodeState {
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
   item_index?: number; item_total?: number; item_label?: string
+  // This node's terminal output was served from the resume/rewind cache (WF2-A1) rather than
+  // freshly produced — "did my edit actually re-run anything?" answered at a glance. A TERMINAL
+  // qualifier like `degraded_reason`: absent means freshly produced, so it is never carried
+  // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
+  // the old value would keep claiming a cache hit the run just superseded).
+  cached?: boolean
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
