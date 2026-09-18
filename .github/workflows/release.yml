@@ -25,8 +25,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      gh_release_flags: ${{ steps.ver.outputs.gh_release_flags }}
     steps:
       - uses: actions/checkout@v7
+      # FIRST, before anything expensive: classify the tag. `scripts/release_tags.py`
+      # is the single parser every job downstream reads (RUM-8) — the version, the
+      # stable/prerelease split, and the image tags all come from it, so the three
+      # shell dialects that used to each answer this differently cannot drift apart
+      # again. It REFUSES a ref it cannot classify (no `v`, not X.Y.Z, or build
+      # metadata), which is why it runs before the 10-minute build rather than after:
+      # a mistyped tag fails here instead of part-publishing.
+      - name: Classify the release tag (one parser — RUM-8)
+        id: ver
+        run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -53,9 +64,6 @@ jobs:
           # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
           # /api/healthz (200). Replaces the old shallow namelist check.
           python scripts/verify_wheel.py --wheel "dist/*.whl"
-      - name: Derive version from tag
-        id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: SBOM (syft SPDX-JSON over the built dist)
         uses: anchore/sbom-action@v0
         with:
@@ -153,15 +161,30 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Which tags this release may MOVE is a property of the tag, not a constant
+      # (RUM-8). Stable publishes `:X.Y.Z`, the moving minor `:X.Y` and `:latest`;
+      # a prerelease publishes `:X.Y.Z-rc.N` and ONLY `:beta`. The tag list is
+      # rendered by the same `scripts/release_tags.py` the tag-parse test asserts,
+      # so a `tags:` block can no longer say something the test does not check —
+      # the hardcoded `:latest` that used to sit here moved `latest` onto every
+      # release candidate. `:X.Y` and `:beta` are the tags RUM-7's
+      # `select_image_tag` already resolves for the `stable`/`beta` channels and
+      # `docs/guides/containers.md` documents; before this step nothing created them.
+      - name: Plan this tag's image tags (RUM-8)
+        id: imagetags
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}
+        run: |
+          python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE"
+          python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE" \
+            --github-output >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
-            ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:latest
+          tags: ${{ steps.imagetags.outputs.image_tags }}
       # RELEASE-BLOCKING per-arch smoke (A2.1). The build above publishes a
       # multi-arch manifest; a manifest that merely *builds* can still ship an
       # arch that cannot start. So pull each arch explicitly and run the image's
@@ -264,10 +287,15 @@ jobs:
           name: desktop-linux
           path: desktop-dist/
       - name: Extract this version's CHANGELOG section
+        # RELEASE_VERSION comes from the one parser (RUM-8) rather than a second
+        # in-line `lstrip("v")`: the CHANGELOG heading this looks up and the version
+        # the wheel/images carry have to be the same string.
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           python - <<'PY' > release-notes.md
           import re, os, pathlib
-          ver = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          ver = os.environ["RELEASE_VERSION"]
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
           # Body under "## [<ver>] ...header..." up to the next "## " heading (a
           # top-level release heading, NOT a "### " subsection) or end of file.
@@ -275,13 +303,24 @@ jobs:
           print(m.group(1).strip() if m else f"Release {ver}.")
           PY
       - name: Create GitHub Release
+        # The stability flags come from `scripts/release_tags.py` via the build job
+        # (RUM-8), not from a shell suffix test. The expression that used to sit here
+        # — `[ "$REF" != "${REF%rc*}" ] && echo --prerelease` — only ever recognized
+        # `rc`, so `v0.3.0-beta.2` was published as a full, non-prerelease Release and
+        # `stable`'s `select_target` then offered it to every user as an upgrade.
+        # A stable tag now claims `--latest` explicitly; a prerelease gets
+        # `--prerelease` and never `--latest`.
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_RELEASE_FLAGS: ${{ needs.build.outputs.gh_release_flags }}
         run: |
+          # Unquoted on purpose: GH_RELEASE_FLAGS is a closed set of whole flags
+          # (`--latest` | `--prerelease`) from the parser above and MUST word-split.
+          # shellcheck disable=SC2086
           gh release create "$GITHUB_REF_NAME" dist/* desktop-dist/* \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
-            $([ "${GITHUB_REF_NAME}" != "${GITHUB_REF_NAME%rc*}" ] && echo --prerelease)
+            $GH_RELEASE_FLAGS
 
   website-follow:
     # A published core release is an OBLIGATION on personalclaw.dev: the website
