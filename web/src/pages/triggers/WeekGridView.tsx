@@ -131,7 +131,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
         <EmptyState
           icon={CalendarDays}
           title="No fires this week"
-          hint="Only enabled schedules with a fire inside this week are plotted — interval and cron alike. A disabled trigger has no fires, and a one-shot is not projected here yet."
+          hint="Only enabled schedules with a fire inside this week are plotted — interval, cron and one-shot alike. A disabled trigger has no fires, and a one-shot that already fired, or is set beyond this week, has none left to show."
         />
       ) : (
         <div className="overflow-x-auto">
