@@ -108,32 +108,73 @@ def allow_loopback_egress(monkeypatch: pytest.MonkeyPatch):
     )
 
 
+#: The endpoint the blocked-host case is driven against. Port 9 (discard) on loopback, so a
+#: guard that WRONGLY permits it fails on connection instead of reaching a listener — and named
+#: at module scope because the fixture below asserts the guard refuses THIS url before the test
+#: drives it. Two copies of the string would let the assertion and the drive disagree.
+_BLOCKED_ENDPOINT = "http://127.0.0.1:9/v1"
+_BLOCKED_MODELS_URL = f"{_BLOCKED_ENDPOINT}/models"
+
+
 @pytest.fixture()
 def default_egress_posture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The mirror of ``allow_loopback_egress``: pin the DEFAULT public-only posture.
 
-    ``egress_policy_for`` (``net/policy.py``) layers ``security.egress`` over the base
-    profile by calling ``AppConfig.load()`` at call time, so "the default posture" is a fact
-    about whichever config home the process points at — not about this test. Under xdist all
-    workers share one home, so a worker-mate that persists ``allow_private: true`` flipped
-    the premise out from under the one test here that takes no egress fixture, and its
-    assertion fell through to a real socket attempt (#2938: one red test, three otherwise
-    green PRs, reproducible on re-run, passing in isolation).
+    The default IS the code's real default — ``CONNECTOR`` carries ``allow_private=False``
+    (``net/policy.py``) and ``guard.evaluate`` refuses a non-public address for a policy that
+    neither allow-lists the host nor opts into private ranges (``net/guard.py``). So the
+    assertion in the test below is right about the contract. What it did NOT own was its own
+    premise, in TWO places rather than one, and each produced the same ambiguous red (#2938:
+    six matrix shards at once on ``main``, three PRs, passing in isolation, surviving a re-run):
 
-    So own the state the default is read from: an empty home of this test's own, and assert
-    it really is default before handing it over — a fixture that silently supplied a
-    permissive posture would turn the same pollution into a false PASS instead of a red.
+    1. **The config.** ``egress_policy_for`` layers ``security.egress`` over the base profile
+       by calling ``AppConfig.load()`` at call time, so "the default posture" was a fact about
+       whichever config home the process pointed at.
+    2. **The seams themselves.** ``openai_compatible_discover_models`` resolves
+       ``egress_policy_for``/``CONNECTOR``/``fetch`` off ``personalclaw.sdk.net`` *at call
+       time* (a deliberate late import — it is what the sibling ``allow_loopback_egress``
+       fixture substitutes), and ``net.client`` resolves ``evaluate`` off its own module
+       namespace. Pinning the config home pins what the real function READS; it does not pin
+       WHICH function is there. A worker-mate that leaves any of those four names permissive —
+       ``allow_loopback_egress``'s own lambda and ``test_model_catalog_seam``'s sentinel both
+       waive the loopback block — turns this test's refusal into a real socket attempt, which
+       is exactly the ``ClientConnectorError`` this issue kept reporting.
+
+    So own both. Every seam is re-pinned to the REAL production object, never a stub: the real
+    ``egress_policy_for``, the real config read, the real ``guard.evaluate``, the real
+    ``net.client.fetch`` and a real socket all still run, so the test is end-to-end exactly as
+    before — it just no longer asks the process what "default" means. Pinning to the real
+    object is a no-op in a clean process and a repair in a polluted one.
+
+    Then assert the premise twice over, so a violation is named HERE instead of 20 lines later
+    as a transport error: the RESOLVED posture (not merely the config it was read from) must be
+    public-only, and the guard must already refuse the url under test — no socket is reachable
+    from this fixture's state unless the guard itself was bypassed.
     """
     home = tmp_path / "egress-default-home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
 
-    from personalclaw.config.loader import AppConfig
+    from personalclaw.net import client as net_client
+    from personalclaw.net import guard as net_guard
+    from personalclaw.net import policy as net_policy
 
-    eg = AppConfig.load().security.egress
-    assert not eg.allow_private and not eg.allow_hosts, (
-        "the point of this fixture is a genuinely default egress posture; got "
-        f"allow_private={eg.allow_private} allow_hosts={eg.allow_hosts}"
+    monkeypatch.setattr("personalclaw.sdk.net.egress_policy_for", net_policy.egress_policy_for)
+    monkeypatch.setattr("personalclaw.sdk.net.CONNECTOR", net_policy.CONNECTOR)
+    monkeypatch.setattr("personalclaw.sdk.net.fetch", net_client.fetch)
+    monkeypatch.setattr("personalclaw.net.client.evaluate", net_guard.evaluate)
+
+    resolved = net_policy.egress_policy_for(net_policy.CONNECTOR)
+    assert not resolved.allow_private and not resolved.allow_hosts, (
+        "the point of this fixture is a genuinely default egress posture, resolved through "
+        "the seam the call site uses; got "
+        f"allow_private={resolved.allow_private} allow_hosts={resolved.allow_hosts}"
+    )
+    decision = net_guard.evaluate(_BLOCKED_MODELS_URL, resolved)
+    assert not decision.allow, (
+        f"the guard must already refuse {_BLOCKED_MODELS_URL} under the default posture — it "
+        f"allowed it, so the test below would dial a socket instead of exercising the block "
+        f"(policy={resolved.name!r} pinned_ips={decision.pinned_ips})"
     )
 
 
@@ -275,13 +316,21 @@ def test_a_blocked_host_says_how_to_allow_list_it(default_egress_posture: None) 
     refuse a loopback endpoint with an instruction, not with an empty list.
 
     ``default_egress_posture`` is not a substitute for that default — it pins it. The real
-    ``egress_policy_for``, config read and guard all still run; only the config home they
-    read is this test's own, so a worker-mate cannot decide what "default" means here."""
+    ``egress_policy_for``, config read, ``guard.evaluate`` and ``net.client.fetch`` all still
+    run; the fixture only makes the config home AND the four call-time seams this test's own,
+    so no worker-mate gets to decide what "default" means here (#2938)."""
     with pytest.raises(ModelDiscoveryError) as caught:
-        _run(openai_compatible_discover_models("http://127.0.0.1:9/v1", "sk-test"))
+        _run(openai_compatible_discover_models(_BLOCKED_ENDPOINT, "sk-test"))
     msg = str(caught.value)
-    assert "Egress policy blocked" in msg
+    assert "Egress policy blocked" in msg, (
+        "the default posture must refuse a loopback endpoint BEFORE any socket is dialled; "
+        f"got {msg!r} — a transport error here means the guard was bypassed, not that the "
+        "host was blocked"
+    )
     assert "allow_private" in msg or "allow_hosts" in msg
+    # A refusal happens pre-flight, so no HTTP status was ever received — the discriminator
+    # between "blocked" and "reached something that answered".
+    assert caught.value.status is None
 
 
 def test_an_unconfigured_provider_says_so_rather_than_listing_nothing() -> None:
