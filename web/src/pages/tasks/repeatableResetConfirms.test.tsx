@@ -159,6 +159,16 @@ describe('the gate is real, and the copy makes no promise it cannot keep', () =>
     const handler = py.match(/async def api_task_lists_reset[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(handler, 'found the reset handler').not.toBe('')
     expect(handler, 'and the window really reached the loop body').toMatch(/for t in tasks:/)
-    expect(handler, 'it still clears execution notes for every task').toMatch(/execution_notes=\[\]/)
+    // 🪤 FOLLOW THE MECHANISM, DON'T PIN A LITERAL. This asserted `execution_notes=[]` inside the
+    // handler, which reds the moment the field list moves — and it did move: the handler used to
+    // enumerate the cleared fields itself, drifted from its own docstring while doing so, and now
+    // writes `task_reset_payload(t)` instead, with `models.py` as the one authority for what reset
+    // means. So the two hops are checked separately: the handler applies that payload to every task,
+    // and the payload is what empties the notes.
+    expect(handler, 'it applies the reset payload to every task').toMatch(/task_reset_payload\(t\)/)
+    const models = readFileSync(join(process.cwd(), '..', 'src/personalclaw/tasks/models.py'), 'utf8')
+    const cleared = models.match(/_RESET_CLEARED: dict\[str, Any\] = \{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(cleared, 'found the cleared-field authority').not.toBe('')
+    expect(cleared, 'it still clears execution notes').toMatch(/"execution_notes": \[\]/)
   })
 })

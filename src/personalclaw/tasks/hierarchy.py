@@ -28,7 +28,13 @@ from pathlib import Path
 
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import is_safe_record_id, record_path
-from personalclaw.tasks.models import BUILTIN_PROJECTS, Project, TaskList
+from personalclaw.tasks.models import (
+    BUILTIN_PROJECTS,
+    PERSONAL_PROJECT,
+    REPEATABLE_PROJECT,
+    Project,
+    TaskList,
+)
 
 
 def config_dir() -> Path:
@@ -173,8 +179,8 @@ class HierarchyStore:
             if p.name == "Chore":
                 # Only rename if a Personal doesn't already exist (else just drop the
                 # rename — find_or_create_project will route to the existing Personal).
-                if not any(q.name == "Personal" for q in self._all_projects_raw()):
-                    p.name = "Personal"
+                if not any(q.name == PERSONAL_PROJECT for q in self._all_projects_raw()):
+                    p.name = PERSONAL_PROJECT
                     p.is_builtin = True
                     self._write_project(p)
 
@@ -225,7 +231,7 @@ class HierarchyStore:
     def find_or_create_project(self, name: str) -> Project:
         name = name.strip()
         if not name:
-            return self.find_or_create_project("Personal")
+            return self.find_or_create_project(PERSONAL_PROJECT)
         existing = self.get_project_by_name(name)
         if existing:
             return existing
@@ -431,7 +437,7 @@ class HierarchyStore:
             raise ValueError("task list name is required")
         self.ensure_defaults()
         if repeatable:
-            project = self.find_or_create_project("Repeatable")
+            project = self.find_or_create_project(REPEATABLE_PROJECT)
         elif project_id:
             _p = self.get_project(project_id)
             if not _p:
@@ -440,7 +446,7 @@ class HierarchyStore:
         elif project_name:
             project = self.find_or_create_project(project_name)
         else:
-            project = self.find_or_create_project("Personal")
+            project = self.find_or_create_project(PERSONAL_PROJECT)
         # Per-project name uniqueness, to match `create_project` (which rejects a duplicate
         # project name). Without it a project could hold two lists of the same name — including
         # two "General" lists, which made the auto-attach in `handlers` pick an arbitrary one
