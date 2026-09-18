@@ -87,6 +87,14 @@ import { physics } from '../../design/motion'
  *    off-switch (`reducedMotionAppWide.test.ts`) instead of a hand-rolled spring here. It grows the
  *    4px tick's footprint on hover/focus, which is what makes a keyboard cursor on a 4px target
  *    visible at all.
+ *
+ *  ── SSM-9: THE RAIL HAS NO RETURN-TO-NEWEST OF ITS OWN, ON PURPOSE ──────────────────────────
+ *
+ *  "Back to the newest turn" is a map affordance, and the map already has exactly one:
+ *  `SessionMapReturnLatest` — the transcript pill §A.7 forbids replacing. Do not add a "newest"
+ *  control at the foot of this rail, and do not give the coarse-pointer drawer (SSM-10) one:
+ *  `SessionMapReturnLatest.test.tsx` derives the single-implementation property over the whole
+ *  `src` tree, so a second one turns that red rather than shipping two names for one intent.
  */
 
 /** Card width. A preview line wants roughly 45-55 characters to be worth reading — narrower and

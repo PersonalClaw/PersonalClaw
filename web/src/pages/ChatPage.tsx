@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -85,6 +85,7 @@ import { FindBar } from '../ui/FindBar'
 import { findSegments } from './chat/findSegments'
 import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
+import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
@@ -3054,18 +3055,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                     </motion.div>
                   )}
                 </AnimatePresence>
-                {/* jump-to-latest pill — appears when scrolled up so streamed
-                    content arriving below the fold is one click away. */}
-                <AnimatePresence>
-                  {scrolledUp && (
-                    <motion.button type="button" onClick={() => endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
-                      aria-label="Jump to latest message"
-                      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={spring.spatialFast}
-                      className="absolute left-1/2 -top-2 z-20 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface/95 px-3 h-8 text-on-surface-var text-[0.75rem] shadow-md backdrop-blur-md transition-colors hover:bg-surface-high hover:text-on-surface">
-                      <ArrowDown size={13} /> Jump to latest
-                    </motion.button>
-                  )}
-                </AnimatePresence>
+                {/* return-to-newest — the SESSION MAP's control (§A.7 / SSM-9), rendered here
+                    rather than defined here: the map owns the one back-to-newest affordance in the
+                    app, so the rail and the coarse-pointer drawer cannot each grow their own. */}
+                <SessionMapReturnLatest
+                  scrolledUp={scrolledUp}
+                  onReturnToLatest={() => scrollToLatest(endRef.current)}
+                />
                 <div className="mx-auto flex flex-col items-center" style={{ maxWidth: 'var(--content-width)' }}>
                   {stage}
                 </div>
