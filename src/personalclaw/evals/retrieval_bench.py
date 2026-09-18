@@ -512,21 +512,28 @@ class ArmContribution:
 
 
 def arm_verdict(
-    contribution_p: float | None, scored_queries: int, *, has_executor: bool = True
+    contribution_p: float | None, scored_queries: int, *, arm_ran: bool
 ) -> tuple[str, tuple[str, ...]]:
     """The offline verdict a dark-shipped arm gets BEFORE enablement (§5.3).
 
-    :data:`ARM_UNMEASURED` when the arm had no executor at all, when the delta does not
+    :data:`ARM_UNMEASURED` when the arm was never observed to run, when the delta does not
     exist, or when it rests on fewer than :data:`MIN_SCORED_QUERIES` queries — an
     unmeasured arm is never reported as a hold, because "we could not tell" and "we told,
-    and it does not earn its keep" lead to different decisions. The no-executor case is
+    and it does not earn its keep" lead to different decisions. The never-ran case is
     checked FIRST and independently of the delta: an arm that never ran scores identically
     to its own absence, so its delta is exactly 0.0 and would otherwise read as a
     confident "this arm is worthless".
+
+    ``arm_ran`` has no default. A default would have to be ``True`` to stay usable, and a
+    fail-open default on precisely the question "did this measurement happen" is how the
+    0.0 delta over a dead arm got published in the first place.
     """
     reasons: list[str] = []
-    if not has_executor:
-        reasons.append("no executor: the arm could not run in this process (no embedder?)")
+    if not arm_ran:
+        reasons.append(
+            "no candidates: the arm returned nothing under its own mask, so it never ran "
+            "(a component that is present but failing reads exactly like this)"
+        )
         return ARM_UNMEASURED, tuple(reasons)
     if contribution_p is None:
         reasons.append("no delta: the full or leave-one-out mask scored nothing")
@@ -544,17 +551,16 @@ def arm_verdict(
     return ARM_HOLD, tuple(reasons)
 
 
-def contributions(
-    rows: "list[ArmMaskRow]", executors: "dict[str, bool] | None" = None
-) -> list[ArmContribution]:
+def contributions(rows: "list[ArmMaskRow]") -> list[ArmContribution]:
     """Per-arm leave-one-out contribution + verdict, from the published table.
 
-    ``executors`` is :func:`arm_executors`' answer. An arm absent from it defaults to
-    "had an executor" so a caller who does not know cannot accidentally mark every arm
-    unmeasured — but :func:`run_retrieval_bench` always supplies it.
+    Whether each arm RAN is derived from these same rows (:func:`arm_executors`) rather than
+    accepted from the caller. A caller-supplied answer was a second source of truth for a
+    fact the table already states, and the caller supplied a COMPONENT check — which is how
+    a delta over an arm that never ran came to be published as a confident hold.
     """
-    executors = executors or {}
     by_mask = {r.mask: r for r in rows}
+    ran = arm_executors(rows)
     full = by_mask.get(mask_name(ARMS))
     out: list[ArmContribution] = []
     for arm in ARMS:
@@ -564,20 +570,27 @@ def contributions(
         without_p = without.p_at_k if without else None
         full_r = full.r_at_k if full else None
         without_r = without.r_at_k if without else None
+        arm_ran = ran[arm]
+        # An arm that never ran leaves the two differenced masks identical, so the difference
+        # is an artifact of subtracting a mask from itself and there is NO delta to report.
+        # Reported as absent, never as +0.0000: a zero here renders as a measured "this arm
+        # earns nothing", which is the opposite of what happened.
         contribution_p = (
-            (full_p - without_p) if (full_p is not None and without_p is not None) else None
+            (full_p - without_p)
+            if (arm_ran and full_p is not None and without_p is not None)
+            else None
         )
         contribution_r = (
-            (full_r - without_r) if (full_r is not None and without_r is not None) else None
+            (full_r - without_r)
+            if (arm_ran and full_r is not None and without_r is not None)
+            else None
         )
         # The delta's power is bounded by the WEAKER of the two masks it differences.
         scored = min(
             full.scored_queries if full else 0,
             without.scored_queries if without else 0,
         )
-        verdict, reasons = arm_verdict(
-            contribution_p, scored, has_executor=bool(executors.get(arm, True))
-        )
+        verdict, reasons = arm_verdict(contribution_p, scored, arm_ran=arm_ran)
         out.append(
             ArmContribution(
                 arm=arm,
@@ -732,31 +745,33 @@ def memory_db_path() -> Path:
     return Path(config_dir()) / _DB_FILE
 
 
-def arm_executors(store_kind: str, handle) -> dict[str, bool]:
-    """Which arms can actually EXECUTE against this store, right now.
+def arm_executors(rows: "list[ArmMaskRow]") -> dict[str, bool]:
+    """Which arms were OBSERVED to run — read off the published table, per arm.
 
-    The vector arm has no executor without an embedder, and a mask that names an arm the
-    process cannot run would report "the vector arm contributes nothing" when the truth is
-    "the vector arm never ran". Surfaced so the report can say which, and so a caller can
-    refuse rather than publish a delta over a dead arm.
+    An arm ran when its OWN solo mask returned at least one candidate for at least one
+    query. A mask that names an arm the process cannot run would otherwise report "the
+    vector arm contributes nothing" when the truth is "the vector arm never ran", so this
+    is what lets the report say which.
+
+    Derived from the run's OUTPUT rather than from a component check, because the two
+    disagree in exactly the case this field exists for. With an expired credential
+    :meth:`~personalclaw.knowledge.embedder.UnifiedEmbedder.is_available` still answers
+    True (a callable is bound) while ``embed()`` returns None (the provider's error is
+    swallowed), so asking the component published ``vector → hold, ΔP@k +0.0000`` over an
+    arm that never ran once. Presence is not availability and availability is not success;
+    only the run's own output settles it.
+
+    The SOLO mask is the only unambiguous attribution — a candidate under a fused mask could
+    have come from any arm in it. An arm with no solo row reads False rather than defaulting
+    to "probably fine": a fail-open default on "did this measurement happen" is the same
+    false success wearing a different hat.
     """
-    if store_kind == STORE_KNOWLEDGE:
-        from personalclaw.knowledge import retrieval as knowledge_retrieval
-
-        retriever = getattr(handle, "_bench_retriever", None)
-        has_embedder = bool(retriever and getattr(retriever, "embedder", None))
-        return {
-            ARM_KEYWORD: True,
-            ARM_GRAPH: bool(getattr(knowledge_retrieval, "HybridRetriever", None)),
-            ARM_VECTOR: has_embedder,
-        }
-    if store_kind == STORE_MEMORY:
-        return {
-            ARM_KEYWORD: True,
-            ARM_GRAPH: bool(getattr(handle, "graph_enabled", False)),
-            ARM_VECTOR: bool(getattr(handle, "embed_fn", None)),
-        }
-    raise RetrievalBenchError(f"unknown store {store_kind!r}; expected one of {STORES}")
+    by_mask = {r.mask: r for r in rows}
+    out: dict[str, bool] = {}
+    for arm in ARMS:
+        solo = by_mask.get(mask_name((arm,)))
+        out[arm] = bool(solo and solo.queries > 0 and solo.no_candidate_queries < solo.queries)
+    return out
 
 
 def knowledge_retriever(knowledge_store) -> Retriever:
@@ -790,9 +805,6 @@ def knowledge_retriever(knowledge_store) -> Retriever:
         logger.debug("knowledge embedder unavailable", exc_info=True)
         embedder = None
     retriever = knowledge_retrieval.HybridRetriever(knowledge_store, embedder=embedder)
-    # Stashed so `arm_executors` can read the bound embedder off the same object the
-    # search will use, rather than re-resolving it and possibly getting a different answer.
-    knowledge_store._bench_retriever = retriever  # noqa: SLF001
 
     def _search(query: str, k: int, arms: "tuple[str, ...]") -> list[str]:
         hits = retriever.search(query, limit=k, arms=arms)
@@ -1315,10 +1327,11 @@ def run_retrieval_bench(
 
         _assert_mask_applied(scores)
         table = build_table(scores, k=k)
-        # Read AFTER the run, off the same objects that ran it: `knowledge_retriever` binds
-        # the embedder it will use, and reading before the bind would report the arm dead.
-        executors = arm_executors(store_kind, handle)
-        contribs = contributions(table, executors)
+        # Read off the TABLE THIS RUN PRODUCED, not off the components that were wired up: a
+        # bound-but-failing embedder is present, reports itself available, and retrieves
+        # nothing, so only the output can say whether the arm actually ran.
+        executors = arm_executors(table)
+        contribs = contributions(table)
         aggregates = aggregate(cells)
         store.write_matrix_aggregates(bench_id, aggregates)
         store.write_matrix_trials(bench_id, cells)

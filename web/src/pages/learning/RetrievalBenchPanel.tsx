@@ -128,10 +128,11 @@ function StoreReport({ store, report, k }: { store: string; report: RetrievalSto
       )}
       {dead.length > 0 && (
         <Warn>
-          No executor for {dead.join(', ')} — that arm never ran, so its zero delta says nothing
-          about the arm. Bind an embedding model on{' '}
-          <a className="underline" href="#/settings/models">Settings → Models</a> to measure the
-          vector arm.
+          {dead.join(', ')} returned no candidates in this run, so {dead.length > 1 ? 'those arms' : 'that arm'}{' '}
+          never ran and {dead.length > 1 ? 'their deltas say' : 'its delta says'} nothing about the
+          arm. Check that an embedding model is bound AND reachable on{' '}
+          <a className="underline" href="#/settings/models">Settings → Models</a> — an expired
+          credential leaves the model bound and embeds nothing, which looks identical here.
         </Warn>
       )}
 

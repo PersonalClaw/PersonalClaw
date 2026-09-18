@@ -1350,9 +1350,15 @@ def _print_retrieval_report(result) -> None:
         )
     dead = sorted(arm for arm, live in (result.executors or {}).items() if not live)
     if dead:
+        # Not "no executor": the arm's component can be present, bound and reporting itself
+        # available while retrieving nothing (an expired embedding credential does exactly
+        # this). The observation is about the RUN's output, so the sentence has to be too —
+        # and there is no delta to describe, because one is not published for a dead arm.
         print(
-            f"  ⚠ no executor for: {', '.join(dead)} — that arm never ran, so its zero "
-            "delta says nothing about the arm."
+            f"  ⚠ no candidates from: {', '.join(dead)} — that arm returned nothing under "
+            "its own mask, so it never ran and has no measured contribution. Check that "
+            "the arm's model is bound AND reachable; an expired credential leaves it bound "
+            "and embedding nothing, which looks identical here."
         )
     print(f"  run: evals/matrices/{result.bench_id}/")
     print(f"  {'mask':<24}{'P@k':>9}{'R@k':>9}{'scored':>8}{'no-cand':>9}")
