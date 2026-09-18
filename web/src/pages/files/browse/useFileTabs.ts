@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FsEntry } from '../../../lib/api'
 import { baseName } from '../fileMeta'
 import { confirm } from '../../../ui/dialog'
+import { useUnsavedGuard } from '../../../lib/useUnsavedGuard'
 
 export interface OpenTab { path: string; name: string }
 
@@ -76,18 +77,12 @@ export function useFileTabs(scope = '') {
   useEffect(() => { try { localStorage.setItem(tabsKey, JSON.stringify(tabs)) } catch { /* quota */ } }, [tabs, tabsKey])
   useEffect(() => { localStorage.setItem(activeKey, activePath) }, [activePath, activeKey])
 
-  // Browser-level exit guard for unsaved edits — closing the tab, reloading, or
-  // navigating away with any open file dirty bypasses the in-app discard confirm and
-  // silently drops the edits. Armed only while something is dirty (a clean editor
-  // never nags). Lives in the hook so EVERY consumer (Files page, Code cockpit, chat
-  // file panel) gets it uniformly — no per-surface duplication.
-  const anyDirty = Object.values(dirty).some(Boolean)
-  useEffect(() => {
-    if (!anyDirty) return
-    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [anyDirty])
+  // Browser-level exit guard for unsaved edits — closing the tab, reloading, or navigating away
+  // with any open file dirty bypasses the in-app discard confirm and silently drops the edits.
+  // Every consumer of this hook (Files page, Code cockpit, chat file panel) gets it uniformly;
+  // the handler itself now lives in `useUnsavedGuard` so the memory editors share this one
+  // implementation instead of carrying a second copy.
+  useUnsavedGuard(Object.values(dirty).some(Boolean))
 
   const open = useCallback((entry: FsEntry) => {
     setTabs((prev) => {
