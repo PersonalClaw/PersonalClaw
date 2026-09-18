@@ -1284,3 +1284,251 @@ async def test_build_update_status_container_pin_miss_emits_no_commands(monkeypa
     status = await uk.build_update_status("0.1.0")
     assert status["image_tag"] == ""
     assert status["instructions"] == []
+
+
+# ── RUM-10: the check describes the RESOLVED release, not `releases/latest` ──
+#
+# `releases/latest` answers only "the newest NON-prerelease", so on `beta` and under any
+# `pin` it names a release the apply would not install. These rows are adversarial to
+# that shortcut: the stub `releases/latest` says 0.2.1 / "stable notes", while beta
+# resolves to 0.3.0-rc.1 / "beta notes" and a pin overrides the channel entirely.
+
+
+def _latest_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`releases/latest` = v0.2.1 — the answer the resolved view must NOT inherit."""
+
+    async def _rel() -> dict:
+        return {"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"}
+
+    async def _releases() -> list[dict[str, object]]:
+        return [dict(r) for r in _FAKE_RELEASES]
+
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
+
+
+@pytest.mark.asyncio
+async def test_status_release_notes_follow_the_beta_channel(monkeypatch) -> None:
+    """On `beta`, latest/name/notes describe the PRERELEASE the apply would install."""
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "beta")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == "0.3.0-rc.1"
+    assert status["release_name"] == "0.3.0-rc.1"
+    assert status["release_notes"] == "beta notes"
+    assert status["update_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_status_release_notes_follow_a_pin_over_the_channel(monkeypatch) -> None:
+    """A pin OVERRIDES the channel here exactly as it does in every resolver (RUM-2).
+
+    `stable` + a pin on the prerelease must describe the PINNED release — a build that
+    kept the `releases/latest` view would report 0.2.1 / "stable notes".
+    """
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "stable", "0.3.0-rc.1")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == "0.3.0-rc.1"
+    assert status["release_notes"] == "beta notes"
+
+
+@pytest.mark.asyncio
+async def test_status_pin_miss_reports_nothing_available(monkeypatch) -> None:
+    """A pin naming no release must not fall back to the stable latest.
+
+    Reporting `releases/latest` here would tell a pinned user an update is available and
+    then hand them notes for a release the apply REFUSES to install (RUM-6's pin-miss).
+    """
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "stable", "9.9.9")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == ""
+    assert status["update_available"] is False
+    assert status["release_notes"] == ""
+
+
+@pytest.mark.asyncio
+async def test_status_stable_needs_no_second_fetch(monkeypatch) -> None:
+    """`stable` IS `releases/latest`, so the resolver must not pay for a list fetch.
+
+    Asserted by making `fetch_releases` raise: on the default channel the status must
+    still build. This is the cost guard on the clause above — without it, every
+    `GET /api/update/check` on the default install would make a second GitHub call.
+    """
+
+    async def _rel() -> dict:
+        return {"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"}
+
+    async def _boom() -> list[dict[str, object]]:
+        raise AssertionError("stable must not fetch the releases list")
+
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.setattr(uk, "fetch_releases", _boom)
+    _fake_container_config(monkeypatch, "stable")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == "0.2.1"
+    assert status["release_notes"] == "stable notes"
+
+
+# ── RUM-9: who writes `updates.last_version`, and how a pin is stored ────────
+
+
+def _home(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+
+
+def test_first_recorded_run_offers_no_rollback(monkeypatch, tmp_path) -> None:
+    """A fresh install has no earlier version, so it must NOT offer to roll back to itself.
+
+    The failure this forbids is the tempting one-liner (`last_version = __version__`),
+    which would render "Roll back to v0.2.0" on a box running 0.2.0.
+    """
+    import json as _json
+
+    _home(monkeypatch, tmp_path)
+    assert uk.record_running_version("0.2.0") == ""
+    assert uk.read_run_state()["version"] == "0.2.0"
+    # Nothing was written to config — there is nothing to offer.
+    assert not (tmp_path / "config.json").exists()
+
+    # Second start on the SAME version: still nothing to offer, and no config write.
+    assert uk.record_running_version("0.2.0") == ""
+    assert not (tmp_path / "config.json").exists()
+
+    # Third start after an upgrade: the version that ran last becomes the offer.
+    assert uk.record_running_version("v0.3.0") == "0.2.0"
+    stored = _json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert stored["updates"]["last_version"] == "0.2.0"
+    assert uk.read_run_state()["version"] == "0.3.0"
+
+
+def test_recorder_catches_a_downgrade_too(monkeypatch, tmp_path) -> None:
+    """A version change in EITHER direction is recorded — a rollback needs a way back.
+
+    Nothing about the mechanism is upgrade-specific: after rolling 0.3.0 → 0.2.0 the
+    offer becomes 0.3.0, which is how a user who rolled back by mistake returns.
+    """
+    _home(monkeypatch, tmp_path)
+    uk.record_running_version("0.3.0")
+    assert uk.record_running_version("0.2.0") == "0.3.0"
+    from personalclaw.config.loader import AppConfig
+
+    assert AppConfig.load().updates.last_version == "0.3.0"
+
+
+def test_recorder_keeps_the_previous_version_when_config_is_unwritable(
+    monkeypatch, tmp_path
+) -> None:
+    """An unreadable config must not silently CONSUME the previous version.
+
+    If the run state advanced while the config write failed, the next start would see
+    "nothing changed" and the rollback target would be lost for good — so the recorder
+    leaves the run state alone and retries on the next start.
+    """
+    _home(monkeypatch, tmp_path)
+    uk.record_running_version("0.2.0")
+    (tmp_path / "config.json").write_text("{ not json", encoding="utf-8")
+
+    assert uk.record_running_version("0.3.0") == ""
+    assert uk.read_run_state()["version"] == "0.2.0"  # NOT advanced
+
+    # Once the config is readable again the same change is still recordable.
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    assert uk.record_running_version("0.3.0") == "0.2.0"
+
+
+def test_write_updates_fields_preserves_the_blocks_it_does_not_model(monkeypatch, tmp_path) -> None:
+    """The writer touches `updates.<key>` only — provider credentials are not collateral.
+
+    `AppConfig.save()` serialises the whole dataclass tree, so using it here would
+    rewrite every block from an in-memory view. This is the read-modify-write the config
+    PATCH does, and this test is the reason it is that and not `save()`.
+    """
+    import json as _json
+
+    _home(monkeypatch, tmp_path)
+    (tmp_path / "config.json").write_text(
+        _json.dumps(
+            {
+                "providers": {"openai": {"api_key_ref": "cred:1"}},
+                "use_cases": {"chat": "gpt"},
+                "updates": {"channel": "beta", "pin": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert uk.write_updates_fields({"pin": "0.2.0"}) is True
+    after = _json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert after["providers"] == {"openai": {"api_key_ref": "cred:1"}}
+    assert after["use_cases"] == {"chat": "gpt"}
+    assert after["updates"]["channel"] == "beta"  # sibling field untouched
+    assert after["updates"]["pin"] == "0.2.0"
+
+
+def test_set_version_pin_normalizes_and_refuses_junk(monkeypatch, tmp_path) -> None:
+    """`v0.2.0` and `0.2.0` are one pin; an empty or over-long pin is REFUSED.
+
+    The bound is the same 64 chars `_EDITABLE_CONFIG["updates.pin"]` enforces, so the CLI
+    and the dashboard PATCH cannot disagree about which pins are storable.
+    """
+    from personalclaw.config.loader import AppConfig
+
+    _home(monkeypatch, tmp_path)
+    assert uk.set_version_pin("v0.2.0") is True
+    assert AppConfig.load().updates.pin == "0.2.0"
+    assert uk.set_version_pin("  ") is False
+    assert uk.set_version_pin("9" * 65) is False
+    assert AppConfig.load().updates.pin == "0.2.0"  # neither refusal overwrote it
+
+
+@pytest.mark.asyncio
+async def test_status_makes_zero_calls_when_checking_is_disabled(monkeypatch, tmp_path) -> None:
+    """RUM-3's kill switch covers the channel/pin probe the resolved-release clause added.
+
+    `check_enabled=false` promises ZERO outbound calls. `fetch_latest_release` guards itself
+    (asserted elsewhere in this file); `fetch_releases` does NOT — it was only ever reachable
+    from a user-typed apply before the resolved-release clause put it on the CHECK path, which
+    every scheduled check runs. So the pinned/beta arm has to read the cache, and this makes
+    `fetch_releases` raise to prove it does: a build that fetched the list fails outright.
+
+    The second assertion is what stops the fix from being "disable the feature when checking is
+    off": the pinned release is still named, resolved from the cached list.
+    """
+    import types
+
+    from personalclaw.config import loader as _loader
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": ""})
+    uk.write_release_cache({"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"})
+
+    async def _boom_list() -> list[dict[str, object]]:
+        raise AssertionError("check_enabled=false must not fetch the releases list")
+
+    async def _cached_latest() -> dict:
+        # What the REAL `fetch_latest_release` does under the kill switch: return the cache
+        # without opening a session. Stubbed rather than run so this test stays about the
+        # list probe, which is the seam the clause added.
+        return uk.read_release_cache()
+
+    monkeypatch.setattr(uk, "fetch_releases", _boom_list)
+    monkeypatch.setattr(uk, "fetch_latest_release", _cached_latest)
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+    cfg = types.SimpleNamespace(
+        updates=types.SimpleNamespace(channel="stable", pin="0.2.0", check_enabled=False)
+    )
+    monkeypatch.setattr(_loader.AppConfig, "load", classmethod(lambda cls: cfg))
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == "0.2.0", "the pinned release is still named, from the cache"
+    assert status["latest"] != "0.2.1", "and it is NOT the stable latest the cache also holds"

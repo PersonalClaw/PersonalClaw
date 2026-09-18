@@ -102,6 +102,17 @@ async def api_update_check(request: web.Request) -> web.Response:
     # (empty `image_tag`/`instructions` with a non-empty `pin`) from a transient
     # status failure — so it never silently falls back to a bare `latest` (RUM-7).
     merged["pin"] = cfg.updates.pin
+    # The remaining `updates` fields the Settings > Updates screen edits (RUM-10). The panel
+    # reads its controls' current values from THIS payload rather than a second
+    # `GET /api/config/personalclaw` round trip, so every control on the screen renders from
+    # one snapshot and cannot show a channel from one read beside an interval from another.
+    merged["check_enabled"] = cfg.updates.check_enabled
+    merged["check_interval_hours"] = cfg.updates.check_interval_hours
+    # `last_version` is the rollback offer (RUM-9): the version this install ran before the
+    # one running now, recorded at startup by `self_update.record_running_version`. Empty
+    # until a version change has actually been observed — the panel hides the control then,
+    # because "Roll back to v" with nothing after it is worse than no offer.
+    merged["last_version"] = cfg.updates.last_version
     merged["version"] = _local_version
     return web.json_response(merged)
 

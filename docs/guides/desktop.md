@@ -327,6 +327,31 @@ gateway is a child process that cannot restart itself out from under the window 
 looking at. An auto-updater is planned — until it ships, the panel says what is actually
 true rather than promising an update that never arrives.
 
+### What the update settings still do here
+
+The `updates` block is honored on this install even though the apply is manual, because it
+governs what the app *tells* you:
+
+- **Channel** (`updates.channel`) — `stable` (default) watches normal releases, `beta`
+  watches release candidates too. `nightly` tracks a git branch, so it has no meaning for
+  a packaged app; the resolver treats it as `stable` here.
+- **Version pin** (`updates.pin`) — pin `0.2.1` and the panel stops reporting newer
+  releases as available, which is how you stay on a known-good build while you finish
+  something. Clear it to follow the channel again.
+- **Roll back** — download the older release from the
+  [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
+  this one, then set `updates.pin` to that version so the panel stops nagging. Run
+  `personalclaw snapshot` first: pre-1.0 releases carry no data migrations in either
+  direction. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
+  affordance — there is nothing for it to install here.)
+- **Apply updates** (`updates.auto`) — `staged` has no effect on this kind: the shell owns
+  the install, and nothing in it can replace a running app bundle. It stays available
+  because the same config file follows your `~/.personalclaw` to other install kinds.
+- **Check for updates** (`updates.check_enabled` + `updates.check_interval_hours`) — the
+  kill switch works exactly as everywhere else. Off means the app makes **zero** outbound
+  calls to GitHub, so the panel simply stops reporting new releases. On, it asks once every
+  `check_interval_hours` (default 12).
+
 ## Related
 
 - [Platforms](platforms.md) — which OSes the desktop shell targets.

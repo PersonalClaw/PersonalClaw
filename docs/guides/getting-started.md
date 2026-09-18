@@ -177,6 +177,54 @@ The gateway comes up on `http://127.0.0.1:10000` with a persistent
 `PERSONALCLAW_IMAGE_TAG` in `.env`. See the
 [container guide](containers.md) for ports, volumes, backups, and updates.
 
+## Updating
+
+`personalclaw update` advances whichever way you installed — it upgrades the wheel,
+checks out the release tag in a git clone, or prints the `docker compose` commands for a
+container. Everything below is the same on every install kind, and all of it lives in
+**Settings → Updates** as well as in `config.json`.
+
+**Channels** (`updates.channel`) — which release line you follow:
+
+| Channel | Follows | Use it when |
+|---|---|---|
+| `stable` (default) | the newest normal release | almost always |
+| `beta` | the newest release *including* release candidates | you want the next minor early |
+| `nightly` | every commit on your checked-out branch | you are contributing (git clones only; needs a clean tree) |
+
+**Pinning** (`updates.pin`) — stay on an exact release, whatever the channel says:
+
+```bash
+personalclaw config set updates.pin 0.2.1     # stay here
+personalclaw config set updates.pin ""        # follow the channel again
+```
+
+A pin overrides the channel everywhere — the update check, the apply, and the container
+image tag. A pin naming no published release is *refused* rather than quietly upgrading you.
+
+**Rolling back.** `personalclaw update --to 0.2.0` pins that version and installs it, so a
+later check cannot pull you forward again. Settings → Updates offers the same thing as
+**Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version change at least
+once. Take a snapshot first — pre-1.0 releases carry no data migrations in either
+direction:
+
+```bash
+personalclaw snapshot
+personalclaw update --to 0.2.0
+```
+
+**Applying automatically is opt-in** (`updates.auto`). The default `off` only notifies
+you. Set it to `staged` and an available update installs itself at the next safe point —
+it holds while a session or subagent is running, and only ever lands on the release your
+channel/pin resolves to, never on raw `main`.
+
+**Turning the check off** (`updates.check_enabled`). PersonalClaw asks GitHub for the
+newest release every `updates.check_interval_hours` (default 12, range 1–168). Set
+`updates.check_enabled` to `false` and the updater makes **zero** outbound calls — no
+scheduled check, no release probe. `personalclaw update` still works when you run it by
+hand. This is a separate switch from `updates.auto`: one governs whether PersonalClaw
+*looks*, the other whether it *installs*.
+
 ## Where to go next
 
 - **Explore the platform** — Skills, Agents, Tasks, goal Loops, Knowledge,

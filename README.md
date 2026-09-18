@@ -203,6 +203,28 @@ The dashboard opens at `http://localhost:10000`. Install a model-provider app fr
 Store, add your API key under **Settings → Providers**, and bind a chat model under
 **Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
 
+### Updating
+
+`personalclaw update` advances the install you actually have — the wheel, the checkout's
+release tag, or the container's image tag. It tracks **releases**, not `main`: a git clone
+checks out the resolved tag rather than fast-forwarding a branch.
+
+```bash
+personalclaw snapshot                        # pre-1.0: no automatic data migration
+personalclaw update                          # → the newest release on your channel
+personalclaw config set updates.pin 0.2.1    # …or stay exactly here
+personalclaw update --to 0.2.0               # roll back: pins that release and installs it
+```
+
+Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
+`nightly` for contributors), a **version pin**, **automatic applies**
+(`updates.auto=staged`, opt-in, held while work is in flight), the **check cadence**, and
+one-click **rollback**. The release check is the one outbound call this project makes and
+it can be switched off — see [Privacy](#privacy). Per-platform details:
+[Updating](docs/guides/getting-started.md#updating) ·
+[containers](docs/guides/containers.md#updates) ·
+[desktop](docs/guides/desktop.md#updating).
+
 > **Tech stack:** Python 3.12 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
 > **Run modes:** local process · Docker Compose · systemd/launchd service. (A macOS-only
 > Electron desktop shell exists but is experimental — not built, signed, or released by CI,

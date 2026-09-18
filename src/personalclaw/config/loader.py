@@ -2962,9 +2962,11 @@ class UpdatesConfig:
         default="",
         metadata=_meta(
             "Last Running Version",
-            "The version this install last ran, persisted so a rollback can offer "
-            "'Roll back to v<last_version>'. Maintained by the updater; empty until the "
-            "first recorded run.",
+            "The version this install ran BEFORE the one running now, so a rollback can "
+            "offer 'Roll back to v<last_version>'. Written by the updater at gateway "
+            "startup (`self_update.record_running_version`) the first time it sees the "
+            "version change — however it changed, including a hand-typed pip upgrade or a "
+            "recreated container. Empty until a change has been observed.",
         ),
     )
 

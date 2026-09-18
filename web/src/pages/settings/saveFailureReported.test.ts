@@ -117,7 +117,20 @@ describe('an optimistic settings write reports its failure', () => {
     const upd = readFileSync(join(SETTINGS, 'UpdatesPanel.tsx'), 'utf8')
     expect(upd, 'the optimistic toggles must report').toMatch(/\.catch\(reportSettingFailure\(/)
     expect(upd).toMatch(/notify\(`Couldn't \$\{what\}: \$\{msg\}`, 'error'\)/)
-    expect(upd, 'and still confirm on success — the `.then` was correct').toContain('.then(() => { setSaved(true)')
+    expect(upd, 'and still confirm on success — the `.then` was correct').toMatch(/\.then\(\(\) => \{ setSaved\(/)
+    // 🔑 STRENGTHENED WITH THE PANEL, not loosened around it (RUM-10). The two toggles this rail was
+    // written for became six controls, and `setSaved(true)` — one boolean for the whole panel — would
+    // now flash "Saved ✓" beside ALL SIX for a write the user made to one. So the confirmation is keyed
+    // by FIELD, and the assertion moves from the literal `true` to the thing that actually matters:
+    // every control's toast is driven by its own key, and there are at least as many of them as there
+    // are writes. A panel that regressed to one shared flag fails the second expectation.
+    const keyed = [...upd.matchAll(/<SavedToast show=\{saved === '(\w+)'\}/g)].map((m) => m[1])
+    const written = [...upd.matchAll(/write\('(\w+)'/g)].map((m) => m[1])
+    expect(new Set(keyed).size, 'each control confirms beside ITSELF, keyed by its config field')
+      .toBeGreaterThanOrEqual(4)
+    for (const field of new Set(written)) {
+      expect(keyed, `UpdatesPanel writes updates.${field} — it must confirm that write too`).toContain(field)
+    }
   })
 })
 

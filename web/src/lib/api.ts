@@ -3416,7 +3416,12 @@ export interface ProjectImportResult {
   project_id?: string; written?: string[]; error?: string
 }
 // Update + changelog.
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string }
+/** `GET /api/update/check`. Carries EVERY `updates.*` field the Settings > Updates screen edits
+ *  (RUM-10), so the six controls render from one snapshot rather than a second config read:
+ *  `channel`/`pin`/`auto`/`check_enabled`/`check_interval_hours`, plus `last_version` — the
+ *  rollback offer, which has no other source (RUM-9). `release_notes` describe the release the
+ *  channel/pin RESOLVES to, not `releases/latest`. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
 
 // settings entity payloads
 export interface NotificationSettings {

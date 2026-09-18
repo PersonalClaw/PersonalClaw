@@ -1056,6 +1056,16 @@ IGNORED: tuple[str, ...] = (
     # truth, so a restored stale release list is worse than the empty one the next
     # check refills.
     "update_releases.json",
+    # RUM-9's run-state file (`self_update._RUN_STATE_FILENAME`): the version this install
+    # was running the last time a gateway started. MACHINE-LOCAL, and the one update file
+    # here whose restored copy would be actively WRONG rather than merely stale. It is the
+    # input `record_running_version` compares the running version against to derive
+    # `updates.last_version`, so a snapshot taken on 0.2.0 and restored onto a 0.1.3 install
+    # would make the next startup record `last_version = 0.2.0` and the Updates panel offer
+    # "Roll back to v0.2.0" — an UPGRADE, i.e. the exact mis-offer RUM-9 exists to prevent.
+    # Omitted, `record_running_version` writes nothing on that first run and makes no offer
+    # until it observes a real version change, which is the honest answer.
+    "update_run.json",
     # 🔴 #2906 — the per-day usage/spend fold (`routing/usage.py`, MRT-3). Ignored, not
     # declared, for the SAME reason as the two update caches directly above: it is a DERIVED
     # fold carrying no unique truth. `routing.usage.refresh` refolds it from scratch out of
