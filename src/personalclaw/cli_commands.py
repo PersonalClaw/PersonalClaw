@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.cli_run import RunError, _authed, mint_local_token, probe_gateway
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.embedding_providers.registry import get_active_embedding_dim
@@ -29,38 +30,78 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 
 def _spawn(args: argparse.Namespace) -> None:
-    """Dispatch spawn subcommands: run, list."""
-    base = f"http://localhost:{args.port}"
+    """Dispatch spawn subcommands: run, list.
+
+    Authenticates through the same trio ``personalclaw run`` uses rather than inventing
+    a second mechanism (#2947): ``probe_gateway`` for liveness (it hits ``/api/healthz``,
+    which ``token_auth`` always bypasses, so a 403 from an auth-on gateway can never be
+    misread as absent) and ``mint_local_token`` for the credential itself (reads the
+    shared ``.local_secret`` and exchanges it at ``/api/token/local`` — the same handshake
+    ``personalclaw token``/``status``/``logout`` use). The minted token then rides every
+    request via ``_authed`` (``?token=`` — the only location ``token_auth`` honours for
+    primary owner auth; a ``Bearer`` header is deliberately not a fallback for it).
+
+    Before this fix ``_spawn`` sent no credential at all, so a 403 from the default
+    auth-on gateway raised ``urllib.error.HTTPError`` (a ``URLError`` subclass) and landed
+    on the "gateway not running" arm below — reporting a running gateway as down.
+    """
     action = getattr(args, "spawn_action", None)
+    if action not in ("list", "run"):
+        print("Usage: personalclaw spawn {run|list}")
+        return
+
+    port = args.port
+    base = f"http://localhost:{port}"
+
+    if not probe_gateway(port):
+        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
+        sys.exit(1)
+    try:
+        token = mint_local_token(port)
+    except RunError as exc:
+        # Liveness is confirmed (probe_gateway passed above) — a mint failure here is a
+        # DIFFERENT fact than "not running" (e.g. this process does not share the
+        # gateway's PERSONALCLAW_HOME, so it holds no `.local_secret`) and must read as one.
+        print(f"Error: {exc}")
+        sys.exit(1)
 
     if action == "list":
+        _spawn_list(base, port, token)
+    else:
+        _spawn_run(args, base, port, token)
+
+
+def _spawn_list(base: str, port: int, token: str) -> None:
+    """``spawn list`` — GET ``/api/spawn`` carrying the caller's minted token."""
+    try:
+        with urllib.request.urlopen(f"{base}{_authed('/api/spawn', token)}", timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
         try:
-            with urllib.request.urlopen(f"{base}/api/spawn", timeout=5) as resp:
-                data = json.loads(resp.read())
-        except (urllib.error.URLError, OSError):
-            print("Error: gateway not running (cannot reach dashboard on port %d)" % args.port)
-            sys.exit(1)
-        agents = data.get("agents", [])
-        if not agents:
-            print("No subagents.")
-            return
-        for a in agents:
-            status = "✅" if a.get("done") else "⏳"
-            print(f"  {status} {a['id']}  {a.get('task', '')[:60]}")
+            body = json.loads(e.read())
+            print(f"Error: {body.get('error', e.reason)}")
+        except Exception:
+            print(f"Error: {e.code} {e.reason}")
+        sys.exit(1)
+    except (urllib.error.URLError, OSError):
+        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
+        sys.exit(1)
+    agents = data.get("agents", [])
+    if not agents:
+        print("No subagents.")
         return
-
-    if action == "run":
-        _spawn_run(args, base)
-        return
-
-    print("Usage: personalclaw spawn {run|list}")
+    for a in agents:
+        status = "✅" if a.get("done") else "⏳"
+        print(f"  {status} {a['id']}  {a.get('task', '')[:60]}")
 
 
-def _spawn_run(args: argparse.Namespace, base: str) -> None:
+def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> None:
     """Spawn a subagent via the dashboard API."""
     data = json.dumps({"task": args.task}).encode()
     req = urllib.request.Request(
-        f"{base}/api/spawn", data=data, headers={"Content-Type": "application/json"}
+        f"{base}{_authed('/api/spawn', token)}",
+        data=data,
+        headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -73,7 +114,7 @@ def _spawn_run(args: argparse.Namespace, base: str) -> None:
             print(f"Error: {e.code} {e.reason}")
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print("Error: gateway not running (cannot reach dashboard on port %d)" % args.port)
+        print("Error: gateway not running (cannot reach dashboard on port %d)" % port)
         sys.exit(1)
 
     agent_id = result["id"]
@@ -85,7 +126,7 @@ def _spawn_run(args: argparse.Namespace, base: str) -> None:
     # Block: poll until done
 
     print(f"Spawned subagent {agent_id}, waiting for result...", file=sys.stderr)
-    poll_url = f"{base}/api/spawn/{agent_id}"
+    poll_url = f"{base}{_authed(f'/api/spawn/{agent_id}', token)}"
     while True:
         _time.sleep(2)
         try:
