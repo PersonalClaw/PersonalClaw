@@ -3337,7 +3337,28 @@ export interface BrowseExpiredSite {
    *  re-auth will REUSE the existing profile rather than establish a new one. */
   key_present: boolean
 }
-export interface BrowseStatus { kill: BrowseKillState; expired: BrowseExpiredSite[] }
+/** One per-task browse grant awaiting a human answer (BA-9). The `user_browser` target drives the
+ *  operator's OWN already-logged-in browser, so it cannot start on the autonomy ladder's say-so: it
+ *  needs a fresh grant naming the sites it will touch, and nobody answering is a REJECT.
+ *
+ *  `requested_at` (epoch seconds) + `timeout` are the fail-closed deadline, handed over as the two
+ *  raw facts rather than a pre-computed "seconds left" — which would be stale before it rendered.
+ *  Carries the task label and host scope ONLY: never a credential, cookie or token (§5.2). */
+export interface BrowsePendingGrant {
+  request_id: string
+  /** The task label, also the name of the tab group the run's tabs live under. */
+  task: string
+  /** The hostnames the task intends to touch — what the human is actually authorizing. */
+  scope: string[]
+  group: string
+  requested_at: number
+  timeout: number
+}
+export interface BrowseStatus {
+  kill: BrowseKillState
+  expired: BrowseExpiredSite[]
+  grants: BrowsePendingGrant[]
+}
 // One live browse step, off the `browse_step` WS frame (browse/mirror.py:WS_BROWSE_STEP). This is a
 // genuine PAYLOAD, not a refetch signal: the step stream has one producer and no GET slice to read
 // it back from, so the panel reads the frame's fields directly. `screenshot` is a filesystem PATH
@@ -5427,6 +5448,12 @@ export const api = {
   browseStatus: () => get<BrowseStatus>('/api/browse/status'),
   browseKill: (reason = '') => post<{ kill: BrowseKillState }>('/api/browse/kill', { reason }),
   browseKillRelease: () => post<{ kill: BrowseKillState }>('/api/browse/kill/release', { confirm: true }),
+  // Answer one pending per-task grant (BA-9). Resolves the fail-closed gate the run is parked on, so
+  // an approve lets it proceed and a reject refuses it NOW instead of making the operator wait out
+  // the 300s ceiling. 404 means it already resolved or timed out — the honest answer, not a retry.
+  browseGrantResolve: (requestId: string, action: 'approve' | 'reject') =>
+    post<{ ok: boolean; request_id: string; action: string }>(
+      `/api/browse/grants/${encodeURIComponent(requestId)}/${action}`, {}),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
       '/api/models/health',
