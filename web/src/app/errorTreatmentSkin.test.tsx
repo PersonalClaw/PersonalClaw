@@ -43,9 +43,10 @@ vi.mock('../lib/api', () => ({
 // ── The frozen pre-change markup ────────────────────────────────────────────
 //
 // Captured by rendering the surfaces on 323265b6 (parent of this change) and
-// printing `container.innerHTML`. Lucide's `<svg>` CHILDREN are normalised away
-// (see `normalise`) so an icon-library upgrade cannot make this red — every svg
-// ATTRIBUTE, including the class the treatment overrides, is still compared.
+// printing `container.innerHTML`. Lucide's `<svg>` CHILDREN and its DEPRECATED
+// ALIAS classes are normalised away (see `normalise` and `dropIconAliases`) so an
+// icon-library upgrade cannot make this red — every svg ATTRIBUTE, including the
+// canonical icon class and the class the treatment overrides, is still compared.
 
 const EB_BEFORE =
   '<div class="flex h-full flex-col items-center justify-center gap-m px-l text-center">' +
@@ -90,9 +91,35 @@ const IB_BEFORE = {
     'suspended · disk full. Chat still works.Resume',
 }
 
-/** Drop lucide's path geometry, keep every `<svg>` attribute. */
+/** Lucide emits its canonical icon class first and then appends a DEPRECATED ALIAS
+ *  class for every icon it has renamed: on 1.46.0 `TriangleAlert` renders
+ *  `class="lucide lucide-triangle-alert lucide-alert-triangle …"`, where the second
+ *  token is the pre-rename name. That alias set is library-internal and grows with
+ *  every upstream rename, so freezing it here reds this file on an icon-library bump
+ *  for a reason that touches neither property under test. Keep the canonical class —
+ *  which still pins WHICH glyph renders — and drop the aliases trailing it. */
+function dropIconAliases(classes: string): string {
+  let canonicalSeen = false
+  return classes
+    .split(' ')
+    .filter((token) => {
+      if (token === 'lucide' || !token.startsWith('lucide-')) return true
+      if (canonicalSeen) return false
+      canonicalSeen = true
+      return true
+    })
+    .join(' ')
+}
+
+/** Drop lucide's path geometry and its alias classes, keep every `<svg>` attribute. */
 function normalise(html: string): string {
-  return html.replace(/(<svg[^>]*>)[\s\S]*?<\/svg>/g, '$1</svg>')
+  return html
+    .replace(/(<svg[^>]*>)[\s\S]*?<\/svg>/g, '$1</svg>')
+    .replace(
+      /(<svg[^>]*?\bclass=")([^"]*)(")/g,
+      (_match, before: string, classes: string, after: string) =>
+        before + dropIconAliases(classes) + after,
+    )
 }
 
 function activate(id: string) {
@@ -156,7 +183,9 @@ describe('under a standard scheme both surfaces are identical to before PT-4', (
     expect(alert.getAttribute('role')).toBe(IB_BEFORE.role)
     expect(alert.getAttribute('class')).toBe(IB_BEFORE.class)
     expect(alert.getAttribute('style')).toBe(IB_BEFORE.style)
-    expect(alert.querySelector('svg')?.getAttribute('class')).toBe(IB_BEFORE.iconClass)
+    expect(dropIconAliases(alert.querySelector('svg')?.getAttribute('class') ?? '')).toBe(
+      IB_BEFORE.iconClass,
+    )
     expect(alert.textContent).toBe(IB_BEFORE.text)
   })
 })
@@ -238,5 +267,35 @@ describe('a treatment changes the skin and only the skin', () => {
   it('the default identity declares NO treatment — that is what makes it pixel-stable', () => {
     const dflt = PERSONALITIES.find((p) => p.id === DEFAULT_PERSONALITY)
     expect(dflt?.behavior.errorTreatment).toBeUndefined()
+  })
+})
+
+describe("lucide's deprecated alias classes do not red the frozen markup", () => {
+  // The class string lucide-react 1.46.0 actually emitted for the IncidentBanner's
+  // `TriangleAlert` — measured on the js-deps bump that first reddened this file.
+  // The pinned version emits no alias, so WITHOUT these cases the normalisation is
+  // never exercised on this tree and the guard silently rots back into an over-pin.
+  const EMITTED_WITH_ALIAS = 'lucide lucide-triangle-alert lucide-alert-triangle shrink-0'
+
+  it('keeps the canonical icon class and the treatment class, drops the alias', () => {
+    expect(dropIconAliases(EMITTED_WITH_ALIAS)).toBe(IB_BEFORE.iconClass)
+  })
+
+  it('is a no-op on a class list that carries no alias', () => {
+    expect(dropIconAliases(IB_BEFORE.iconClass)).toBe(IB_BEFORE.iconClass)
+  })
+
+  it('still pins WHICH glyph renders — a different icon is not normalised away', () => {
+    expect(dropIconAliases('lucide lucide-rotate-ccw')).not.toBe('lucide lucide-triangle-alert')
+  })
+
+  it('normalises the alias out of a whole `<svg>` element', () => {
+    const emitted =
+      '<svg width="32" class="lucide lucide-triangle-alert lucide-alert-triangle ' +
+      'text-on-surface-low" aria-hidden="true"><path d="M1 1"></path></svg>'
+    expect(normalise(emitted)).toBe(
+      '<svg width="32" class="lucide lucide-triangle-alert text-on-surface-low" ' +
+        'aria-hidden="true"></svg>',
+    )
   })
 })
