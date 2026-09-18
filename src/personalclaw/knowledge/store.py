@@ -13,6 +13,12 @@ from uuid import uuid4
 
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
+from .embedding_fingerprint import (
+    FINGERPRINT_COLUMNS,
+    STALE_PREDICATE,
+    active_fingerprint,
+    count_stale_chunks,
+)
 from .vector_index import ChunkVectorIndex
 
 logger = logging.getLogger(__name__)
@@ -595,6 +601,11 @@ class KnowledgeStore:
             -- order within the item (a chunker detail, distinct from the retired legacy
             -- source/chunk model). ON DELETE CASCADE means a deleted item drops its
             -- chunks with it.
+            -- `embedding_model_id`/`embedding_provider` fingerprint the vector (RET-4):
+            -- the dimension partition in `vector_index` cannot tell two DIFFERENT 384-dim
+            -- models apart, so without these a model swap leaves old vectors being scored
+            -- against the new model's queries. NULL means "provenance unknown" and reads
+            -- as stale. See `knowledge/embedding_fingerprint.py`.
             CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
                 item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -603,7 +614,9 @@ class KnowledgeStore:
                 embedding BLOB,
                 section TEXT,
                 line_start INTEGER,
-                line_end INTEGER
+                line_end INTEGER,
+                embedding_model_id TEXT,
+                embedding_provider TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_chunks_item_id ON chunks(item_id);
@@ -882,6 +895,7 @@ class KnowledgeStore:
         # means a `DROP TABLE sources` on an upgrading DB is always followed by the fresh
         # CREATE rather than racing it.
         self._migrate_sources()
+        self._migrate_chunk_fingerprint()
         # Prune orphan entities (no mentions/relations) + stale relations.
         self.db.execute("BEGIN")
         try:
@@ -897,6 +911,21 @@ class KnowledgeStore:
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+
+    def _migrate_chunk_fingerprint(self) -> None:
+        """Add the RET-4 embedding fingerprint columns to a ``chunks`` table without them.
+
+        Deliberately leaves the existing rows NULL rather than back-stamping them with the
+        currently-active model: nothing in a database written before this column knows which
+        model produced those vectors, and inventing the answer is precisely the silent
+        same-dimension comparison this atom removes. A NULL fingerprint reads as stale, so
+        an upgraded library reports its chunk layer as needing a re-index — which is the
+        true statement — instead of quietly scoring unknown vectors.
+        """
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(chunks)").fetchall()}
+        for col, decl in FINGERPRINT_COLUMNS:
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE chunks ADD COLUMN {col} {decl}")
 
     def _migrate_tags_to_rows(self):
         """Move tags from the legacy `items.tags` JSON column into `tags`/`item_tags`,
@@ -2470,12 +2499,20 @@ class KnowledgeStore:
         shorter document after an edit never leaves stale tail chunks behind. ``embedding``
         is written pre-serialized on the Chunk (``.embedding`` bytes) or NULL. Caller owns
         no commit — this commits its own single statement batch. Returns rows written.
+
+        Each row is stamped with the embedding selection active NOW (RET-4), read through
+        the one accessor the query path compares against, so a same-dimension model swap is
+        detectable instead of silently scoring incomparable vectors. When nothing is bound
+        the stamp is NULL — which is honest, and which the reader treats as "no staleness
+        concept applies" rather than as a fresh vector.
         """
         # Drop the OLD chunk ids from the ANN index while they are still readable: a re-chunk
         # mints fresh uuids, so deleting only the new ids would leave every previous
         # generation's vectors behind as orphan candidates.
         self.vec_index.drop_item(item_id)
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
+        fp = active_fingerprint()
+        model_id, provider = fp.params if fp is not None else (None, None)
         rows = [
             (
                 uuid4().hex,
@@ -2486,14 +2523,17 @@ class KnowledgeStore:
                 c.section,
                 c.line_start,
                 c.line_end,
+                model_id,
+                provider,
             )
             for c in chunks
         ]
         if rows:
             self.db.executemany(
                 "INSERT INTO chunks "
-                "(id, item_id, chunk_index, text, embedding, section, line_start, line_end) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, item_id, chunk_index, text, embedding, section, line_start, line_end, "
+                "embedding_model_id, embedding_provider) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         # Write through to the ANN index on the same connection, immediately after the rows it
@@ -3952,6 +3992,148 @@ class KnowledgeStore:
                     on_progress(done, total)
         self.db.commit()
         return {"reembedded": reembedded, "failed": failed, "total": total}
+
+    # -- Chunk-vector fingerprinting (RET-4) -------------------------------------
+
+    def count_stale_chunk_vectors(self) -> int:
+        """Chunk vectors written by a model other than the one bound now. 0 if none bound.
+
+        ``clear_embeddings`` + ``reembed_all`` rewrite the ITEM vectors on a model switch and
+        never touch ``chunks``, and the chunk backfill only visits items with NO chunk rows —
+        so before this method there was no counter, and no code path, that could see a
+        library whose whole passage layer came from the previous model.
+        """
+        fp = active_fingerprint()
+        if fp is None:
+            return 0
+        return count_stale_chunks(self.db, fp)
+
+    def stale_chunk_item_rows(self, *, include_archived: bool = False) -> list:
+        """RET-2-shaped attention rows for the items holding stale chunk vectors."""
+        fp = active_fingerprint()
+        if fp is None:
+            return []
+        from .embedding_fingerprint import stale_chunk_items, stale_rows
+
+        return stale_rows(stale_chunk_items(self.db, fp, include_archived=include_archived))
+
+    def reembed_stale_chunks(
+        self,
+        embedder,
+        on_progress=None,
+        *,
+        limit: int | None = None,
+    ) -> dict:
+        """Re-embed every chunk whose vector came from a different embedding model.
+
+        The counterpart ``reembed_all`` never had: it rewrites the PASSAGE layer, in place,
+        and re-stamps each row with the active fingerprint. Returns the counts, and
+        ``stale_remaining`` READ BACK FROM THE ROWS after the pass rather than inferred from
+        "we processed everything" — a provider that failed on three chunks leaves three rows
+        on the old model, and a re-index that reported done on that state would be exactly
+        the write-that-reported-success-and-did-not-land failure RET-4 exists to remove.
+
+        Chunk ids are preserved (an UPDATE, not a delete+insert), so citations and any other
+        reference to a chunk id survive a re-index. The ANN index is re-synced per affected
+        item afterwards: the vectors changed under unchanged ids, and the index's
+        row-count reconciliation cannot see that — the counts still match.
+        """
+        fp = active_fingerprint()
+        if fp is None:
+            # Nothing is bound, so "stale" is undefined and re-embedding is impossible.
+            return {
+                "reembedded": 0,
+                "failed": 0,
+                "total": 0,
+                "stale_remaining": 0,
+                "fingerprint": None,
+            }
+
+        sql = (
+            "SELECT c.id, c.item_id, c.text FROM chunks c "
+            f"WHERE c.embedding IS NOT NULL AND {STALE_PREDICATE} "  # noqa: S608 — literal
+            "ORDER BY c.item_id, c.chunk_index"
+        )
+        params: tuple[Any, ...] = fp.params
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (*fp.params, max(1, int(limit)))
+        rows = self.db.execute(sql, params).fetchall()
+        total = len(rows)
+        done = reembedded = failed = 0
+        touched: set[str] = set()
+
+        from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
+        from personalclaw.knowledge.embedder import floats_to_bytes
+        from personalclaw.knowledge.pipeline.runner import active_batch_embed_fn
+
+        embed_many = active_batch_embed_fn(embedder)
+        embed_one = getattr(embedder, "embed", None)
+        if not callable(embed_one):
+            # Same graceful skip as ``embed_item_chunks``: an embedder with no ``embed`` (a
+            # minimal stub) cannot produce a vector, and pretending otherwise would blank
+            # every stale chunk's vector rather than leave it recoverable.
+            return {
+                "reembedded": 0,
+                "failed": total,
+                "total": total,
+                "stale_remaining": count_stale_chunks(self.db, fp),
+                "fingerprint": str(fp),
+            }
+        size = batch_size_from_config()
+
+        for start in range(0, total, size):
+            group = rows[start : start + size]
+            texts = [(r["text"] or "") for r in group]
+            embeddable = [i for i, t in enumerate(texts) if t.strip()]
+            vectors: list[list[float] | None] = [None] * len(texts)
+            if embeddable:
+                got = embed_texts(
+                    [texts[i] for i in embeddable],
+                    embed_many=embed_many,
+                    embed_one=embed_one,
+                    batch_size=size,
+                )
+                for i, vec in zip(embeddable, got):
+                    vectors[i] = vec
+            for r, vec in zip(group, vectors):
+                if vec:
+                    # The fingerprint is written in the SAME statement as the vector, so a
+                    # crash can never leave a new vector wearing the old model's name.
+                    self.db.execute(
+                        "UPDATE chunks SET embedding = ?, embedding_model_id = ?, "
+                        "embedding_provider = ? WHERE id = ?",
+                        (floats_to_bytes(vec), fp.model_id, fp.provider, r["id"]),
+                    )
+                    reembedded += 1
+                    touched.add(str(r["item_id"]))
+                else:
+                    failed += 1
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, total)
+        self.db.commit()
+
+        # Re-sync the ANN index for every item whose vectors changed. ``sync_item`` deletes
+        # the item's chunk keys from every dimension table and re-inserts the live blobs, so
+        # a same-dimension swap (where the row COUNTS match and reconciliation therefore
+        # sees nothing wrong) still ends with the index holding the new vectors.
+        for item_id in sorted(touched):
+            live = self.db.execute(
+                "SELECT id, embedding FROM chunks WHERE item_id = ? ORDER BY chunk_index",
+                (item_id,),
+            ).fetchall()
+            self.vec_index.sync_item(item_id, [(r["id"], r["embedding"]) for r in live])
+        if touched:
+            self.db.commit()
+
+        return {
+            "reembedded": reembedded,
+            "failed": failed,
+            "total": total,
+            "stale_remaining": count_stale_chunks(self.db, fp),
+            "fingerprint": str(fp),
+        }
 
     def search_items_fts(self, query, limit=10, offset=0) -> list:
         safe = self._sanitize_fts5(query)

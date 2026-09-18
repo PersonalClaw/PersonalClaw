@@ -174,7 +174,7 @@ its **WSL2 backend** (its default; the legacy Hyper-V backend is not tested).
 
 ### 1. Get the compose file and a `.env`
 
-From a checkout, or by downloading just these two files:
+From a checkout:
 
 ```powershell
 git clone https://github.com/PersonalClaw/PersonalClaw.git
@@ -182,15 +182,31 @@ cd PersonalClaw
 copy .env.example .env
 ```
 
+Or with just the compose file, no checkout at all:
+
+```powershell
+curl.exe -fsSLO https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/main/deploy/compose/compose.yaml
+# optional: put a .env next to it
+```
+
 Open `.env` and set at least one provider key. **Paths in `.env` must be
 container paths, not Windows paths** — the gateway runs inside Linux, so
 `C:\Users\you\...` means nothing to it. Leave `PERSONALCLAW_HOME` alone; compose
 already sets it to `/data`, backed by a named volume.
 
-> **Why the `.env` must sit at the repo root:** `compose.yaml` declares
-> `env_file: ../../.env`, i.e. two levels up from `deploy/compose/`. If you copy
-> the compose file somewhere else on its own, that relative path breaks and your
-> keys silently do not load.
+> **Where the `.env` goes:** `compose.yaml` declares two candidate locations and
+> marks both `required: false` — `./.env` beside the compose file (the standalone
+> layout) and `../../.env`, the repo root (the from-a-checkout layout). Whichever
+> exists is loaded; if the repo root also has one it wins, since a later
+> `env_file` entry overrides an earlier one. A relative `env_file` path always
+> resolves from the compose **file's** parent directory, never from your shell's
+> cwd.
+>
+> Before v0.2 the file declared a bare `env_file: ../../.env`, and `required`
+> defaults to **true** in the Compose spec — so a copy of `compose.yaml` on its
+> own did not "silently skip" your keys, it **failed to start at all** with
+> `env file /path/.env not found`. That is fixed; both locations are now
+> optional.
 
 ### 2. Start it
 

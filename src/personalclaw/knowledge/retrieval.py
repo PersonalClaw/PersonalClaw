@@ -9,6 +9,7 @@ from collections import defaultdict
 from personalclaw.sqlite_compat import sqlite3
 
 from .embedder import floats_to_bytes
+from .embedding_fingerprint import FRESH_PREDICATE, active_fingerprint
 from .searchability import SearchOutcome, degradations_from, unsearchable_rows
 from .store import KnowledgeStore
 
@@ -253,11 +254,19 @@ class HybridRetriever:
         Callers that only want hits keep using :meth:`search`. Callers that must not
         answer "nothing found" when the truth is "found nothing it can reach" — the
         ``knowledge_search`` tool — use this.
+
+        **RET-4 adds one derived reason to the persisted ones.** ``stale_index`` names items
+        whose chunk vectors came from a different embedding model than the one bound now:
+        :meth:`_vector_search` refused to score those vectors (scoring them would produce a
+        meaningless number), so a search that returns nothing because of them must say so.
+        It is derived from the chunk fingerprints rather than read off the item, because the
+        thing that changed is the bound model and the item is otherwise healthy.
         """
         results = self.search(query, limit, include_archived=include_archived, arms=arms)
-        return SearchOutcome(
-            results=results, degradations=degradations_from(unsearchable_rows(self.store))
+        rows = unsearchable_rows(self.store) + self.store.stale_chunk_item_rows(
+            include_archived=include_archived
         )
+        return SearchOutcome(results=results, degradations=degradations_from(rows))
 
     def _keyword_search(
         self, query: str, limit: int = 20, *, include_archived: bool = False
@@ -487,6 +496,17 @@ class HybridRetriever:
             "SELECT c.id AS chunk_id, c.item_id, c.embedding, c.section, c.line_start, c.line_end "
         )
 
+        # RET-4: only score chunk vectors the ACTIVE embedding model produced. The dimension
+        # guard in `_consider` cannot see a same-dimension model swap — two 384-dim models
+        # produce equally-long, mutually meaningless vectors — so the filter is on the
+        # recorded fingerprint, applied in SQL rather than after decoding the BLOB. With
+        # nothing bound there is no fingerprint to compare and the clause is omitted
+        # entirely: that state is RET-2's `no_embedding_provider`, not staleness (and the
+        # vector arm has already returned above, since `self.embedder` is None).
+        fp = active_fingerprint()
+        fresh_clause = f"AND {FRESH_PREDICATE} " if fp is not None else ""
+        fresh_params: tuple[str, ...] = fp.params if fp is not None else ()
+
         def _consider_chunk_row(row) -> float | None:
             return _consider(
                 row["item_id"],
@@ -532,8 +552,8 @@ class HybridRetriever:
                             chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
                             f"WHERE c.id IN ({placeholders}) "  # noqa: S608 (placeholders only)
                             "AND c.embedding IS NOT NULL AND i.status = 'active' "
-                            f"{chunk_archived}",
-                            batch,
+                            f"{chunk_archived} {fresh_clause}",
+                            (*batch, *fresh_params),
                         )
                     }
                     for chunk_id in batch:
@@ -557,7 +577,8 @@ class HybridRetriever:
             for row in self.store.db.execute(
                 chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
                 "WHERE c.embedding IS NOT NULL AND i.status = 'active' "
-                f"{chunk_archived}"  # noqa: S608 (clause is a fixed literal)
+                f"{chunk_archived} {fresh_clause}",  # noqa: S608 (clauses are fixed literals)
+                fresh_params,
             ):
                 _consider_chunk_row(row)
 
