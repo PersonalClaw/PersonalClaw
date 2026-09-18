@@ -11,6 +11,7 @@ from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
 from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
+from personalclaw.auth.modes import classify_auth_mode_request
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_backend, credential_backend_warning
@@ -358,6 +359,18 @@ def _doctor() -> None:
         if not _has_slack:
             print("  auth:        ⚠️  no channel configured — token generation unavailable")
             issues.append("dashboard auth: remote bind without a channel")
+
+    # An auth mode the runtime cannot honor must be NAMED here, not just left to
+    # the startup log (SL-8). `from_env` silently returned the `local_token`
+    # default for `api_key`/`oauth2`/any unknown value, so an operator who
+    # believed they had enforced IdP SSO was on a shared bearer token with
+    # nothing said. Legibility only: this prints, it does not gate. The
+    # misconfiguration fails CLOSED (lost access, not weakened auth) and is a
+    # documented pre-1.0 limitation, so it is not an `issues` entry — doctor's
+    # exit status still means what it meant before.
+    _mode_request = classify_auth_mode_request()
+    if _mode_request.detail:
+        print(f"  auth mode:   ⚠️  {_mode_request.detail}")
 
     # ── Remote access (MOBILE-COMPANION S1) ──
     # Reuse the shared tailnet-detection helper so this line and the doctor
