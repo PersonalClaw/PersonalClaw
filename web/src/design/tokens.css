@@ -704,19 +704,33 @@
    target a person can hit, and that is what moves; the tool cannot see it. Prefer the
    margin idiom wherever slack exists, precisely so the measurable number improves too.
 
-   `--hit-min` is the floor, so the inset is derived rather than hand-tuned per site: the
-   pseudo-element grows by half the shortfall on each side. Set `--hit-size` to the drawn
-   size of the control on the call site if it is not 21px. */
+   🔑 THE BAND DERIVES FROM THE ELEMENT'S OWN SIZE — no call site declares its drawn width.
+   The first version of this rule computed the overhang from a `--hit-size` variable the
+   adopter had to set to its own drawn size (21px, for `BoardCollapse`). That knob is a
+   duplicate of a fact the browser already knows, and it is wrong by default for every
+   adopter that is not 21px: the app's `ui/forms` `Checkbox` draws `size-4`, so it would have
+   inherited a 21px assumption and landed at 21px reachable instead of 24.
+
+   A percentage on a pseudo-element's `width`/`height` resolves against the ORIGINATING
+   element's box, so `max(var(--hit-min), 100%)` is exactly "at least the floor, never
+   smaller than the control" for any size, and centring it with `translate(-50%, -50%)`
+   keeps the growth symmetric. Measured on the running app: `BoardCollapse` (21×21 drawn)
+   stays at **24×24 reachable, byte-identical position and box**, and `Checkbox` (16×16
+   drawn) goes **16×16 → 24×24** with zero layout shift on all five instances. */
 .hit-24 {
   position: relative;
   --hit-min: 24px;
-  --hit-size: 21px;
 }
 .hit-24::before {
   content: "";
   position: absolute;
-  /* half the shortfall per side; clamped at 0 so an already-large control is unaffected */
-  inset: calc(-1 * max(0px, (var(--hit-min) - var(--hit-size)) / 2));
+  /* At least the floor, never smaller than the control, centred on it. `100%` here is the
+     ORIGINATING element's box — which is why no adopter has to restate its drawn size. */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(var(--hit-min), 100%);
+  height: max(var(--hit-min), 100%);
   /* No paint, and it must NOT swallow events from the element it belongs to — it forwards
      them, which is the whole point. `pointer-events: auto` is the default for a generated
      box, so this is documentation rather than a change. */
