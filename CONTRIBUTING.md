@@ -218,7 +218,7 @@ Useful Makefile targets (see `make help` for the full list):
 | `make lint` / `make format` | black + isort + flake8 + mypy / auto-format. |
 | `make web-build` | Build the React SPA and link `static/dist -> web/dist` (a symlink by design — never copy). |
 | `make serve` / `make serve-fresh` | Dev gateway on `:10000` with an isolated `PERSONALCLAW_HOME` / same, after a fresh SPA build. |
-| `make serve-web` | Vite dev server with HMR on `:3000`, proxying to a running gateway. |
+| `make serve-web` | Vite dev server with HMR on `:3100` (`server.port` in `web/vite.config.ts`), proxying `/api` — the `/api/ws` socket included — and `/apps` to a running gateway. |
 
 Frontend tests run from the repo root: `npm run test:web` (vitest).
 
