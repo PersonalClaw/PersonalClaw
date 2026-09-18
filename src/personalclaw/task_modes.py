@@ -150,6 +150,38 @@ def shell_command(title: str, tool_kind: str, tool_input: object) -> str:
     return extract_bash_command(tool_input)
 
 
+def read_only_command(title: str, tool_kind: str, tool_input: object) -> bool | None:
+    """The command-screening verdict an approval surface may publish. Tri-state.
+
+    ``True`` this call runs a shell command and that command is read-only ·
+    ``False`` it runs a shell command that is NOT read-only ·
+    ``None`` it is not a shell call at all, so the question does not apply.
+
+    The distinction between ``False`` and ``None`` is the whole point and is why this
+    returns an optional rather than a bool. A consumer must be able to tell "screened,
+    and it mutates" from "never screened": the first is a positive claim it may render,
+    the second is an absence it must not turn into one. #2821's consumer
+    (``web/src/pages/chat/approvalMeta.ts``) encodes exactly that tri-state and had no
+    supplier, so one branch of it was unreachable in production.
+
+    ONE owner for the composition (#2821): ``shell_command`` decides whether a ``command``
+    key means anything here — ``command`` is an ordinary argument name and reading it off a
+    non-shell tool labelled a destructive call as a read (#443) — and only then does
+    :func:`is_read_only_bash` screen it. Two surfaces publish this verdict (the dashboard
+    chat's approval card and the gateway's pending-approval queue) and they call this, so
+    they cannot answer the same question differently.
+
+    Deliberately NOT :func:`classify_invocation`: that falls back to the tool NAME and
+    answers READ_ONLY for any name carrying no mutating hint, which is why
+    ``approval_brief.py`` argues against feeding it to a blast-radius derivation. This
+    screens the actual command string, deny-by-default.
+    """
+    cmd = shell_command(title, tool_kind, tool_input)
+    if not cmd:
+        return None
+    return is_read_only_bash(cmd)
+
+
 def extract_bash_command(tool_input: object) -> str:
     """Extract the command string from an execute_bash tool input.
 

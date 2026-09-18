@@ -28,6 +28,7 @@ from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
+    read_only_command,
     resolve_effective_risk,
     shell_command,
 )
@@ -1273,6 +1274,15 @@ class DashboardState:
             "tool_purpose": safe_purpose,
             "session": session,
             "ts": time.time(),
+            # #2821: the same command-screening verdict the chat card gets, from the same
+            # owner, so the two surfaces that ask a human for permission cannot describe
+            # one call differently. This entry is BOTH the `approval` WS payload and the
+            # `GET /api/approvals` row, so supplying it here reaches both doors at once.
+            #
+            # Screened on the RAW `tool_input`: `safe_input` has had URLs and credentials
+            # rewritten, and screening a string the shell will never see is how a verdict
+            # stops describing the actual call. `None` when this is not a shell call.
+            "is_read_only": read_only_command(tool, "", tool_input),
         }
         self.broadcast_ws("approval", self._pending_approvals[approval_id])
         self._push_approval(approval_id)
