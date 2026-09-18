@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { Check, CornerDownLeft, CornerLeftUp, Folder, FolderPlus, GitBranch, Loader2 } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
@@ -56,22 +56,63 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
   // `path`) so a FAILED jump can restore the path-bar draft to it — else the bar keeps
   // showing the bad path the user typed while the list still shows the old dir (the bar
   // and list silently disagree until a blur resets it).
-  const browse = useCallback(async (to?: string, from?: string) => {
+  //
+  // Returns the RESOLVED directory (the backend's realpath) on success and null on failure, so a
+  // caller that needs to act on the destination — "Use this folder" resolving a typed draft — can
+  // use one already-validating round trip instead of re-implementing the read, and can tell
+  // "resolved to X" from "refused" without racing the state it sets.
+  // Set the moment the user edits the path bar, cleared whenever the picker writes the bar itself.
+  // The bar belongs to the user once they touch it — see `keepTypedDraft` below.
+  const draftTouched = useRef(false)
+  const browse = useCallback(async (to?: string, from?: string, keepTypedDraft = false): Promise<string | null> => {
     setLoading(true); setError(null)
     try {
       const r = await api.browseDirs(to)
-      setPath(r.path); setParent(r.parent); setDirs(r.dirs); setPathDraft(r.path); setFilter(''); setInRepo(!!r.in_repo)
+      setPath(r.path); setParent(r.parent); setDirs(r.dirs); setFilter(''); setInRepo(!!r.in_repo)
+      // A browse the user did NOT ask for (the one on mount) must not overwrite a path they have
+      // already started typing. Found while driving the #311 fix on a loaded machine: the first
+      // browse-dirs response landed AFTER the keystrokes, reset the draft to the default browse
+      // location, and the footer button bound THAT — the same silent substitution as #311 through
+      // a different door, and a wider window the slower the filesystem.
+      if (!(keepTypedDraft && draftTouched.current)) { setPathDraft(r.path); draftTouched.current = false }
+      return r.path
     } catch (e) {
       setError((e as Error).message || 'Could not open that directory')
       // Snap the path bar back to where we still are, so it doesn't keep showing the
       // rejected path while the list below shows the prior (valid) directory.
       if (from !== undefined) setPathDraft(from)
+      return null
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { void browse() }, [browse])
+  // A typed path the user has NOT navigated to yet — the draft differing from the browsed dir.
+  // This is the whole of issue 311: the footer button submitted `path` while the input visibly
+  // showed something else, so typing `/tmp` and clicking "Use this folder" bound the browsed
+  // directory — by default the user's entire HOME — with no error and no hint. `workspace_dir` is
+  // what loops and code sessions read, write and run `bash` in, so a silent substitution points
+  // real agent work at an unintended tree.
+  const typedTarget = pathDraft.trim() && pathDraft.trim() !== path ? pathDraft.trim() : ''
+
+  /** Bind the folder the footer button names: the typed path when there is one, else the browsed
+   *  dir. A typed path is RESOLVED first (browse-dirs 404s a path that doesn't exist and returns
+   *  the realpath of one that does), so the outcome is either the path the user typed or a visible
+   *  refusal — never a different directory. */
+  const useThisFolder = async () => {
+    if (loading) return
+    if (typedTarget) {
+      // No `from` here on purpose: on refusal the rejected text stays in the bar so the user can
+      // fix a typo, next to an error that names what was wrong with it.
+      const resolved = await browse(typedTarget)
+      if (resolved) onPick(resolved)
+      return
+    }
+    if (path) onPick(path)
+  }
+
+  // The only browse nobody asked for — so it yields the path bar to anything already typed.
+  useEffect(() => { void browse(undefined, undefined, true) }, [browse])
 
   const shownDirs = useMemo(() => {
     const needle = filter.trim().toLowerCase()
@@ -123,14 +164,17 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
             {...unavailableWhen(!parent || parent === path, 'Already at the top level', { title: 'Up one level' })}>
             <CornerLeftUp size={16} />
           </button>
-          {/* Editable: type/paste an absolute path + Enter to jump there. Blurring
-              or pressing Escape resets to the current dir. */}
-          <input value={pathDraft} onChange={(e) => setPathDraft(e.target.value)}
+          {/* Editable: type/paste an absolute path + Enter to jump there, or type it and hit
+              "Use this folder" to bind it directly. Escape abandons the draft.
+              🪤 NO `onBlur` REVERT. It used to reset the draft to the browsed dir, and since
+              clicking a button blurs the input first, the typed value was destroyed a moment
+              before the click that was meant to submit it (issue 311). Losing focus is not a
+              retraction — Escape is, and it stays. */}
+          <input value={pathDraft} onChange={(e) => { draftTouched.current = true; setPathDraft(e.target.value) }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { const t = pathDraft.trim(); if (t && t !== path) void browse(t, path) }
-              else if (e.key === 'Escape') setPathDraft(path)
+              else if (e.key === 'Escape') { draftTouched.current = false; setPathDraft(path) }
             }}
-            onBlur={() => setPathDraft(path)}
             spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-label="Workspace path"
             placeholder="/absolute/path/to/folder"
             data-type="body-s" className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
@@ -235,15 +279,22 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         <div className="flex items-center justify-between gap-2 border-t border-outline-variant/40 pt-3">
           <span data-type="caption" className="min-w-0 text-on-surface-low">
             {mode === 'brownfield' ? 'Open a folder to navigate; use the current one as the codebase.' : 'Create a new folder, or use the current one as the project home.'}
-            {/* Brownfield: confirm the current dir's git status — a non-repo pick means
-                no diff/history tracking in the cockpit. Only shown once a dir is loaded. */}
-            {mode === 'brownfield' && path && !loading && (
-              inRepo
-                ? <span className="ml-1.5 inline-flex items-center gap-1" style={{ color: 'var(--color-ok)' }}><GitBranch size={11} /> git repo</span>
-                : <span className="ml-1.5 text-on-surface-low/70">· not a git repo (changes won’t be version-tracked)</span>
-            )}
+            {/* A pending typed path is what the button will bind, so name it — and DON'T claim a
+                git status for a directory the button isn't going to use. That note is derived from
+                the browsed dir (`inRepo`), so it read "· not a git repo" identically for /etc, a
+                ../ traversal and a nonexistent path; keeping it visible next to a typed draft is
+                the same wrong subject the bug had. Once the draft is committed (Enter, or the
+                resolve the button does) the note describes the bound dir again and comes back. */}
+            {typedTarget
+              ? <span className="ml-1.5 font-mono text-on-surface-low/70">· will use {typedTarget}</span>
+              : mode === 'brownfield' && path && !loading && (
+                inRepo
+                  ? <span className="ml-1.5 inline-flex items-center gap-1" style={{ color: 'var(--color-ok)' }}><GitBranch size={11} /> git repo</span>
+                  : <span className="ml-1.5 text-on-surface-low/70">· not a git repo (changes won’t be version-tracked)</span>
+              )}
           </span>
-          <Button size="sm" onClick={() => path && onPick(path)} disabled={!path || loading} disabledReason={!path && !loading ? 'Choose a folder first' : BUSY_REASON}>
+          <Button size="sm" onClick={() => void useThisFolder()} disabled={(!path && !typedTarget) || loading}
+            disabledReason={!path && !typedTarget && !loading ? 'Choose a folder first' : BUSY_REASON}>
             <Check size={14} /> Use this folder
           </Button>
         </div>
