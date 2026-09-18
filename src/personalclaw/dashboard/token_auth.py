@@ -625,6 +625,42 @@ def token_nonce(token: str) -> str:
     return nonce if isinstance(nonce, str) else ""
 
 
+def presented_session_nonce(request: Any, port: int) -> str:
+    """The nonce of the VALID session token *request* presents, or ``""``.
+
+    For the auth paths that GRANT WITHOUT CONSULTING the session token — ``AuthMode.NONE``'s
+    dev middleware and the IP-gated local-network bypass. Both hand the request straight to
+    the handler, so neither reaches the line in :func:`token_auth_middleware` that records
+    ``session_nonce``. The request is authorized, and yet the session behind it is anonymous.
+
+    That silently disables **every** paired-device distinction in those modes, which is the
+    same shape of hole the ``app`` claim had before none-mode learned to adopt it: pairing
+    succeeds, ``GET /api/devices`` lists the device, and then ``POST /api/browse/connector``
+    answers ``browse_connector_unpaired`` with that device's own cookie, because
+    ``_paired_device`` has no nonce to look up. ``/api/ws``'s origin-less upgrade (CA-7) reads
+    the same key and fails closed for the same reason.
+
+    Naming the session cannot WIDEN either path — a caller these modes admit already holds
+    unrestricted owner reach — it only lets a handler tell *which kind of client* is calling.
+    And it names only a session the token proves: the token is fully validated here (same
+    ``validate_token`` the strict path uses, same ``use_session_exp`` rule keyed on whether it
+    arrived as a cookie), so an absent, forged, or expired credential yields ``""`` and every
+    consumer keeps its stricter branch. Validation also stamps the device's ``last_seen``,
+    exactly as it does on the authenticated path.
+    """
+    token = request.query.get("token") or ""
+    from_cookie = False
+    if not token:
+        token = request.cookies.get(f"pc_token_{port}", "")
+        from_cookie = bool(token)
+    if not token:
+        return ""
+    valid, _user_id, _reason = validate_token(token, use_session_exp=from_cookie)
+    if not valid:
+        return ""
+    return token_nonce(token)
+
+
 def _evict_expired() -> None:
     """Remove token state entries whose session has expired."""
     _state.evict_expired(time.time())
@@ -894,6 +930,12 @@ def token_auth_middleware(
             client_ip = _resolved_client_ip(request)
             if is_private_network(client_ip):
                 request["user"] = request.get("user") or f"local-net:{client_ip}"
+                # The bypass grants on the IP, so it never reaches the session_nonce line
+                # below — which left a paired device on a bypassed LAN indistinguishable from
+                # the owner's browser. Name the session when (and only when) the request
+                # presents one the token proves. See presented_session_nonce.
+                if not request.get("session_nonce"):
+                    request["session_nonce"] = presented_session_nonce(request, port)
                 _log_auth(request, request["user"], "ok", "local-network bypass")
                 return await handler(request)  # type: ignore[operator]
 
