@@ -456,6 +456,18 @@ class NativeBuiltinToolProvider(ToolProvider):
         return out
 
     @staticmethod
+    def _max_task_page() -> int:
+        """The page ceiling, read from the module that OWNS it.
+
+        Same reasoning as :meth:`_structural_verbs`: writing 500 into the schema would let
+        the advertised bound drift from the one `_t_task_list` actually clamps to, which is
+        how a model comes to be told a limit is legal that the handler silently narrows.
+        """
+        from personalclaw.tasks.registry import MAX_TASK_PAGE
+
+        return MAX_TASK_PAGE
+
+    @staticmethod
     def _structural_verbs() -> list[str]:
         """The structural-retrieval verb vocabulary, read from the module that OWNS it.
 
@@ -780,7 +792,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 description=(
                     "List tasks, most-recent first. Args: optional status "
                     "('open'|'in_progress'|'blocked'|'done'|'cancelled'), project (str label), "
-                    "task_list_id (str), limit (int, default 25)."
+                    "task_list_id (str), limit (int, 1 to "
+                    f"{self._max_task_page()}, default 25 — there is no 'everything' value; "
+                    "omit it or raise it)."
                 ),
                 parameters={
                     **s,
@@ -788,7 +802,13 @@ class NativeBuiltinToolProvider(ToolProvider):
                         "status": {"type": "string"},
                         "project": {"type": "string"},
                         "task_list_id": {"type": "string"},
-                        "limit": {"type": "integer"},
+                        # A model reads the schema, not the handler — an unconstrained
+                        # `integer` is what invited `limit: -1` (#2984).
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": self._max_task_page(),
+                        },
                     },
                 },
             ),
@@ -2374,10 +2394,17 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_task_list(self, a: dict) -> ToolResult:
         from personalclaw.tasks import registry
 
+        # `int(a.get("limit", 25) or 25)` turned an explicit 0 into 25, so `limit: 0` meant
+        # "all" here and "none" over HTTP — one value, two meanings (#2984). The default now
+        # applies only when the argument is ABSENT, and the value is clamped to the same
+        # window the HTTP route uses, so `limit: -1` (the common "give me everything" idiom)
+        # can no longer hand a model a silently short list reported as a full `total`.
+        raw = a.get("limit")
         try:
-            limit = int(a.get("limit", 25) or 25)
+            limit = 25 if raw is None else int(raw)
         except (ValueError, TypeError):
             limit = 25
+        limit = max(1, min(limit, registry.MAX_TASK_PAGE))
         tasks, total = await registry.list_all_tasks(
             status=a.get("status") or None,
             project=a.get("project") or None,

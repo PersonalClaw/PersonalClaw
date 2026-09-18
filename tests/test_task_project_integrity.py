@@ -1,6 +1,6 @@
 """Rails for the task-project-integrity family.
 
-Two invariants a scoped view depends on, each previously violated silently:
+Invariants a scoped view depends on, each previously violated silently:
 
 - #475: a task cannot be completed while a BLOCKS prerequisite is still open. The
   DONE write enforced only the task's OWN exit criteria, so a kanban drag (PUT
@@ -13,6 +13,21 @@ Two invariants a scoped view depends on, each previously violated silently:
   ``task_list_id``; without a cascade they survived pointing at dead list ids,
   unreachable from every scoped view. The delete handler now deletes the
   project's tasks first.
+
+- #2976: the same orphan condition through the SIBLING door. ``DELETE
+  /api/task-lists/{id}`` was a bare ``delete_task_list()``, so its tasks survived
+  pointing at the deleted list with their derived ``project`` label blanked — and then
+  outlived the project delete too, because the #457 cascade above resolves doomed tasks
+  by project NAME, which this door had already blanked.
+
+- #2977: a task must not be BORN into that state. Neither parent id on the write path
+  was validated, so ``POST/PUT /api/tasks`` accepted a nonexistent ``task_list_id`` at
+  201/200 and STORED it, and swallowed a bad ``project_id`` outright — while the sibling
+  ``POST /api/task-lists`` refused the identical id.
+
+The last two are why the #457 cascade's resolve-by-NAME is no longer load-bearing for the
+orphan state: both doors that could produce a task with a live FK and a blank label are
+closed here, so the label the cascade reads can no longer be stale.
 """
 
 from __future__ import annotations
@@ -196,3 +211,214 @@ class TestProjectDeleteCascadesTasks:
 
             # Only the deleted project's task is cascaded; the sibling is untouched.
             assert (await client.get(f"/api/tasks/{kept['id']}")).status == 200
+
+
+# ── #2976: deleting a task LIST cascades its tasks too ──
+
+
+class TestTaskListDeleteCascadesTasks:
+    """The #457 orphan condition through the sibling door.
+
+    ``DELETE /api/task-lists/{id}`` was a bare ``delete_task_list()``: its tasks survived
+    with ``task_list_id`` still naming the deleted list and their derived ``project`` label
+    blanked. The project-delete path above documents exactly why that matters and guards
+    against it; this door did the same removal with none of the guard.
+
+    Worse, the orphan then outlived the project delete as well, because the #457 cascade
+    resolves doomed tasks by project NAME and the list delete had already blanked that
+    label — so the cascade written to catch the orphan could no longer see it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_deleting_a_list_deletes_its_tasks(self, tmp_path):
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+            lid = (
+                await (
+                    await client.post("/api/task-lists", json={"name": "Sprint", "project_id": pid})
+                ).json()
+            )["id"]
+            tid = (
+                await (
+                    await client.post("/api/tasks", json={"title": "Ship it", "task_list_id": lid})
+                ).json()
+            )["id"]
+
+            r = await client.delete(f"/api/task-lists/{lid}")
+            assert r.status == 200
+            # The count is reported, the way the artifact-folder delete reports what it
+            # unfiled: a cascade the caller cannot see is a cascade nobody can audit.
+            assert (await r.json())["deleted_tasks"] == 1
+
+            assert (await client.get(f"/api/tasks/{tid}")).status == 404
+            listed, _ = await registry.list_all_tasks(limit=10_000)
+            assert tid not in {x.id for x in listed}
+
+    @pytest.mark.asyncio
+    async def test_a_sibling_lists_tasks_survive(self, tmp_path):
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+
+            async def _make_list(name):
+                return (
+                    await (
+                        await client.post("/api/task-lists", json={"name": name, "project_id": pid})
+                    ).json()
+                )["id"]
+
+            keep, drop = await _make_list("Keep"), await _make_list("Drop")
+            kept = await (
+                await client.post("/api/tasks", json={"title": "Keeper", "task_list_id": keep})
+            ).json()
+            await client.post("/api/tasks", json={"title": "Doomed", "task_list_id": drop})
+
+            assert (await client.delete(f"/api/task-lists/{drop}")).status == 200
+            assert (await client.get(f"/api/tasks/{kept['id']}")).status == 200
+
+    @pytest.mark.asyncio
+    async def test_an_empty_list_delete_still_answers_the_same_shape(self, tmp_path):
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+            lid = (
+                await (
+                    await client.post("/api/task-lists", json={"name": "Empty", "project_id": pid})
+                ).json()
+            )["id"]
+            r = await client.delete(f"/api/task-lists/{lid}")
+            assert r.status == 200
+            assert await r.json() == {"ok": True, "deleted_tasks": 0}
+
+    @pytest.mark.asyncio
+    async def test_no_task_outlives_the_project_through_the_list_door(self, tmp_path):
+        # The second half of #2976, measured end to end: on main the task orphaned by the
+        # list delete survived the project delete too, permanently unowned.
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+            lid = (
+                await (
+                    await client.post("/api/task-lists", json={"name": "Sprint", "project_id": pid})
+                ).json()
+            )["id"]
+            tid = (
+                await (
+                    await client.post("/api/tasks", json={"title": "Ship it", "task_list_id": lid})
+                ).json()
+            )["id"]
+
+            assert (await client.delete(f"/api/task-lists/{lid}")).status == 200
+            assert (await client.delete(f"/api/projects/{pid}")).status == 200
+            assert (await client.get(f"/api/tasks/{tid}")).status == 404
+
+
+# ── #2977: a task cannot be BORN pointing at a parent that does not exist ──
+
+
+class TestTaskWriteValidatesItsParents:
+    """Neither parent id on the task write path was validated, so a task could be created
+    directly into the orphan state the two cascades above exist to prevent.
+
+    ``POST /api/task-lists`` refuses the identical bad ``project_id``; the reference
+    behavior is the sibling handler on the same parent, not a new convention.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_refuses_an_unknown_project_id(self, tmp_path):
+        # Measured on main: 201 with `project: ""` and `task_list_id: ""` — the project
+        # choice silently discarded by `_attach_project_general_list`'s bare
+        # `except ValueError: return`.
+        async with _client(tmp_path) as client:
+            r = await client.post("/api/tasks", json={"title": "x", "project_id": "p-nope-1234"})
+            assert r.status == 400
+            err = (await r.json())["error"]
+            assert err["code"] == "invalid_request"
+            assert "p-nope-1234" in err["message"]
+            # Nothing was minted.
+            listed, _ = await registry.list_all_tasks(limit=10_000)
+            assert listed == []
+
+    @pytest.mark.asyncio
+    async def test_the_sibling_list_door_refuses_the_same_id(self, tmp_path):
+        # The asymmetry #2977 is about: same parent, same bad id. Pinned so the two doors
+        # cannot drift apart again.
+        async with _client(tmp_path) as client:
+            r = await client.post(
+                "/api/task-lists", json={"name": "y", "project_id": "p-nope-1234"}
+            )
+            assert r.status == 400
+
+    @pytest.mark.asyncio
+    async def test_create_refuses_an_unknown_task_list_id(self, tmp_path):
+        # Measured on main: 201, and the dangling FK stored verbatim.
+        async with _client(tmp_path) as client:
+            r = await client.post("/api/tasks", json={"title": "x", "task_list_id": "tl-nope-5678"})
+            assert r.status == 400
+            assert "tl-nope-5678" in (await r.json())["error"]["message"]
+            listed, _ = await registry.list_all_tasks(limit=10_000)
+            assert listed == []
+
+    @pytest.mark.asyncio
+    async def test_update_refuses_an_unknown_project_id_and_changes_nothing(self, tmp_path):
+        async with _client(tmp_path) as client:
+            t = await (await client.post("/api/tasks", json={"title": "x"})).json()
+            r = await client.put(f"/api/tasks/{t['id']}", json={"project_id": "p-nope-9999"})
+            assert r.status == 400
+            after = await (await client.get(f"/api/tasks/{t['id']}")).json()
+            assert after["task_list_id"] == t["task_list_id"]
+
+    @pytest.mark.asyncio
+    async def test_update_refuses_an_unknown_task_list_id_and_changes_nothing(self, tmp_path):
+        async with _client(tmp_path) as client:
+            t = await (await client.post("/api/tasks", json={"title": "x"})).json()
+            r = await client.put(f"/api/tasks/{t['id']}", json={"task_list_id": "tl-nope-9999"})
+            assert r.status == 400
+            after = await (await client.get(f"/api/tasks/{t['id']}")).json()
+            assert after["task_list_id"] == t["task_list_id"]
+
+    @pytest.mark.asyncio
+    async def test_bulk_create_refuses_the_same_dangling_parent(self, tmp_path):
+        # Bulk is the cheapest way to mint many rows, so it inherits the same rule in
+        # PHASE 1 — exactly as it already inherits the attribution rule.
+        async with _client(tmp_path) as client:
+            r = await client.post(
+                "/api/tasks/bulk",
+                json={"op": "create", "items": [{"title": "x", "task_list_id": "tl-nope-5678"}]},
+            )
+            assert r.status == 400
+            assert "tl-nope-5678" in (await r.json())["errors"][0]["error"]
+            listed, _ = await registry.list_all_tasks(limit=10_000)
+            assert listed == []
+
+    @pytest.mark.asyncio
+    async def test_a_real_project_id_still_attaches_to_its_general_list(self, tmp_path):
+        # The refusal must not cost the feature: a valid `project_id` alone still resolves
+        # the project's find-or-create "General" list.
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+            r = await client.post("/api/tasks", json={"title": "x", "project_id": pid})
+            assert r.status == 201
+            made = await r.json()
+            assert made["project"] == "Site"
+            assert made["task_list_id"]
+
+    @pytest.mark.asyncio
+    async def test_a_real_task_list_id_is_still_stored(self, tmp_path):
+        async with _client(tmp_path) as client:
+            pid = (await (await client.post("/api/projects", json={"name": "Site"})).json())["id"]
+            lid = (
+                await (
+                    await client.post("/api/task-lists", json={"name": "Sprint", "project_id": pid})
+                ).json()
+            )["id"]
+            r = await client.post("/api/tasks", json={"title": "x", "task_list_id": lid})
+            assert r.status == 201
+            assert (await r.json())["task_list_id"] == lid
+
+    @pytest.mark.asyncio
+    async def test_an_explicitly_empty_parent_is_not_a_dangling_one(self, tmp_path):
+        # `""` is "no parent chosen" — the payload `TaskForm.draftToPayload` always sends —
+        # and must keep meaning that rather than becoming an id lookup that fails.
+        async with _client(tmp_path) as client:
+            r = await client.post(
+                "/api/tasks", json={"title": "x", "project_id": "", "task_list_id": ""}
+            )
+            assert r.status == 201

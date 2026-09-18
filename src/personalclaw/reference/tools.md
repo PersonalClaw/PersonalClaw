@@ -1851,7 +1851,7 @@ Fetch one task by id (full detail incl. exit criteria, plan, deps). Args: id (st
 
 ### `task_list`
 
-List tasks, most-recent first. Args: optional status ('open'|'in_progress'|'blocked'|'done'|'cancelled'), project (str label), task_list_id (str), limit (int, default 25).
+List tasks, most-recent first. Args: optional status ('open'|'in_progress'|'blocked'|'done'|'cancelled'), project (str label), task_list_id (str), limit (int, 1 to 500, default 25 — there is no 'everything' value; omit it or raise it).
 
 **Response type:** `task.list`
 

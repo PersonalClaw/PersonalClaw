@@ -111,7 +111,16 @@ describe('VACUITY: the cascade these dialogs warn about is real', () => {
     const handler = py.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(handler, 'found the delete handler').not.toBe('')
     expect(handler, 'and the window reached the cascade').toMatch(/list_all_tasks\(project=/)
-    expect(handler, 'it deletes each one').toMatch(/delete_task\(t\.id\)/)
+    // 🪤 The per-task delete used to be inline here as `delete_task(t.id)`. It moved into
+    // `_cascade_delete_tasks`, which the task-list door calls too, so the two cascades are one
+    // mechanism instead of two that happen to agree. Following it is safe only because BOTH hops are
+    // pinned: the handler hands it every doomed task in the project, and the helper deletes each id.
+    // Asserting only the call would let a helper that deletes nothing pass.
+    expect(handler, 'it hands every doomed task to the shared cascade')
+      .toMatch(/_cascade_delete_tasks\(\[t\.id for t in doomed\]\)/)
+    const cascade = py.match(/async def _cascade_delete_tasks[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(cascade, 'found the shared cascade').not.toBe('')
+    expect(cascade, 'and it deletes each one').toMatch(/delete_task\(tid\)/)
   })
 
   it('and the provider really unlinks the file — there is nothing to restore from', () => {
