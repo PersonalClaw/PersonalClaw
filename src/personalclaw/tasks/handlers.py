@@ -129,6 +129,11 @@ def _owner_username() -> str:
 # alongside `id`/`provider`/`created_at` in `native._IMMUTABLE_FIELDS`.
 _SUPPLIED_AUTHOR_ERROR = "author is server-derived and must not be supplied"
 
+# Ceiling on one comment body. Mirrors `dashboard/handlers/hooks.py:_HOOK_MESSAGE_MAX_LEN`
+# (~50K chars, one char of headroom) — the app's settled size-refusal for a free-text field
+# that lands in a JSON file read back whole on every access.
+_COMMENT_MAX_LEN = 49_999
+
 
 def _supplies_author(payload: object) -> bool:
     """Whether a request payload tries to set `author` itself.
@@ -493,6 +498,13 @@ async def api_tasks_comments_post(request: web.Request) -> web.Response:
     message = (raw or "").strip()
     if not message:
         return web.json_response({"error": "body required"}, status=400)
+    # Bounded, because the whole thread is read back into memory and re-serialised on every
+    # read and every write: a single 100K comment made the sidecar 102KB and the GET response
+    # 101KB, and nothing refused it. Same shape as the hook-message ceiling
+    # (`handlers/hooks.py:_HOOK_MESSAGE_MAX_LEN`) — a 400 naming the limit, not a truncation,
+    # so a client never believes it stored text the server dropped.
+    if len(message) > _COMMENT_MAX_LEN:
+        return web.json_response({"error": f"body exceeds {_COMMENT_MAX_LEN} chars"}, status=400)
     provider = body.get("provider")
     # Attribution comes from the server's own view of who is acting — the same handle
     # `Task.author` is stamped with on create, so a task and its comments agree.

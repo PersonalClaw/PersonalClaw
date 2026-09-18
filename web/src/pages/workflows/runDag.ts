@@ -13,7 +13,11 @@ import { buildTree } from './nodeTree'
  *  agree about which node comes first. Column DEPTH is derived here from ancestry among the placed
  *  nodes rather than from `TreeRow.depth` — measured, that field counts `.children[...]` segments,
  *  which is right for the list's indentation (a top-level step is not indented under the root
- *  container) and wrong for columns, where it would draw a parent on top of its own children. */
+ *  container) and wrong for columns, where it would draw a parent on top of its own children.
+ *
+ *  Both derivations read the engine's instance-path grammar, so `nestingOf` and `containsPath`
+ *  below are where that grammar is written down — including the two BRACKETLESS fan-out forms
+ *  (`.body#<i>`, `.body@<n>`) whose absence from the old reader is issue #567. */
 
 /** Geometry constants. Tuned so a 20-node run fits a laptop viewport without scrolling
  *  horizontally, which is the shape that actually occurs (`deep-research` expands to 21). */
@@ -144,9 +148,10 @@ export function layoutRunDag(
 
   // Containment edges. The parent is the nearest PLACED ancestor — which on a real run is usually
   // not the textual parent, because the projection omits container rows entirely (measured: a gated
-  // run projected four leaves and zero containers). Falling back to the nearest ancestor by path
-  // PREFIX means a nested leaf still links to the step that contains it, so the graph shows the
-  // run's shape instead of four disconnected boxes.
+  // run projected four leaves and zero containers). Taking the nearest ancestor by path SEGMENT
+  // means a nested leaf still links to the step that contains it, so the graph shows the run's
+  // shape instead of four disconnected boxes. Same parenthood test `buildTree` uses for the list
+  // (`nodeTree.ts` matches on `${path}.`), which is what keeps the DAG and the list agreeing.
   const edges: DagEdge[] = []
   for (const row of rows) {
     const parentPath = parentOf(row.node.instance_path, placed)
@@ -183,44 +188,62 @@ export function layoutRunDag(
   }
 }
 
-/** How deeply a path nests, by counting its container segments.
+/** How deeply a path nests, by counting the DOT-separated container segments the engine appends.
  *
- *  Counts `[` rather than `.`: the separators mix (`root.children[1].children[0]`), and a bracket
- *  appears exactly once per container level in every shape the engine emits — `children[n]`,
- *  `body[n]`, `cases[label]`.
+ *  The engine composes an instance path one dotted segment per container level, and only two of
+ *  the six forms carry a bracket (`workflows/models.py`, `workflows/tick.py`):
+ *
+ *      .children[<i>]   .cases[<label>]   .default   .body   .body#<i>   .body@<n>
+ *
+ *  `#i` is a `foreach` item and `@n` a `while` iteration — the fan-out shapes. Counting `[`
+ *  instead scored every one of those ZERO, so a loop's twelve items landed in the SAME column as
+ *  their container, the DAG showed no fan-out at all, and every containment edge pointed backwards
+ *  because parent and child shared an x (issue #567). The old docstring claimed the grammar was
+ *  `body[n]`; nothing emits that.
+ *
+ *  Separators inside brackets are skipped, because a `cases[<label>]` label is spec-authored text
+ *  and may contain a dot.
  */
 function nestingOf(path: string): number {
-  let count = 0
-  for (const ch of path) if (ch === '[') count += 1
-  return count
+  let depth = 0
+  let brackets = 0
+  for (const ch of path) {
+    if (ch === '[') brackets += 1
+    else if (ch === ']') brackets = Math.max(0, brackets - 1)
+    else if (ch === '.' && brackets === 0) depth += 1
+  }
+  return depth
 }
 
-/** The nearest ancestor of `path` that is actually placed.
+/** Whether `ancestor` contains `path`, by SEGMENT rather than by characters.
+ *
+ *  🔴 The `.` is load-bearing and a bare `startsWith` is not enough. Every child path is its
+ *  parent's plus `.<segment>`, so requiring the separator is what tells a real ancestor from a
+ *  SIBLING whose name merely starts the same way: `body#10`.startsWith(`body#1`) is true — no
+ *  delimiter stands between the `1` and the `0` — so a prefix scan reparented every double-digit
+ *  loop item onto item #1 and drew a wrong tree for any loop with ten or more iterations. The
+ *  bracketed forms accidentally escaped it (`children[10]` does not start with `children[1]`,
+ *  the `]` blocks it), which is exactly why 85 cycles of bracket-shaped test data never saw this.
+ */
+function containsPath(ancestor: string, path: string): boolean {
+  return path.length > ancestor.length
+    && path.startsWith(ancestor)
+    && path[ancestor.length] === '.'
+}
+
+/** The nearest ancestor of `path` that is actually placed, or `''` when none is.
  *
  *  NEAREST, not the immediate textual parent: a projection can omit an intermediate container (it
  *  has not started yet), and linking to the textual parent would drop the edge entirely — leaving a
- *  child floating with no visible connection to the run it belongs to.
+ *  child floating with no visible connection to the run it belongs to. `''` (no edge) is the honest
+ *  answer when nothing above this node was projected; inventing an edge to an unplaced box would
+ *  draw a line to nowhere.
  */
 function parentOf(path: string, placed: Map<string, unknown>): string {
-  // First: a placed node that is a strict path PREFIX of this one. That is what links
-  // `root.children[1].children[0]` to nothing (its container is unprojected) but links a loop body
-  // item to the loop's own row when the loop IS projected. Longest prefix wins — the nearest
-  // ancestor, not the outermost.
   let best = ''
   for (const candidatePath of placed.keys()) {
-    if (candidatePath === path) continue
-    if (!path.startsWith(candidatePath)) continue
+    if (!containsPath(candidatePath, path)) continue
     if (candidatePath.length > best.length) best = candidatePath
   }
-  if (best) return best
-
-  let candidate = path
-  for (;;) {
-    const cut = Math.max(candidate.lastIndexOf('.'), candidate.lastIndexOf('['))
-    if (cut <= 0) return ''
-    candidate = candidate.slice(0, cut)
-    // `root.children[2]` → strip the bracket segment to reach `root.children` → then `root`.
-    if (placed.has(candidate)) return candidate
-    if (!candidate.includes('.') && !candidate.includes('[')) return ''
-  }
+  return best
 }

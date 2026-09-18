@@ -55,6 +55,31 @@ def _sel():
     return _pkg.sel()
 
 
+def default_terminal_cwd(cfg: "dict[str, object]") -> str:
+    """Where a terminal session starts when the caller names no ``cwd``.
+
+    ``dashboard.terminal.cwd`` (an explicit user choice) wins, then the agent WORKSPACE
+    — the same root ``session.py``'s pool uses for a chat's tools — then ``$HOME``.
+
+    🔴 The workspace step is the fix for issue #544. The Terminal empty state promises a
+    shell "to run shell commands in your workspace" and every UI-created session opened in
+    ``$HOME`` instead, so a user following that hint ran their first command in the wrong
+    tree — and on a normal install ``$HOME`` is also where ``~/.personalclaw`` itself lives,
+    which an isolated dev home exists to keep a shell away from. Resolved SERVER-side rather
+    than passed by each caller: the promise belongs to the endpoint, and the two New-session
+    buttons, the drawer, and the CLI would otherwise each have to remember to send it (they
+    did not — that is the bug). A caller with a specific workspace still overrides, which is
+    the cockpit's path. ``default_workspace_dir()`` already returns ``""`` when the root is
+    missing or sensitive, so the chain still ends somewhere real.
+    """
+    configured = str(cfg.get("cwd") or "").strip()
+    if configured:
+        return configured
+    from personalclaw.config.loader import default_workspace_dir
+
+    return default_workspace_dir() or os.environ.get("HOME", "/")
+
+
 @dataclass
 class _TerminalSession:
     """Server-side state for one PTY session."""
@@ -311,10 +336,10 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 struct.pack("HHHH", 24, 80, 0, 0),
             )
             shell = str(cfg.get("shell") or os.environ.get("SHELL", "/bin/bash"))
-            # prefer the cwd requested at create time (workspace-scoped), then
-            # cfg, then HOME. Only honor a requested cwd that actually exists.
+            # prefer the cwd requested at create time (a project/cockpit workspace), then
+            # the shared default. Only honor a requested cwd that actually exists.
             _req_cwd = _pending_cwd.pop(session_id, "")
-            cwd = cfg.get("cwd") or os.environ.get("HOME", "/")
+            cwd = default_terminal_cwd(cfg)
             if _req_cwd and os.path.isdir(_req_cwd):
                 cwd = _req_cwd
             env = {
@@ -675,7 +700,9 @@ async def api_terminal_create(request: web.Request) -> web.Response:
         {
             "session_id": session_id,
             "shell": shell,
-            "cwd": requested_cwd or str(cfg.get("cwd") or os.environ.get("HOME", "/")),
+            # The SAME resolution the WS spawn does, so the create response never advertises a
+            # cwd the PTY will not actually open in.
+            "cwd": requested_cwd or default_terminal_cwd(cfg),
             "sandbox": requested_sandbox,
         }
     )

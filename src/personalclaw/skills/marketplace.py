@@ -68,6 +68,13 @@ class SkillEntry:
     source: str  # marketplace name or "local"
     url: str = ""  # human-readable URL on the marketplace
     installs: int = 0  # install count if known
+    # Already present in the user's skills dir. An ANNOTATION, never a reason to withhold
+    # the row: the fan-out used to DROP every already-installed hit, which emptied the
+    # store on a stock install (every bundled skill is auto-installed at startup, and the
+    # `native` marketplace mirrors exactly that bundle — so its whole catalogue matched the
+    # drop filter and "all marketplaces" answered 0 for every query, issue #301). A search
+    # that omits what you have cannot tell you that you already have it.
+    installed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +84,7 @@ class SkillEntry:
             "source": self.source,
             "url": self.url,
             "installs": self.installs,
+            "installed": self.installed,
         }
 
 

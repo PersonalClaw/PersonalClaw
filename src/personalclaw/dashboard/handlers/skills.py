@@ -252,6 +252,24 @@ async def api_skills_marketplaces(request: web.Request) -> web.Response:
     return web.json_response(get_default_skills_registry().info())
 
 
+def _mark_installed(entries: "list") -> "list":
+    """Stamp ``SkillEntry.installed`` from the user's own skills dir, in place.
+
+    ONE reader of installed-ness for BOTH branches of the search endpoint. The scoped
+    branch used to report ``installed: false`` for the very row the unscoped branch
+    dropped as installed — the same skill, two answers — and the frontend cannot annotate
+    a row the server never labelled. Matched on ``id`` OR ``name`` because a marketplace
+    keyed on the bare directory name (``native``) and one keyed on ``owner/repo/skill``
+    both have to line up against ``SkillsLoader.list_skills()``'s ``key``.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
+    installed_names = {s["key"] for s in SkillsLoader(install_builtins=False).list_skills()}
+    for entry in entries:
+        entry.installed = entry.id in installed_names or entry.name in installed_names
+    return entries
+
+
 async def api_skills_search(request: web.Request) -> web.Response:
     """GET /api/skills/search — search across all registered skill providers.
 
@@ -280,7 +298,7 @@ async def api_skills_search(request: web.Request) -> web.Response:
                 {"error": f"Marketplace '{marketplace_name}' not registered"}, status=404
             )
         try:
-            results = mp.search(query, limit=limit)
+            results = _mark_installed(mp.search(query, limit=limit))
             return web.json_response(
                 {
                     "results": [r.to_dict() for r in results],
@@ -300,9 +318,10 @@ async def api_skills_search(request: web.Request) -> web.Response:
     #
     # Two sources register at import (`skills/native.py`): `native` mirrors the bundled
     # catalogue and `installed` mirrors the user's own skills. Both report
-    # `marketplace_type == "native"`, and neither is somewhere to install from — the fan-out
-    # skips `installed` outright and then filters every `native` hit out as already present.
-    # So on a fresh install the store can offer nothing FOR ANY QUERY, and
+    # `marketplace_type == "native"`, and neither is somewhere to install FROM — the fan-out
+    # skips `installed` outright and reports every `native` hit as `installed: true`, because
+    # a stock install has already copied that whole bundle into the user's skills dir. So a
+    # fresh install can MATCH plenty and still have nothing to install from, and
     # `{"results": [], "counts": {}}` was byte-identical to a query that genuinely matched
     # nothing (issue 1780). The user searched, got silence, and the panel blamed the query.
     #
@@ -325,46 +344,41 @@ def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dic
     ``(results, per_source_counts)``.
 
     The counts are taken BEFORE the merged list is capped at *limit*, so a source that
-    matched 40 skills reports 40 even though only its top rows survive the cap. One
-    implementation: :func:`search_marketplaces` is this function without the counts.
+    matched 40 skills reports 40 even though only its top rows survive the cap.
     Never raises — a failing marketplace (an unreachable catalog) is logged and skipped,
     so one bad source cannot empty the store.
+
+    🔴 Already-installed hits are ANNOTATED (``SkillEntry.installed``), never withheld.
+    Dropping them read as "no results" for every query a stock install can make (#301):
+    the gateway copies the whole bundled tree into the user's skills dir at startup
+    (``skills/loader.py:_ensure_builtin_skills``) and the ``native`` marketplace is
+    registered against that same bundled dir, so ``native``'s ids were ALWAYS a subset of
+    the installed set and the filter emptied the catalogue structurally rather than
+    occasionally. It also inverted this endpoint's documented contract — an unscoped
+    search returned strictly LESS than the same search scoped to one marketplace. The
+    ``installed`` source itself is still skipped, which is a different fact: it mirrors the
+    user's own skills dir, so including it would list every skill twice.
     """
-    from personalclaw.skills.loader import SkillsLoader
     from personalclaw.skills.marketplace import get_default_skills_registry
 
     registry = get_default_skills_registry()
-    installed_names = {s["key"] for s in SkillsLoader(install_builtins=False).list_skills()}
 
-    all_results = []
+    results = []
     for name in registry.list():
         if name == "installed":
             continue
         try:
             mp = registry.get(name)
-            all_results.extend(mp.search(query, limit=limit))
+            results.extend(mp.search(query, limit=limit))
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", name, exc)
+    _mark_installed(results)
 
-    filtered = [
-        r for r in all_results if r.id not in installed_names and r.name not in installed_names
-    ]
     counts: dict[str, int] = {}
-    for r in filtered:
+    for r in results:
         counts[r.source] = counts.get(r.source, 0) + 1
-    filtered.sort(key=lambda r: r.installs, reverse=True)
-    return filtered[:limit], counts
-
-
-def search_marketplaces(query: str, limit: int = 20) -> list:
-    """Fan a query out to every registered marketplace, drop already-installed
-    skills, and return ``SkillEntry`` objects sorted by install count.
-
-    Shared by the skills-search endpoint and the goal-loop intake (the planner
-    auto-searches for installable skills during classify). Never raises — a
-    failing marketplace is logged and skipped.
-    """
-    return search_marketplaces_counted(query, limit=limit)[0]
+    results.sort(key=lambda r: r.installs, reverse=True)
+    return results[:limit], counts
 
 
 async def api_skills_marketplace_detail(request: web.Request) -> web.Response:

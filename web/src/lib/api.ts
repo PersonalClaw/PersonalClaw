@@ -1918,7 +1918,10 @@ export interface LearningSummary {
 export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
-export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number }
+/** `installed` is the server's answer to "is this already in my skills dir" — an ANNOTATION on a
+ *  row the search still returns. The fan-out used to withhold installed rows instead, which emptied
+ *  the store for every query a stock install can make (#301). */
+export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number; installed?: boolean }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
 /** `tier` is the PROVENANCE of the provider behind this tool — the same
  *  `supply_chain.TrustTier` string the install dialog discloses ("Unsigned — community
