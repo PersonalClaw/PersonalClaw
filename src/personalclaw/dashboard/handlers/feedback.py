@@ -8,9 +8,11 @@ POST /api/feedback/producers/clear      un-suppress after the user edits the art
 
 The ``feedback.enabled`` kill-switch 404s every route (thumbs never render when
 off — the FE hides on config, this is the backend rail). An app-scoped token's
-records get ``source_app`` stamped server-side from ``request["app"]`` and the
-producer forcibly namespaced to ``("app", "<app>:<producer>")`` — an app can
-never impersonate a core producer.
+records get ``source_app`` stamped server-side from ``request["app"]``; the
+app-boundary that identity implies — producer namespaced to
+``("app", "<app>:<producer>")`` and the target forced to ``app_judgment`` — is
+enforced in :func:`personalclaw.feedback.record_feedback`, which is the one write
+API BOTH this route and ``sdk.feedback`` go through (#2784).
 """
 
 from __future__ import annotations
@@ -75,13 +77,13 @@ async def api_feedback_record(request: web.Request) -> web.Response:
 
     producer_kind = str(body.get("producer_kind", ""))
     producer_id = str(body.get("producer_id", ""))
-    # App callers: source_app is stamped server-side (never client-claimed) and
-    # the producer is forced into the app namespace.
+    # App identity is stamped server-side from the verified app-scoped token, never
+    # client-claimed. The BOUNDARY it implies — producer namespaced, target forced to
+    # `app_judgment` — is enforced in `fb.record_feedback` and deliberately not duplicated
+    # here: this route is one of two doors, and `sdk.feedback.record_feedback` is the other
+    # (#2784). The copy that used to live here forced the producer and, through a
+    # conditional that could never be false, never the target.
     source_app = str(request.get("app") or "")
-    if source_app:
-        producer_id = f"{source_app}:{producer_id or 'default'}"
-        producer_kind = "app"
-        target_kind = "app_judgment" if target_kind not in fb.TARGET_KINDS else target_kind
 
     snapshot = body.get("snapshot")
     rec = fb.record_feedback(

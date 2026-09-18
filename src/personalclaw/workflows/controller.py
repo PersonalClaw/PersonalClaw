@@ -388,9 +388,6 @@ class RunController:
         #: Run-scoped "always allow" decisions (WF2-R7). Cleared on rewind: remembering
         #: across one would auto-approve the very step the user rewound to reconsider.
         self._allow_memory = gate_policy.AllowMemory()
-        #: event-gate path -> re-hold accounting. Bounded, because an unbounded hold is a
-        #: wedge that looks like patience.
-        self._event_holds: dict[str, gate_policy.HoldState] = {}
         #: Monotonic SSE sequence. Separate from the journal's `seq`: the journal counts
         #: persisted records, this counts published events, and conflating them would make a
         #: consumer's gap detection fire on every unpublished journal write.
@@ -963,6 +960,14 @@ class RunController:
 
         A `wait` is parked on the CLOCK and resolves itself, so surfacing it as needs_input
         would ask a human to answer something nobody asked them.
+
+        `approval` and `event` are ONE case here on purpose, and #375 read that as the bug
+        it is not. An event gate's wake-up arrives as a trigger-declared resume against this
+        run (`triggers.loop._apply_resume` → `service.resume_run` → `resume`), which is the
+        same continuation a human answering the card consumes — so an event gate is
+        answerable by a human too, and `bundled/goal-pursuit-monitor`'s `park` message says
+        exactly that ("answer this gate to force a check now"). Splitting them would hide a
+        parked monitor from needs_input, leaving no surface for the escape hatch.
         """
         node = dict(_walk(self.root)).get(_base_path(path))
         if node is None or node.kind != NodeKind.GATE:

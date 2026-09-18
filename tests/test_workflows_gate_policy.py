@@ -1,4 +1,4 @@
-"""Gate policy (WF2-R7) — who may answer, what auto-approves, how a hold behaves.
+"""Gate policy (WF2-R7) — who may answer, and what auto-approves.
 
 The load-bearing claims, each guarding a specific way unattended automation goes wrong:
 
@@ -8,12 +8,14 @@ The load-bearing claims, each guarding a specific way unattended automation goes
 * **a remote reply must come from the run's owner** — otherwise a shared channel is a
   privilege-escalation path where anyone who can type approves someone else's deploy;
 * **an unanswered remote gate DENIES** — silence is not consent;
-* **an event gate does not eat its wake-up** — consuming the event and then failing
-  destroys the only signal that would ever satisfy it;
-* prerequisite-absent and input-invalid are DIFFERENT: one holds, one fails;
 * **"always allow" is cleared on rewind** — otherwise it auto-approves the very step the
   user rewound to reconsider;
 * an action provider may ASK mid-run without the author pre-placing a gate.
+
+The event-hold suite that used to sit here went with the machinery it tested (#375):
+`evaluate_event_gate`/`HoldState`/`HoldVerdict` had zero production callers, and a suite
+over an unreachable function is a green rail that certifies nothing.
+`tests/test_workflows_gate_policy_reachability.py` is what now keeps that from recurring.
 """
 
 from __future__ import annotations
@@ -178,47 +180,6 @@ class TestOwnerBinding:
         was reading a channel."""
         verdict = GP.remote_timeout_decision({"risk": "destructive"})
         assert verdict.decision == GP.Decision.AUTO_DENIED and not verdict.approved
-
-
-# ── event gates ──────────────────────────────────────────────────────────────
-
-
-class TestEventHold:
-    def test_a_satisfied_prerequisite_proceeds_and_consumes_the_event(self) -> None:
-        verdict = GP.evaluate_event_gate({}, GP.HoldState(), prerequisite_met=True)
-        assert not verdict.hold and not verdict.preserve_event and not verdict.give_up
-
-    def test_an_absent_prerequisite_holds_and_PRESERVES_the_event(self) -> None:
-        """The core of the rule: a gate that ate its wake-up and then failed would destroy
-        the only signal that would ever satisfy it."""
-        state = GP.HoldState()
-        verdict = GP.evaluate_event_gate({}, state, prerequisite_met=False)
-        assert verdict.hold and verdict.preserve_event and not verdict.give_up
-        assert state.holds == 1
-
-    def test_holds_are_bounded_and_give_up_loudly(self) -> None:
-        """An unbounded hold is a wedge that looks like patience."""
-        state = GP.HoldState()
-        for _ in range(GP.DEFAULT_EVENT_HOLD_LIMIT):
-            GP.evaluate_event_gate({}, state, prerequisite_met=False)
-        final = GP.evaluate_event_gate({}, state, prerequisite_met=False)
-        assert final.give_up and not final.hold
-        assert "giving up" in final.reason
-
-    def test_the_hold_limit_is_configurable(self) -> None:
-        state = GP.HoldState()
-        GP.evaluate_event_gate({"hold_limit": 1}, state, prerequisite_met=False)
-        second = GP.evaluate_event_gate({"hold_limit": 1}, state, prerequisite_met=False)
-        assert second.give_up
-
-    def test_invalid_input_fails_rather_than_holding(self) -> None:
-        """prerequisite-absent is NOT input-invalid: the event arrived and was wrong, so
-        retrying the same payload only burns budget."""
-        verdict = GP.evaluate_event_gate(
-            {}, GP.HoldState(), prerequisite_met=False, input_valid=False
-        )
-        assert verdict.give_up and not verdict.hold
-        assert not verdict.preserve_event  # the event WAS delivered; it was just bad
 
 
 # ── action-node clarification ────────────────────────────────────────────────
