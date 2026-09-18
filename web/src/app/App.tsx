@@ -157,7 +157,15 @@ function renderPage(active: string, r: RouteProps) {
     case 'apps': return <AppsSection {...r} />
     case 'app': return <AppHostPage {...r} />
     case 'settings': return <SettingsPage {...r} />
-    default: return <div className="flex h-full items-center justify-center text-on-surface-low" data-type="headline-s">{NAV.find((n) => n.id === active)?.label} — coming soon</div>
+    // Unreachable by construction: every ROUTABLE member has a case above, and an UNKNOWN route
+    // never arrives here because `rendered` clamps it (and the effect then corrects the URL).
+    // `routeCasesCoverRoutable.test.ts` is what keeps that true.
+    //
+    // It said "<label> — coming soon", which was wrong twice over: for an unknown route the label
+    // resolved to `undefined` (rendering a bare " — coming soon"), and for a ROUTABLE route with a
+    // missing case it told the user a feature was PLANNED when the truth is a missing branch. The
+    // switch still needs a fallback for its return type, so it says something true instead.
+    default: return <div className="flex h-full items-center justify-center text-on-surface-low" data-type="headline-s">This view isn’t available.</div>
   }
 }
 
@@ -371,6 +379,21 @@ function AppInner() {
     else if (onboarded) clearOnboardingExit()
   }, [loaded, onboarded, route, navigate])
 
+  // An unknown hash CORRECTS ITSELF (#306). The clamp above picks what to render; this makes the
+  // URL agree, so the address bar stops claiming a route that does not exist.
+  //
+  // `replace: true` is the load-bearing half: a push would leave the bogus hash in history, so Back
+  // would return the user to the broken URL they were just rescued from — and each Back press would
+  // re-run this effect, bouncing them forward again.
+  //
+  // Gated on `loaded && onboarded` so it cannot race the onboarding effect above: while onboarding
+  // owns the route, `#/onboarding` is deliberately NOT in ROUTABLE, and correcting it here would
+  // fight that redirect.
+  useEffect(() => {
+    if (!loaded || !onboarded) return
+    if (route && !ROUTABLE.has(route)) navigate('dashboard', { replace: true })
+  }, [loaded, onboarded, route, navigate])
+
   // ── Progressive disclosure over the rail (ONBOARDING-UX C4) ──
   // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
   // and no record at all resolves to `expert` — the marker for an install that was onboarded
@@ -379,7 +402,10 @@ function AppInner() {
 
   // The REAL route to render (loops/code keep their own sections for detail/history/
   // planning sub-routes; only the BARE route was folded into the #/loop composer).
-  // An unknown route falls back to the home dashboard.
+  // An unknown route falls back to the home dashboard FOR THIS RENDER, and the effect below
+  // then corrects the URL (#306). The clamp alone left `#/nonsense` in the address bar with the
+  // dashboard underneath it — so a stale bookmark, a typo, or a link from an older version all
+  // looked like the dashboard had simply moved there, with nothing to tell the user which.
   const rendered = ROUTABLE.has(route) ? route : 'dashboard'
   // The nav-HIGHLIGHT route: loops launch from within Projects, so a bare #/loop
   // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.
