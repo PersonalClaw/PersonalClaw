@@ -185,7 +185,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     control.unmount()
 
     learningBenchmark.mockResolvedValue(view())
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(learningBenchmark).toHaveBeenCalled()
     expect(await screen.findByText('Skill impact benchmark')).toBeTruthy()

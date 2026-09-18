@@ -2202,6 +2202,10 @@ export interface LearningInbox {
   rows: LearningRow[]; total: number
   by_kind: Record<string, number>; by_tier: Record<string, number>
   flagged: number; unrenderable: string[]; bulk_acceptable: number
+  /** SKILL proposals awaiting review — a count and a pointer, never rows. A different store
+   *  (`skills/.proposals`) with its own review UI; the Learning empty state names it so it
+   *  stops claiming "Nothing to review" while they sit one page away (#321). */
+  skill_proposals_pending?: number
 }
 // One day of the capture panel. An EMPTY bucket is the signal: `health()` cannot see a day where
 // capture never ran, which is the failure the staging tier exists to expose.

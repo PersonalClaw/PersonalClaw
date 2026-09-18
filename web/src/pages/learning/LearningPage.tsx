@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, Brain, Check, RefreshCw, TrendingDown, X } from 'lucide-react'
+import { AlertTriangle, Brain, Check, RefreshCw, Sparkles, TrendingDown, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
@@ -18,6 +18,7 @@ import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
+import type { RouteProps } from '../../app/useQueryState'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState, evidenceLabel,
   gateLabel, gateRegressed, kindIcon, kindLabel, replayLabel, replayRegressed,
@@ -56,7 +57,7 @@ const ATTENTION_KEY = 'learning:attention'
  *  bulk eligibility, and renderability all arrive decided — this renders them. Re-deriving any of
  *  them in TS would eventually disagree with the server, and the FE would be the copy shipping the
  *  permissive answer. */
-export function LearningPage() {
+export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   const [kind, setKind] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
@@ -167,6 +168,9 @@ export function LearningPage() {
   }
 
   const rows = inbox?.rows ?? []
+  // `?? 0`, so an older gateway that does not send the field reads as "none pending" and the
+  // original empty state renders — a missing count must not claim proposals exist.
+  const skillPending = inbox?.skill_proposals_pending ?? 0
 
   return (
     <div className="flex h-full flex-col">
@@ -282,11 +286,27 @@ export function LearningPage() {
             ) : loading && !inbox ? (
               <ListSkeleton rows={4} what="proposals" />
             ) : rows.length === 0 ? (
-              <EmptyState
-                icon={Brain}
-                title="Nothing to review"
-                hint="Proposals appear here when the system notices a pattern worth offering. Nothing is ever installed without your accept."
-              />
+              /* 🔴 The empty state must not DENY what another store holds (#321). This said
+                 "Nothing to review — proposals appear here when the system notices a pattern
+                 worth offering", which describes a skill refinement synthesized from the user's
+                 own sessions exactly. Measured with one pending proposal: the identity report
+                 lower on THIS PAGE counted it while this panel said there was nothing. Skill
+                 proposals live in a different store with its own review UI, so this names them
+                 and points there — it does not list them. */
+              skillPending > 0 ? (
+                <EmptyState
+                  icon={Sparkles}
+                  title={`${skillPending} skill ${skillPending === 1 ? 'proposal' : 'proposals'} awaiting review`}
+                  hint="The ambient lesson pipeline has filed nothing yet. These came from the skill ladder, which keeps its own queue."
+                  action={{ label: 'Review in Skill proposals', onClick: () => navigate('skills?mode=proposals'), icon: Sparkles }}
+                />
+              ) : (
+                <EmptyState
+                  icon={Brain}
+                  title="Nothing to review"
+                  hint="Proposals appear here when the system notices a pattern worth offering. Nothing is ever installed without your accept."
+                />
+              )
             ) : (
               <div className="flex flex-col gap-s">
                 {rows.map((row) => (

@@ -154,7 +154,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
     control.unmount()
 
     ablation.mockResolvedValue(view())
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     // The route is REQUESTED: the client is not merely exported next to `judgeBench`.
     expect(ablation).toHaveBeenCalled()
