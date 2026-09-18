@@ -56,6 +56,20 @@ def progress_feed(item_id: str) -> str:
     return f"knowledge:ingest:{item_id}"
 
 
+# The terminal stages, in execution order — the ones that run AFTER the graph over the
+# consolidated bundle. Owned HERE, beside the code that actually runs them, and imported
+# by the graph-shape endpoint: the list was previously hand-copied into
+# `dashboard/handlers/knowledge.py`, and the copy silently fell out of date (it omitted
+# `dedup`, so the runner emitted a `node` SSE event for a stage the shape denied existed —
+# a phase no surface could render). One list, one truth.
+TERMINAL_STAGES = ("insights", "entities", "intents", "embed", "dedup")
+
+# Which of them need an active model. `embed` has its own embedder and `dedup` is pure
+# arithmetic over vectors, so neither is gated on the LLM pool (this is why both still run
+# for a `raw` source, whose promise is only about the model-backed three).
+MODEL_BACKED_TERMINAL_STAGES = frozenset({"insights", "entities", "intents"})
+
+
 async def ingest_item(
     store,
     item_id: str,
@@ -217,8 +231,13 @@ async def ingest_item(
             # an item whose enrichment silently produced nothing.
             insights_phase = entities_phase = intents_phase = "skipped"
             insights_ok = True  # nothing failed; a raw item is not under-enriched
-            for stage in ("insights", "entities", "intents"):
-                _emit("node", node=stage, phase="skipped")
+            # Derived from the model-backed set, not re-listed: a fourth model-backed stage
+            # added later must announce its skip here without anyone remembering to edit a
+            # second copy of the same list. Filtered through TERMINAL_STAGES for a stable
+            # emit order (a frozenset's iteration order is not).
+            for stage in TERMINAL_STAGES:
+                if stage in MODEL_BACKED_TERMINAL_STAGES:
+                    _emit("node", node=stage, phase="skipped")
         else:
             _emit("node", node="insights", phase="running")
             insights_ok = await _run_insights(store, item_id, consolidated, insights_pool)
@@ -249,8 +268,8 @@ async def ingest_item(
         # cosine + date-gate) and archives the format-recall loser on a confirmed dup.
         # Inert when no embedder / no vector (behaves as pre-P12); never fails the ingest.
         _emit("node", node="dedup", phase="running")
-        dedup_result = _dedup(store, item_id, embedder)
-        _emit("node", node="dedup", phase="done")
+        dedup_phase, dedup_result = _dedup(store, item_id, embedder)
+        _emit("node", node="dedup", phase=dedup_phase)
         if dedup_result:
             _emit("dedup", **dedup_result)
     except Exception as exc:
@@ -333,10 +352,21 @@ async def ingest_item(
     # "done" unconditionally, which reported a step that never ran as healthy: with no
     # embedding model bound, `embed` claimed "done" while writing zero vectors. A stage
     # that legitimately had nothing to do says "skipped", not "done".
-    node_phases["insights"] = insights_phase
-    node_phases["entities"] = entities_phase
-    node_phases["intents"] = intents_phase
-    node_phases["embed"] = embed_phase
+    # Keyed by TERMINAL_STAGES so the set of stages that REPORT is the same object as the
+    # set that RUNS. `dedup` used to be absent from this map entirely while the live SSE
+    # stream claimed `done` for it — so on reload its phase was unknowable, and while the
+    # stream was open it was a lie. `test_every_terminal_stage_reports_a_phase` is the rail:
+    # it reds if TERMINAL_STAGES gains a member this mapping does not cover. Deliberately
+    # NOT a runtime raise — `ingest_item` promises never to raise, and a reporting gap must
+    # not become a failed ingest.
+    terminal_phases = {
+        "insights": insights_phase,
+        "entities": entities_phase,
+        "intents": intents_phase,
+        "embed": embed_phase,
+        "dedup": dedup_phase,
+    }
+    node_phases.update(terminal_phases)
 
     # RET-2 — the searchability verdict, computed from what actually LANDED (rows in
     # `chunks`, a vector on the item, text in the content) rather than from any stage's
@@ -1019,25 +1049,42 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
         logger.debug("knowledge chunk-embed failed for %s", item_id, exc_info=True)
 
 
-def _dedup(store, item_id: str, embedder) -> dict | None:
+def _dedup(store, item_id: str, embedder) -> tuple[str, dict | None]:
     """P12 TIER-2 semantic dedup — runs AFTER `_embed` (the vector must exist; it doesn't at
     create time in the create-fast/enrich-async model). Fetches same-type candidates carrying
     an embedding and asks the pure `dedup.resolve_duplicate` (filename + cosine + date-gate) if
     the just-enriched item duplicates one. On a confirmed dup it ARCHIVES the format-recall
     LOSER (never deletes — archived is excluded from retrieval + reversible), which may be the
-    NEW item or the existing one. Returns a small verdict dict for the SSE phase, or None when
-    nothing fired. Never raises into the pipeline — a dedup fault must not fail an ingest.
+    NEW item or the existing one. Never raises into the pipeline — a dedup fault must not fail
+    an ingest.
 
-    Silently no-ops when the embedder is unavailable (no vector to compare) → behaves exactly
-    as pre-P12. TIER-1 exact dedup (URL/byte-hash, create-time in store.py) is unaffected."""
+    Returns ``(phase, verdict)``:
+
+    * ``skipped`` — the comparison never happened because a PREREQUISITE was absent: no
+      embedder (embeddings disabled), an unavailable one, the item gone, or the item has no
+      vector. Nothing was compared, so nothing can be claimed. Same word, same meaning, and
+      the same triggering condition as ``_embed``'s — that is the point.
+    * ``done`` — the comparison actually ran against the candidate set. A run that compared
+      and found no duplicate is a real, completed pass (mirroring ``_run_intents_stage``,
+      which reports ``done`` when the intents ran and nothing matched) — so ``verdict`` is
+      ``None`` for "no dup" and a dict for a confirmed one.
+    * ``failed`` — the attempt errored.
+
+    *verdict* stays a separate return value rather than being inferred from the phase because
+    "the stage ran" and "the stage found something" are different facts, and collapsing them
+    is exactly the conflation that made this stage report ``done`` for a no-op (#481). The
+    phase was previously hardcoded ``done`` at the call site, so an instance with embeddings
+    OFF reported a dedup pass it had never performed.
+
+    TIER-1 exact dedup (URL/byte-hash, create-time in store.py) is unaffected."""
     if not embedder or not getattr(embedder, "is_available", lambda: True)():
-        return None
+        return "skipped", None
     try:
         from personalclaw.knowledge import dedup as dedup_mod
 
         item = store.get_item(item_id)
         if not item:
-            return None
+            return "skipped", None
         # get_item strips the raw vector (→ has_embedding); read it back for the resolver.
         from personalclaw.knowledge.embedder import bytes_to_floats
 
@@ -1049,7 +1096,8 @@ def _dedup(store, item_id: str, embedder) -> dict | None:
         )
         vec = bytes_to_floats(raw or b"")
         if not vec:
-            return None  # this item has no vector → nothing to compare (behaves as today)
+            # No vector → there is nothing to compare against. The stage did not run.
+            return "skipped", None
         # content_len is the format-recall richness signal: measured LIVE from the item's
         # current content, NOT the word_count column (which can lag the dedup stage in the
         # ingest ordering, and is 0 for a type whose body is pooled) — so the winner pick is
@@ -1085,13 +1133,14 @@ def _dedup(store, item_id: str, embedder) -> dict | None:
                 verdict.filename_sim,
                 loser_id,
             )
-            return {
+            return "done", {
                 "winner_id": winner_id,
                 "loser_id": loser_id,
                 "cosine": round(verdict.cosine, 3),
                 "filename_sim": round(verdict.filename_sim, 3),
             }
-        return None
+        # The candidate set was walked and nothing duplicated this item — a completed pass.
+        return "done", None
     except Exception:
         logger.debug("knowledge dedup failed for %s (non-fatal)", item_id, exc_info=True)
-        return None
+        return "failed", None

@@ -1259,8 +1259,9 @@ def test_dedup_archives_format_recall_loser_on_confirmed_dup(store):
         item_type="note",
         extra={"processing_status": "partial", "word_count": 50},
     )
-    res = _dedup(store, thin, _StubEmbedder())
+    phase, res = _dedup(store, thin, _StubEmbedder())
     assert res is not None, "a confirmed fuzzy dup should fire"
+    assert phase == "done"  # it compared AND resolved
     # Format-recall keeps the richer copy → the THIN one is archived, the rich one stays.
     assert res["loser_id"] == thin and res["winner_id"] == rich
     assert store.get_item(thin)["is_archived"] is True
@@ -1275,22 +1276,119 @@ def test_dedup_respects_the_series_date_gate(store):
     v = [1.0, 0.0, 0.0, 0.0]
     d1 = _seed_item(store, title="Weekly Report 2026-07-01", vec=v, item_type="note")
     d2 = _seed_item(store, title="Weekly Report 2026-07-08", vec=v, item_type="note")
-    res = _dedup(store, d2, _StubEmbedder())
+    phase, res = _dedup(store, d2, _StubEmbedder())
     assert res is None, "differing series dates → NOT a dup"
+    # It DID run the comparison and correctly declined — a completed pass, not a skip.
+    assert phase == "done"
     assert store.get_item(d1)["is_archived"] is False
     assert store.get_item(d2)["is_archived"] is False
 
 
 def test_dedup_noop_without_embedder(store):
-    """No embedder / unavailable → the stage is inert (behaves exactly as pre-P12)."""
+    """No embedder / unavailable → the stage is inert (behaves exactly as pre-P12), and it
+    says so: ``skipped``, never ``done``. Nothing was compared, so nothing may be claimed."""
     from personalclaw.knowledge.pipeline.runner import _dedup
 
     v = [1.0, 0.0, 0.0, 0.0]
     _seed_item(store, title="Architecture Overview", vec=v, item_type="note")
     thin = _seed_item(store, title="Architecture Overview.pdf", vec=v, item_type="note")
-    assert _dedup(store, thin, None) is None  # no embedder
-    assert _dedup(store, thin, _StubEmbedder(available=False)) is None  # unavailable
+    assert _dedup(store, thin, None) == ("skipped", None)  # no embedder
+    assert _dedup(store, thin, _StubEmbedder(available=False)) == ("skipped", None)  # unavailable
     assert store.get_item(thin)["is_archived"] is False
+
+
+def test_dedup_phase_follows_whether_the_comparison_ACTUALLY_ran(store):
+    """#481, the surviving half. The runner hard-coded ``phase="done"`` for the dedup stage
+    at its call site, so with embeddings disabled every ingest announced a semantic-dedup
+    pass it had never performed — the same fabrication the terminal stages were fixed for
+    in #727, left behind in a sibling.
+
+    The phase must follow the ONE fact that matters: did the comparison run?
+    """
+    from personalclaw.knowledge.pipeline.runner import _dedup
+
+    v = [1.0, 0.0, 0.0, 0.0]
+
+    # (a) prerequisite absent — no embedder at all → the stage never ran.
+    thin = _seed_item(store, title="Architecture Overview.pdf", vec=v, item_type="note")
+    assert _dedup(store, thin, None)[0] == "skipped"
+
+    # (b) prerequisite absent — an embedder, but THIS item has no vector to compare. The
+    #     distinction matters: embeddings can be on while an individual item is unembedded.
+    novec = store.create_typed_item(item_type="note", title="No Vector", content="body")
+    assert _dedup(store, novec, _StubEmbedder())[0] == "skipped"
+
+    # (c) the item is gone (deleted mid-ingest) → nothing to compare.
+    assert _dedup(store, "does-not-exist", _StubEmbedder())[0] == "skipped"
+
+    # (d) the attempt ERRORS → 'failed'. Previously this was swallowed to a bare None and
+    #     reported as 'done' — a fault announced as a success.
+    with pytest.MonkeyPatch.context() as mp:
+
+        def _raise(self, item_id):
+            raise RuntimeError("candidate query exploded")
+
+        mp.setattr(type(store), "find_fuzzy_dup_candidates", _raise, raising=True)
+        assert _dedup(store, thin, _StubEmbedder())[0] == "failed"
+
+    # (e) the positive control — it really ran → 'done'. Without this the fix could be
+    #     satisfied by never saying 'done' at all, which is a different lie.
+    assert _dedup(store, thin, _StubEmbedder())[0] == "done"
+
+
+def test_every_terminal_stage_reports_a_phase(store):
+    """THE RAIL. ``TERMINAL_STAGES`` is the single list of stages the runner executes, and
+    the persisted ``node_phases`` map must carry a phase for every one of them — so an
+    absent key can only ever mean "the run died before this stage", never "someone added a
+    stage and forgot to report it". ``dedup`` was exactly that omission: it ran on every
+    ingest, emitted a live phase, and appeared nowhere in the persisted map.
+
+    This test reds if TERMINAL_STAGES grows a member the runner does not record.
+    """
+    from personalclaw.knowledge.pipeline.runner import TERMINAL_STAGES
+
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="Redis caches.")
+    _run(ingest_item(store, iid))
+    phases = (store.get_item(iid).get("file_metadata") or {}).get("node_phases") or {}
+    missing = [s for s in TERMINAL_STAGES if s not in phases]
+    assert not missing, f"terminal stages with no reported phase: {missing}"
+    # And every reported phase is drawn from the closed vocabulary — no invented words.
+    assert set(phases.values()) <= {"done", "skipped", "failed"}
+
+
+def test_no_terminal_stage_claims_done_with_its_prerequisite_absent(store):
+    """The assertion worth pinning, stated once over the WHOLE terminal set rather than
+    per-stage: run a real ingest with NO embedder and NO model pool — i.e. every optional
+    prerequisite absent — and no stage may report ``done`` unless it genuinely did work
+    without one. ``entities`` legitimately does (its alias pre-pass is model-free) and
+    ``insights`` treats an empty result as nothing-to-do; the model/vector-dependent
+    stages must not."""
+    ensure_nodes_registered()
+    # Capture the LIVE SSE phases too. There are two reports of the same run — the stream a
+    # watching UI sees, and the map a reloading UI reads — and the bug was present in BOTH
+    # for `dedup`. Asserting only the persisted map would leave the stream free to lie.
+    live: dict[str, str] = {}
+
+    def publish(event, data):
+        if event == "node":
+            live[data["node"]] = data["phase"]
+
+    iid = store.create_typed_item(item_type="note", title="N", content="Redis caches.")
+    _run(ingest_item(store, iid, embedder=None, insights_pool=None, publish=publish))
+    item = store.get_item(iid)
+    phases = (item.get("file_metadata") or {}).get("node_phases") or {}
+
+    # Vector-dependent stages: no embedder → no vector was written and no comparison ran.
+    assert phases["embed"] == "skipped"
+    assert not item.get("has_embedding"), "phase and artifact must agree"
+    assert phases["dedup"] == "skipped"
+    # Model-dependent matching: no pool → nothing was matched.
+    assert phases["intents"] == "skipped"
+    # The stream said the same thing the stored map says.
+    assert live["dedup"] == "skipped"
+    assert live["embed"] == "skipped"
+    assert live["intents"] == "skipped"
 
 
 def test_reenrich_refreshes_when_user_tags_are_a_permutation_of_the_ai_topics(store):

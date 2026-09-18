@@ -2172,10 +2172,13 @@ async def get_extracted_contents(request: web.Request) -> web.Response:
     return web.json_response({"contents": store.get_extracted_contents(item_id)})
 
 
-# The runner's terminal stages run AFTER the type's graph (in this order) and emit
-# the same per-node SSE phase events, but they aren't part of the PipelineGraph. The
-# mini-DAG view appends them so the progress graph reflects the whole pipeline.
-_TERMINAL_STAGES = ("insights", "entities", "intents", "embed")
+# The runner's terminal stages run AFTER the type's graph and emit the same per-node SSE
+# phase events, but they aren't part of the PipelineGraph — the mini-DAG view appends them
+# so the progress graph reflects the whole pipeline. The list itself lives in the runner
+# (`TERMINAL_STAGES`) and is imported below rather than re-listed here: this used to be a
+# hand-copied tuple, and it drifted — it omitted `dedup`, which the runner has always run
+# and always emitted a `node` phase for, so the stream carried a phase for a node the shape
+# said did not exist and no surface could render it (#481).
 
 
 async def get_item_graph(request: web.Request) -> web.Response:
@@ -2189,6 +2192,10 @@ async def get_item_graph(request: web.Request) -> web.Response:
     try:
         from personalclaw.knowledge.pipeline import ensure_nodes_registered
         from personalclaw.knowledge.pipeline.graphs import graph_for
+        from personalclaw.knowledge.pipeline.runner import (
+            MODEL_BACKED_TERMINAL_STAGES,
+            TERMINAL_STAGES,
+        )
 
         ensure_nodes_registered()
         g = graph_for(item_type)
@@ -2227,12 +2234,12 @@ async def get_item_graph(request: web.Request) -> web.Response:
     # Chain the terminal stages after the graph's leaf nodes (no out-edges).
     leaves = [nt for nt in g.nodes if not g.successors(nt)]
     prev_leaves = leaves or list(g.nodes)
-    for stage in _TERMINAL_STAGES:
+    for stage in TERMINAL_STAGES:
         nodes.append(
             {
                 "node_type": stage,
                 "backend": "",
-                "model_backed": stage in ("insights", "entities", "intents"),
+                "model_backed": stage in MODEL_BACKED_TERMINAL_STAGES,
                 "terminal": True,
             }
         )
