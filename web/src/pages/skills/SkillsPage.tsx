@@ -74,8 +74,26 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   // on mobile (matching the resolved header doctrine) rather than clipping "Installed"
   // into the action cluster on a narrow header. The active segment stays highlighted.
   const isMobile = useIsMobile()
+  // 🔑 `collapse="menu"` because WITHOUT IT THE STRIP IS CRUSHED, and `Segmented`'s own comment already
+  // said so: "Tabs are `shrink-0`. `size-8` / `px-m` set a tab's size but NOT its floor, so in a
+  // constrained slot the flex parent squeezed them … Overflow is the job of `collapse` ('scroll' /
+  // 'menu'), not of silently crushing every target: a strip that cannot fit should scroll or fold."
+  // This call site never passed the prop, so it kept crushing.
+  //
+  // Measured on this header (seeded `demo-home`), strip box vs its two 32px tabs:
+  //
+  //     1440px   strip 197×40   both tabs reachable          ← fits
+  //      390px   strip  41×40   "Browse" reachable 16×16     ← already under the 24px floor
+  //      320px   strip   8×40   "Browse" reachable  1×1      ← effectively gone
+  //
+  // The tabs are `shrink-0` and the strip's wrapper is `min-w-0`, so the strip absorbs the whole
+  // squeeze while its children keep their size and overflow it. `menu` is the designed last rung of
+  // the ladder (labelled → icon-only → folded pill) and `CollapsedSegmented`'s own docstring is
+  // written for exactly this case: a phone header's ~42px control rail, where the labelled pill's
+  // ~119px "still overflowed … and rendered as a clipped '☰ Li…'" but the icon-only pill fits.
   return (
     <Segmented ariaLabel="Skills view" value={mode} onChange={(m) => onChange(m as Mode)} iconOnly={isMobile}
+      collapse="menu"
       options={[{ key: 'installed', label: 'Installed', icon: Sparkles }, { key: 'browse', label: 'Browse', icon: Store }]} />
   )
 }
