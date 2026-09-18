@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react'
 import { fvs } from '../../design/fontWeight'
-import { EmptyState } from '../../ui/ListScaffold'
+import { EmptyState, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { useQuery } from '../../lib/data'
 import { api, type WeekProjection } from '../../lib/api'
@@ -50,11 +50,26 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   // Keyed by the week so paging fetches rather than reusing the previous week's cells. persist:false
   // — a projection is only true relative to `now`, so a cached week restored after a hard reload
   // would show a forecast that has already partly happened.
-  const { data: week } = useQuery<WeekProjection>(
+  //
+  // 🔴 `error` AND `refresh` ARE BOUND, and the reason is that `week === undefined` was doing
+  // two incompatible jobs. It meant BOTH "the read is still in flight" and "the read failed",
+  // so a rejected `/api/triggers/week` left the header on `Projecting…` permanently while the
+  // `grid.totalFires === 0` branch below — gated on the read having LANDED — fell through to
+  // the else and drew the full 7×24 table from `buildWeekGrid([], start)`. Measured with the
+  // endpoint forced to reject: 168 empty `<td>`s, a legend advertising four cell states that
+  // can never appear, `role="alert"` nowhere and no retry (#498).
+  //
+  // The fetcher never swallowed anything — there is no `.catch` — so the rejection did reach
+  // the hook; only the call site declined to read it. This is the pattern `TriggersListPage`
+  // in this same directory already ships (`loadFailed` → a retryable `LoadError`, pinned by
+  // `triggersLoadError.test.tsx`), so the fix is adoption, not invention.
+  const { data: week, error: weekErr, refresh: refreshWeek } = useQuery<WeekProjection>(
     `triggers:week:${start.toISOString().slice(0, 10)}`,
     () => api.triggersWeek(localIso(start), 7, localIso(weekEnd(start))),
     { persist: false },
   )
+  // The ONE condition that separates the three states `week === undefined` used to collapse.
+  const loadFailed = week === undefined && Boolean(weekErr)
 
   const grid = useMemo(() => buildWeekGrid(week?.occurrences ?? [], start), [week, start])
   const hours = useMemo(() => visibleHours(grid), [grid])
@@ -79,7 +94,10 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
             {offset !== 0 && <Button size="sm" variant="ghost" onClick={() => setOffset(0)}>Today</Button>}
           </div>
           <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
-            {week === undefined ? 'Projecting…' : weekSummary(grid)}
+            {/* `Projecting…` is now claimed ONLY by a read that is genuinely in flight. On a
+                failure the summary says nothing here and the LoadError below carries the news —
+                a header that keeps projecting above an error would contradict it. */}
+            {loadFailed ? '' : week === undefined ? 'Projecting…' : weekSummary(grid)}
             {tzMismatch && <span> · times in {viewerTz} (server: {week?.server_tz})</span>}
           </div>
         </div>
@@ -104,7 +122,12 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
         </div>
       )}
 
-      {week !== undefined && grid.totalFires === 0 ? (
+      {loadFailed ? (
+        // Ordered FIRST so a failure can never fall through to the grid. `what="week"` reads as
+        // "Couldn't load your week"; the retry re-runs this week's key, not the whole page, so
+        // paging back to a week that loaded is unaffected.
+        <LoadError what="week" error={weekErr} onRetry={refreshWeek} />
+      ) : week !== undefined && grid.totalFires === 0 ? (
         <EmptyState
           icon={CalendarDays}
           title="No fires this week"
