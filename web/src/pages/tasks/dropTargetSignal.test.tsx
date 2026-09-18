@@ -81,7 +81,7 @@ describe('the drop target is signalled by more than a background tint', () => {
 // 🔑 THE LIFT IS TOKENISED AND THAT IS WORTH PROTECTING SPECIFICALLY. It reads
 // `var(--shadow-lift)` / `var(--shadow-rest)`, not a raw Tailwind shadow — i.e. this surface is
 // already on the right side of the scheme-blind-shadow finding in `design/sheetShadow.test.ts`, where
-// seven floating sheets use `shadow-2xl` (Tailwind's fixed default, identical in both schemes). A
+// six floating sheets use `shadow-2xl` (Tailwind's fixed default, identical in both schemes). A
 // "tidy-up" that swapped this for `shadow-2xl` would look harmless and would quietly enlarge that
 // family, so the token form is asserted rather than assumed.
 //
@@ -105,7 +105,7 @@ describe('the picked-up card is legible, and stays tokenised', () => {
   })
 
   it('the lift stays a TOKEN, so this surface never joins the scheme-blind shadow family', () => {
-    // `design/sheetShadow.test.ts` holds seven floating sheets on `shadow-2xl` — Tailwind's fixed
+    // `design/sheetShadow.test.ts` holds six floating sheets on `shadow-2xl` — Tailwind's fixed
     // default, identical in light and dark. This card is not one of them and must not become one.
     const s = src()
     expect(s).toMatch(/var\(--shadow-lift\)/)
