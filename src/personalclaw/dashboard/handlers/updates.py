@@ -97,6 +97,11 @@ async def api_update_check(request: web.Request) -> web.Response:
     # legacy `auto_update` bool (RUM-5). The panel renders it as the Auto-update control.
     merged["auto"] = cfg.updates.auto
     merged["channel"] = cfg.updates.channel
+    # `pin` + the container `image_tag` (from build_update_status) let the panel render
+    # the exact channel/pin-resolved container commands, and distinguish a pin-miss
+    # (empty `image_tag`/`instructions` with a non-empty `pin`) from a transient
+    # status failure — so it never silently falls back to a bare `latest` (RUM-7).
+    merged["pin"] = cfg.updates.pin
     merged["version"] = _local_version
     return web.json_response(merged)
 
@@ -438,6 +443,9 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 "kind": kind,
                 "apply_method": status.get("apply_method", ""),
                 "instructions": status.get("instructions", []),
+                # The channel/pin-resolved container image tag (RUM-7); "" for desktop
+                # or a container pin-miss (empty `instructions` say the same thing).
+                "image_tag": status.get("image_tag", ""),
                 # The desktop wording says what the shell ACTUALLY does today. It shipped
                 # claiming "the app updates itself", which described the electron-updater
                 # half of `DC-1` — still unbuilt: `desktop/package.json` carries no

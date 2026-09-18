@@ -125,7 +125,13 @@ async def test_build_status_update_available(monkeypatch) -> None:
     async def _fake_release() -> dict:
         return {"tag": "v0.2.0", "name": "0.2.0", "body": "notes"}
 
+    async def _no_releases() -> list[dict[str, object]]:
+        return []
+
     monkeypatch.setattr(uk, "fetch_latest_release", _fake_release)
+    # The container branch now resolves the image tag from the releases list (RUM-7);
+    # stub that seam too so this stays network-free (empty list -> `latest` fallback).
+    monkeypatch.setattr(uk, "fetch_releases", _no_releases)
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     status = await uk.build_update_status("0.1.0")
     assert status["kind"] == "container"
@@ -593,7 +599,13 @@ async def test_c2_wire_shape_conformance(monkeypatch) -> None:
     async def _rel() -> dict:
         return {"tag": "v0.2.0", "name": "0.2.0", "body": "notes"}
 
+    async def _no_releases() -> list[dict[str, object]]:
+        return []
+
     monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    # RUM-7: the container branch resolves an image tag from the releases list; stub
+    # that seam so the wire-shape check stays network-free (empty -> `latest`).
+    monkeypatch.setattr(uk, "fetch_releases", _no_releases)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
 
     required = {
@@ -1142,3 +1154,133 @@ def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(tmp_path
     ff = uk.git_fast_forward(str(clone), "main")
     assert ff.returncode != 0  # cannot fast-forward a diverged branch
     assert _rev(clone) == local_head  # tree untouched — the local commit survives
+
+
+# ── RUM-7: container image tag resolver ─────────────────────────────────────
+#
+# Reuses _FAKE_RELEASES (adversarial). Over it the container tag mapping resolves
+# to THREE DIFFERENT tags — stable -> "0.2" (moving minor of v0.2.1), beta ->
+# "beta", pin 0.2.0 -> "0.2.0" — and a pin-miss -> "". A "return latest" or any
+# single-constant implementation fails at least two rows, so the mapping is
+# non-vacuous. That distinctness is the named vacuity floor for this atom.
+
+
+def test_select_image_tag_maps_channel_pin_to_distinct_tags() -> None:
+    # stable -> the moving minor of the newest stable release (v0.2.1 -> 0.2)
+    assert uk.select_image_tag(_FAKE_RELEASES, "stable") == "0.2"
+    # beta -> the moving prerelease tag
+    assert uk.select_image_tag(_FAKE_RELEASES, "beta") == "beta"
+    # a pin -> the exact immutable version, overriding the channel (even an older one)
+    assert uk.select_image_tag(_FAKE_RELEASES, "stable", "0.2.0") == "0.2.0"
+    assert uk.select_image_tag(_FAKE_RELEASES, "beta", "v0.2.0") == "0.2.0"  # v-tolerant
+    # the three channel/pin answers are DIFFERENT — the vacuity floor
+    assert len({"0.2", "beta", "0.2.0"}) == 3
+    # nightly/unknown have no container image of their own -> ride the stable line
+    assert uk.select_image_tag(_FAKE_RELEASES, "nightly") == "0.2"
+    assert uk.select_image_tag(_FAKE_RELEASES, "whatever") == "0.2"
+
+
+def test_select_image_tag_pin_miss_refuses_and_empty_is_only_a_pin_miss() -> None:
+    # A pin naming no release -> "" (REFUSE) — never the stable/latest tag.
+    assert uk.select_image_tag(_FAKE_RELEASES, "stable", "9.9.9") == ""
+    assert uk.select_image_tag(_FAKE_RELEASES, "beta", "9.9.9") == ""
+    # ...and "" is ONLY ever a pin-miss: with no releases every channel still yields
+    # a tag (latest / beta), so a caller reads "" as "refuse", not "offline".
+    assert uk.select_image_tag([], "stable") == "latest"
+    assert uk.select_image_tag([], "beta") == "beta"
+    assert uk.select_image_tag([], "nightly") == "latest"
+
+
+def test_container_instructions_carry_the_tag_on_both_commands() -> None:
+    cmds = uk.container_instructions("0.2")
+    assert cmds == [
+        "PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml pull",
+        "PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml up -d",
+    ]
+    # Both commands carry the tag: pull and up run as separate processes, so a tag on
+    # only one would let the other fall back to compose's `latest` default.
+    assert all("PERSONALCLAW_IMAGE_TAG=0.2 " in c for c in cmds)
+    # An empty tag emits the bare commands (the pre-RUM-7 answer for an unresolved tag).
+    assert uk.container_instructions() == [
+        "docker compose -f deploy/compose/compose.yaml pull",
+        "docker compose -f deploy/compose/compose.yaml up -d",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_image_tag_over_the_release_list(monkeypatch) -> None:
+    async def _fake_releases() -> list[dict[str, object]]:
+        return _FAKE_RELEASES
+
+    monkeypatch.setattr(uk, "fetch_releases", _fake_releases)
+    assert await uk.resolve_image_tag("stable") == "0.2"
+    assert await uk.resolve_image_tag("beta") == "beta"
+    assert await uk.resolve_image_tag("stable", "0.2.0") == "0.2.0"
+    assert await uk.resolve_image_tag("stable", "9.9.9") == ""  # pin-miss refuses
+
+
+def _fake_container_config(monkeypatch, channel: str, pin: str = "") -> None:
+    """Pin the `updates` channel/pin for `build_update_status` without disk I/O."""
+    import types
+
+    from personalclaw.config import loader as _loader
+
+    cfg = types.SimpleNamespace(
+        updates=types.SimpleNamespace(channel=channel, pin=pin, check_enabled=True)
+    )
+    monkeypatch.setattr(_loader.AppConfig, "load", classmethod(lambda cls: cfg))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel, pin, tag",
+    [("stable", "", "0.2"), ("beta", "", "beta"), ("stable", "0.2.0", "0.2.0")],
+)
+async def test_build_update_status_container_carries_the_resolved_tag(
+    monkeypatch, channel, pin, tag
+) -> None:
+    """RUM-7 done_when: build_update_status emits the channel/pin image tag AND the
+    exact `docker compose pull`+`up -d` carrying it. Drives the REAL resolver
+    (`fetch_releases` is the only stub) over the adversarial list, so stable/beta/pin
+    land on DIFFERENT tags — a bare-`latest` implementation fails the beta and pin rows.
+    """
+
+    async def _rel() -> dict:
+        return {"tag": "v0.2.1", "name": "0.2.1", "body": ""}
+
+    async def _releases() -> list[dict[str, object]]:
+        return _FAKE_RELEASES
+
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
+    _fake_container_config(monkeypatch, channel, pin)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["kind"] == "container"
+    assert status["image_tag"] == tag
+    assert status["instructions"] == [
+        f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml pull",
+        f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml up -d",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_update_status_container_pin_miss_emits_no_commands(monkeypatch) -> None:
+    """A container pin naming no release -> empty image_tag + NO instructions (refuse),
+    so the panel/CLI never silently offer a bare `latest` (mirrors the wheel pin-miss)."""
+
+    async def _rel() -> dict:
+        return {"tag": "v0.2.1", "name": "0.2.1", "body": ""}
+
+    async def _releases() -> list[dict[str, object]]:
+        return _FAKE_RELEASES
+
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
+    _fake_container_config(monkeypatch, "stable", "9.9.9")
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["image_tag"] == ""
+    assert status["instructions"] == []

@@ -498,6 +498,9 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
 def test_container_kind_prints_the_two_commands_and_exits_zero(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
+    # Default config (stable/no-pin) + the autouse offline `fetch_releases`->[] means
+    # the resolver degrades to the `latest` fallback (RUM-7): the commands still print
+    # and carry `PERSONALCLAW_IMAGE_TAG=latest`, exit 0.
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
@@ -505,8 +508,59 @@ def test_container_kind_prints_the_two_commands_and_exits_zero(
     cli_server._update()  # returns, i.e. exit status 0 — see _update's docstring
 
     out = capsys.readouterr().out
-    for cmd in su.container_instructions():
+    for cmd in su.container_instructions("latest"):
         assert cmd in out
+    assert "PERSONALCLAW_IMAGE_TAG=latest " in out
+    assert not git.calls and not spawns
+
+
+@pytest.mark.parametrize(
+    "channel, pin, tag",
+    [
+        ("stable", "", "0.2"),  # moving minor of the newest stable (v0.2.1)
+        ("beta", "", "beta"),  # the moving prerelease tag
+        ("stable", "0.2.0", "0.2.0"),  # pin overrides the channel, exact immutable tag
+    ],
+)
+def test_container_prints_the_channel_pin_resolved_tag(
+    monkeypatch: pytest.MonkeyPatch, capsys, spawns, channel: str, pin: str, tag: str
+) -> None:
+    """RUM-7 core: the container commands carry the channel/pin-resolved image tag,
+    never a bare `latest`. Non-vacuous — over `_RUM6_RELEASES` stable/beta/pin resolve
+    to DIFFERENT tags (0.2 / beta / 0.2.0), so a constant-`latest` implementation fails
+    the beta and pin rows. Drives the REAL `resolve_image_tag`/`select_image_tag` (only
+    `fetch_releases` is stubbed)."""
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    _channel(monkeypatch, channel, pin)
+    _fake_release_list(monkeypatch)
+    git = _Git()
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    out = capsys.readouterr().out
+    for cmd in su.container_instructions(tag):
+        assert cmd in out, f"expected {cmd!r} in output; out={out!r}"
+    assert f"PERSONALCLAW_IMAGE_TAG={tag} " in out
+    assert not git.calls and not spawns
+
+
+def test_container_pin_miss_refuses_and_prints_no_pull(
+    monkeypatch: pytest.MonkeyPatch, capsys, spawns
+) -> None:
+    """A container pin naming no release must REFUSE — never print a bare `latest` pull
+    (mirrors the wheel pin-miss refusal)."""
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    _channel(monkeypatch, "stable", "0.9.9")  # no such release in _RUM6_RELEASES
+    _fake_release_list(monkeypatch)
+    git = _Git()
+    monkeypatch.setattr(su, "_run_git", git)
+
+    cli_server._update()
+
+    out = capsys.readouterr().out
+    assert "No release matches the pinned version" in out
+    assert "docker compose" not in out  # nothing to pull — no commands offered
     assert not git.calls and not spawns
 
 

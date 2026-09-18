@@ -171,13 +171,24 @@ export function UpdatesPanel() {
           </div>
           {msg && <div data-type="caption" className="mt-2 text-on-surface-low">{msg}</div>}
 
-          {/* Container: no in-place apply — show the exact pull+recreate commands. */}
+          {/* Container: no in-place apply — show the exact pull+recreate commands for the
+              channel/pin-resolved image tag (RUM-7). The backend emits them carrying
+              `PERSONALCLAW_IMAGE_TAG=<tag>`, so this renders them verbatim rather than a
+              hard-coded `latest`. A pin that matches no release yields no commands (empty
+              `instructions` + a non-empty `pin`) — say so instead of silently offering
+              `latest`, which would defeat the pin. */}
           {isContainer && info.available && (
-            <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
-              <div data-type="caption" className="text-on-surface-low mb-1">Update this container install by pulling the new image and recreating:</div>
-              <pre tabIndex={0} role="group" aria-label="Update commands"
-                data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
-            </div>
+            info.instructions?.length ? (
+              <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
+                <div data-type="caption" className="text-on-surface-low mb-1">Update this container install by pulling the new image and recreating:</div>
+                <pre tabIndex={0} role="group" aria-label="Update commands"
+                  data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{info.instructions.join('\n')}</code></pre>
+              </div>
+            ) : info.pin ? (
+              <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
+                No published release matches the pinned version <code>{info.pin}</code>. Clear or fix the version pin (<code>updates.pin</code>) to update this container.
+              </div>
+            ) : null
           )}
           {/* Desktop: the SHELL owns updates, so there is no in-app apply. What the shell does
               about it is a re-download today — the electron-updater half of `DC-1` is unbuilt
