@@ -18,6 +18,7 @@ one — a rail matching nothing looks clean.
 from __future__ import annotations
 
 import ast
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,109 @@ def test_a_tmp_root_is_allowed(tmp_path):
 
 def test_an_unparseable_root_is_not_the_rails_business():
     assert real_model_root_guard.offending_root(None) is None
+
+
+# ── The SHARED temp base is not a delete root (#2999) ─────────────────────────
+#
+# The tmp exemption that keeps ``tmp_path`` usable on a host whose ``TMPDIR`` lives under
+# ``$HOME`` used to read ``candidate == tmp_root or tmp_root in candidate.parents``. The first
+# arm made the shared temp base ITS OWN delete root — and under xdist that one directory covers
+# every worker's ``tmp_path`` at once, which is precisely the cross-test delete the rail exists
+# to stop. Measured at ``e5dd376fb``: ``offending_root(<shared base>)`` returned ``None``.
+#
+# Every cell below repoints ``REAL_HOME`` at the base's PARENT rather than trusting this host's
+# layout. Without that the assertions would pass for the wrong reason on an ordinary macOS or
+# Linux box, where ``$TMPDIR`` sits outside ``$HOME`` and the bare-home catch-all — the only
+# branch the exemption touches — is never reached at all.
+
+
+def _temp_base() -> Path:
+    """The resolved OS temp base: what ``_test_path_root()`` returns, spelled the same way."""
+    return Path(tempfile.gettempdir()).resolve()
+
+
+@pytest.fixture
+def home_above_the_temp_base(monkeypatch):
+    """Simulate the TMPDIR-under-``$HOME`` layout the exemption was written for."""
+    base = _temp_base()
+    monkeypatch.setattr(real_model_root_guard, "REAL_HOME", base.parent)
+    return base
+
+
+def test_the_repointed_home_really_reaches_the_bare_home_branch(home_above_the_temp_base):
+    """Vacuity floor: without this the cells below prove nothing about the exemption.
+
+    Three things must hold for the refusal that follows to be attributable to the predicate:
+    the temp base has to sit under the (repointed) home, ``_test_path_root()`` must still hand
+    back that base rather than bailing, and no NAMED root may swallow the base first — named
+    roots are checked before the catch-all, so a match there would refuse the base for an
+    entirely different reason.
+    """
+    base = home_above_the_temp_base
+    home = real_model_root_guard.REAL_HOME
+    assert home in base.parents, f"{base} is not under the repointed home {home}"
+    assert real_model_root_guard._test_path_root() == base, (
+        "_test_path_root() no longer returns the temp base under this layout, so the exemption "
+        "is not the thing being exercised"
+    )
+    named = real_model_root_guard.named_forbidden_roots()
+    assert not any(base == root or root in base.parents for root in named), (
+        f"the temp base {base} sits inside a NAMED model root, which is checked first — the "
+        f"cells below would then be measuring the named-root path, not the tmp exemption"
+    )
+
+
+def test_the_shared_temp_base_is_refused_as_a_delete_root(home_above_the_temp_base):
+    """The defect, stated directly: a sweep of the base must NOT be allowed."""
+    base = home_above_the_temp_base
+    assert real_model_root_guard.offending_root(base) == real_model_root_guard.REAL_HOME, (
+        f"the SHARED temp base {base} is allowed as a delete root. Under xdist that directory "
+        f"holds every worker's tmp_path, so a delete rooted there is the cross-test delete this "
+        f"rail exists to stop — a guard satisfiable by the shared base is not a guard (#2999)."
+    )
+    with pytest.raises(AssertionError, match="REAL model root"):
+        real_model_root_guard.assert_safe("delete_all_layouts", base)
+
+
+def test_a_worker_tmp_path_under_the_base_is_still_allowed(home_above_the_temp_base):
+    """The exemption's whole purpose survives: a real per-test root still passes.
+
+    This is the other half of the pair. Refusing the base is only correct if the paths pytest
+    actually hands out remain allowed — the 55-red regression that created the exemption was
+    exactly this case failing.
+    """
+    base = home_above_the_temp_base
+    worker_root = base / "pytest-of-somebody" / "pytest-1" / "popen-gw0" / "test_thing0"
+    assert real_model_root_guard.offending_root(worker_root) is None, (
+        f"{worker_root} is a per-test root strictly inside the temp base and must be allowed; "
+        f"refusing it is the regression that made the rail fire on its own fixture"
+    )
+    real_model_root_guard.assert_safe("delete_all_layouts", worker_root)  # does not raise
+
+
+def test_a_named_root_is_still_refused_when_the_home_is_repointed(home_above_the_temp_base):
+    """Narrowing the exemption must not have widened anything else."""
+    ollama = real_model_root_guard.REAL_HOME / ".ollama"
+    assert real_model_root_guard.offending_root(ollama) == ollama
+
+
+def test_identity_is_exactly_where_the_two_predicates_disagree(home_above_the_temp_base):
+    """Anti-vacuity for the pair above: the base is the ONE input the fix changes.
+
+    Restate both predicates over the base. If they agreed there, the refusal asserted above
+    would hold under the buggy code too and this whole section would be decoration. They must
+    disagree — strictly-inside says "not a test path", inside-or-equal says "a test path" — so
+    the refusal is attributable to dropping the identity arm and to nothing else.
+    """
+    base = home_above_the_temp_base
+    tmp_root = real_model_root_guard._test_path_root()
+    strictly_inside = tmp_root in base.parents
+    inside_or_equal = base == tmp_root or tmp_root in base.parents
+    assert not strictly_inside, f"{base} reads as strictly inside itself — pathlib changed"
+    assert inside_or_equal, (
+        "the dropped `candidate == tmp_root` arm would NOT have exempted the base, so the "
+        "cells above pass under the buggy predicate too and prove nothing"
+    )
 
 
 # ── The rail as INSTALLED by the autouse fixture ──────────────────────────────

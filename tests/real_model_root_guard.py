@@ -86,6 +86,11 @@ def _test_path_root() -> Path | None:
     even if it somehow sat inside the temp directory. And when the temp directory IS the
     real home, "under tmp" would exempt the whole of ``$HOME`` and the catch-all would mean
     nothing — so this returns ``None`` and the rail keeps its original strictness.
+
+    🪤 THE BASE ITSELF IS NOT EXEMPT — see ``offending_root``'s strictly-inside test. This
+    function answers "where do test paths live", not "which single path is disposable": the
+    directory returned here is SHARED by every xdist worker, so a delete rooted at it is the
+    cross-test delete the rail exists to stop (#2999).
     """
     try:
         tmp = Path(tempfile.gettempdir()).resolve()
@@ -133,10 +138,21 @@ def offending_root(cache_root: object) -> Path | None:
 
     # Then the bare-home catch-all, which a pytest ``tmp_path`` must not trip — see
     # :func:`_test_path_root` for the measurement that made this necessary.
+    #
+    # 🪤 STRICTLY INSIDE, not "inside or equal" (#2999). The exemption used to read
+    # ``candidate == tmp_root or tmp_root in candidate.parents``, and that first arm made the
+    # SHARED temp base its own delete root: ``tmp_root`` is ``tempfile.gettempdir()``, the one
+    # directory every xdist worker's ``tmp_path`` hangs off, so a sweep of it is exactly the
+    # cross-test delete this rail exists to stop. Measured at ``e5dd376fb`` with ``REAL_HOME``
+    # repointed at the base's parent (the TMPDIR-under-``$HOME`` layout the exemption was
+    # written for): ``offending_root(<shared base>)`` returned ``None`` — allowed — while
+    # ``<base>/pytest-of-x/w0`` was correctly allowed and ``~/.ollama`` was still refused.
+    # An ancestor test is the right shape for "this path belongs to a test"; identity is not,
+    # because no legitimate caller needs the base itself — a ``tmp_path`` is always below it.
     tmp_root = _test_path_root()
     for candidate in candidates:
         if candidate == REAL_HOME or REAL_HOME in candidate.parents:
-            if tmp_root is not None and (candidate == tmp_root or tmp_root in candidate.parents):
+            if tmp_root is not None and tmp_root in candidate.parents:
                 continue
             return REAL_HOME
     return None
