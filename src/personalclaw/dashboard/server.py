@@ -262,6 +262,116 @@ def _ws_csp_sources() -> str:
         return ""
 
 
+# Content-hashed Vite output (`/assets/AgentsSection-<hash>.js`): the URL itself
+# changes whenever the file's content does (Vite's own cache-busting), so the
+# response can be cached forever — this is the ONLY prefix this middleware treats
+# as immutable. Deliberately narrower than token_auth._BYPASS_PREFIXES: `/fonts/`,
+# `/sprites/` and `/vendor/` also skip auth but are STABLE-named (unhashed), so
+# long-lived caching them would serve stale content past a rebuild (#2933).
+_IMMUTABLE_ASSET_PREFIX = "/assets/"
+
+#: Response headers every dashboard response carries, unless the handler already set a
+#: STRICTER value of its own (hence ``setdefault`` at the call site — artifact responses
+#: pass through this middleware and deliberately send ``Referrer-Policy: no-referrer``).
+#:
+#: ARCC's "Secure HTTP Headers" guidance lists these among the headers to set for ALL
+#: responses. Before #2735 they were applied ad hoc on specific artifact/file responses
+#: (``artifacts/deploy.py``, ``artifacts/handlers.py``, ``dashboard/handlers/files.py``,
+#: ``dashboard/session_starters.py``) and so were absent from dashboard responses
+#: generally; promoting them here gives the posture one owner.
+#:
+#: ``SAMEORIGIN`` rather than ``DENY``: the dashboard frames its own artifact pane, and
+#: ``DENY`` would break that in-app open. It is the legacy fallback for user agents that
+#: predate ``frame-ancestors`` — both are shipped, because shipping only one of them is
+#: how this class of gap survives a review.
+SECURITY_HEADERS: dict[str, str] = {
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def dashboard_csp() -> str:
+    """The dashboard's Content-Security-Policy.
+
+    Defense-in-depth layer. Primary XSS protection is rehypeSanitize (strips
+    script/iframe/form/foreignObject at HAST level before rendering). CSP must allow
+    ``'unsafe-inline'`` because widget iframes (blob: sandbox) inherit the parent CSP per
+    W3C spec — inline scripts in widgets need it. Widget isolation is enforced by
+    ``sandbox="allow-scripts"`` (no parent DOM access) + a widget-level CSP meta
+    (``connect-src 'none'``).
+
+    A function rather than a constant because ``_ws_csp_sources()`` depends on
+    ``dashboard.public_url``, which is config the operator can change without a restart.
+    """
+    return (
+        "default-src 'self'; "
+        # blob: in script-src enables dynamic ESM module loading for contributed
+        # app UI bundles: the host rewrites a bundle's bare import specifiers
+        # (react / @personalclaw/app-sdk / …) to same-origin-derived blob modules
+        # that re-export the host's singletons. Blobs are origin-scoped; apps are
+        # still gated by the permission system + SkillScanner at install.
+        "script-src 'self' 'unsafe-inline' blob: "
+        "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        "img-src 'self' data: blob: https:; "
+        # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
+        # without font-src the default-src 'self' fallback blocks it.
+        "font-src 'self' data:; "
+        # REMOTE-USER-AUTH T4.1: behind a TLS-terminating tunnel the page is https,
+        # so the browser upgrades the WS to wss:// against the PUBLIC host — which
+        # this policy must name, or the dashboard loads and then silently has no
+        # live connection (the worst failure shape: it looks fine and does nothing).
+        # `_ws_csp_sources()` returns "" for a normal local install, leaving the
+        # policy byte-identical to before.
+        f"connect-src 'self' ws://localhost:* ws://127.0.0.1:*{_ws_csp_sources()}; "
+        # What this page may FRAME (its artifact pane + blob: widget iframes).
+        "frame-src 'self' blob:; "
+        # Who may frame THIS page — the opposite question, and the one #2735 found
+        # unanswered. `frame-ancestors` is NOT in CSP L3 §6.1's fallback list, so
+        # `default-src 'self'` above does not cover it and its absence meant no
+        # restriction at all. `'self'` matches artifacts/deploy.py's spelling and its
+        # reasoning ("embeddable in the dashboard's own pane, nowhere else"); behind a
+        # reverse proxy the document's origin IS `dashboard.public_url`, so `'self'`
+        # already names the public host and no allowlist is owed.
+        "frame-ancestors 'self'; "
+        "worker-src 'self' blob:; "
+        "object-src 'none'; base-uri 'self'"
+    )
+
+
+@web.middleware  # type: ignore[misc]
+async def _security_headers_middleware(
+    request: web.Request,
+    handler: object,
+) -> web.StreamResponse:
+    """Cache policy + the security headers every dashboard response carries.
+
+    The outermost middleware, so it sees every handler's response — including the static
+    handlers' and the artifact routes' — before anything else can react to it. Every
+    header is a ``setdefault``: a handler that chose a STRICTER value keeps it, so a
+    hardening change here can never downgrade a response that was already tighter.
+    """
+    resp = await handler(request)  # type: ignore[operator]
+    if hasattr(resp, "headers"):
+        if request.path.startswith(_IMMUTABLE_ASSET_PREFIX):
+            # #2933: these bundles are content-addressed, so `no-store` bought
+            # nothing but a full re-download of ~22 MB of JS/CSS on every load.
+            # `public` is safe here — the route is unauthenticated (see
+            # token_auth._BYPASS_PREFIXES) and carries no per-user data.
+            resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            resp.headers.setdefault(
+                "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
+            )
+            resp.headers.setdefault("Pragma", "no-cache")
+            resp.headers.setdefault("Expires", "0")
+        resp.headers.setdefault("Content-Security-Policy", dashboard_csp())
+        for name, value in SECURITY_HEADERS.items():
+            resp.headers.setdefault(name, value)
+    return resp  # type: ignore[return-value]
+
+
 # SPA fallback: serve index.html for client-side React Router paths, and normalize
 # the router's two refusals into the one wire envelope for /api/*.
 @web.middleware  # type: ignore[misc]
@@ -1889,68 +1999,6 @@ async def start_dashboard(
 
     # ── Middleware ────────────────────────────────────────────────────────────
 
-    # Content-hashed Vite output (`/assets/AgentsSection-<hash>.js`): the URL itself
-    # changes whenever the file's content does (Vite's own cache-busting), so the
-    # response can be cached forever — this is the ONLY prefix this middleware treats
-    # as immutable. Deliberately narrower than token_auth._BYPASS_PREFIXES: `/fonts/`,
-    # `/sprites/` and `/vendor/` also skip auth but are STABLE-named (unhashed), so
-    # long-lived caching them would serve stale content past a rebuild (#2933).
-    _IMMUTABLE_ASSET_PREFIX = "/assets/"
-
-    # No-cache: prevents Chrome from caching stale HTML/API responses
-    @web.middleware  # type: ignore[misc]
-    async def no_cache_middleware(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        resp = await handler(request)  # type: ignore[operator]
-        if hasattr(resp, "headers"):
-            if request.path.startswith(_IMMUTABLE_ASSET_PREFIX):
-                # #2933: these bundles are content-addressed, so `no-store` bought
-                # nothing but a full re-download of ~22 MB of JS/CSS on every load.
-                # `public` is safe here — the route is unauthenticated (see
-                # token_auth._BYPASS_PREFIXES) and carries no per-user data.
-                resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
-            else:
-                resp.headers.setdefault(
-                    "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
-                )
-                resp.headers.setdefault("Pragma", "no-cache")
-                resp.headers.setdefault("Expires", "0")
-            # CSP: defense-in-depth layer. Primary XSS protection is rehypeSanitize
-            # (strips script/iframe/form/foreignObject at HAST level before rendering).
-            # CSP must allow 'unsafe-inline' because widget iframes (blob: sandbox)
-            # inherit parent CSP per W3C spec — inline scripts in widgets need it.
-            # Widget isolation is enforced by sandbox="allow-scripts" (no parent DOM
-            # access) + widget-level CSP meta (connect-src 'none').
-            resp.headers.setdefault(
-                "Content-Security-Policy",
-                "default-src 'self'; "
-                # blob: in script-src enables dynamic ESM module loading for contributed
-                # app UI bundles: the host rewrites a bundle's bare import specifiers
-                # (react / @personalclaw/app-sdk / …) to same-origin-derived blob modules
-                # that re-export the host's singletons. Blobs are origin-scoped; apps are
-                # still gated by the permission system + SkillScanner at install.
-                "script-src 'self' 'unsafe-inline' blob: "
-                "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "  # noqa: E501
-                "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "  # noqa: E501
-                "img-src 'self' data: blob: https:; "
-                # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
-                # without font-src the default-src 'self' fallback blocks it.
-                "font-src 'self' data:; "
-                # REMOTE-USER-AUTH T4.1: behind a TLS-terminating tunnel the page is https,
-                # so the browser upgrades the WS to wss:// against the PUBLIC host — which
-                # this policy must name, or the dashboard loads and then silently has no
-                # live connection (the worst failure shape: it looks fine and does nothing).
-                # `_ws_csp_sources()` returns "" for a normal local install, leaving the
-                # policy byte-identical to before.
-                f"connect-src 'self' ws://localhost:* ws://127.0.0.1:*{_ws_csp_sources()}; "
-                "frame-src 'self' blob:; "
-                "worker-src 'self' blob:; "
-                "object-src 'none'; base-uri 'self'",
-            )
-        return resp  # type: ignore[return-value]
-
     # CSRF: block state-mutating requests from cross-origin pages
     _safe_methods = {"GET", "HEAD", "OPTIONS"}
 
@@ -2118,7 +2166,7 @@ async def start_dashboard(
 
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
-        no_cache_middleware,
+        _security_headers_middleware,
         api_version_middleware(),
         *(
             [_dev_user_middleware]

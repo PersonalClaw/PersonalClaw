@@ -1,4 +1,5 @@
-"""Rails for #2933: ``no_cache_middleware`` (``dashboard/server.py``) used to set
+"""Rails for #2933: ``_security_headers_middleware`` (``dashboard/server.py``, named
+``no_cache_middleware`` when this was filed) used to set
 ``Cache-Control: no-store, no-cache, must-revalidate, max-age=0`` on EVERY response
 via ``resp.headers.setdefault(...)``, including the content-hashed Vite bundles
 served under ``/assets/*``. Those URLs change whenever their content does (that is
@@ -13,7 +14,7 @@ routes, and the other UI-transport static mounts (``/fonts``, ``/sprites``,
 rails boot the REAL gateway on an ephemeral port and assert the header over actual
 HTTP, the same pattern ``test_gateway_boot_app_source_seed.py`` uses, because
 nothing short of standing up ``start_dashboard()`` exercises the real middleware
-chain (order matters: ``no_cache_middleware`` is the outermost middleware, so it
+chain (order matters: ``_security_headers_middleware`` is the outermost one, so it
 sees the static handler's response before anything else can react to it).
 """
 
