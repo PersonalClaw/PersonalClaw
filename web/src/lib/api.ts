@@ -2613,10 +2613,11 @@ export interface RetrievalMaskRow {
 /** One arm's leave-one-out marginal contribution and its offline verdict.
  *
  *  `verdict` is 'enable' | 'hold' | 'unmeasured'. `unmeasured` is first-class and covers
- *  three different truths — no delta, too few scored queries, or no executor at all — so
- *  `reasons[0]` is what a reader acts on. An arm with no executor never ran, which makes
- *  its `contribution_p` exactly 0.0; rendering that as "worthless" is the mistake the
- *  verdict exists to prevent. */
+ *  three different truths — no delta, too few scored queries, or the arm never ran — so
+ *  `reasons[0]` is what a reader acts on. An arm that never ran has `contribution_p: null`,
+ *  NOT 0.0: its delta would be a mask differenced against itself, so the server withholds
+ *  the number rather than publishing a zero that reads as a measured "this arm is
+ *  worthless". Render `null` as "not measured"/"no delta" and never as 0. */
 export interface RetrievalArmContribution {
   arm: string
   full_p_at_k: number | null
