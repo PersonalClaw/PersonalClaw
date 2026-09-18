@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from typing import NamedTuple
 
@@ -490,13 +491,50 @@ def pool_size(n_items: int | None = None) -> int:
     never below 1, and never more than there is work for.
 
     Bounded on BOTH sides deliberately. The ceiling is §1.2's ("bounded by
-    os.cpu_count(), ceiling 4"): ``git worktree add`` is I/O-bound and each briefly
-    takes the repo lock, so more threads than 4 buys contention, not throughput. The
+    os.cpu_count(), ceiling 4"): what the pool overlaps is hydration, which is I/O-bound,
+    and each worker also serializes briefly on the per-repo registration lock (see
+    ``_REGISTER_LOCKS``) — so more threads than 4 buys contention, not throughput. The
     cpu_count leg keeps a 2-core box from being asked for 4."""
     size = min(os.cpu_count() or 1, POOL_CEILING)
     if n_items is not None:
         size = min(size, n_items)
     return max(1, size)
+
+
+# ``git worktree add`` is not safe against a concurrent ``git worktree add`` in the SAME
+# repo, and it fails HARD rather than degrading. Measured on git 2.55 (macOS runner and
+# this dev box): an add writes ``.git/worktrees/<id>/gitdir`` BEFORE it writes that
+# entry's ``commondir``, so a sibling entry is briefly DISCOVERABLE while its
+# ``commondir`` is still a zero-byte file — polling the directory through a 16-wide
+# batch caught the state directly (``commondir=0 gitdir=118``). A concurrent add
+# enumerates the worktrees, opens that sibling and dies:
+#
+#     fatal: failed to read .git/worktrees/<sibling>/commondir: Undefined error: 0
+#
+# exit 128, which :func:`add_worktree` can only report as a creation failure (``None``)
+# — the red that took ``main`` down (8-wide batch, ~1 round in 20 locally).
+#
+# Forging that state makes the death deterministic, and shows the blast radius is
+# exactly ONE command: ``worktree add`` dies on it, while ``checkout``,
+# ``sparse-checkout set`` and ``status`` run inside a worktree are unaffected. So
+# REGISTRATION is serialized per repository and HYDRATION — the expensive part the pool
+# exists to overlap — stays in the pool. Not a lock on the batch: a lock around the one
+# metadata command, held for milliseconds.
+_REGISTER_LOCKS: dict[str, threading.Lock] = {}
+_REGISTER_LOCKS_GUARD = threading.Lock()
+
+
+def _register_lock(workspace: str) -> threading.Lock:
+    """The per-repository lock guarding ``git worktree add``.
+
+    Keyed by workspace abspath like the sibling caches above: every worktree of a repo
+    is registered through that repo's main workspace, so the key IS the repo."""
+    key = os.path.abspath(workspace)
+    with _REGISTER_LOCKS_GUARD:
+        lock = _REGISTER_LOCKS.get(key)
+        if lock is None:
+            lock = _REGISTER_LOCKS[key] = threading.Lock()
+        return lock
 
 
 def add_worktrees(
@@ -613,22 +651,31 @@ def add_worktree(
     branch = branch_name(task_id)
     # -B resets the branch if it somehow exists; -f tolerates a stale registration.
     #
-    # ORDER IS THE WHOLE SAVING. With ``scope`` we add ``--no-checkout`` first, record
-    # the cone, and only then hydrate — so the out-of-scope files are never written at
-    # all. Doing it the obvious way round (full ``worktree add``, then
-    # ``sparse-checkout set``) is measurably WORSE than today: it pays the entire
-    # hydration cost and then pays again to delete what it just wrote.
-    args = ["worktree", "add", "-f", "-B", branch]
-    if scope:
-        args.append("--no-checkout")
-    rc, out = _git(workspace, *args, path, "HEAD")
-    if rc == 0 and scope:
+    # ORDER IS THE WHOLE SAVING, and it now buys two things.
+    #
+    # ``--no-checkout`` ALWAYS, then an explicit hydration step. That splits the call in
+    # two along exactly the line the concurrency needs: REGISTRATION is metadata-only and
+    # takes the per-repo lock (see ``_REGISTER_LOCKS`` — a concurrent registration is a
+    # hard exit 128, not a slow path), while HYDRATION is the expensive half and runs
+    # outside the lock, so a batch still overlaps the work that costs the time.
+    #
+    # With ``scope`` the same split is what saves the work outright: the cone is recorded
+    # BEFORE anything is written, so the out-of-scope files are never created at all.
+    # Doing it the obvious way round (full ``worktree add``, then ``sparse-checkout
+    # set``) is measurably WORSE than today: it pays the entire hydration cost and then
+    # pays again to delete what it just wrote.
+    with _register_lock(workspace):
+        rc, out = _git(
+            workspace, "worktree", "add", "-f", "-B", branch, "--no-checkout", path, "HEAD"
+        )
+    if rc == 0:
         # Both steps stay INSIDE the timed window: hydration is what the HC-1 log line
-        # measures, and with sparse on, the ``checkout`` below IS the hydration. The
-        # checkout runs whether or not the cone was recorded — a failed
-        # ``sparse-checkout set`` must still leave a populated (just full) worktree, not
-        # the empty one ``--no-checkout`` created.
-        set_sparse_scope(path, scope)
+        # measures, and the ``checkout`` below IS the hydration. It runs whether or not a
+        # cone was recorded — a failed (or absent) ``sparse-checkout set`` must still
+        # leave a populated (just full) worktree, not the empty one ``--no-checkout``
+        # created.
+        if scope:
+            set_sparse_scope(path, scope)
         rc, out = _git(path, "checkout")
     elapsed = time.perf_counter() - started
     if rc != 0:
