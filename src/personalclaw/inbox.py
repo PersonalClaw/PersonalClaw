@@ -12,7 +12,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from personalclaw import notification_kinds
 from personalclaw.atomic_write import atomic_write
@@ -46,8 +46,49 @@ __all__ = [
     "emit_attention_item",
     "evaluate_alert",
     "notify_inbox_alert",
+    "owner_view",
     "redact_item",
 ]
+
+
+def _local_username() -> str:
+    """The local owner's attribution handle, or ``""``. Imported lazily, never raises.
+
+    Lazy for the reason ``config_dir`` above is defined rather than imported: this module is
+    imported early and ``identity`` reads config.
+    """
+    try:
+        from personalclaw.identity import current_username
+
+        return current_username()
+    except Exception:  # noqa: BLE001 — attribution must never fail an inbox write
+        logger.debug("inbox: username unreadable — storing without attribution")
+        return ""
+
+
+def _local_harness() -> str:
+    """This harness's stable id, or ``""``. Reuses ``durability``'s, never mints a new one."""
+    try:
+        from personalclaw.durability.shards import machine_id
+
+        return machine_id(config_dir())
+    except Exception:  # noqa: BLE001 — same posture as the username above
+        logger.debug("inbox: machine id unreadable — storing without origin")
+        return ""
+
+
+def owner_view(items: "Iterable[InboxItem]", owner: str) -> "list[InboxItem]":
+    """The subset of *items* that counts as *owner*'s — the ONE owner-counter scope.
+
+    Every "my items" count and the ``?mine=1`` filter go through this, so the counter and
+    the filter cannot disagree about what "mine" means. It is a thin wrapper over
+    :meth:`InboxItem.belongs_to` on purpose: the conformance kit
+    (``personalclaw.sdk.shared_store``) asserts a provider's owner view agrees with its
+    ``belongs_to`` on EVERY record, and the cheapest way to guarantee that is to have no
+    second implementation to diverge.
+    """
+    return [i for i in items if i.belongs_to(owner)]
+
 
 _STATE_FILE = "inbox_state.json"
 _ITEMS_FILE = "inbox.json"
@@ -265,11 +306,57 @@ class InboxItem:
     # "workflow":…}. Deep-linking is what makes a needs_input row actionable rather than a
     # notification with extra steps.
     refs: dict = field(default_factory=dict)
+    # ── Attribution (TSE2-3, built on TSE2-1) ────────────────────────────────────────
+    # WHO this item is for, and WHICH harness minted it. Same two fields, same names and
+    # same defaults as `WorkflowRun` (`workflows/models.py:942-943`) — a shared inbox that
+    # invented its own attribution vocabulary would be a second dialect of a question TSE2-1
+    # already answered. Stamped once, in `InboxStore.add`, from the same two primitives
+    # (`identity.current_username()` and `durability.shards.machine_id`).
+    #
+    # Deliberately NOT in `_UPDATABLE_FIELD_TYPES`: that set is pinned equal to the HTTP
+    # allowlist `handlers_inbox._UPDATABLE_FIELDS`, so putting attribution there would let
+    # `PUT /api/inbox/{id}` re-attribute somebody else's item to the owner — laundering
+    # foreign content into owner intent, which is the one thing this atom's fencing exists to
+    # prevent. Attribution is set at creation and never by a client.
+    owner_username: str = ""
+    origin_harness: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["ts"] = self.ts
         return d
+
+    def belongs_to(self, username: str) -> bool:
+        """Whether this item counts as *username*'s for a "my items" counter.
+
+        Mirrors :meth:`personalclaw.workflows.models.WorkflowRun.belongs_to` exactly, and
+        for the same reason: an UNATTRIBUTED item reads as the local owner's (that is the
+        shipped bargain — every item written before the inbox knew about attribution stays
+        the owner's), an item attributed to somebody ELSE does not count, and an empty
+        *username* counts everything (a single-user install with no username configured
+        behaves exactly as it did before this field existed).
+
+        This is the predicate the owner-scoped counters and ``?mine=1`` share, so a
+        hand-rolled scope cannot diverge from it on the empty-attribution edge — the F3
+        failure mode ``docs/architecture/shared-store-provider-conformance.md`` names.
+        """
+        owner = (username or "").strip().lower()
+        if not owner:
+            return True
+        author = (self.owner_username or "").strip().lower()
+        return not author or author == owner
+
+    def authored_by(self, username: str) -> bool:
+        """Whether this item is EXACTLY attributed to *username*.
+
+        Distinct from :meth:`belongs_to`, and both are needed — they answer two different
+        questions and one key cannot answer both. "Is this mine?" (``belongs_to``) treats an
+        unattributed item as the owner's; "show me only Dana's items" (``authored_by``) must
+        not, or every unattributed row would appear under every owner's filter in the shared
+        view. Using ``belongs_to`` for per-owner filtering is the bug this pair prevents.
+        """
+        who = (username or "").strip().lower()
+        return bool(who) and (self.owner_username or "").strip().lower() == who
 
     @property
     def ts(self) -> str:
@@ -441,6 +528,26 @@ class InboxStore:
             logger.warning("Failed to save inbox items")
 
     def add(self, item: InboxItem) -> None:
+        """Store *item*, stamping attribution when it carries none.
+
+        The ONE creation seam, mirroring TSE2-1's single stamping point in
+        ``workflows/store.py:264-271``. Every source — the native push sink, the poll
+        providers, digests, app-raised proposals — arrives here, so attribution cannot be
+        forgotten by one of them.
+
+        A value already SET is preserved: that is how a shared source hands over a
+        teammate's item without this seam overwriting it into the owner's own. And an
+        unresolvable username stays ``""``, which :meth:`InboxItem.belongs_to` reads as the
+        owner's — today's single-user behaviour, unchanged.
+
+        ``load()`` does not come through here (it constructs via ``from_dict`` straight into
+        ``items``), so re-reading the store never re-stamps a stored item with today's
+        identity — which would silently re-attribute history.
+        """
+        if not item.owner_username:
+            item.owner_username = _local_username()
+        if not item.origin_harness:
+            item.origin_harness = _local_harness()
         self.items[item.id] = item
         self._dirty = True
 

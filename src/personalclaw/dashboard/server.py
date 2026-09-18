@@ -1393,6 +1393,10 @@ async def start_dashboard(
     app.router.add_get("/api/inbox", handlers_inbox.api_inbox_list)
     app.router.add_get("/api/inbox/pending", handlers_inbox.api_inbox_pending)
     app.router.add_get("/api/inbox/kinds", handlers_inbox.api_inbox_kinds)
+    # TSE2-3 — the owner census behind the shared inbox's per-owner filter chips. A literal
+    # segment, registered beside `kinds` and before any dynamic `{id}` route, for the same
+    # shadowing reason called out below.
+    app.router.add_get("/api/inbox/owners", handlers_inbox.api_inbox_owners)
     app.router.add_post("/api/inbox/seen", handlers_inbox.api_inbox_seen)
     app.router.add_get("/api/inbox/status", handlers_inbox.api_inbox_status)
     app.router.add_post("/api/inbox/restart", handlers_inbox.api_inbox_restart)
