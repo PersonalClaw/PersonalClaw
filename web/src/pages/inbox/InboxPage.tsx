@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote, Star } from 'lucide-react'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote, Star, User, UserCheck, Users } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -15,10 +15,11 @@ import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQuery
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
+import { ForeignBadge } from './ForeignContent'
 import { rowSubject } from '../../lib/rowSubject'
 import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isForeignItem, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ComposeNoteModal } from './ComposeNoteModal'
@@ -54,6 +55,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   const { data: status, refresh: refreshStatus } = useQuery<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'open', { replace: true })
   const [kind, setKind] = useQueryParam(query, setQuery, 'kind', '', { replace: true })
+  // `''` = every owner (the shared view's default: hiding a teammate's rows by default would
+  // make the shared inbox look empty). `mine` is the pseudo-value for the owner's own scope —
+  // it means `belongs_to`, which INCLUDES unattributed rows, so it cannot be expressed as an
+  // owner handle. Any other value is an exact handle (`authored_by`).
+  const [ownerFilter, setOwnerFilter] = useQueryParam(query, setQuery, 'owner', '', { replace: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
@@ -70,17 +76,43 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   // Live: triage layer pushes new/updated items over the shared WS.
   useChatSocket((m: WsMessage) => { if (m.type === 'inbox_item_updated' || m.type === 'inbox_new_item') load() })
 
+  // TSE2-3 — the local owner's handle, off the status payload this page ALREADY reads.
+  //
+  // 🪤 Deliberately not a third `useQuery` on `/api/inbox/owners`. That endpoint exists (it is
+  // the API-side census, paired with `?owner=` exactly as `/api/inbox/kinds` is paired with
+  // `?kind=`), but this page must not call it, for the same reason it does not call
+  // `api.inboxKinds`: `api.inbox()` already returns EVERY item, so the census is derivable
+  // locally and a fourth request would add a round trip, a loading state, and — measured — a
+  // new mock obligation that broke four unrelated test files whose mocks predated it. The
+  // shipped `kindChips` below is the precedent, not an exception to it.
+  //
+  // `''` means "no username configured", and NOTHING is foreign then — `isForeignItem` encodes
+  // that, so a solo install needs no special case here.
+  const me = status?.owner ?? ''
+  /** The one owner predicate the filter, the chip counts and the list all read.
+   *
+   *  `mine` → `belongs_to` (unattributed included); an exact handle → `authored_by`
+   *  (unattributed excluded). Mirrors the server's two predicates so the client-side
+   *  narrowing and `?owner=`/`?mine=1` cannot disagree about which rows belong where. */
+  const matchesOwner = (it: InboxItem) => {
+    if (!ownerFilter) return true
+    const who = (it.owner_username || '').trim().toLowerCase()
+    if (ownerFilter === 'mine') return !me || !who || who === me.trim().toLowerCase()
+    return who === ownerFilter.trim().toLowerCase()
+  }
+
   const filtered = useMemo(() => {
     if (!items) return null
     const n = q.trim().toLowerCase()
     return items
+      .filter(matchesOwner)
       // `favorites` is a CURATION view, not a status one: it cuts across open/handled
       // deliberately, because a starred item the user then handled is still the thing they
       // starred. Same predicate Knowledge uses for the same field (issue 620).
       .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
       .filter((it) => !kind || (it.item_kind || 'message') === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
-  }, [items, filter, kind, q])
+  }, [items, filter, kind, q, ownerFilter, me])
   const open = items?.find((it) => it.id === openId) ?? null
 
   // P11: fire the "open" engagement signal when the user opens an item's panel. Once per
@@ -179,7 +211,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   // default (`open` — NOT `all`, which is the trap the results-announcement rail records), or a kind
   // chip. Shared by the empty state's title AND hint so the two can never disagree about which state
   // the list is in.
-  const narrowed = !!(q.trim() || filter !== 'open' || kind)
+  const narrowed = !!(q.trim() || filter !== 'open' || kind || ownerFilter)
 
   // Live per-filter counts so the menu shows where items sit. Counts respect the active
   // KIND chip — a count that ignored it would disagree with the list right beside it.
@@ -207,6 +239,33 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     }
     return ITEM_KINDS.filter((k) => counts.has(k.key)).map((k) => ({ ...k, open: counts.get(k.key) ?? 0 }))
   }, [items])
+  // TSE2-3 — owner chips, driven by what is PRESENT in the list, with OPEN counts from the
+  // same array the rows come from so a badge cannot disagree with its own list. Exactly the
+  // `kindChips` shape above. The unattributed rows get no chip: they are not a person, and
+  // "Mine" already covers them (`belongs_to`).
+  const ownerChips = useMemo(() => {
+    if (!items) return []
+    const counts = new Map<string, { total: number; open: number }>()
+    for (const it of items) {
+      const who = (it.owner_username || '').trim()
+      if (!who) continue
+      const e = counts.get(who) ?? { total: 0, open: 0 }
+      e.total += 1
+      if (isOpen(it.status)) e.open += 1
+      counts.set(who, e)
+    }
+    return [...counts.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([username, c]) => ({ username, ...c, isMe: !!me && username.toLowerCase() === me.toLowerCase() }))
+  }, [items, me])
+  // Only a SHARED inbox gets owner controls: on a solo install every row is the owner's, so
+  // a single "me" chip would be a control with nothing to choose — the same dead-control rule
+  // the kind chips follow.
+  const shared = ownerChips.length > 1
+  const myOpenCount = useMemo(
+    () => (items ?? []).filter((it) => !isForeignItem(it, me) && isOpen(it.status)).length,
+    [items, me],
+  )
   const filterSections: FilterSectionDef[] = [{
     title: 'Show', value: filter, defaultKey: 'open', onChange: setFilter,
     // The Filtered view is only offered when something is actually withheld — an always-on
@@ -231,7 +290,16 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `truncate` on this flex container does nothing (it has no text of its own), which
           // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
           // the secondary count truncates — the same shape `notifications` uses.
-          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">{status.pending_count} pending · {status.total_count} total</span>}</PageTitle>}
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
+            {/* TSE2-3 — on a SHARED inbox the count says how much of the queue is the owner's,
+                because "12 pending" in a queue where nine are a teammate's is a number that
+                misreads as personal backlog. `my_pending_count` is the server's own
+                owner-scoped figure, so this label and the `mine` chip report one number. Solo
+                installs keep the original two-part count exactly. */}
+            {shared && status.my_pending_count !== undefined
+              ? <>{status.my_pending_count} of {status.pending_count} pending are yours · {status.total_count} total</>
+              : <>{status.pending_count} pending · {status.total_count} total</>}
+          </span>}</PageTitle>}
           right={
             // The header has room now (search/filter live on the page), so surface
             // the actions directly — the cluster collapses them (icon-only → …) if tight.
@@ -312,7 +380,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 ? (open.sender_name || open.sender_id || 'Item')
                 : kindMeta(open.item_kind).label}
               onClose={() => setOpenId("")}>
-              <InboxDetail item={open} onChanged={load} navigate={navigate} />
+              <InboxDetail item={open} owner={me} onChanged={load} navigate={navigate} />
             </SidePanel>
           )}
           {settingsOpen && (
@@ -384,6 +452,33 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                   icon: k.icon,
                   tone: k.tone,
                   title: `${k.label} — ${k.open} open`,
+                })),
+              ]}
+            />
+          </div>
+        )}
+        {/* TSE2-3 — OWNER chips, rendered only for a genuinely shared inbox (more than one
+            attributed owner present). Three scopes, and the middle one is not an owner handle:
+            "Everyone" is the shared view's default, "Mine" is `belongs_to` (so it keeps the
+            unattributed rows an owner still owns), and each handle is an exact attribution.
+            Uses the same canonical `Segmented` as the kind chips rather than a second chip
+            style. */}
+        {shared && (
+          <div className="mb-m">
+            <Segmented
+              size="sm"
+              collapse="scroll"
+              ariaLabel="Filter by owner"
+              value={ownerFilter || 'all'}
+              onChange={(o) => setOwnerFilter(o === 'all' ? '' : o)}
+              options={[
+                { key: 'all', label: 'Everyone', icon: Users },
+                { key: 'mine', label: myOpenCount > 0 ? `Mine ${myOpenCount}` : 'Mine', icon: UserCheck, title: `Yours — ${myOpenCount} open` },
+                ...ownerChips.filter((o) => !o.isMe).map((o) => ({
+                  key: o.username,
+                  label: o.open > 0 ? `${o.username} ${o.open}` : o.username,
+                  icon: User,
+                  title: `${o.username} — ${o.open} open of ${o.total}`,
                 })),
               ]}
             />
@@ -528,6 +623,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                           a screen reader, which would leave the read half missing for exactly the
                           users who need it most. */}
                       {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
+                      {/* TSE2-3 — whose item this is, on the ROW. Without it the attribution
+                          would only appear once the panel is open, i.e. after the reader has
+                          already taken the text as the owner's own. Renders nothing for the
+                          owner's own rows. */}
+                      <ForeignBadge item={it} owner={me} />
                     </div>
                     {/* The panel renders this content as real markup; the ROW is a one-line
                         plain-text preview, so the marks must go — a digest body's `**` and `##`

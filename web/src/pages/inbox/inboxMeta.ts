@@ -53,6 +53,25 @@ export function isOpen(s?: string): boolean {
   return OPEN_STATUSES.includes((s || 'pending') as InboxItemStatus)
 }
 
+/** TSE2-3 — whether *item* is attributed to somebody OTHER than *owner*.
+ *
+ *  The ONE foreignness test, mirroring the server's `InboxItem.belongs_to` inverted, and it
+ *  must keep mirroring it: an unattributed item is NOT foreign (it predates attribution, so
+ *  it reads as the owner's), and nothing is foreign when the install has no username
+ *  configured. A `!!item.owner_username` shortcut would mark every attributed row foreign,
+ *  including the owner's own.
+ *
+ *  🪤 Lives HERE and not in `lib/api.ts` alongside the `InboxItem` type it takes. It is a pure
+ *  predicate, so it belongs with `isOpen` — and putting it in `api.ts` broke six unrelated test
+ *  files at once: those suites `vi.mock('../../lib/api')` with a partial object, so every NEW
+ *  named export from that module is a missing-export error in each of them. A module that is
+ *  routinely partially mocked is the wrong home for a helper. */
+export function isForeignItem(item: Pick<InboxItem, 'owner_username'>, owner: string): boolean {
+  const me = (owner || '').trim().toLowerCase()
+  const who = (item.owner_username || '').trim().toLowerCase()
+  return !!me && !!who && who !== me
+}
+
 // ── item kind (WHAT is asking for attention — orthogonal to classification) ──
 // classification is the triage layer's judgment ABOUT a message; item_kind is what the
 // row fundamentally IS. A needs_input row has no sender and no reply — treating it as a

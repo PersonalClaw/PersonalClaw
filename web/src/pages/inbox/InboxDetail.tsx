@@ -9,6 +9,7 @@ import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
@@ -18,7 +19,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
  *  and triage actions. Sending a reply depends on the source provider supporting
  *  it (filesystem/Slack-bot don't here) — Send is shown but gated. */
-export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; onChanged: () => void; navigate: (path: string) => void }) {
+export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: InboxItem; owner?: string; onChanged: () => void; navigate: (path: string) => void }) {
   const [draft, setDraft] = useState(item.draft ?? '')
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
@@ -111,8 +112,9 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
         {item.created_at && <span>{relPast(item.created_at)}</span>}
       </div>
 
-      {/* the message */}
-      <div data-type="body-m" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed"><Markdown>{item.message}</Markdown></div>
+      {/* the message — FENCED + LABELLED when it is another owner's (TSE2-3). `InboxMessageBody`
+          renders it plain for the owner's own item, so a solo install is unchanged. */}
+      <div data-type="body-m" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed"><InboxMessageBody item={item} owner={owner} /></div>
 
       {/* thread context */}
       {(item.thread_context?.length ?? 0) > 0 && (
