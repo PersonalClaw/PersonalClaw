@@ -47,7 +47,7 @@ def _design_loop():
             name="D",
             kind="design",
             task="design a tic-tac-toe system",
-            plan=[{"step": "build_plan", "title": "Document & export"}],
+            plan=[{"stage": "build_plan", "title": "Document & export"}],
         )
     )
 
@@ -105,9 +105,9 @@ class TestPhaseMatchTolerantOfOrdinalPrefix:
                 kind="design",
                 task="a design system",
                 plan=[
-                    {"step": "foundations", "title": "Emit Primitive Token Layer"},
-                    {"step": "palette", "title": "Expand & Verify Semantic Color Roles"},
-                    {"step": "build_plan", "title": "Assemble DESIGN.md & Export"},
+                    {"stage": "foundations", "title": "Emit Primitive Token Layer"},
+                    {"stage": "palette", "title": "Expand & Verify Semantic Color Roles"},
+                    {"stage": "build_plan", "title": "Assemble DESIGN.md & Export"},
                 ],
             )
         )
@@ -158,11 +158,11 @@ class TestPhaseMatchTolerantOfOrdinalPrefix:
                 kind="design",
                 task="t",
                 plan=[
-                    {"step": "foundations", "title": "Materialize foundation tokens"},
-                    {"step": "palette", "title": "Expand & re-verify color scales"},
-                    {"step": "typography", "title": "Type scale & X/O glyph proof"},
-                    {"step": "components", "title": "Per-state specs & keyboard model"},
-                    {"step": "export", "title": "Document, export tokens & verify"},
+                    {"stage": "foundations", "title": "Materialize foundation tokens"},
+                    {"stage": "palette", "title": "Expand & re-verify color scales"},
+                    {"stage": "typography", "title": "Type scale & X/O glyph proof"},
+                    {"stage": "components", "title": "Per-state specs & keyboard model"},
+                    {"stage": "export", "title": "Document, export tokens & verify"},
                 ],
                 phase_status={"foundations": "done", "palette": "done", "typography": "done"},
             )
@@ -192,10 +192,10 @@ class TestPhaseMatchTolerantOfOrdinalPrefix:
                 kind="design",
                 task="t",
                 plan=[
-                    {"step": "foundations", "title": "F"},
-                    {"step": "palette", "title": "P"},
-                    {"step": "components", "title": "C"},
-                    {"step": "export", "title": "E"},
+                    {"stage": "foundations", "title": "F"},
+                    {"stage": "palette", "title": "P"},
+                    {"stage": "components", "title": "C"},
+                    {"stage": "export", "title": "E"},
                 ],
                 phase_status={"foundations": "done", "palette": "done", "components": "active"},
                 max_cycles=30,

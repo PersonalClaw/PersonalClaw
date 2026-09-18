@@ -15,6 +15,7 @@ import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
 import { downloadText, safeFilename } from '../../lib/download'
 import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
 import { useRunStream } from './useRunStream'
+import { phaseKey } from './loopPhases'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
@@ -382,7 +383,9 @@ function DesignPhaseTrail({ plan, phaseStatus, cycle, active, complete }: {
   plan: LoopPhase[]; phaseStatus: Record<string, string>; cycle: number; active: boolean; complete: boolean
 }) {
   if (!plan.length) return null
-  const key = (p: LoopPhase) => String(p.step || p.title || '').trim()
+  // The SHARED phase-id reader (`PHASE_KEY_FIELDS`), not a local copy: this trail and the
+  // run fold each carried their own, and they disagreed about the same data (issue 494).
+  const key = phaseKey
   // Active index: prefer an explicit phase_status 'active'/'running'; else, while running,
   // map the cycle count across the phases (rough but honest — design advances by cycle,
   // not a gated checklist); -1 when not started.
@@ -397,7 +400,7 @@ function DesignPhaseTrail({ plan, phaseStatus, cycle, active, complete }: {
           const done = complete || st === 'done' || (activeIdx >= 0 && i < activeIdx)
           const isActive = !done && i === activeIdx
           const Icon = done ? CheckCircle2 : isActive ? CircleDot : Circle
-          const title = String(p.title || p.step || `Step ${i + 1}`)
+          const title = String(p.title || p.stage || `Step ${i + 1}`)
           const obj = String((p as Record<string, unknown>).objective || '')
           return (
             <div key={i} className="flex items-center gap-1 shrink-0">

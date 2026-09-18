@@ -14,6 +14,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
+import { phaseKey } from '../loops/loopPhases'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
 import { loopStatusLabel, effectiveLoopStatus, loopStatusTone, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
@@ -277,12 +278,12 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
     // (no single stage is "in play" there).
     // Exactly the backend's ACTIVE_STATUSES — the one set, not a fourth hand-written copy.
     if (!ACTIVE_LOOP_STATUSES.has(p.status) || done >= total) return base
-    // Key EXACTLY as the backend phase_key (`stage.strip() || title.strip()`): a
-    // stageless-but-titled row (stage==='') is keyed by its TITLE. The old `?? `
-    // (nullish) kept the empty stage → keyed by '' → the stage_status lookup missed,
-    // so a project with a stageless row showed the wrong stage-in-play. (Same fix as
-    // SdlcProgressCard; mirrors CodeCockpitPage's stageKey.)
-    const active = plan.find((s) => (ss[(String(s.stage ?? '').trim() || String(s.title ?? '').trim())] ?? 'pending') !== 'done')
+    // Key via the SHARED `phaseKey` (`loopPhases.PHASE_KEY_FIELDS`) — the backend's own
+    // resolution: a stageless-but-titled row (stage==='') is keyed by its TITLE. A plain
+    // nullish `??` kept the empty stage → keyed by '' → the stage_status lookup missed, so a
+    // project with a stageless row showed the wrong stage-in-play. This used to be spelled
+    // out here, one of four copies that had already drifted apart (issue 494).
+    const active = plan.find((s) => (ss[phaseKey(s)] ?? 'pending') !== 'done')
     const name = active ? String(active.title || active.stage || '') : ''
     return name ? `${base} · ${sdlcStageLabel(name)}` : base
   }

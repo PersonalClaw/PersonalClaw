@@ -4674,9 +4674,10 @@ export type LoopKind = 'general' | 'goal' | 'code' | 'design' | 'research'
 export type UnifiedLoopStatus =
   | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
   | 'stagnant' | 'blocked' | 'needs_input' | 'complete' | 'failed' | 'stopped'
-// One phase in the kind-agnostic plan: goal sub-goals (keyed by title), code SDLC
-// stages (keyed by stage), design steps. Only `title` is universal; the rest are
-// kind-specific and pass through untouched.
+// One phase in the kind-agnostic plan: goal sub-goals, code SDLC stages, design steps.
+// `stage` is the phase id EVERY kind's planner emits and `title` is its fallback — together
+// they are `loopPhases.PHASE_KEY_FIELDS`, the one vocabulary `phase_status` is keyed by.
+// Anything else on a row is kind-specific and passes through untouched.
 export interface LoopPhase {
   title?: string; stage?: string; objective?: string; exit_criteria?: string[]
   deliverable?: string; tasks?: Record<string, unknown>[]

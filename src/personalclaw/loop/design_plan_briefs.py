@@ -252,7 +252,7 @@ def _artifact_contract(kind: str) -> str:
             "{\n"
             '  "markdown": "<human-readable summary of the build phases>",\n'
             '  "phases": [\n'
-            '    {"step":"<snake_case slug, e.g. foundations|palette|typography|'
+            '    {"stage":"<snake_case slug, e.g. foundations|palette|typography|'
             'components|export>", "title":"<phase title>", '
             '"objective":"<what this phase produces for THIS product>"}\n'
             "  ]\n"
@@ -371,13 +371,16 @@ def build_plan_to_phases(artifact: dict) -> list[dict]:
     for p in phases:
         if not isinstance(p, dict):
             continue
-        step = _slug(p.get("step")) or _slug(p.get("title"))
-        title = str(p.get("title", "")).strip() or step.replace("_", " ").title()
-        if not (step or title):
+        stage = _slug(p.get("stage")) or _slug(p.get("title"))
+        title = str(p.get("title", "")).strip() or stage.replace("_", " ").title()
+        if not (stage or title):
             continue
         out.append(
             {
-                "step": step or title.lower().replace(" ", "_"),
+                # `stage` — the ONE phase-id field every kind's plan rows carry
+                # (`kinds.PHASE_KEY_FIELDS`), so a projected design phase keys
+                # `phase_status` identically to a code phase.
+                "stage": stage or title.lower().replace(" ", "_"),
                 "title": title,
                 "objective": str(p.get("objective", "")).strip(),
             }

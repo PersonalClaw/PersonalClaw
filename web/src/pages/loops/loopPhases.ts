@@ -4,6 +4,41 @@
 
 export type Phase = Record<string, unknown>
 
+/** The plan-row fields a phase's stable key is read from, in priority order — the
+ *  frontend's copy of the backend's `kinds.PHASE_KEY_FIELDS`. `tests/test_loop_phase_key_one_owner.py`
+ *  asserts the two lists are identical, so renaming the field on either side reds a test.
+ *
+ *  This list is the whole contract for looking a phase up in `phase_status`: the backend
+ *  writes that map under `kind.phase_key(row)`, and `phaseKey` below is the only reader.
+ *  Design used to spell its phase id `step`, which nothing outside the design kind knew —
+ *  so every design stage read `todo` forever while the header counter (which counts VALUES,
+ *  not lookups) showed real progress (issue 494). */
+export const PHASE_KEY_FIELDS = ['stage', 'title'] as const
+
+/** The minimum shape `phaseKey` reads — DERIVED from the field list, so a row type only has to
+ *  carry the declared fields (a `CodeStage`, a `LoopPhase`, or a bare `Phase` record all do). */
+export type PhaseKeyRow = { [K in (typeof PHASE_KEY_FIELDS)[number]]?: unknown }
+
+/** The stable key for a plan phase — the first non-empty `PHASE_KEY_FIELDS` value, matching
+ *  the backend's single `phase_key` exactly.
+ *
+ *  ONE implementation for every surface. There were FOUR: the shared run fold, the design
+ *  cockpit's phase trail, `CodeCockpitPage`'s `stageKey` and `CodeSection`'s stage-in-play
+ *  lookup each rebuilt it, and they did not agree — the design copy read a different field
+ *  (freezing every design stage on 'todo'), and the CodeCockpit copy never trimmed, so a
+ *  whitespace-only stage id keyed on whitespace rather than falling through to the title.
+ *
+ *  Trimmed, not just nullish-coalesced: a titled-but-stage-less row deliberately carries an
+ *  EMPTY-string `stage`, and `stage ?? title` kept that '' as the key → an unconditional
+ *  `phase_status` miss → the stage stuck on 'todo'. */
+export function phaseKey(p: PhaseKeyRow | undefined | null): string {
+  for (const field of PHASE_KEY_FIELDS) {
+    const v = String(p?.[field] ?? '').trim()
+    if (v) return v
+  }
+  return ''
+}
+
 /** Index of the phase the upcoming cycle belongs to — cumulative min_cycles
  *  windows; stays on the last phase past the end. -1 when there's no plan. */
 export function activePhaseIndex(totalCycles: number, plan: Phase[]): number {

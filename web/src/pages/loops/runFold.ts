@@ -17,7 +17,7 @@
  *  inline folds it replaces (keyed by the comment tags), and runFold.test.ts locks
  *  each one as a test case. */
 
-import { activePhaseIndex, phaseForCycle, type Phase } from './loopPhases'
+import { activePhaseIndex, phaseForCycle, phaseKey, type Phase } from './loopPhases'
 
 /** `untracked` = this step is REAL but its done-state is not maintained by any writer, so
  *  no claim is made about it (a research objective, a goal sub-goal). Distinct from `todo`,
@@ -132,11 +132,12 @@ export function foldRunSnapshot(loop: RunSnapshot): RunSnapshotViewModel {
   if (planned) {
     const ss = loop.phase_status || {}
     for (const s of plan) {
-      // Key EXACTLY as the backend's phase_key: `stage.trim() || title.trim()`. The old
-      // nullish `s.stage ?? s.title` kept an EMPTY-string stage (deliberately emitted for
-      // a titled-but-stageless row) → skey '' → phase_status miss → stage stuck 'todo'.
-      const skey = (String((s as Record<string, unknown>).stage ?? '').trim()
-        || String((s as Record<string, unknown>).title ?? '').trim())
+      // `phaseKey` is the ONE reader of the phase-id vocabulary (`PHASE_KEY_FIELDS`), mirroring
+      // the backend's single `phase_key`. This used to spell the lookup out inline, which is how
+      // it came to disagree with the design kind: design's writer keyed `phase_status` by a field
+      // this expression never read, so every design stage rendered 'todo' forever while the
+      // header counter above (which counts VALUES, not lookups) showed real progress (issue 494).
+      const skey = phaseKey(s)
       const st = ss[skey]
       steps.push({
         key: skey,

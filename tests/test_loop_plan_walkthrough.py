@@ -174,12 +174,12 @@ class TestDesignWalkthrough:
                     {
                         "phases": [
                             {
-                                "step": "foundations",
+                                "stage": "foundations",
                                 "title": "Foundations",
                                 "objective": "warm anchors",
                             },
                             {
-                                "step": "export",
+                                "stage": "export",
                                 "title": "Document & export",
                                 "objective": "DESIGN.md",
                             },
@@ -190,8 +190,8 @@ class TestDesignWalkthrough:
         )
         spec = wt.project_to_spec(session)
         assert spec["summary"] == "Warm, accessible recipe-app system."
-        # build_plan phases → unified design plan rows (keyed by step→title)
-        assert [p["step"] for p in spec["plan"]] == ["foundations", "export"]
+        # build_plan phases → unified design plan rows (keyed by the shared stage→title)
+        assert [p["stage"] for p in spec["plan"]] == ["foundations", "export"]
         # phase titles mirrored into kind_config.design_steps (cockpit/brief render them)
         assert spec["kind_config"]["design_steps"] == ["Foundations", "Document & export"]
 
@@ -213,7 +213,7 @@ class TestDesignWalkthrough:
                     "typography",
                     {"token_overrides": {"typography": {"family": {"sans": "Inter, sans-serif"}}}},
                 ),
-                _approved("build_plan", {"phases": [{"step": "export", "title": "Export"}]}),
+                _approved("build_plan", {"phases": [{"stage": "export", "title": "Export"}]}),
             ],
         )
         spec = wt.project_to_spec(session)
