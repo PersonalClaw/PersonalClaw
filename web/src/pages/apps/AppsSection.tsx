@@ -984,6 +984,12 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const defaultSources = new Set(catalog?.defaultGitSources ?? [])
   const builtinSources = new Set(catalog?.builtinGitSources ?? [])
   const networkSources = catalog?.networkSources ?? []
+  // #408: which source failed, keyed by URL. Without this the Store showed fewer apps (or,
+  // before the scan budget, spun for two minutes) with nothing naming the source at fault,
+  // so the natural diagnosis was "the Store is broken" rather than "remove that one".
+  const unavailableReason = new Map(
+    (catalog?.unavailableSources ?? []).map((u) => [u.source, u.reason]),
+  )
 
   return (
     <div className="flex flex-col gap-xl">
@@ -1023,10 +1029,22 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
               // The seeded registry default IS removable and its removal persists.
               const isDefault = defaultSources.has(url)
               const isBuiltin = builtinSources.has(url)
+              const unavailable = unavailableReason.get(url)
               return (
               <div key={url} className="flex items-center gap-3 rounded-lg bg-surface-container px-l py-m">
                 <Download size={15} className="shrink-0 text-on-surface-low" />
-                <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{url}</span>
+                {/* `title` because the row truncates: with a Default label, an Unavailable
+                    badge and two controls beside it a long URL renders as "htt…", and naming
+                    the source at fault is the entire point of the badge (issue 408). */}
+                <span title={url} className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{url}</span>
+                {unavailable && (
+                  <span data-testid="store-source-unavailable" title={unavailable === 'budget'
+                    ? 'Skipped — the catalog scan ran out of time before reaching this source.'
+                    : 'Could not be reached on the last listing read. It will be retried automatically.'}
+                    className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-warn text-[0.75rem]">
+                    {unavailable === 'budget' ? 'Skipped' : 'Unavailable'}
+                  </span>
+                )}
                 {isDefault && (
                   <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">Default</span>
                 )}

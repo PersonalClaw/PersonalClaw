@@ -801,8 +801,13 @@ _backend_config_mode: str | None = None  # config mode when backend was cached
 def detect_backend(config_mode: str = "auto") -> str:
     """Detect the best available sandbox backend.
 
-    Cached after first call; cache is invalidated if *config_mode* changes
-    (e.g. user toggles agent.sandbox between "auto" and "off").
+    Cached after first call; cache is invalidated if *config_mode* changes.
+
+    *config_mode* is :func:`wrap_argv`'s ``mode``, and it is the ONLY input to this
+    decision. It arrives from a per-provider option (``sandbox_mode``) or a literal at
+    the call site — never from ``config.json``. This docstring used to name a config key
+    under the agent section instead, which is what made that dead key look wired; the key
+    was removed in #364 rather than given a meaning it never had.
     """
     global _backend, _backend_config_mode
     if _backend is not None and _backend_config_mode == config_mode:

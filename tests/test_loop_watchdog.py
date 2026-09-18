@@ -743,3 +743,103 @@ class TestStagnation:
             _write_finding(c.id, i, new_findings_count=0)
             _run(wd._poll_once())
         assert store.get(c.id).status == LoopStatus.STAGNANT.value
+
+
+class TestFirstCycleFindingIsCredited:
+    """#320 — a finding already on disk at the watchdog's FIRST poll must be credited.
+
+    The seeding branch used to adopt the current finding count as its progress baseline
+    and ``continue`` past the progress branch, so a cycle whose worker beat the first
+    5s poll was absorbed into the baseline: never counted, and — because the kind's
+    ``on_new_cycle`` hook (which owns the SDLC/design stage advance) hangs off that same
+    branch — never staged. The smaller the task, the likelier the worker wins the race,
+    so this bit hardest on exactly the simple loops a user tries first.
+
+    The rail is a PARITY property over the kind registry, not a single call site: every
+    registered kind that declares ``on_new_cycle`` must credit a pre-existing cycle-1
+    finding. The set is computed from ``kinds.registered_kinds()`` so a kind added later
+    is covered without editing this test.
+    """
+
+    @staticmethod
+    def _hooked_kinds() -> list[str]:
+        from personalclaw.loop import kinds
+
+        kinds.ensure_loaded()
+        return [
+            k
+            for k in kinds.registered_kinds()
+            if getattr(kinds.get(k), "on_new_cycle", None) is not None
+        ]
+
+    def test_registry_has_kinds_with_a_cycle_hook(self):
+        """Vacuity floor: the parity test below is only meaningful if the registry
+        actually carries hooked kinds. If this ever reads 0, the rail below is passing
+        because it iterates nothing."""
+        assert self._hooked_kinds(), "no registered kind declares on_new_cycle"
+
+    def _record_hook(self, monkeypatch) -> list[list[dict]]:
+        """Replace the kind hook with a recorder. The defect is that the watchdog never
+        CALLS the hook, so recording the call (and the findings handed to it) is the
+        assertion — and it keeps the rail independent of each kind's real stage
+        machinery, which needs a bound model provider."""
+        from personalclaw.loop import kinds
+
+        calls: list[list[dict]] = []
+
+        async def _fake(strategy, loop, findings, ctx):
+            calls.append(list(findings))
+            return False  # not complete — let the poll continue normally
+
+        monkeypatch.setattr(kinds, "run_cycle_hook", _fake)
+        return calls
+
+    @pytest.mark.parametrize("kind", _hooked_kinds.__func__())
+    def test_finding_present_at_first_poll_fires_the_cycle_hook(self, kind, monkeypatch):
+        calls = self._record_hook(monkeypatch)
+        c = _running(kind=kind, kind_config={}, max_cycles=30)
+        wd = _wd()
+        wd._state._sessions[manager.session_key(c.id)] = _FakeSession(
+            manager.session_key(c.id), running=True
+        )
+        # The worker beats the first poll: cycle 1 is on disk BEFORE the watchdog
+        # has ever observed this loop.
+        _write_finding(c.id, 1, summary="cycle 1 landed before the first poll")
+        _run(wd._poll_once())
+        assert calls, f"kind {kind!r}: cycle 1's on_new_cycle never fired"
+        assert len(calls[0]) == 1, f"kind {kind!r}: hook got {len(calls[0])} findings, want 1"
+        assert calls[0][0]["cycle"] == 1
+
+    @pytest.mark.parametrize("kind", _hooked_kinds.__func__())
+    def test_resume_does_not_re_fire_the_hook_for_credited_findings(self, kind, monkeypatch):
+        """The re-seed clause (``_last_activity < loop.started_at``) fires again on
+        Pause→Resume. Fixing the swallow must not overcorrect into re-crediting work that
+        already ran its hook — that would re-advance the stage on every resume."""
+        calls = self._record_hook(monkeypatch)
+        c = _running(kind=kind, kind_config={}, max_cycles=30)
+        wd = _wd()
+        wd._state._sessions[manager.session_key(c.id)] = _FakeSession(
+            manager.session_key(c.id), running=True
+        )
+        _write_finding(c.id, 1)
+        _run(wd._poll_once())  # credits cycle 1
+        assert len(calls) == 1
+        # Resume: started_at moves ahead of the recorded activity, re-firing the re-seed.
+        store.update_status(c.id, LoopStatus.RUNNING)
+        wd._last_activity[c.id] = 0.0
+        _run(wd._poll_once())
+        assert len(calls) == 1, f"kind {kind!r}: resume re-fired the hook for a credited cycle"
+
+    def test_fresh_loop_with_no_findings_still_only_seeds(self, monkeypatch):
+        """The seeding poll must stay a pure seed when there is nothing to credit: no
+        hook, no status change. Guards the fix against reaching the budget/stall checks
+        on a loop the watchdog has only just met."""
+        calls = self._record_hook(monkeypatch)
+        c = _running(kind="code", kind_config={}, max_cycles=30)
+        wd = _wd()
+        wd._state._sessions[manager.session_key(c.id)] = _FakeSession(
+            manager.session_key(c.id), running=True
+        )
+        _run(wd._poll_once())
+        assert calls == []
+        assert store.get(c.id).status == LoopStatus.RUNNING.value

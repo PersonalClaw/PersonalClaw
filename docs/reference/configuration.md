@@ -37,7 +37,6 @@ Not everything is in `config.json` by design. Stored elsewhere:
 |---|---|---|---|---|
 | `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
 | `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
-| `agent.sandbox` | enum: `auto`, `off` | `auto` | Settings → Agent defaults | Sandbox mode for the ACP provider. |
 | `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. |
 | `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
 | `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Sanitized at the write boundary (markdown/braces stripped). Empty = default. |

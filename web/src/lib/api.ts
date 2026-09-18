@@ -848,6 +848,10 @@ export interface AppCatalog {
   /** The remote HOSTS a Store read contacts, so the surface that triggers the egress can
    *  disclose it. Empty ⇒ opening the Store reaches nothing off this machine. */
   networkSources?: string[]
+  /** Sources that contributed nothing to THIS build — unreachable, or cut off by the scan
+   *  budget (#408). The backend used to discard this, so one typo'd source read as "the
+   *  Store is broken" rather than "remove that one". `reason` is `unreachable` | `budget`. */
+  unavailableSources?: { source: string; reason: string }[]
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the

@@ -66,12 +66,6 @@
     "type": "int"
   },
   {
-    "default": "auto",
-    "path": "agent.sandbox",
-    "sensitive": false,
-    "type": "str"
-  },
-  {
     "default": false,
     "path": "agent.self_qa.enabled",
     "sensitive": false,
