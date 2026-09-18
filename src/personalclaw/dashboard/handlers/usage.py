@@ -28,6 +28,7 @@ import logging
 from aiohttp import web
 
 from personalclaw import usage_ledger as ul
+from personalclaw.constants import dashboard_session_key
 from personalclaw.http_errors import json_error
 from personalclaw.routing import usage as usage_fold
 
@@ -43,7 +44,12 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
 
     ``group_by`` defaults to ``model``; ``since``/``until`` are optional ISO
     timestamps bounding a ``[since, until)`` window (empty = unbounded); ``session``
-    restricts to one session key (empty = all)."""
+    restricts to one session key (empty = all). The param carries the bare chat session
+    id the frontend/URL hold; ledger rows are keyed by the ``dashboard:``-namespaced
+    form (``chat_runner.run_chat`` writes via ``_history_key_for``), so it is
+    canonicalized here the same way ``openai_dialect.py``/``cli_run.py`` do before
+    querying — a bare-key query would otherwise match nothing and silently report a
+    confident 0 (CATO-7)."""
     group_by = request.query.get("group_by", "model")
     if group_by not in _GROUP_KEYS:
         return json_error(
@@ -54,8 +60,9 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     session = request.query.get("session", "")
+    session_key = dashboard_session_key(session) if session else session
     try:
-        rows = ul.rollup(since=since, until=until, group_by=group_by, session_key=session)
+        rows = ul.rollup(since=since, until=until, group_by=group_by, session_key=session_key)
     except Exception:  # noqa: BLE001 — a ledger read must never 500 a read-only surface
         logger.debug("usage rollup failed", exc_info=True)
         return web.json_response(
@@ -70,12 +77,15 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
 async def api_usage_totals(request: web.Request) -> web.Response:
     """GET /api/usage/totals?since=&until=&session= — the grand total over the window.
 
-    ``session`` (when given) restricts to one session key — the session-total surface."""
+    ``session`` (when given) restricts to one session key — the session-total surface
+    (``ChatPage``'s cost chip). Canonicalized the same way as ``api_usage_rollup``
+    above — see that docstring (CATO-7)."""
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     session = request.query.get("session", "")
+    session_key = dashboard_session_key(session) if session else session
     try:
-        totals = ul.totals(since=since, until=until, session_key=session)
+        totals = ul.totals(since=since, until=until, session_key=session_key)
     except Exception:  # noqa: BLE001
         logger.debug("usage totals failed", exc_info=True)
         return web.json_response(

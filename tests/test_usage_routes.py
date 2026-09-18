@@ -173,6 +173,79 @@ async def test_session_filter_threads_through(_home):
         await c.close()
 
 
+@pytest.mark.asyncio
+async def test_session_totals_join_bare_frontend_key_to_namespaced_ledger_rows(_home):
+    """CATO-7: the join that mattered. ``ChatPage``'s cost chip queries
+    ``?session=<bare id>`` — the literal ``sessionId``/URL key it holds, never
+    ``dashboard:``-prefixed. But every chat turn is written by
+    ``chat_runner.run_chat`` under the NAMESPACED key (``_history_key_for`` →
+    ``dashboard:<id>``). Before the CATO-7 fix, the route passed the bare param
+    straight to ``ul.totals``/``ul.rollup``, which match ``session_key`` by exact
+    string equality — so the two halves never joined and the chip silently read a
+    confident 0 over real spend (the fix mirrors ``openai_dialect.py``/``cli_run.py``,
+    which already wrap with ``dashboard_session_key`` before querying the same ledger).
+
+    This test seeds a MULTI-turn session (3 turns, distinct token/cost values) plus a
+    same-name-prefix decoy session that must NOT leak in, then asserts the header total
+    (``/api/usage/totals?session=<bare id>``) equals the exact sum of that session's own
+    turn rows for cost AND both token axes — not merely that the request succeeds or the
+    chip has *some* nonzero number, which would pass vacuously on the wrong join."""
+    turns = [  # (input_tokens, output_tokens, cost_usd) — three distinct turns
+        (100, 20, 0.10),
+        (250, 63, 0.30),
+        (400, 91, 0.55),
+    ]
+    for input_tokens, output_tokens, cost in turns:
+        ul.record_turn(
+            TurnUsage(
+                ts="2026-09-18T12:00:00+00:00",
+                session_key="dashboard:abc123",  # the namespaced form chat_runner writes
+                source="chat",
+                agent="",
+                provider="anthropic",
+                model="claude-opus-4.5",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                priced=True,
+            )
+        )
+    # A same-prefix decoy session ("abc1234", not "abc123") must not bleed in via a bare
+    # startswith — _session_matches already guards this; belt-and-suspenders here.
+    ul.record_turn(
+        TurnUsage(
+            ts="2026-09-18T12:05:00+00:00",
+            session_key="dashboard:abc1234",
+            source="chat",
+            agent="",
+            provider="anthropic",
+            model="claude-opus-4.5",
+            input_tokens=999,
+            output_tokens=999,
+            cost_usd=99.0,
+            priced=True,
+        )
+    )
+    c = await _client()
+    try:
+        # The frontend's ACTUAL call shape: the bare id, never the namespaced form.
+        body = await (await c.get("/api/usage/totals?session=abc123")).json()
+        t = body["totals"]
+        assert t["turns"] == len(turns)
+        assert t["cost_usd"] == pytest.approx(sum(c for _, _, c in turns))
+        assert t["input_tokens"] == sum(i for i, _, _ in turns)
+        assert t["output_tokens"] == sum(o for _, o, _ in turns)
+
+        # The rollup endpoint shares the exact same join and must agree with totals —
+        # grouping by day collapses the 3 turns into one row summing to the same total.
+        rollup_body = await (await c.get("/api/usage/rollup?group_by=day&session=abc123")).json()
+        assert len(rollup_body["rows"]) == 1
+        assert rollup_body["rows"][0]["turns"] == len(turns)
+        assert rollup_body["rows"][0]["cost_usd"] == pytest.approx(sum(c for _, _, c in turns))
+    finally:
+        await c.close()
+
+
 # ── GET /api/usage — the per-day spend fold (MRT-3) ─────────────────────────────────────
 #
 # The sibling routes above read the retained tail of the same ledger. This one reads the DURABLE
