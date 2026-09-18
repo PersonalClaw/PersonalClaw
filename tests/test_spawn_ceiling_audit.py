@@ -278,6 +278,14 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host tool: ffmpeg contact-sheet/GIF derivation "
         "(fixed filter argv, paths in the bundle dir)"
     ),
+    # Same disposition as the two above, and the same class as the knowledge pipeline's ffprobe
+    # duration probe below: a fixed `ffprobe -show_entries format=duration` argv whose only
+    # variable is the recording path inside the run's own bundle dir. It reads a host fact (how
+    # long is this file) to size the contact sheet's tile grid, runs no agent code, and takes no
+    # agent-authored text.
+    "selfqa/evidence.py::probe_duration_secs::subprocess.run": (
+        "host-fact: ffprobe recording duration (fixed argv, path in the bundle dir)"
+    ),
     "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
     # The usability probe behind ensure_repo's self-heal:
     # `git --git-dir <gd> rev-parse --git-dir`
