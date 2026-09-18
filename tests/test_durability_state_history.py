@@ -47,7 +47,16 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
     monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(ws))
     # A leftover subscriber from another test would make a "the seam fires" rail
-    # pass for the wrong reason.
+    # pass for the wrong reason. Clear the debouncer SINGLETON before the hooks, not
+    # just the hooks: `install()` early-returns a non-None `_installed` without
+    # re-subscribing (history_debounce.py:274-275), so stripping the hook list while
+    # leaving `_installed` set leaves a module whose only installer is a no-op — and
+    # `test_the_seam_is_wired_to_the_debouncer_by_install` then fails on a debouncer
+    # this fixture itself unsubscribed. Symmetric with the teardown below, which is
+    # what makes the file order-independent: any earlier test in the same xdist worker
+    # that installed one (every `time_travel`-enabled service test does, via
+    # `DurabilityService._install_history`) used to decide this file's outcome.
+    hd.uninstall(flush=False)
     for hook in aw.post_write_hooks():
         aw.unregister_post_write_hook(hook)
     yield
