@@ -383,6 +383,31 @@ def count_for_def(workflow_name: str) -> int:
         conn.close()
 
 
+def def_names() -> list[str]:
+    """Every workflow def that currently has runs, ordered.
+
+    Read from the RUNS table rather than the template registry: retention operates on what is
+    stored, and a def whose template was deleted still has rows and directories on disk — those
+    are exactly the ones a registry-driven sweep would leave behind forever.
+
+    Returns nothing when the store does not exist yet, WITHOUT opening it: `_connect` creates the
+    directory and the whole schema, so the scheduled retention sweep that calls this every tick
+    would otherwise mint an empty `runs.db` on a gateway that has never run a workflow. Asking
+    "which defs have runs?" must not create the store that answers.
+    """
+    if not _db_path().is_file():
+        return []
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT workflow_name FROM runs WHERE workflow_name IS NOT NULL "
+            "AND workflow_name != '' ORDER BY workflow_name"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [str(r[0]) for r in rows]
+
+
 def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> WorkflowRun | None:
     """Persist a run's sparse ``SupervisorPolicy`` overlay (PP-16 seam 4d, OWNER RULING 2).
 
