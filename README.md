@@ -135,6 +135,21 @@ to the OWASP Agentic Top-10 with code citations and states the limitations plain
 security issue? Report it privately via [our security policy](SECURITY.md). See also the
 [security model](docs/architecture/security.md).
 
+## Does it do…?
+
+Scanning for one specific word? Here it is, with what actually ships behind it today. The
+caveat is part of the answer — where a capability needs an app installed or a provider
+bound, the row says so rather than letting you find out after installing.
+
+| Looking for | What ships today | Details |
+|---|---|---|
+| **RAG · retrieval · vector search** | A knowledge base over your own documents: keyword search (SQLite FTS5) is always available, and on top of it semantic **vector** retrieval, entity extraction, and a knowledge graph feed chat context with citations. **Caveat:** the vector half needs an embedding-provider app bound — with none bound, embeddings are off and retrieval stays keyword-only. | [Knowledge & memory](docs/architecture/knowledge-memory.md) |
+| **Ollama · local models** | Run chat against a local Ollama with no API key: setup probes `localhost:11434`, and an opt-in, time-bounded sweep can find one elsewhere on your own private network. Downloading and managing local models is a first-class provider axis. **Caveat:** the `ollama-models` provider is a **removable app** you install from the Store — core ships the detection and the binding, not the vendor. | [App platform](docs/architecture/app-platform.md) |
+| **web search** | `web_search` and `web_fetch` tools, plus the research flows built on them, served by a search-**provider app** you bind. **Caveat:** no search provider ships bundled, so nothing is bound out of the box — this is a provider seam you fill, not a batteries-included search feature. | [App platform](docs/architecture/app-platform.md) |
+| **MCP — both directions** | PersonalClaw **connects out to any MCP server** you configure in `~/.personalclaw/mcp.json` — stdio or remote SSE/HTTP — and calls its tools inside the native agent loop. It also works the other way: it **exposes** six read-only tools of its own to your editor's assistant. **Caveat:** the outbound client needs the optional `personalclaw[mcp]` extra; without it the server registry is simply empty. | [Use it from your editor](docs/guides/use-from-your-ide.md) · [API](docs/reference/api-overview.md#mcp-servers) |
+| **SSO · SAML · OIDC login** | **Not shipped, by design** — PersonalClaw is single-user and self-hosted, so there is no directory to federate with. The gateway's selectable auth is a local token, or none when bound to loopback only; `api_key` and `oauth2` exist as half-implementations that no configuration can select, and the runtime says so out loud. Reaching it from outside is a tunnel plus password and TOTP 2FA instead. | [Remote access](docs/guides/remote-access.md) · [Security model](docs/architecture/security.md) |
+| **Document upload** | Resumable chunked **upload** of large files — size-policed before the first byte and content-scanned on assembly — routed to a chat attachment, knowledge ingest, or your workspace. Documents ingest as PDF/DOCX/PPTX/HTML, web pages, and media. | [Getting started](docs/guides/getting-started.md) |
+
 ## Quickstart
 
 Install with one command — every path installs the **same release artifact** (no
@@ -245,7 +260,8 @@ run on every push to `main`.
 - [Use it from your editor](docs/guides/use-from-your-ide.md) — exposing six read-only MCP tools to your editor's assistant: minting the surface token, the client config, why it is same-machine-only, and the kill switch.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md)
-- Roadmap — 52 plans across 6 pillars, with a shared execution protocol.
+- Roadmap — maintainer-owned and deliberately not in this repo; the written way in is the
+  [contribution intake path](CONTRIBUTING.md#the-model).
 - [Visual showcase](SHOWCASE.md) — every screen, light and dark.
 
 ## Contributing
@@ -267,7 +283,7 @@ and closed.
 The roadmap is maintainer-owned, but not opaque: propose changes in
 [Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)
 rather than by PR'ing the owner's internal roadmap (not in this repo). See
-the intake path.
+[the intake path](CONTRIBUTING.md#the-model).
 
 ## License
 
