@@ -213,9 +213,14 @@ def test_video_dag_routes_conditional_branch(monkeypatch, tmp_path):
     g = graph_for("video")
     ctx = NodeContext(item_id="v1", item_type="video", file_path=str(tmp_path / "vid.mp4"))
     res = _run(PipelineExecutor(g).run(ctx))
-    # text-heavy verdict → ocr ran, vision skipped
+    # text-heavy verdict → ocr ran, the vision branch was NOT TAKEN. Not `skipped`: an
+    # either/or branch not applying is not a degradation, so it lands in `not_taken` and
+    # leaves `status` at "done" — see `ExecutionResult.not_taken`. The live timeline still
+    # shows it as skipped (`_notify(..., "skipped")`), so the UI fact is unchanged.
     assert "ocr" in res.ran
-    assert "vision" in res.skipped
+    assert "vision" in res.not_taken
+    assert "vision" not in res.skipped
+    assert res.status == "done"
     assert "transcription" in res.ran
     assert res.outputs["video_consolidate"].text == "MERGED"
     # consolidate saw transcription + ocr (not vision)

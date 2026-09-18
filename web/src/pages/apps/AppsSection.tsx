@@ -1299,6 +1299,10 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   // Python set and requires an entry here for every member. Measured before adding this line: 19
   // provider types, and `trigger` was the only one missing.
   trigger: 'Trigger',
+  // 🔴 FOURTH occurrence of the class above — `ocr` (KOCR-1) reached `PROVIDER_TYPES` with no entry
+  // here, so the guard below caught it before a user saw "ocr provider". Acronym, so it is shouted:
+  // `TAG_WORD_CASING` already renders the `ocr` TAG as "OCR", and the two must agree.
+  ocr: 'OCR',
 }
 
 

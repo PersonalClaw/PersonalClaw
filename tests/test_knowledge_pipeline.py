@@ -144,7 +144,13 @@ def test_executor_conditional_branch_taken():
     )
     res = _run(PipelineExecutor(g).run(NodeContext(item_id="i", item_type="t")))
     assert "vision" in res.ran  # matched the 'visual' classification
-    assert "ocr" in res.skipped  # 'text' edge not satisfied
+    # An untaken branch lands in `not_taken`, NOT in `skipped`: the branch not applying is
+    # not a degradation, and counting it as one made every either/or graph report `partial`
+    # (KOCR-1 — the document graph's scan branch made that user-visible). The stronger fact
+    # is asserted directly: the node did not run.
+    assert "ocr" in res.not_taken  # 'text' edge not satisfied
+    assert "ocr" not in res.ran and "ocr" not in res.skipped
+    assert res.status == "done", "a clean run down one branch of an either/or is not partial"
 
 
 def test_executor_disabled_node_skipped():
@@ -539,6 +545,22 @@ def test_runner_synthesizes_descriptor_for_textless_image(store, tmp_path):
     store.update_item(iid, file_path=str(img), file_size=img.stat().st_size)
     store.db.commit()
     # No insights_pool/embedder → ocr+vision skip; exif (pure-python) runs.
+    #
+    # `NODE_REGISTRY` is process-global and the executor tests above register `("ocr","stub")`
+    # / `("vision","stub")` into it, so with a backend-substitution executor those leaked
+    # stubs would RUN here and this test's premise ("no model → skipped") would be false
+    # without saying so. Drop them and assert the premise, so the degradation being tested is
+    # the real one. Each executor test registers its own stubs immediately before use, so
+    # removing them here cannot affect any other test.
+    from personalclaw.knowledge.pipeline.registry import NODE_REGISTRY, resolve_runnable
+
+    for node_type in ("ocr", "vision"):
+        # Only the test stubs are dropped — core's own backends stay registered, so this
+        # leaves the registry as a real install has it rather than emptied.
+        NODE_REGISTRY.pop((node_type, "stub"), None)
+        assert (
+            resolve_runnable(node_type, "vision-llm") is None
+        ), f"a {node_type} backend is runnable here, so this is not the no-model case"
     _run(ingest_item(store, iid))
     item = store.get_item(iid)
     # Content is no longer empty — it carries a human-readable structural descriptor.

@@ -153,7 +153,17 @@ class FileReader:
         try:
             with pdfplumber.open(path) as pdf:
                 pages = [p.extract_text() or "" for p in pdf.pages]
-                return "\n".join(pages), {"format": "pdf", "page_count": len(pages)}
+                # `text_layer` reports whether the PDF carries EXTRACTABLE text at all. A
+                # scanned page yields None per page, so the join is not empty — it is the
+                # page separators — and a caller testing the returned string for falsiness
+                # would call a 3-page scan "has text". The one honest test is whether any
+                # page contributed non-whitespace, so it is computed once, here, rather
+                # than re-derived by each consumer.
+                return "\n".join(pages), {
+                    "format": "pdf",
+                    "page_count": len(pages),
+                    "text_layer": any(p.strip() for p in pages),
+                }
         except Exception as e:
             # A .pdf that isn't a real PDF is often a mislabeled text/markdown file.
             # Salvage it: read as text when the bytes decode to mostly-printable
