@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.workflows import store
 
 logger = logging.getLogger(__name__)
@@ -225,17 +226,26 @@ async def run_teardown(
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
     try:
+        # start_new_session: a teardown command is workflow-authored text, so it is
+        # routinely a wrapper that forks (a `docker`/`terraform` CLI, a shell one-liner).
+        # Only a GROUP signal reaches what it forked. See kill_timed_out.
         proc = await create_subprocess_limited(
             *argv,
             profile=PROFILE_TOOL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            start_new_session=True,
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            proc.kill()
+            # kill_timed_out, not a bare `proc.kill()`. The bare kill returned WITHOUT
+            # reaping — so the child stayed a zombie holding its end of the pipe until
+            # the loop's watcher got to it — and reached only the direct child: measured
+            # against a forking teardown stub, ONE live orphan grandchild survived every
+            # timed-out teardown. The owner signals the group and reaps under a bound.
+            await kill_timed_out(proc)
             return False, f"teardown timed out after {timeout}s"
     except FileNotFoundError:
         return False, f"teardown command not found: {argv[0]}"

@@ -63,6 +63,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.computer_use import enable_state, gate, overlay, policy
 from personalclaw.computer_use.tools import TOOLS_BY_NAME, ToolSpec
 from personalclaw.errors import AgentError
@@ -437,6 +438,7 @@ async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[st
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
     request = json.dumps({"op": op, **payload}).encode()
+    proc = None
     try:
         proc = await create_subprocess_limited(
             *_driver_argv(),
@@ -449,6 +451,14 @@ async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[st
             proc.communicate(request), timeout=DRIVER_TIMEOUT_SECS
         )
     except asyncio.TimeoutError:
+        # The refusal below PROMISED "the child was killed rather than left running" and
+        # nothing killed it: the driver — the one child in this tree that holds the
+        # operator's physical input layer — stayed alive, still able to move the mouse,
+        # after the tool call had already reported failure. kill_timed_out makes the
+        # sentence true. No start_new_session: the driver is a single process that does
+        # not fork, so the owner's single-pid fallback is the right signal.
+        if proc is not None:
+            await kill_timed_out(proc)
         _refuse(
             ERR_DRIVER_FAILED,
             what=f"The desktop driver did not answer {tool} within " f"{DRIVER_TIMEOUT_SECS:.0f}s.",

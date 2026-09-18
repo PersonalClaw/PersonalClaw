@@ -52,9 +52,16 @@ import time
 from pathlib import Path
 from typing import Literal, get_args
 
+from personalclaw.cancellation import kill_timed_out
+
 logger = logging.getLogger(__name__)
 
 InstallKind = Literal["git", "pip", "container", "desktop"]
+
+# The two async git deadlines in `commits_behind_upstream`, named so a test can inject
+# one instead of sleeping on it.
+_BEHIND_FETCH_TIMEOUT = 15.0
+_BEHIND_REVLIST_TIMEOUT = 10.0
 
 #: Every member of the taxonomy, in resolution order. Callers that branch per
 #: kind assert against this so adding a member reds their dispatch test instead
@@ -688,6 +695,10 @@ async def commits_behind_upstream(proj: str) -> int | None:
     import asyncio
 
     try:
+        # start_new_session: `git fetch` forks a remote helper (git-remote-https, ssh),
+        # and that helper is what a stalled fetch is actually waiting on — `fetch.kill()`
+        # reached only the `git` wrapper and left the helper running. Only a GROUP signal
+        # reaches it. See kill_timed_out.
         fetch = await asyncio.create_subprocess_exec(
             "git",
             "fetch",
@@ -695,15 +706,12 @@ async def commits_behind_upstream(proj: str) -> int | None:
             cwd=proj,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         try:
-            await asyncio.wait_for(fetch.communicate(), timeout=15)
+            await asyncio.wait_for(fetch.communicate(), timeout=_BEHIND_FETCH_TIMEOUT)
         except asyncio.TimeoutError:
-            try:
-                fetch.kill()
-            except ProcessLookupError:
-                pass
-            await fetch.communicate()
+            await kill_timed_out(fetch)
     except Exception:
         pass  # no git / no remote — the rev-list probe below decides
     try:
@@ -717,13 +725,13 @@ async def commits_behind_upstream(proj: str) -> int | None:
             stderr=asyncio.subprocess.DEVNULL,
         )
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=_BEHIND_REVLIST_TIMEOUT)
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.communicate()
+            # No start_new_session on the spawn above: `git rev-list` is leaf plumbing
+            # that never forks, so a session would only widen what a group signal can
+            # reach. kill_timed_out falls back to the single pid for exactly this case —
+            # what it adds here over `kill()` + an unbounded drain is the BOUND.
+            await kill_timed_out(proc)
             return None
         if proc.returncode != 0:
             return None  # no upstream configured (or not a git checkout)

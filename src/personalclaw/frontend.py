@@ -7,9 +7,15 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from personalclaw.cancellation import kill_timed_out
+
 logger = logging.getLogger(__name__)
 
 _DIR_NAME = "web"
+
+# Named so a test can inject a deadline instead of sleeping on one.
+_NPM_CI_TIMEOUT = 180.0
+_NPM_BUILD_TIMEOUT = 120.0
 
 
 def _resolve_website_dist(pkg_dir: Path) -> Optional[Path]:
@@ -164,6 +170,10 @@ async def build_frontend_async(
         _warn("Node.js not found — skipping frontend build")
         return
 
+    # start_new_session on both: npm forks — a package's install script, and for `run
+    # build` the bundler itself (vite/esbuild and its workers) — so `npm_x.kill()`
+    # reached the npm wrapper and left the tree that was actually burning the deadline
+    # running. Only a GROUP signal reaches it. See kill_timed_out.
     npm_i = await asyncio.create_subprocess_exec(
         "npm",
         "ci",
@@ -172,15 +182,12 @@ async def build_frontend_async(
         cwd=str(website_dir),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
     )
     try:
-        await asyncio.wait_for(npm_i.wait(), timeout=180)
+        await asyncio.wait_for(npm_i.wait(), timeout=_NPM_CI_TIMEOUT)
     except asyncio.TimeoutError:
-        try:
-            npm_i.kill()
-        except ProcessLookupError:
-            pass
-        await npm_i.wait()
+        await kill_timed_out(npm_i)
     if npm_i.returncode == 0:
         npm_build = await asyncio.create_subprocess_exec(
             "npm",
@@ -189,15 +196,12 @@ async def build_frontend_async(
             cwd=str(website_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         try:
-            await asyncio.wait_for(npm_build.wait(), timeout=120)
+            await asyncio.wait_for(npm_build.wait(), timeout=_NPM_BUILD_TIMEOUT)
         except asyncio.TimeoutError:
-            try:
-                npm_build.kill()
-            except ProcessLookupError:
-                pass
-            await npm_build.wait()
+            await kill_timed_out(npm_build)
         if npm_build.returncode != 0:
             _warn("Frontend build failed -- dashboard may be stale")
         else:

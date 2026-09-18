@@ -16,6 +16,7 @@ import shutil
 import tempfile
 from typing import Any
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.provider import TtsProvider
 
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 # ── Config defaults ──
 DEFAULT_RATE = "100%"
 MAX_CHARS = 2900
+
+# The wav-stitch ffmpeg deadline, named so a test can inject it instead of sleeping on it.
+_STITCH_TIMEOUT = 30.0
 
 _RATE_RE = re.compile(r"^\d{1,3}%$")
 
@@ -202,6 +206,7 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
         fd, output = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
     concat = "|".join(paths)
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -214,10 +219,20 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await asyncio.wait_for(proc.communicate(), timeout=30)
+        await asyncio.wait_for(proc.communicate(), timeout=_STITCH_TIMEOUT)
         if proc.returncode != 0 or not os.path.exists(output):
             return None
         return output
+    except asyncio.TimeoutError:
+        # This arm did not exist. The bare `except Exception` below swallowed the timeout
+        # (since 3.11 asyncio.TimeoutError IS builtins.TimeoutError), logged a traceback
+        # and returned — leaving the ffmpeg child running with its deadline already spent.
+        # No start_new_session: ffmpeg does not fork here, so the owner's single-pid
+        # fallback is the right signal and a session would only widen a group's reach.
+        if proc is not None:
+            await kill_timed_out(proc)
+        logger.warning("ffmpeg stitch timed out after %ss", _STITCH_TIMEOUT)
+        return None
     except Exception:
         logger.exception("ffmpeg stitch failed")
         return None
