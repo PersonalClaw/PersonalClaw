@@ -24,8 +24,21 @@ def _repo_root() -> Path:
 
 
 def _git(args: list[str], root: Path) -> tuple[int, str, str]:
+    # ``errors="replace"``, not the default ``strict``: a diff BODY carries file content, and
+    # git text-diffs any file it doesn't detect as binary (its heuristic only looks for NUL in
+    # the first 8000 bytes). A mostly-ASCII binary fixture — a PDF's ``%PDF-1.3`` header line
+    # followed by ``%\x93\x8c\x8b\x9e`` — therefore arrives as undecodable "text" and a strict
+    # decode raises UnicodeDecodeError out of subprocess, killing the whole harness run with a
+    # nameless exit 1 instead of scanning the change.
     try:
-        p = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=False)
+        p = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
         return p.returncode, p.stdout, p.stderr
     except OSError as exc:
         return -1, "", str(exc)
