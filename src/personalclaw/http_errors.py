@@ -330,6 +330,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # say so instead of borrowing that answer. Without it, an empty card and a broken card
     # are the same bytes — and a client would stop asking.
     "a2a_catalog_unavailable": "The published-workflow catalog could not be read.",
+    # A SECOND code rather than reusing the one above, because the two need different
+    # operator actions and a peer branches on the code: `catalog_unavailable` is a read
+    # that failed and may succeed on retry, `origin_unresolved` is a missing declaration
+    # that will never resolve itself. The card is withheld rather than published with a
+    # guessed address (#2620) — advertising a guess to a third party is failing open.
+    "a2a_origin_unresolved": (
+        "This instance could not determine the address peers should use to reach it, so "
+        "no agent card was published."
+    ),
     # ── desktop computer use (handlers/computer_use.py) ──
     # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
     # AgentError the dispatch composed has to reach the model unchanged, and the wire code is
