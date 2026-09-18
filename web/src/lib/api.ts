@@ -5,6 +5,7 @@
 
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
+import { activePersonaTheme } from '../design/personalities'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
 // into it is the SPA's ONE declaration site (PL-9): the number lives only in
@@ -6043,8 +6044,15 @@ export const api = {
   },
 
   // send / control
-  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) =>
-    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}) }),
+  // color_theme rides along automatically (issue 650): the backend's persona
+  // injection was a live reader of a key NO client ever wrote — the picker sold
+  // "a terse operator voice" while activate() only touched localStorage and CSS.
+  // Centralized here so every send path (chat, steer, comment-target) carries it;
+  // the server gates on first-turn-of-session and its own closed theme set.
+  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) => {
+    const color_theme = activePersonaTheme()
+    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
+  },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
   stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
