@@ -24,6 +24,7 @@ from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
+from personalclaw.dashboard.chat_session_map import build_turn_telemetry, stamp_turn_telemetry
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
@@ -2836,6 +2837,13 @@ async def run_chat(
         _turn_model = ""
         _turn_cost_usd = 0.0
         _turn_priced = False
+        # How long the turn took, for the persisted per-turn record (SSM-2). Most
+        # providers leave `event.duration_ms` at 0 — only a backend that reports its own
+        # timing fills it — so a provider-reported value WINS and the wall clock is the
+        # fallback rather than the reverse. Persisting a bare `event.duration_ms` would
+        # have written "0 ms" for almost every real turn.
+        _turn_started_at = time.monotonic()
+        _turn_reported_duration_ms = 0
         # Which ACP CLI (if any) is serving this turn — the key the per-provider
         # not-gateable registry is enumerated under. "" for the native runtime, whose
         # tools are gated in-loop before approval (a YOLO auto-approve there never
@@ -4010,6 +4018,7 @@ async def run_chat(
                         stats.inc_turns(event.num_turns)
                     if event.duration_ms:
                         stats.inc_duration_ms(event.duration_ms)
+                        _turn_reported_duration_ms = int(event.duration_ms)
                     # Resolve the model that actually ran for the cost estimate. When
                     # the user left model on "auto", some ACP backends report the
                     # resolved model only via an `init` event that arrives mid-turn, so
@@ -4194,6 +4203,34 @@ async def run_chat(
 
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
+        # Read the context measurement ONCE, here, and hand the same value to every
+        # consumer: the persisted per-turn record below, the `context_usage` frame and
+        # the live "Turn complete" line further down. Read twice, the persisted number
+        # and the rendered number could disagree about the same turn.
+        pct = client.context_usage_pct()
+        # Durable per-turn telemetry (SSM-2). Stamped on the turn's last assistant
+        # message BEFORE the save, because `save_session_to_history` rewrites the whole
+        # transcript file from this buffer — a key added after it would be in-memory only
+        # and would vanish on the next reload, which is exactly the gap this closes. The
+        # live stats line below still renders the same numbers; this makes them survive.
+        stamp_turn_telemetry(
+            session,
+            build_turn_telemetry(
+                input_tokens=_turn_input_tokens,
+                output_tokens=_turn_output_tokens,
+                cache_read_tokens=_turn_cache_read_tokens,
+                cache_creation_tokens=_turn_cache_creation_tokens,
+                cost_usd=_turn_cost_usd,
+                priced=_turn_priced,
+                duration_ms=(
+                    _turn_reported_duration_ms or int((time.monotonic() - _turn_started_at) * 1000)
+                ),
+                context_pct=pct,
+                events=_turn_event_count,
+                tool_calls=_turn_tool_call_count,
+                model=_turn_model,
+            ),
+        )
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0
@@ -4240,9 +4277,9 @@ async def run_chat(
             except Exception:
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)
         state.sessions.check_context_usage(session_key, client)
-        pct = client.context_usage_pct()
-        # ``None`` when the provider measured nothing — the composer ring reads that as
-        # "no measurement" and shows no percentage, instead of a fabricated 0%.
+        # ``pct`` was read above (once, before the save) — ``None`` when the provider
+        # measured nothing, which the composer ring reads as "no measurement" and shows
+        # no percentage, instead of a fabricated 0%.
         state.broadcast_ws(
             "context_usage",
             {"session": session.key, "pct": None if pct is None else round(pct, 1)},

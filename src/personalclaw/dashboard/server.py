@@ -1032,6 +1032,9 @@ async def start_dashboard(
     # rather than `project` so it can never be misread as a session named "project".
     app.router.add_get("/api/chat/sessions/bound-project", chat.api_chat_session_bound_project)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
+    # The durable session map (SSM-2): the in-session index's marks + per-turn telemetry,
+    # served without hydrating the whole transcript client-side.
+    app.router.add_get("/api/chat/sessions/{session}/map", chat.api_chat_session_map)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
     app.router.add_post("/api/chat/sessions/{session}/interrupt", chat.api_chat_session_interrupt)
