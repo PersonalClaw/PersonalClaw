@@ -17,7 +17,7 @@ and runs seven jobs:
 | `build` | sdist + wheel (SPA bundled inside), SBOM | verifies the wheel serves the SPA with **no Node** present |
 | `pypi` | core package on PyPI | environment `release` — **needs your approval** |
 | `pypi-client` | `personalclaw-client` on PyPI | environment `release-client` — **needs your approval** |
-| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch | — |
+| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | — |
 | `notes` | the GitHub Release, notes lifted from `CHANGELOG.md` | needs `build`, `pypi`, `images` |
 | `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error` |
 | `attest` | build-provenance attestation on the wheel (OIDC, no keys) | — |
@@ -28,6 +28,34 @@ Two consequences worth knowing before you start:
   environments. Nothing reaches PyPI until you approve both in the run's UI.
 - **Publishing is idempotent.** Both PyPI jobs use `skip-existing`, so re-running
   a release whose version is already published no-ops instead of failing.
+
+### What a tag publishes
+
+The tag you push decides which pointers move. `scripts/release_tags.py` is the
+one parser that decides it — the `images` job's tag list and the `notes` job's
+`gh release create` flags both come from it, and
+`tests/test_release_tag_semantics.py` asserts it — so this table is the contract,
+not a description of it:
+
+| You push | GitHub Release | Image tags |
+|---|---|---|
+| `v0.3.0` | **Latest** | `:0.3.0`, `:0.3`, `:latest` |
+| `v0.3.0-rc.1`, `v0.3.0-beta.2` | **Pre-release** | `:0.3.0-rc.1`, `:beta` |
+
+The half worth internalizing: **a prerelease moves no stable pointer.** Not
+`:latest` (the compose file's default is `${PERSONALCLAW_IMAGE_TAG:-latest}`, so
+moving it would drag every default container install onto a candidate), and not
+the moving minor `:X.Y` — not even its own. Once `v0.3.0` ships, `:0.3` means the
+stable 0.3 line, and anyone who pinned `:0.3` did not opt into candidates. The
+moving `:X.Y` and `:beta` tags are what `updates.channel` resolves to for a
+container install (`self_update.select_image_tag`, RUM-7), which is why they have
+to exist and why the negative cases are tested.
+
+A tag the parser cannot classify **fails the run before the build starts** —
+that includes a ref with no `v` prefix, anything that is not `X.Y.Z`, and a tag
+carrying `+build` metadata (`+` is not a legal Docker tag character). Cutting a
+release candidate therefore needs no special flag or manual step: tag
+`vX.Y.Z-rc.N` and the pipeline does the rest.
 
 ## Before you tag
 
