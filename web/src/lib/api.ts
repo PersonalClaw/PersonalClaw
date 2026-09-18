@@ -3159,6 +3159,12 @@ export interface InboxItem {
   // payload rides here too under `refs.proposal` — hence the widened value type. Read the
   // typed payload through `proposalOf()` rather than indexing this directly.
   refs?: Record<string, any>
+  // TSE2-3 — attribution, the same two fields the run ledger carries (TSE2-1). Optional
+  // because every row written before attribution existed has neither; an EMPTY
+  // `owner_username` reads as the local owner's (the shipped `belongs_to` bargain), which is
+  // why `isForeign()` compares against the owner rather than testing for presence.
+  owner_username?: string
+  origin_harness?: string
 }
 /** INU-7 C6 — the proposal payload carried in `refs.proposal` on a `proposal` item.
  *  `apply` holds EXACTLY ONE of `action` / `workflow` / `skill_promotion` / `app_callback`;
@@ -3183,6 +3189,15 @@ export interface InboxProposalApplyResult {
 }
 /** One row of the inbox kind-filter chips: what's present, and how much is unresolved. */
 export interface InboxKindCount { kind: InboxItemKind; total: number; open: number; channel: boolean }
+/** One row of the shared inbox's OWNER-filter chips (TSE2-3).
+ *
+ *  `username` is `''` for the unattributed rows, reported honestly rather than folded into
+ *  the owner's count — folding them in would make this census disagree with the `?owner=`
+ *  filter it drives, which excludes them. */
+export interface InboxOwnerCount { username: string; total: number; open: number; is_me: boolean }
+/** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
+ *  unattributed rows) — the same number `InboxStatus.my_pending_count` reports. */
+export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
@@ -3192,6 +3207,12 @@ export interface InboxStatus {
   watched_channels?: Array<{ id: string; name: string }>
   pending_count: number; total_count: number; health: InboxHealth
   poll_interval_seconds?: number
+  // TSE2-3 — the owner-scoped counters, ALONGSIDE the shared totals above. Two numbers
+  // because a shared inbox has two questions: how much is in it, and how much of it is mine.
+  // Optional so a frontend built against an older gateway still renders the shared totals.
+  owner?: string
+  my_pending_count?: number
+  my_total_count?: number
 }
 export interface InboxSettings {
   // alert_keywords / alert_on_name_mention removed in plan 42 S3 — alerting is now a
@@ -6869,6 +6890,11 @@ export const api = {
   // Kinds PRESENT in the store (not the whole enum) — a chip for an empty kind is a dead
   // control, so the backend drives the chip row from real data.
   inboxKinds: () => get<{ kinds: InboxKindCount[] }>('/api/inbox/kinds').then((d) => d.kinds),
+  // TSE2-3 — owners PRESENT in the store, same "real data drives the chips" reasoning as
+  // `inboxKinds`. The shared view filters CLIENT-side off this census plus the full listing,
+  // so switching owner chips costs no refetch; `?owner=` exists on the endpoint for callers
+  // that want the narrowing server-side.
+  inboxOwners: () => get<InboxOwners>('/api/inbox/owners'),
   // Advance PENDING → SEEN. Omit both fields to mark everything; a resolved item is never
   // dragged backwards. Idempotent.
   markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>

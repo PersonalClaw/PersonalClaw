@@ -51,7 +51,15 @@ const inboxCode = inbox.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm
 
 describe('the inbox distinguishes "nothing matches" from "you have nothing"', () => {
   it('derives `narrowed` once, against its own default filter', () => {
-    expect(inbox).toMatch(/const narrowed = !!\(q\.trim\(\) \|\| filter !== 'open' \|\| kind\)/)
+    // 🪤 WIDENED for TSE2-3's owner chip, and deliberately not weakened. The property this
+    // rail owns is "ONE derivation, comparing the status filter to THIS surface's default" —
+    // not the exact list of narrowing dimensions, which grows whenever the page gains a
+    // filter (`kind` was itself such a growth). So the trailing terms are open-ended while
+    // the two load-bearing halves stay pinned: the single `const narrowed = !!(…)` shape,
+    // and `filter !== 'open'` rather than `'all'`. A second derivation elsewhere would still
+    // be caught by the `hint=`/`title=` assertions below, which read the identifier.
+    expect(inbox).toMatch(/const narrowed = !!\(q\.trim\(\) \|\| filter !== 'open' \|\| kind[^)]*\)/)
+    expect(inboxCode.match(/const narrowed\b/g) ?? [], 'derived exactly once').toHaveLength(1)
     expect(inboxCode, "'all' is not this surface's default — 'open' is").not.toMatch(/filter !== 'all'/)
   })
 
