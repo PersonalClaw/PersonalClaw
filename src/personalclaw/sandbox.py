@@ -292,8 +292,29 @@ def build_child_env(
 
 
 # ── Availability probes ──
+#
+# Both probes answer a HOST FACT — "can this kernel/OS give me this mechanism" — and both
+# answer it by SPAWNING (a fork for the namespace probe, a `sandbox-exec -f <profile>
+# /usr/bin/true` subprocess plus an mkstemp/unlink for the seatbelt one). The repo's own
+# un-ceilinged-spawn audit already classes them that way ("host-fact: sandbox-exec
+# availability probe", alongside the ssh/docker/lima daemon probes).
+#
+# So they are memoised per process, exactly like `_ssh_supports_accept_new` below. This is
+# NOT redundant with `detect_backend`'s cache: that cache is keyed on the sandbox MODE, and
+# the mode is the isolation LEVEL ("auto"/"standard"/"cc"/"strict"), not a host property.
+# The five `wrap_argv` call sites pass four different mode strings — `bash_provider` "auto",
+# `schedule_script` "standard", `pack_parse` "strict", `builtin_tools`/`sandbox_providers.none`
+# whatever the caller carries — so consecutive spawns from different subsystems flipped the
+# key and re-derived the backend every time. Measured on a macOS < 26 host: six `wrap_argv`
+# calls over that alternating mode sequence spawned SIX `sandbox-exec` probes, i.e. one per
+# call, so a cron script interleaved with agent turns paid a probe subprocess on every run.
+# Memoising the host fact makes it one per process while leaving `detect_backend`'s
+# mode-keyed derivation (which "off" depends on) exactly as it was.
+#
+# `reset_backend()` clears these too, so a test or a config change can still re-measure.
 
 
+@functools.lru_cache(maxsize=1)
 def _probe_unshare() -> bool:
     """Return True if user + mount namespaces work (Linux).
 
@@ -333,6 +354,7 @@ def _probe_unshare() -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1)
 def _probe_sandbox_exec() -> bool:
     """Return True if macOS ``sandbox-exec`` actually works.
 
@@ -802,10 +824,16 @@ def detect_backend(config_mode: str = "auto") -> str:
 
 
 def reset_backend() -> None:
-    """Reset cached backend (for testing or config change)."""
+    """Reset cached backend (for testing or config change).
+
+    Clears the memoised host-fact probes as well as the derived backend — otherwise
+    resetting the backend would re-derive it from a frozen answer, which is not a reset.
+    """
     global _backend, _backend_config_mode
     _backend = None
     _backend_config_mode = None
+    _probe_unshare.cache_clear()
+    _probe_sandbox_exec.cache_clear()
 
 
 def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | None]:

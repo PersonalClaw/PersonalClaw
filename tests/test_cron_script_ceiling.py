@@ -33,7 +33,7 @@ import pytest
 
 import personalclaw.schedule_script as ss
 from personalclaw import gateway_base
-from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+from personalclaw.sandbox import PROFILE_TOOL, detect_backend, spawn_shim_argv
 
 # A cron run spawns a fresh interpreter through the sandbox, twice over (shim then target).
 # Under full-suite xdist load that can take tens of seconds of wall time from pure CPU
@@ -220,6 +220,20 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
             return "ok"
         """,
     )
+    # Settle the sandbox backend BEFORE opening the measurement window below.
+    #
+    # `wrap_argv` derives the backend on first use, and on a macOS host older than 26 that
+    # derivation SPAWNS a host-fact capability probe (`sandbox-exec -f
+    # /tmp/personalclaw_probe_*.sb /usr/bin/true`). The spy below monkeypatches `run` on the
+    # shared `subprocess` MODULE object, so it captures every spawn in the process and cannot
+    # tell that probe apart from the cron child's own — it counted both. Whether it saw one or
+    # two therefore depended on whether some earlier test in the same pytest-split shard had
+    # already warmed the cache, which is exactly how this assertion came up `2 == 1` on the
+    # `(3.13, macos-14, 4)` leg while passing on every host where the probe short-circuits.
+    # Settling it here makes the window hold the cron spawn and nothing else, on every host
+    # and in any shard, so the count below stays an exact 1 rather than a tolerance.
+    detect_backend(config_mode="standard")  # the mode `run_script_sandboxed` passes
+
     seen: list[list[str]] = []
     real_run = ss.subprocess.run
 
@@ -231,7 +245,10 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
     r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
     assert r["status"] == "ok", r
 
-    assert len(seen) == 1, seen
+    assert len(seen) == 1, (
+        f"expected exactly one spawn in the window — the cron child — but saw {len(seen)}; "
+        f"something other than the cron runner spawned here: {seen}"
+    )
     argv = seen[0]
     # The shim prefix leads: <python> -m personalclaw._spawn_exec_shim <policy> -- <rest>
     assert argv[1:3] == ["-m", "personalclaw._spawn_exec_shim"], argv[:4]
