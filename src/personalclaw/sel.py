@@ -22,10 +22,11 @@ import logging
 import os
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 from personalclaw.atomic_write import atomic_write
 
@@ -58,12 +59,39 @@ _VERIFY_WINDOW = 5000
 # size bound (not just age) keeps reads/verify fast. Comfortably above the verify
 # window so a prune never erases the whole verifiable tail.
 _MAX_ENTRIES = 50000
+#: How many log lines ONE :meth:`SecurityEventLog.audit_page` request may read.
+#:
+#: A BUDGET, not a wall — and the distinction is the whole of issue #593's second half.
+#: This used to be ``scan_cap=_MAX_ENTRIES``: every page re-read the newest 50,000 lines and
+#: nothing older was reachable at any page depth. Measured on a 63,653-entry log: 13,653 rows
+#: (21.4%) unreachable, and 2.1s of server work for EVERY page including the first, because
+#: the whole 50,000-line tail was read and split before the first row was chosen.
+#:
+#: Now the cursor carries a byte anchor, so a page reads only backward from where the previous
+#: one stopped, and hitting this budget hands back an anchor instead of ending the walk. The
+#: log is reachable end to end; the bound is on one request's work.
+_AUDIT_PAGE_SCAN_BUDGET = 5000
 
 #: The fields the audit read surface may filter on. A CLOSED set: the handler refuses an
 #: unknown filter key instead of ignoring it, because a silently-dropped filter returns
 #: MORE than the operator asked for while looking like it worked — the fail-open shape an
 #: audit surface can least afford.
 AUDIT_FILTER_FIELDS = ("caller_identity", "operation", "outcome", "downstream_service")
+
+
+class AuditOutcomeFamily(TypedDict):
+    """One outcome family: what it is called, how it reads, and which words it claims.
+
+    Typed rather than a bare ``dict[str, object]`` so ``tone`` is not optional by accident and so
+    consumers stop casting. The casts were the tell: the tone lived in the dashboard because a
+    loosely-typed table here made it awkward to carry, and the dashboard's copy then drifted.
+    """
+
+    key: str
+    label: str
+    tone: str
+    values: tuple[str, ...]
+
 
 #: The audit surface's outcome filters, defined HERE because this module owns the log the
 #: words are written into. The dashboard used to carry its own two-entry list — one literal
@@ -80,18 +108,27 @@ AUDIT_FILTER_FIELDS = ("caller_identity", "operation", "outcome", "downstream_se
 #: WITH the vocabulary, or it describes only the words that existed when someone typed it.
 #:
 #: ``values`` are matched any-of (see :func:`_audit_matches`), so a family stays one
-#: server-side query and pagination keeps agreeing with the pill.
-#: Every value here is matched as a SUBSTRING, which is what makes the prefixed variants fall
-#: in for free: ``denied_running``/``denied_mismatch``/``denied_invalid`` under ``denied``,
+#: server-side query and pagination keeps agreeing with the pill. Matching is per
+#: :func:`_outcome_token_match` — the value, or the value as a whole ``_``-delimited token of a
+#: longer word — which is what makes the prefixed variants fall in for free:
+#: ``denied_running``/``denied_mismatch``/``denied_invalid`` under ``denied``,
 #: ``rejected_spawn``/``rejected_invalid_cwd`` under ``rejected``, the five ``refused_*`` under
 #: ``refused``, ``hook_blocked`` under ``blocked``, ``hook_error`` under ``error``. And every
 #: value must be a word a writer actually emits — a filter offering a term nobody writes is the
 #: same silent-zero defect from the other direction, so ``test_audit_outcome_families.py``
 #: checks each one against the tree's real vocabulary.
-AUDIT_OUTCOME_FAMILIES: tuple[dict[str, object], ...] = (
+#:
+#: ``tone`` is how a row of this family READS, and it lives here for the same reason the values
+#: do. The dashboard kept its own fourteen-entry ``outcome -> colour`` map, and it had drifted
+#: from this table: ``not_found`` is in the ``failed`` family and had no entry, so a failure
+#: rendered in neutral grey. A hand-maintained view over a vocabulary describes only the words
+#: that existed when someone typed it. The server now stamps each row's tone with the matcher
+#: below, and the panel maps tone -> design token and holds no outcome vocabulary at all.
+AUDIT_OUTCOME_FAMILIES: tuple[AuditOutcomeFamily, ...] = (
     {
         "key": "denied",
         "label": "Denied",
+        "tone": "danger",
         "values": ("denied", "rejected", "blocked", "refused"),
     },
     {
@@ -100,33 +137,78 @@ AUDIT_OUTCOME_FAMILIES: tuple[dict[str, object], ...] = (
         # break is not an operation failure and deserves its own surface, not a bucket.
         "key": "failed",
         "label": "Failed",
+        "tone": "danger",
         "values": ("failure", "failed", "error", "not_found"),
+    },
+    {
+        # The control stopped and asked. Not a refusal (nothing was denied) and not a fault
+        # (nothing broke), so it gets its own pill rather than being forced into one of the two
+        # above — and it is the one tone the panel's old local map carried that no family did.
+        "key": "needs_confirm",
+        "label": "Needs confirmation",
+        "tone": "warning",
+        "values": ("needs_confirm", "needs_input"),
+    },
+    {
+        # 🔴 THE PILLS COVERED 0.6% OF THE LOG (issue #535). Measured on a live 1,040-entry log:
+        # `ok` alone was 1,021 rows (98.2%), and it matched NEITHER pill — so the two filters
+        # together reached 6 rows. The vocabulary below was already classified (it is the list
+        # the coverage rail uses) but was never OFFERED, so an operator could narrow to what
+        # went wrong and never to what happened. A view that cannot select the bulk of the log
+        # is not a filter, and on an audit surface "no matching events" reads as "nothing
+        # happened".
+        #
+        # This family is why matching is token-bounded and not substring. Measured against the
+        # tree's 66 emitted outcome words, a substring `ok` also captures `hook_blocked` and
+        # `hook_error` — both of which belong to the families above — and `approved` captures
+        # `not_auto_approved`, its own negation. A "Succeeded" pill returning a blocked hook is
+        # the same silent lie as a "Failed" pill that misses one.
+        "key": "ok",
+        "label": "Succeeded",
+        "tone": "success",
+        "values": (
+            "success",
+            "ok",
+            # PA-5. Both emitters spell it as the SUCCESS arm of an explicit pair —
+            # `outcome="executed" if executed else "declined"` (handlers/proactive.py) and
+            # `"outcome": "executed" if ok else "failed"` (proactive/autoexec.py) — so a triage
+            # reply's verb having been carried out is a working operation, not something a
+            # failure pill should accuse. Its sibling `expired` is deliberately left
+            # UNCLASSIFIED: nobody answered, which is not a refusal, and putting it in a denied
+            # family would make the audit log assert a refusal that never happened. PA-5's own
+            # note is the distinction — "you answered and it did nothing" must stay legible
+            # against "you never answered".
+            "executed",
+            "allowed",
+            "approved",
+            "auto_approved",
+            "completed",
+            "granted",
+            "enabled",
+            "disabled",
+        ),
     },
 )
 
-#: Outcomes that mean the thing succeeded, and neutral/informational ones. Not filterable
-#: families today — they exist so the coverage rail below can tell "this word is accounted
-#: for" from "nobody classified this word", which is the state that produced the bug above.
-AUDIT_OUTCOME_SUCCESS = (
-    "success",
-    "ok",
-    # PA-5. Both emitters spell it as the SUCCESS arm of an explicit pair —
-    # `outcome="executed" if executed else "declined"` (handlers/proactive.py) and
-    # `"outcome": "executed" if ok else "failed"` (proactive/autoexec.py) — so a triage reply's
-    # verb having been carried out is a working operation, not something a failure pill should
-    # accuse. Its sibling `expired` is deliberately left UNCLASSIFIED: nobody answered, which is
-    # not a refusal, and putting it in a denied family would make the audit log assert a refusal
-    # that never happened. PA-5's own note is the distinction — "you answered and it did nothing"
-    # must stay legible against "you never answered".
-    "executed",
-    "allowed",
-    "approved",
-    "auto_approved",
-    "completed",
-    "granted",
-    "enabled",
-    "disabled",
+#: The success vocabulary, DERIVED from the family above rather than kept beside it. It was a
+#: second tuple, and a second copy of a vocabulary is how the two drift; consumers
+#: (``browse/grant.py``, the coverage rail) want the words, and there is now one place holding
+#: them.
+AUDIT_OUTCOME_SUCCESS: tuple[str, ...] = next(
+    f["values"] for f in AUDIT_OUTCOME_FAMILIES if f["key"] == "ok"
 )
+
+#: The tones a row may be stamped with. A CLOSED set: the frontend maps each to a design token,
+#: so a family declaring a tone nobody renders would silently fall back to neutral — the
+#: hand-maintained-list failure this whole table exists to end. Checked at import.
+AUDIT_OUTCOME_TONES = ("danger", "warning", "success", "neutral")
+
+_DECLARED_TONES = {f["tone"] for f in AUDIT_OUTCOME_FAMILIES}
+if not _DECLARED_TONES <= set(AUDIT_OUTCOME_TONES):
+    raise RuntimeError(
+        "an outcome family declares a tone the renderers do not know: "
+        f"{sorted(_DECLARED_TONES - set(AUDIT_OUTCOME_TONES))}"
+    )
 
 #: Structural fields :func:`redact_event` leaves byte-identical. Each is machine-generated
 #: and cannot carry a user/tool payload, so there is nothing in them to redact — while
@@ -202,15 +284,82 @@ def redact_event(record: dict) -> dict:
     return {k: (v if k in _UNREDACTED_FIELDS else _deep(v)) for k, v in record.items()}
 
 
+def _outcome_token_match(value: str, word: str) -> bool:
+    """Whether ``word`` belongs to the outcome ``value``, matched on ``_`` token boundaries.
+
+    ``outcome`` is the one filterable field whose vocabulary WE write (:data:`SecurityEvent`),
+    so it gets a matcher that understands the shape of those words instead of the plain
+    substring the free-text fields use. A value matches a word it equals, or of which it is a
+    whole underscore-delimited token: ``error`` matches ``hook_error``, ``denied`` matches
+    ``denied_running``, ``refused`` matches ``refused_low_memory``.
+
+    The two things it deliberately does NOT match, both measured against the tree's 66 emitted
+    outcome words and both of which a substring match got wrong:
+
+    * ``ok`` does not match ``hook_blocked``/``hook_error``/``invoked``. Under substring, the
+      ``ok`` success family captured a blocked hook and a hook error — rows that belong to the
+      denied and failed families — so a "Succeeded" pill would have asserted success for both.
+    * a positive value does not match a ``not_``-prefixed word: ``approved`` does not match
+      ``not_auto_approved``. Capturing a negation as its own affirmative is the same lie in a
+      subtler form. ``not_found`` still matches itself, because the value carries the prefix.
+    """
+    if not value.startswith("not_") and word.startswith("not_"):
+        return False
+    return (
+        word == value
+        or word.startswith(f"{value}_")
+        or word.endswith(f"_{value}")
+        or f"_{value}_" in word
+    )
+
+
+def audit_outcome_tone(outcome: str) -> str:
+    """The tone one outcome word READS as: one of :data:`AUDIT_OUTCOME_TONES`.
+
+    Stamped onto every row by :meth:`SecurityEventLog.audit_page` so the tone and the filter
+    pills come from the SAME table and the same matcher. The dashboard used to hold its own
+    ``outcome -> colour`` map; it was missing ``not_found`` (a member of the ``failed`` family)
+    and five success words, so those rows rendered neutral while the pill called them failures.
+
+    An unclassified word is ``"neutral"`` on purpose. Guessing a tone for a word nobody
+    classified is how the audit log would come to assert a verdict no one decided.
+    """
+    word = outcome.strip().lower()
+    if not word:
+        return "neutral"
+    for family in AUDIT_OUTCOME_FAMILIES:
+        if any(_outcome_token_match(v, word) for v in family["values"]):
+            return family["tone"]
+    return "neutral"
+
+
+def _audit_cursor(offset: int, record: dict) -> str:
+    """Encode a resumable audit anchor: ``"<byte offset>.<event_id>"``.
+
+    Both halves are load-bearing. The offset is what makes the next page an O(page) read
+    instead of a re-scan from the tail; the ``event_id`` is what lets
+    :meth:`SecurityEventLog._resolve_audit_cursor` prove the offset still points at the record
+    the client was given, so a cursor stale from a ``prune()`` fails closed instead of quietly
+    resuming somewhere else in the log.
+    """
+    return f"{offset}.{record.get('event_id', '')}"
+
+
 def _audit_matches(data: dict, filters: dict[str, str], since: str, until: str) -> bool:
     """Whether one record satisfies every active filter (AND across fields).
 
-    Field filters are case-insensitive substring matches; the time bounds are
-    lexicographic over the ISO-8601 UTC timestamp, which is ordering-correct because
-    every writer formats it identically (``datetime.now(tz=utc).isoformat()``).
+    Free-text fields (``caller_identity``/``operation``/``downstream_service``) are
+    case-insensitive SUBSTRING matches — you type ``terminal`` and it finds
+    ``DELETE /api/terminal/sessions/x``. ``outcome`` is matched on token boundaries instead
+    (:func:`_outcome_token_match`), because it is a closed vocabulary this module writes and a
+    substring over it mis-classifies real words: ``ok`` inside ``hook_error``.
+
+    The time bounds are lexicographic over the ISO-8601 UTC timestamp, which is
+    ordering-correct because every writer formats it identically
+    (``datetime.now(tz=utc).isoformat()``).
 
     A comma in a needle means ANY-OF: ``outcome=failure,error,failed`` matches a record
-    whose outcome contains any one of them. That is what lets an outcome FAMILY
+    whose outcome is any one of them. That is what lets an outcome FAMILY
     (:data:`AUDIT_OUTCOME_FAMILIES`) stay a single server-side query, so the filter pill and
     the pagination cursor cannot disagree — the reason these filters became server-side in
     the first place. AND still holds ACROSS fields; the OR is only within one field.
@@ -220,7 +369,10 @@ def _audit_matches(data: dict, filters: dict[str, str], since: str, until: str) 
         alternatives = [part.strip().lower() for part in needle.split(",") if part.strip()]
         if not alternatives:
             continue
-        if not any(alt in haystack for alt in alternatives):
+        if field_name == "outcome":
+            if not any(_outcome_token_match(alt, haystack) for alt in alternatives):
+                return False
+        elif not any(alt in haystack for alt in alternatives):
             return False
     ts = str(data.get("timestamp", ""))
     if since and ts < since:
@@ -278,31 +430,60 @@ class SecurityEventLog:
             pass
         return key
 
-    def _read_last_hash(self) -> str:
-        if not self._path.exists():
-            return ""
+    def _size(self) -> int:
         try:
-            # Read last non-empty line
+            return self._path.stat().st_size
+        except OSError:
+            return 0
+
+    def _lines_backward(self, end: int) -> "Iterator[tuple[int, str]]":
+        """Yield ``(start_offset, text)`` for every non-empty line strictly before byte ``end``,
+        NEWEST FIRST, reading the file backward in chunks.
+
+        THE one backward reader. There used to be three hand-rolled reverse chunk scans in this
+        class — ``_read_last_hash``, ``_tail_lines`` and (through the latter) ``audit_page`` —
+        and only the last of them needed a line's POSITION, which is why it could not have one:
+        the other two threw the offsets away, so pagination had nothing to anchor on and every
+        page restarted from the tail. Yielding the offset costs nothing and is what makes an
+        audit cursor resumable (see :meth:`audit_page`).
+
+        The offset is the byte at which the line's first character sits, so passing it back as
+        ``end`` resumes strictly older than that line — the line itself is never re-served.
+        """
+        if end <= 0 or not self._path.exists():
+            return
+        try:
             with open(self._path, "rb") as f:
-                f.seek(0, 2)
-                pos = f.tell()
-                if pos == 0:
-                    return ""
-                # Scan backward for last newline
-                buf = b""
+                pos = end
+                # Bytes of a line whose start lies before `pos`; resolved by the next chunk.
+                carry = b""
                 while pos > 0:
-                    pos = max(pos - 4096, 0)
+                    step = min(65536, pos)
+                    pos -= step
                     f.seek(pos)
-                    buf = f.read() + buf
-                    lines = buf.split(b"\n")
-                    for line in reversed(lines):
-                        line = line.strip()
-                        if line:
-                            data = json.loads(line)
-                            return data.get("entry_hash", "")
-            return ""
+                    buf = f.read(step) + carry
+                    parts = buf.split(b"\n")
+                    carry = parts[0]
+                    offset = pos + len(parts[0]) + 1
+                    complete: list[tuple[int, bytes]] = []
+                    for part in parts[1:]:
+                        complete.append((offset, part))
+                        offset += len(part) + 1
+                    for line_offset, part in reversed(complete):
+                        if part.strip():
+                            yield line_offset, part.decode("utf-8", "replace")
+                if carry.strip():
+                    yield 0, carry.decode("utf-8", "replace")
+        except OSError:
+            return
+
+    def _read_last_hash(self) -> str:
+        try:
+            for _offset, line in self._lines_backward(self._size()):
+                return str(json.loads(line).get("entry_hash", ""))
         except Exception:
             return ""
+        return ""
 
     def _tail_lines(self, max_lines: int) -> list[str]:
         """Return up to ``max_lines`` trailing non-empty lines, reading only the
@@ -310,27 +491,13 @@ class SecurityEventLog:
         gateway/channel/mcp action appends), so reads MUST stay O(tail) — never load
         the whole file just to show recent events or sample-verify the chain.
         """
-        if not self._path.exists():
-            return []
-        try:
-            with open(self._path, "rb") as f:
-                f.seek(0, 2)
-                pos = f.tell()
-                buf = b""
-                newlines = 0
-                # Read backward in chunks until we've seen enough line breaks (one
-                # extra so the first captured line is whole), or hit the start.
-                while pos > 0 and newlines <= max_lines:
-                    step = min(65536, pos)
-                    pos -= step
-                    f.seek(pos)
-                    buf = f.read(step) + buf
-                    newlines = buf.count(b"\n")
-            lines = [ln.strip() for ln in buf.split(b"\n")]
-            text_lines = [ln.decode("utf-8", "replace") for ln in lines if ln]
-            return text_lines[-max_lines:]
-        except Exception:
-            return []
+        out: list[str] = []
+        for _offset, line in self._lines_backward(self._size()):
+            out.append(line)
+            if len(out) >= max_lines:
+                break
+        out.reverse()
+        return out
 
     def _record_is_authentic(self, data: dict) -> bool:
         """Whether one parsed record's stored HMAC matches its recomputed digest.
@@ -548,6 +715,47 @@ class SecurityEventLog:
                 break
         return result
 
+    def _resolve_audit_cursor(self, cursor: str) -> int | None:
+        """Byte offset an audit cursor anchors at, or ``None`` if it no longer holds.
+
+        The token is ``"<offset>.<event_id>"``. Both halves are checked, and a failure of
+        either is a refusal rather than a fallback: the offset must still be the START of a
+        line, and the record there must still be the one the cursor names. A ``prune()`` or
+        ``rotate()`` rewrites the file, so a stale offset lands mid-record or on a different
+        one — exactly the case that must fail CLOSED, because restarting from the newest
+        record would re-serve the whole trail as if it were a fresh page.
+        """
+        raw_offset, _, event_id = cursor.partition(".")
+        if not _:  # no separator — a bare id (the pre-#593 token) or junk
+            return None
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            return None
+        if offset < 0 or offset > self._size():
+            return None
+        try:
+            with open(self._path, "rb") as f:
+                if offset:
+                    # A line START, or the cursor is pointing into the middle of a record.
+                    f.seek(offset - 1)
+                    if f.read(1) != b"\n":
+                        return None
+                else:
+                    f.seek(0)
+                line = f.readline()
+        except OSError:
+            return None
+        if not line.strip():
+            return None
+        try:
+            data = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(data, dict) or str(data.get("event_id", "")) != event_id:
+            return None
+        return offset
+
     def audit_page(
         self,
         *,
@@ -556,71 +764,98 @@ class SecurityEventLog:
         filters: dict[str, str] | None = None,
         since: str = "",
         until: str = "",
-        scan_cap: int = _MAX_ENTRIES,
+        scan_budget: int | None = None,
     ) -> dict:
         """Return one filtered page of audit records, newest first, redacted.
 
         **Why a cursor and not an offset.** The log is append-only and this surface reads
-        it newest-first, so an ``offset`` is unstable by construction: append *k* entries
+        it newest-first, so a row ``offset`` is unstable by construction: append *k* entries
         between page 1 and page 2 and every element shifts *k* places toward the tail, so
         page 2 re-serves *k* rows the operator already saw — and a concurrent ``prune()``
         shifts the other way and SKIPS rows. Skipping rows in an audit trail is the
         failure that matters: the surface would omit events while looking complete.
 
-        ``cursor`` is the ``event_id`` of the last row of the previous page. A page is the
-        next ``limit`` matching records strictly OLDER than that anchor (earlier in file
-        order). Appends land strictly newer than the anchor, so they cannot enter or
-        shift any page taken after it — pages 2..N are stable under concurrent writes,
-        while page 1 (no cursor) still shows the true live tail.
+        ``cursor`` is an opaque ``"<byte offset>.<event_id>"`` anchor on the last line the
+        previous page looked at. A page is the next ``limit`` matching records strictly OLDER
+        than that anchor. Appends land strictly newer than it, so they cannot enter or shift
+        any page taken after it — pages 2..N are stable under concurrent writes, while page 1
+        (no cursor) still shows the true live tail. An anchor that no longer holds returns
+        ``cursor_found=False`` and the caller REFUSES.
 
-        An anchor that is no longer in the scanned window (pruned, or rotated out)
-        returns ``cursor_found=False`` — the caller REFUSES rather than silently
-        restarting from the newest record, which would re-serve the whole log as if it
-        were new.
+        **The budget is not a wall (issue #593).** The anchor carries the byte position, so a
+        page reads backward only from where the previous one stopped instead of re-reading the
+        tail. ``scan_budget`` bounds ONE request's work; when it stops the walk early the page
+        comes back with an anchor at the stopping point and ``truncated=True``, so the operator
+        continues from there. This used to be ``scan_cap=_MAX_ENTRIES``, bounding the whole
+        LOG: measured on a 63,653-entry log, 13,653 rows (21.4%) were unreachable at any page
+        depth, and every page — including the first — cost 2.1s because the newest 50,000 lines
+        were read and split before the first row was chosen.
 
-        Reads stay O(tail): at most ``scan_cap`` trailing lines are ever touched.
-        Per-record ``integrity_ok`` is computed on the RAW line, before redaction —
-        redacting first would rewrite the payload the HMAC covers and report every
-        record as tampered.
+        Per-record ``integrity_ok`` is computed on the RAW line, before redaction — redacting
+        first would rewrite the payload the HMAC covers and report every record as tampered.
+        ``outcome_tone`` comes from the same table the filter pills do
+        (:func:`audit_outcome_tone`), so a row cannot read green while a pill calls it a
+        failure.
         """
-        lines = self._tail_lines(scan_cap)
+        # Resolved at CALL time, not bound as a default: a default argument freezes the module
+        # constant at import, which silently made the reachability rails below pass without the
+        # budget ever biting. A bound already read by nobody is not a bound.
+        budget = _AUDIT_PAGE_SCAN_BUDGET if scan_budget is None else scan_budget
+        empty = {
+            "events": [],
+            "next_cursor": "",
+            "scanned": 0,
+            "truncated": False,
+            "cursor_found": True,
+        }
+        if not self._path.exists():
+            return empty
+        end = self._size()
+        if cursor:
+            resolved = self._resolve_audit_cursor(cursor)
+            if resolved is None:
+                return {**empty, "cursor_found": False}
+            end = resolved
+
         active = {k: v for k, v in (filters or {}).items() if v}
-        page: list[dict] = []
+        page: list[tuple[int, dict]] = []
         next_cursor = ""
-        past_cursor = not cursor
+        truncated = False
         scanned = 0
-        for line in reversed(lines):  # newest first
+        for offset, line in self._lines_backward(end):
             scanned += 1
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                continue
-            if not isinstance(data, dict):
-                continue
-            if not past_cursor:
-                # Still walking back to the anchor; the anchor row itself is not re-served.
-                if data.get("event_id") == cursor:
-                    past_cursor = True
-                continue
-            if not _audit_matches(data, active, since, until):
-                continue
-            if len(page) >= limit:
-                # One match BEYOND the page proves a next page exists, so a cursor is
-                # only ever handed out when it leads somewhere.
-                next_cursor = str(page[-1].get("event_id", ""))
+                data = None
+            if isinstance(data, dict) and _audit_matches(data, active, since, until):
+                if len(page) >= limit:
+                    # One match BEYOND the page proves a next page exists, so a cursor is
+                    # only ever handed out when it leads somewhere.
+                    next_cursor = _audit_cursor(*page[-1])
+                    break
+                authentic = self._record_is_authentic(data)
+                row = redact_event(data)
+                row["integrity_ok"] = authentic
+                row["outcome_tone"] = audit_outcome_tone(str(data.get("outcome", "")))
+                page.append((offset, row))
+            if scanned >= budget and offset > 0:
+                # Out of budget with older bytes still on disk. Hand back an anchor here —
+                # a bounded read that ENDS the walk is what made 21% of the log unreachable.
+                truncated = True
+                next_cursor = _audit_cursor(
+                    offset, data if isinstance(data, dict) else {"event_id": ""}
+                )
                 break
-            authentic = self._record_is_authentic(data)
-            row = redact_event(data)
-            row["integrity_ok"] = authentic
-            page.append(row)
         return {
-            "events": page,
+            "events": [row for _offset, row in page],
             "next_cursor": next_cursor,
             "scanned": scanned,
-            # The scan window filled up, so older records may exist beyond it. Reported
-            # rather than hidden: a bounded read that looks exhaustive is a lie.
-            "truncated": len(lines) >= scan_cap,
-            "cursor_found": past_cursor,
+            # This request stopped on its scan budget, not on the start of the log. Always
+            # paired with a usable ``next_cursor``: reported so a consumer can say "still
+            # looking" rather than "that is everything".
+            "truncated": truncated,
+            "cursor_found": True,
         }
 
     def _prune_plan(self, keep_days: int, max_entries: int) -> tuple[list[str], int]:

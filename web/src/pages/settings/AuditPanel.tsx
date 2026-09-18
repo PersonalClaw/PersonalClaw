@@ -10,14 +10,22 @@ import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Field, TextInput, DateInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 
-const OUTCOME_TONE: Record<string, string> = {
-  success: 'var(--color-success)', allowed: 'var(--color-success)', approved: 'var(--color-success)',
-  completed: 'var(--color-success)', ok: 'var(--color-success)',
-  denied: 'var(--color-danger)', failure: 'var(--color-danger)', failed: 'var(--color-danger)',
-  blocked: 'var(--color-danger)', refused: 'var(--color-danger)', rejected: 'var(--color-danger)',
-  error: 'var(--color-danger)',
-  not_triggered: 'var(--color-on-surface-low)', scanned: 'var(--color-on-surface-low)',
-  needs_confirm: 'var(--color-warning)',
+// 🔴 THIS PANEL NO LONGER KNOWS ANY OUTCOME WORDS. It used to hold a fourteen-entry
+// `outcome -> colour` map, hand-maintained against a log whose writers emit 66 distinct outcome
+// words — and it had already drifted from the server's own table: `not_found` is a member of the
+// `failed` family and had no entry here, so a record the Failed pill calls a failure rendered in
+// neutral grey. Five success words (`executed`, `auto_approved`, `granted`, `enabled`, `disabled`)
+// were missing the same way. Measured live: `disabled`, `not_found`, `fail_open`, `expired` and
+// `open` all rendered grey.
+//
+// `sel.audit_outcome_tone` stamps every row with the tone its OWN family matcher assigned, so the
+// pill and the colour can no longer disagree about the same record. What is left here is a
+// tone -> design-token map, which is this file's business; the vocabulary is not.
+const TONE_COLOR: Record<string, string> = {
+  danger: 'var(--color-danger)',
+  warning: 'var(--color-warning)',
+  success: 'var(--color-success)',
+  neutral: 'var(--color-on-surface-low)',
 }
 
 // 🔴 THE PILLS NO LONGER DEFINE THE VOCABULARY THEY FILTER ON. They used to: two entries,
@@ -39,6 +47,18 @@ const OUTCOME_TONE: Record<string, string> = {
 const ALL_PRESET = { key: '', label: 'All', values: [] as string[] }
 
 const PAGE_SIZE = 50
+/** How many budget-exhausted (zero-row) pages one click may chase before handing control back.
+ *  A ceiling, not a target: the server's budget is 5,000 lines, so this bounds one click at
+ *  ~100k lines of log rather than the whole chain. Past it the panel says where it stopped and
+ *  the operator decides — an unbounded auto-follow is how a filtered read of a million-entry log
+ *  becomes an unkillable request.
+ *
+ *  Named "follows", not the graph word for the same idea: `oneLitSetImplementation.test.ts`
+ *  censuses the tree for the memory graph's lit-set traversal by its loop shape, and it is right
+ *  to — a second file wearing that shape reads as a second traversal. That census greps RAW source,
+ *  comments included, so the shape must not be spelled out here either. This walks a cursor through
+ *  an append-only file: it visits nothing twice and has no frontier. */
+const MAX_EMPTY_FOLLOWS = 20
 
 /** One JSONL line per event — the export format. Pure + exported so the round-trip is
  *  testable: `toJsonl(rows).trim().split('\n').map(JSON.parse)` must equal `rows`.
@@ -62,9 +82,16 @@ function downloadJsonl(events: SelEvent[]): void {
 }
 
 /** Audit log — "what did my agent do". The live security-event log (SEL): a
- *  tamper-evident hash chain of every tool invocation, approval/denial, redaction, and
- *  config write. Server-side filters, cursor pagination, per-row integrity, chain-verify,
- *  credential-safe JSONL export, key-rotate. */
+ *  tamper-evident hash chain of every tool invocation, API access, and approval/denial.
+ *  Server-side filters, cursor pagination, per-row integrity, chain-verify, credential-safe
+ *  JSONL export, archive-and-restart.
+ *
+ *  It does NOT contain redaction events, and this used to claim it did — measured across
+ *  `src/personalclaw`, no writer emits `event_type="redaction"`; the words are `api_access`,
+ *  `tool_invocation` and thirteen config/approval kinds. Redaction is something the log has
+ *  DONE TO it on the way out (`sel.redact_event`), not a thing it records. The panel had a
+ *  Redactions tab that could therefore never match a row (issue 535); the tab is gone and so is
+ *  the promise. */
 /** How much of the chain a verdict actually covers, and whether anything was left out.
  *
  *  🔴 THE VERDICT USED TO OVERSTATE ITS SCOPE. `sel.verify_integrity` defaults to a 5000-entry
@@ -95,7 +122,6 @@ export function AuditPanel() {
   const [showMore, setShowMore] = useState(false)
   const [events, setEvents] = useState<SelEvent[] | null>(null)
   const [cursor, setCursor] = useState('')
-  const [truncated, setTruncated] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [verify, setVerify] = useState<SelVerify | null>(null)
@@ -113,14 +139,25 @@ export function AuditPanel() {
     const id = ++runId.current
     setBusy(true)
     try {
-      const page = await api.auditEvents({ limit: PAGE_SIZE, cursor: opts.cursor, filters: opts.filters })
+      // A page whose scan budget ran out before it found anything is a real answer ("still
+      // looking, here is where I stopped") and the operator can resume from its cursor — but a
+      // CLICK that returns zero rows looks like a broken button. Measured on a 63,653-entry log:
+      // `outcome=not_found` (one matching row) needs 13 budgeted pages, so one click was thirteen
+      // clicks. Chain the empty ones here, bounded, so a click either shows rows or ends.
+      let page = await api.auditEvents({ limit: PAGE_SIZE, cursor: opts.cursor, filters: opts.filters })
+      const rows = [...page.events]
+      let follows = 0
+      while (rows.length === 0 && page.truncated && page.next_cursor && follows++ < MAX_EMPTY_FOLLOWS) {
+        if (id !== runId.current) return
+        page = await api.auditEvents({ limit: PAGE_SIZE, cursor: page.next_cursor, filters: opts.filters })
+        rows.push(...page.events)
+      }
       if (id !== runId.current) return
-      setEvents((prev) => (opts.cursor && prev ? [...prev, ...page.events] : page.events))
+      setEvents((prev) => (opts.cursor && prev ? [...prev, ...rows] : rows))
       // Every page carries them; taking them on each load means a family widened on the
       // backend appears without a reload, and an older payload cannot blank the pills.
       if (page.outcome_families?.length) setFamilies(page.outcome_families)
       setCursor(page.next_cursor)
-      setTruncated(page.truncated)
       setError(null)
     } catch (e) {
       if (id !== runId.current) return
@@ -184,7 +221,7 @@ export function AuditPanel() {
 
   return (
     <div>
-      <PanelHeader title="Audit log" hint="What your agent did — every tool call, approval, denial, and redaction, hash-chained and tamper-evident." />
+      <PanelHeader title="Audit log" hint="What your agent did — every tool call, API access, approval and denial, hash-chained and tamper-evident." />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-pill bg-surface-container p-0.5" role="group" aria-label="Filter by outcome">
@@ -261,7 +298,12 @@ export function AuditPanel() {
       )}
 
       {events.length === 0 ? (
-        <p data-type="body-s" className="py-6 text-center text-on-surface-low">No matching events.</p>
+        <p data-type="body-s" className="py-6 text-center text-on-surface-low">
+          {/* Two different answers that used to read identically. "Nothing matches in the whole
+              log" is a conclusion; "nothing matched in the part I have read so far" is not, and on
+              an audit surface presenting the second as the first is the failure that matters. */}
+          {cursor ? 'No matches yet in the events scanned so far — keep looking for older ones.' : 'No matching events.'}
+        </p>
       ) : (
         <div className="flex flex-col gap-1">
           {events.map((e) => <EventRow key={e.event_id} ev={e} />)}
@@ -273,10 +315,14 @@ export function AuditPanel() {
           <Button variant="secondary" size="sm" onClick={loadMore} loading={busy} loadingLabel="Loading">Load older events
           </Button>
         )}
+        {/* No cursor means the walk reached the START of the log, so this is the whole answer.
+            It did not used to be: the scan window was a wall at the newest 50,000 entries, and
+            this line said "older entries exist beyond the scanned window" with no way to reach
+            them — measured at 13,653 unreachable rows on a 63,653-entry log (issue 593). The
+            budget now hands back a cursor instead of ending the walk, so a missing cursor is a
+            real end and `truncated` can no longer be true here. */}
         {!cursor && events.length > 0 && (
-          <p data-type="caption" className="text-on-surface-low">
-            {truncated ? `End of the ${events.length} most recent matching events — older entries exist beyond the scanned window.` : `All ${events.length} matching events shown.`}
-          </p>
+          <p data-type="caption" className="text-on-surface-low">All {events.length} matching events shown.</p>
         )}
       </div>
     </div>
@@ -285,7 +331,10 @@ export function AuditPanel() {
 
 function EventRow({ ev }: { ev: SelEvent }) {
   const [open, setOpen] = useState(false)
-  const tone = OUTCOME_TONE[ev.outcome ?? ''] ?? 'var(--color-on-surface-low)'
+  // The server's verdict on this row, not a lookup by word. An unclassified outcome arrives as
+  // `neutral`, which is the honest reading — inventing a colour for a word nobody classified is
+  // how the audit log would come to assert a verdict no one decided.
+  const tone = TONE_COLOR[ev.outcome_tone ?? 'neutral'] ?? TONE_COLOR.neutral
   const tampered = ev.integrity_ok === false
   return (
     <div className="rounded-md px-3 py-1.5" style={tampered

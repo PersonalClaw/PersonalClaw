@@ -3233,17 +3233,28 @@ export interface SelEvent {
   agent?: string; source?: string; operation?: string; tool_kind?: string; outcome?: string
   resources?: string; error?: string; prev_hash?: string; entry_hash?: string
   downstream_service?: string; request_id?: string; integrity_ok?: boolean
+  /** How this row's `outcome` READS, decided server-side by the same table and matcher that
+   *  define the filter pills (`sel.audit_outcome_tone`) — one of `danger`/`warning`/`success`/
+   *  `neutral`, and `neutral` for a word nobody classified. The dashboard used to map outcome
+   *  words to colours itself and had drifted: `not_found` is a member of the `failed` family and
+   *  rendered in neutral grey, so a row the Failed pill called a failure did not look like one. */
+  outcome_tone?: string
 }
-// One page of /api/security/audit. `next_cursor` empty = no further page (the server
-// only hands out a cursor once it has seen a match beyond the page). `truncated` = the
-// bounded tail scan filled up, so older records may exist beyond the window.
+// One page of /api/security/audit. `next_cursor` empty = the walk reached the START of the log, so
+// what you have is the whole answer; anything else is an opaque resumable anchor
+// (`<byte offset>.<event_id>`, verified server-side, refused when stale). `truncated` = this
+// request stopped on its per-page scan BUDGET, not on the end of the log, and is always paired
+// with a usable `next_cursor` — the difference between "still looking" and "that is everything".
+// It used to mean the read hit a WALL at the newest 50,000 entries, with nothing older reachable
+// at any page depth (13,653 of 63,653 rows, measured).
 export interface AuditPage {
   events: SelEvent[]; count: number; next_cursor: string; scanned: number; truncated: boolean
   // The outcome filters, shipped by the module that owns the log's vocabulary
   // (`sel.AUDIT_OUTCOME_FAMILIES`). `values` are matched ANY-OF server-side, so a family is
   // one query and the pill cannot disagree with the pagination cursor. The dashboard used to
-  // keep its own two-word list here and missed most of what the writers emit.
-  outcome_families: { key: string; label: string; values: string[] }[]
+  // keep its own two-word list here and missed most of what the writers emit. `tone` travels
+  // with the family for the same reason, and is the same value each row is stamped with.
+  outcome_families: { key: string; label: string; tone?: string; values: string[] }[]
 }
 // Server-side filters for the audit read. Empty strings are omitted by the caller —
 // an unknown key is REFUSED by the endpoint, never ignored.
