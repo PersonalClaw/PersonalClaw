@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.session_workspace import workspace_dir
+from personalclaw.session_workspace import workspace_dir, workspace_path
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,23 @@ _HASH_LEN = 12  # sha256 hex prefix length for content-addressed ids
 
 
 def _store_dir(session_id: str) -> Path:
+    """The store dir, CREATED. Write paths only — see :func:`_store_path`."""
     d = workspace_dir(session_id) / _DIRNAME
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _store_path(session_id: str) -> Path:
+    """The store dir RESOLVED, not created — for lookups and probes.
+
+    ``GET /api/chat/sessions/{s}/tool-result/{rid}`` used to answer `404` *and* leave a
+    ``sessions/dashboard:<invented-id>/tool_results/`` behind, for any id a caller made
+    up (#2993). Worse than the two sibling doors: the nested ``tool_results/`` made the
+    ghost NON-empty, and the only reaper wired into the gateway
+    (``session_pid.cleanup_orphaned_sessions``) removes empty dirs only — so it survived
+    every restart.
+    """
+    return workspace_path(session_id) / _DIRNAME
 
 
 def _content_id(raw: str) -> str:
@@ -102,11 +116,16 @@ def purge_session(session_id: str) -> bool:
     and any other per-session state under ``sessions/{session_id}/``. Called on a
     hard-delete of a chat so a "deleted" conversation's retained tool outputs (which
     can hold file contents / command output) don't survive on disk. Best-effort;
-    returns True if a dir was removed."""
+    returns True if a dir was removed.
+
+    Resolves with :func:`~personalclaw.session_workspace.workspace_path`, not
+    ``workspace_dir``: the creating resolver made the dir it was about to test, so
+    ``d.is_dir()`` was ALWAYS true and this reported it had deleted a session that never
+    existed (#2993 — ``purge_session('never-existed-zz')`` returned ``True``)."""
     import shutil
 
     try:
-        d = workspace_dir(session_id)
+        d = workspace_path(session_id)
     except Exception:
         return False
     try:
@@ -122,7 +141,7 @@ def get_result(session_id: str, result_id: str) -> dict | None:
     """Load a stored result by id, or None if absent/unreadable."""
     if not result_id or "/" in result_id or ".." in result_id:
         return None
-    p = _store_dir(session_id) / f"{result_id}.json"
+    p = _store_path(session_id) / f"{result_id}.json"
     if not p.is_file():
         return None
     try:

@@ -1412,13 +1412,22 @@ class DashboardState:
             await asyncio.get_running_loop().run_in_executor(None, self._flush_dirty_sessions)
 
     def _flush_dirty_sessions(self) -> None:
-        """Write any session with new messages to its JSONL file."""
+        """Write any DIRTY session to its JSONL file — messages or metadata.
+
+        The message-count half of this guard (``or not session.messages``) is gone (#2969).
+        ``_dirty`` already means "something changed"; the colour and natural-voice handlers
+        set only that and nothing else, so on a conversation with no turns yet their writes
+        were accepted `200 {"ok": true}` and then dropped. Whether the change was a turn or
+        a piece of metadata is ``save_session_to_history``'s question, not this loop's — and
+        it answers it, refusing to write an empty buffer over a persisted transcript and
+        refusing to mint a file for a pristine tab.
+        """
         if not self.conversation_log:
             return
         from personalclaw.dashboard.chat import save_session_to_history
 
         for session in list(self._sessions.values()):
-            if not session._dirty or not session.messages:
+            if not session._dirty:
                 continue
             try:
                 save_session_to_history(self, session)

@@ -2835,6 +2835,17 @@ async def api_chat_session_color(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # ABSENT IS NOT "CLEAR". `null` is a legitimate explicit clear on this field, which is
+    # exactly why a body that never mentions `color_index` must not be read as the same
+    # request: an agent that PATCHes with the wrong key name ("colour") used to get
+    # `200 {"ok": true}` and have silently erased the colour the user picked (#2970).
+    # The house rule is already stated thirty lines below, at api_chat_session_natural_voice:
+    # a value outside the closed set is a client bug, not "inherit". So is a missing one.
+    # Same shape as the `nothing_to_set` refusal the /lifecycle sibling already returns.
+    if "color_index" not in body:
+        return web.json_response(
+            {"error": "body must include 'color_index' (use null to clear)"}, status=400
+        )
     ci = body.get("color_index")
     if ci is not None and (
         isinstance(ci, bool) or not isinstance(ci, int) or ci < 0 or ci > MAX_COLOR_INDEX
@@ -2891,6 +2902,16 @@ async def api_chat_session_natural_voice(request: web.Request) -> web.Response:
         return json_error("invalid_body", status=400)
     from personalclaw.natural_voice import normalize_conversation_choice
 
+    # ABSENT IS NOT "INHERIT". The rule stated below is the whole point of this handler,
+    # and it did not cover its own missing-field case: `body.get("natural_voice", "")`
+    # turned `{}` into the explicit-clear value, so an empty body silently dropped the
+    # override at `200 ok` — the same defect as /color, /pin and /folder (#2970).
+    if "natural_voice" not in body:
+        return json_error(
+            "bad_request",
+            message="body must include 'natural_voice' (use \"\" to inherit the agent default)",
+            status=400,
+        )
     raw = body.get("natural_voice", "")
     choice = normalize_conversation_choice(raw)
     # A value outside the closed set is a client bug, not "inherit" — reject it

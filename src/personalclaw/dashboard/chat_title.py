@@ -201,8 +201,17 @@ def _auto_tag_enabled() -> bool:
 
 
 def _persist_title(state: DashboardState, session: _ChatSession) -> None:
-    """Save the session title to the conversation history file."""
+    """Save the session title to the conversation history file.
 
+    ``set_title`` MERGES into an existing meta line and returns silently when there is no
+    file to merge into (``ConversationLog.update_metadata``), which is every conversation
+    that has not had a turn yet — so a rename of a brand-new chat was accepted
+    ``200 {"ok": true}`` and lost on the next restart (#2969). Marking the session dirty as
+    well routes the title through the flush loop, which owns creating the file; this stays
+    the immediate write for a conversation that already has one.
+    """
+
+    session._dirty = True
     if state.conversation_log:
         history_key = persisted_history_key(state.conversation_log, session.key)
         try:
