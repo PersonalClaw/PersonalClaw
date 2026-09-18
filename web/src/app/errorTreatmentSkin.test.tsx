@@ -74,8 +74,15 @@ const IB_BEFORE = {
   // the tests below assert. What this constant freezes is "a treatment does not touch the
   // base chrome", and that still holds; it is not a licence to keep a stale literal.
   class: 'flex items-center gap-3 pl-4 py-2 text-[0.8125rem]',
+  // ⚠️ UPDATED AGAIN, same axis, same reason. The base paint is now the shared
+  // `ERROR_SURFACE_PAINT` — `--color-error-container`/`--color-on-error-container`
+  // were defined NOWHERE, so this banner's authored tint resolved to
+  // `rgba(0, 0, 0, 0)` over plain body ink and the alert had no alert affordance.
+  // `design/definedTokenReads.test.ts` is the rail that now makes that class of
+  // typo impossible to ship. What this constant freezes — "a treatment does not
+  // touch the base chrome" — is unchanged.
   style:
-    'background: var(--color-error-container); color: var(--color-on-error-container); ' +
+    'background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); ' +
     'padding-right: calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px));',
   iconClass: 'lucide lucide-triangle-alert shrink-0',
   text:
