@@ -132,6 +132,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "browse_connector_unpaired": "Only a paired device may attach as the browse connector.",
     "browse_connector_endpoint_invalid": "The announced CDP page-target endpoint is missing "
     "or is not a loopback ws(s) URL.",
+    # ── per-task browse grant (handlers/browse_mirror.py — BA-9) ──
+    # Two codes because the remedies differ: `action_invalid` is "you named something other
+    # than approve/reject" (a value to fix), `not_pending` is "no grant is waiting on that id"
+    # (nothing to retry — it was already answered, or it expired).
+    "browse_grant_action_invalid": "A browse grant may only be approved or rejected.",
+    "browse_grant_not_pending": "No browse grant is waiting on that id.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── push subscriptions (handlers/push.py) ──
