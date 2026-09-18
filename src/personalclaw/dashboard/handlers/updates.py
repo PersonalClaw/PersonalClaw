@@ -897,14 +897,6 @@ _log_ring_handler_installed = False
 _log_ring_handler: "_RingLogHandler | None" = None
 
 
-async def _safe_ws_send(ws: web.WebSocketResponse, msg: str, state: DashboardState) -> None:
-    """Send to WS, removing dead subscribers on failure."""
-    try:
-        await ws.send_str(msg)
-    except Exception:
-        state._ws_log_subscribers.discard(ws)
-
-
 class _RingLogHandler(logging.Handler):
     """Always-on handler that keeps the last N log entries in a ring buffer.
 
@@ -920,34 +912,23 @@ class _RingLogHandler(logging.Handler):
         self._ring = ring
         self._max = max_size
         self._state: DashboardState | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     def set_state(self, state: DashboardState) -> None:
         """Attach DashboardState for WS log broadcasting."""
         self._state = state
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = _redact_log_text(self.format(record))
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._ring.append(data)
-            # Push to WS log subscribers (thread-safe via call_soon_threadsafe)
-            if self._state and self._loop and self._state._ws_log_subscribers:
-                ws_msg = json.dumps(
-                    {"type": "log", "data": {"level": record.levelname, "msg": msg}}
-                )
-                for ws in list(self._state._ws_log_subscribers):
-                    try:
-                        self._loop.call_soon_threadsafe(
-                            self._loop.create_task,
-                            _safe_ws_send(ws, ws_msg, self._state),
-                        )
-                    except RuntimeError:
-                        pass
+            # Push to WS log subscribers through the state's ONE gated fan-out, which is
+            # thread-safe and consults each socket's app permissions. This handler used
+            # to walk `state._ws_log_subscribers` and write to every socket itself, so an
+            # app-scoped socket that declared no `log` event still received the owner's
+            # entire backend log stream (issue 2963).
+            if self._state is not None:
+                self._state.broadcast_ws_log_subscribers({"level": record.levelname, "msg": msg})
         except Exception:
             pass
 
