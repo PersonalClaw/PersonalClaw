@@ -41,6 +41,8 @@ it, exactly as #375 was resolved. Removing one is the point.
 from __future__ import annotations
 
 import ast
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -123,12 +125,67 @@ def _names_referenced(node: ast.AST) -> set[str]:
     return found
 
 
+def _python_files(root: Path, *areas: str) -> list[Path]:
+    """Every Python file in ``areas``, preferring the files git TRACKS.
+
+    Tracked-only for a reason beyond tidiness: ``rglob`` also sees whatever a full-suite run
+    has dropped in the tree. ``build/lib/personalclaw/`` alone is a 1117-file copy of the
+    package that a wheel build leaves behind, and a scan that counted it would report the
+    whole package twice. Falls back to ``rglob`` where git is unavailable, since the areas
+    scanned exclude ``build/`` and ``.venv/`` anyway.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", *areas],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        # Directory pathspecs, then filter here: a `src/*.py` pathspec relies on git's
+        # default non-pathname fnmatch letting `*` cross `/`, which is true but not obvious.
+        tracked = [root / rel for rel in out.stdout.split("\0") if rel.endswith(".py")]
+        if tracked:
+            return sorted(tracked)
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover - git-less fixture
+        pass
+    return sorted(p for area in areas for p in (root / area).rglob("*.py"))
+
+
+def _files_mentioning(paths: list[Path], needles: set[str]) -> list[Path]:
+    """The subset whose TEXT contains at least one needle — a complete cheap prefilter.
+
+    Two stages, because each alone is wrong. A substring scan has no false NEGATIVES (a real
+    reference is spelled out in the source) but plenty of false positives — it matches a
+    comment, a docstring, or its own negation. An AST scan has neither problem but costs an
+    ``ast.parse`` per file, and parsing every one of ~2500 files takes long enough to breach
+    ``pytest-timeout``'s 120 s cap on a loaded machine. So: prefilter by substring to lose
+    nothing, then let the AST decide on the handful that survive.
+    """
+    hits: list[Path] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover - unreadable fixture
+            continue
+        if any(needle in text for needle in needles):
+            hits.append(path)
+    return hits
+
+
 def _production_files(root: Path, module_path: Path) -> list[Path]:
+    candidates = _python_files(root, "src/personalclaw")
     return [
         path
-        for path in sorted((root / "src" / "personalclaw").rglob("*.py"))
-        if path != module_path and IMPORT_TOKEN in path.read_text(encoding="utf-8")
+        for path in _files_mentioning(candidates, {IMPORT_TOKEN})
+        if path.resolve() != module_path
     ]
+
+
+@lru_cache(maxsize=None)
+def _scan(root_str: str, module_rel: str) -> tuple[frozenset[str], tuple[tuple[str, int], ...]]:
+    """Cached because three tests ask the same question of the same tree."""
+    unreachable, census = _compute_unreachable(Path(root_str), module_rel)
+    return frozenset(unreachable), tuple(sorted(census.items()))
 
 
 def unreachable_public_names(root: Path, module_rel: str = MODULE_REL) -> tuple[set[str], dict]:
@@ -137,6 +194,11 @@ def unreachable_public_names(root: Path, module_rel: str = MODULE_REL) -> tuple[
     The census rides along so the vacuity assertions can key on this scan's OWN numbers
     rather than a parallel re-walk that could drift from it.
     """
+    unreachable, census = _scan(str(root), module_rel)
+    return set(unreachable), dict(census)
+
+
+def _compute_unreachable(root: Path, module_rel: str) -> tuple[set[str], dict]:
     module_path = (root / module_rel).resolve()
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
     public = _public_top_level(tree)
@@ -189,23 +251,39 @@ class TestGatePolicyHasNoUnreachableDecisionLayer:
         state" the issue warned about, so this walks every Python file in the repo and looks
         at both halves: is the name still DEFINED anywhere, and is it still READ anywhere.
 
-        By AST, not substring — a substring version of this test was written first and
-        failed on the module docstring that *explains the deletion*, which is exactly the
-        "a grep rail matches a comment" failure in its false-positive direction.
+        Two stages, and the split is what keeps this test inside ``pytest-timeout``'s 120 s
+        cap. Parsing all ~2500 tracked files took long enough to breach it on a contended
+        machine (measured: this case timed out locally while passing all four CI shards — a
+        latent flake, and a rail that reds at random is worse than none). So a substring
+        prefilter narrows the set — it cannot produce a false NEGATIVE, since a real
+        reference is spelled out in the source — and only the survivors are AST-parsed.
+
+        The AST stage is not optional. A substring-only version was written first and failed
+        on the module docstring that *explains the deletion*: the "a grep rail matches a
+        comment" failure in its false-positive direction.
         """
         root = _repo_root()
         dead = {"evaluate_event_gate", "_event_holds", "HoldState", "HoldVerdict"}
+        tracked = _python_files(root, "src", "tests", "harness", "scripts")
+        mentions = _files_mentioning(tracked, dead)
         offenders: list[str] = []
-        for area in ("src", "tests", "harness", "scripts"):
-            for path in sorted((root / area).rglob("*.py")):
-                if path.resolve() == Path(__file__).resolve():
-                    continue  # this file names them as literals in `dead`
-                try:
-                    tree = ast.parse(path.read_text(encoding="utf-8"))
-                except SyntaxError:  # pragma: no cover - a deliberately broken fixture
-                    continue
-                live = (_names_referenced(tree) | _defined_names(tree)) & dead
-                offenders += [f"{path.relative_to(root)}: {name}" for name in sorted(live)]
+        for path in mentions:
+            if path.resolve() == Path(__file__).resolve():
+                continue  # this file names them as literals in `dead`
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - a deliberately broken fixture
+                continue
+            live = (_names_referenced(tree) | _defined_names(tree)) & dead
+            offenders += [f"{path.relative_to(root)}: {name}" for name in sorted(live)]
+        # Vacuity floor: the prefilter must have found the docstrings that DISCUSS the
+        # deletion. Zero survivors would mean the scan looked at nothing and the AST stage
+        # never ran, which passes for the wrong reason.
+        assert len(tracked) >= 800 and len(mentions) >= 2, (
+            f"the scan is vacuous, not clean: {len(tracked)} tracked files, "
+            f"{len(mentions)} survived the prefilter (the docstrings that DISCUSS the "
+            "deletion must survive it, or the AST stage never ran)"
+        )
         assert not offenders, "the event-hold machinery is still in the tree:\n  " + "\n  ".join(
             offenders
         )
