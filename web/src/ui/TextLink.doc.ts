@@ -20,6 +20,7 @@ const doc: UiDoc = {
     { name: 'ink', description: "Which accent shade to paint, decided by the GROUND behind the link: 'primary' (default) is AA-safe only on --color-surface, where it measures 4.83:1; pass 'emphasis' on any other ground — canvas 4.37, surface-low 4.46 and surface-high 4.26 all fail the 4.5 floor with the base ink, while primary-emphasis clears it in all 12 schemes. Never push the ink through className: two color utilities on one element resolve by stylesheet order, not by the order you write them." },
     { name: 'disabled', description: 'Dims to 50% and disables — button form only (an <a> has no disabled state).' },
     { name: 'aria-label', description: 'Accessible name when the visible label alone does not say what the link opens (an icon-only or terse "open" link beside a row). Plumbed to the rendered <a>/<button>.' },
+    { name: 'aria-expanded', description: 'For a link used as a disclosure toggle (e.g. a "Show N more" reveal): the expanded state, plumbed to the rendered <a>/<button> so the control announces it rather than relying on a flipping label alone.' },
     { name: 'title', description: 'Native tooltip text.' },
     { name: 'className', description: 'Extra layout (ml-auto, mt-1.5, normal-case) — tokens only, no raw hex/px.' },
   ],

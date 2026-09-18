@@ -361,7 +361,29 @@ def validate_cron_expr(expr: str) -> bool:
 
 
 def _humanize_cron(expr: str, tz_name: str = "") -> str:
-    """Convert a 5-field cron expression to human-readable string with timezone."""
+    """Convert a 5-field cron expression to human-readable string with timezone.
+
+    🔴 THE ZONE IS RESOLVED, NOT REQUIRED (#445). This gated the whole timezone-aware branch on
+    `tz_name` being TRUTHY, so a trigger with no explicit `timezone` — the default, and what every
+    stock schedule carries — fell straight through to `cron_descriptor`'s raw text: a bare
+    ``At 09:00 AM`` naming no zone and converted to nothing. Meanwhile the fire itself was armed
+    through `_job_tz` → `resolve_zone("")`, which walks explicit → config → machine → UTC. So the
+    row's LABEL was cron text while its `next_fire_at` was a real instant in the resolved zone,
+    and the frontend localizes that instant for the viewer. Measured on a `server_tz: UTC` host
+    read from Pacific: ``At 09:00 AM`` beside ``Sep 19, 02:00 AM`` — the same schedule, in one
+    row, seven hours apart, with no zone printed anywhere to explain it.
+
+    `resolve_zone` already answers for an empty name, and the `at` branch of `format_schedule`
+    right below already calls it unconditionally for exactly this reason (`at 03:51 AM PDT` on a
+    trigger with no timezone). The cron branch was the one outlier, so the gate is dropped rather
+    than a second fallback invented: this is the same one-owner direction #2520 established, one
+    layer further out — that fix routed the zone through `resolve_zone` but left the truthiness
+    check in front of it, so the no-explicit-timezone case never reached the owner.
+
+    The `%Z` suffix the branch already appends is what makes the disclosure legible: the label now
+    names the zone it is stated in, so a viewer in another zone reads a difference rather than a
+    contradiction.
+    """
     if get_description is None:
         return expr
     opts = Options()
@@ -374,7 +396,7 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
     # Timezone-aware display: evaluate the cron expression in the job's
     # timezone (matching compute_next_run_ts) and display the local time.
     parts = expr.split()
-    if tz_name and len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit():
+    if len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit():
         try:
             # Through the one owner (#2520), so the humanized string and the armed fire can
             # never name different hours — this used to build its own `ZoneInfo`.

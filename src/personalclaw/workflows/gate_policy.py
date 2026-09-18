@@ -1,4 +1,4 @@
-"""Gate policy — who may answer, what auto-approves, and how an event hold behaves.
+"""Gate policy — who may answer, and what auto-approves.
 
 Slice 5a made a gate durable. This decides whether a human is asked at all, and whose
 answer counts.
@@ -15,14 +15,23 @@ real action. Only the run's requester can answer; a non-owner reply is ignored r
 argued with, and a gate nobody answers denies rather than passing. Default-ALLOW here
 would make a shared Slack channel a privilege-escalation path.
 
-**An event gate must not eat its wake-up.** `gate{kind: event}` holds transiently when a
-prerequisite is absent: the triggering event is NOT consumed, a bounded retry counter runs,
-and exhaustion gives up LOUDLY. A gate that consumed the event and then failed would lose
-the only signal that would ever have satisfied it — the run then waits forever for
-something that already happened.
-
 **"Always allow" is run-scoped and cleared on rewind.** Remembering a decision across a
 rewind would silently auto-approve the very step the user rewound to reconsider.
+
+**An event gate's semantics live in the RESUME path, not here (#375).** A transient-hold
+contract for `gate{kind: event}` — `evaluate_event_gate`, `HoldState`, `HoldVerdict`,
+`DEFAULT_EVENT_HOLD_LIMIT`, and `controller._event_holds` — was written, documented and
+unit-tested with **zero production callers**, and its state dict was allocated and never
+touched. It has been deleted rather than wired, because the delivery model it assumed does
+not exist and nothing asked for it: it presumed an event fires INTO the engine, which then
+decides whether a prerequisite is met and re-holds up to `hold_limit`. What actually
+shipped is the opposite direction — an event gate parks in WAITING (`engine.dispatch_gate`,
+the shared approval tail) and a trigger *targets the parked run*:
+`set_onetime_task(resume_run_id="self")` → `triggers.wakeup.resume_target_of` →
+`triggers.loop._apply_resume` → `service.resume_run` → `controller.resume`. The wake-up is
+single-use and claimed by `human_input.consume_continuation`'s rename, so nothing here
+needs a `preserve_event` flag. `bundled/goal-pursuit-monitor`'s `park` gate is the live
+consumer, and no template has ever declared `hold_limit`.
 """
 
 from __future__ import annotations
@@ -46,10 +55,6 @@ AUTO_APPROVABLE_RISKS = frozenset({RiskLevel.SAFE, RiskLevel.CAUTION})
 UNATTENDED_ORIGINS = frozenset(
     {OriginKind.SCHEDULE, OriginKind.EVENT, OriginKind.HOOK, OriginKind.IDLE}
 )
-
-#: How many times an event gate may re-hold before giving up loudly. Bounded because an
-#: unbounded hold is a wedge that looks like patience.
-DEFAULT_EVENT_HOLD_LIMIT = 5
 
 
 class Decision(str, Enum):
@@ -218,88 +223,6 @@ def remote_timeout_decision(node_config: dict[str, Any]) -> PolicyVerdict:
         decision=Decision.AUTO_DENIED,
         reason="remote gate expired with no owner reply; silence is not consent",
         risk=gate_risk(node_config).value,
-    )
-
-
-# ── event gates (transient hold) ─────────────────────────────────────────────
-
-
-@dataclass
-class HoldState:
-    """Re-hold accounting for one `gate{kind: event}`."""
-
-    holds: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"holds": self.holds}
-
-
-@dataclass
-class HoldVerdict:
-    """The outcome of evaluating an event gate's prerequisite."""
-
-    hold: bool = False
-    #: True when the wake-up event must be left UNCONSUMED for a later attempt.
-    preserve_event: bool = True
-    give_up: bool = False
-    reason: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "hold": self.hold,
-            "preserve_event": self.preserve_event,
-            "give_up": self.give_up,
-            "reason": self.reason,
-        }
-
-
-def evaluate_event_gate(
-    node_config: dict[str, Any],
-    state: HoldState,
-    *,
-    prerequisite_met: bool,
-    input_valid: bool = True,
-) -> HoldVerdict:
-    """Decide whether an event gate holds, proceeds, or gives up.
-
-    The distinction that matters (WF2-R7): **prerequisite-absent is not input-invalid.**
-
-    * prerequisite absent → HOLD, and do NOT consume the event. A gate that ate its
-      wake-up and then failed would destroy the only signal that would ever satisfy it,
-      leaving the run waiting forever for something that already happened.
-    * input invalid → a real failure. The event arrived and was wrong; retrying the same
-      bad input just burns the retry budget.
-    * holds exhausted → give up LOUDLY. An unbounded hold is a wedge that looks like
-      patience.
-    """
-    limit = (node_config or {}).get("hold_limit")
-    max_holds = (
-        int(limit) if isinstance(limit, (int, float)) and limit > 0 else (DEFAULT_EVENT_HOLD_LIMIT)
-    )
-    if not input_valid:
-        return HoldVerdict(
-            hold=False,
-            preserve_event=False,
-            give_up=True,
-            reason="the event arrived but its payload was invalid — retrying the same "
-            "input would only burn budget",
-        )
-    if prerequisite_met:
-        return HoldVerdict(hold=False, preserve_event=False, reason="prerequisite satisfied")
-    if state.holds >= max_holds:
-        return HoldVerdict(
-            hold=False,
-            preserve_event=False,
-            give_up=True,
-            reason=f"prerequisite still absent after {state.holds} holds; giving up rather "
-            "than waiting indefinitely",
-        )
-    state.holds += 1
-    return HoldVerdict(
-        hold=True,
-        preserve_event=True,
-        reason=f"prerequisite absent (hold {state.holds}/{max_holds}); the wake-up event is "
-        "preserved for the next attempt",
     )
 
 

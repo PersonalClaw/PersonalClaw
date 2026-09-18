@@ -1011,21 +1011,54 @@ HOOK_UPDATE_SCHEMA = ToolSchema(
 
 # ── Tool Schemas (File I/O) ──
 
+#: A dashboard/tool file path: rooted at `/` or `~`, and bounded.
+#:
+#: 🔴 NO CHARSET ALLOWLIST (#296). This used to be `^[~/][-\w.@~/ ]+$`, which is the
+#: SAME namespace the create/rename/upload/list endpoints govern with `_reject_name` +
+#: `_validate_dashboard_path` — and those two contracts disagreed. `POST /api/file-create`
+#: happily wrote `notes (draft).md`, then `file-read`/`file-write`/`file-watch` answered
+#: 400 for that exact path, so the explorer produced files it could never reopen, edit,
+#: watch or download. It hit ordinary ASCII (`( ) % ' & # + , [ ] = :`), not just emoji.
+#:
+#: Loosening this side rather than tightening create is the only direction that can be
+#: right: the allowlist was never the traversal defence (it permits `.` and `/`), the real
+#: defence is `_validate_dashboard_path`'s realpath + root-allowlist + secret-name checks
+#: which run on BOTH the lax and the strict endpoints, and `sanitize_string` has already
+#: stripped control/format/surrogate characters before this pattern is consulted. Files
+#: with such names also arrive from git checkouts, uploads and agent writes, so tightening
+#: create would have left them permanently unopenable rather than merely uncreatable.
+#:
+#: What the pattern still enforces, and why each half is the same rule the create side
+#: applies to a NAME (`files._reject_name`) — so the two ends now express one contract:
+#:   1. **Rooted** at `/` or `~`. A bare relative path is refused before it can be joined
+#:      against anything; `file-read`/`file-watch` resolve relative paths explicitly via
+#:      `resolve=1` → `_resolve_relative_path`, so arriving here un-rooted is a caller bug.
+#:   2. **No control characters** (C0 + DEL). `sanitize_string` deliberately PRESERVES
+#:      `\n`/`\r`/`\t`, and a path carrying them reaches SEL's `resources=` field and every
+#:      log line built from it. `_reject_name` refuses them on the create side for the same
+#:      reason, so this is the shared rule rather than a stricter one.
+#: `NUL` in particular must never reach `os.*`, which raises `ValueError` on it.
+_FILE_PATH_RE = re.compile(r"^[~/][^\x00-\x1f\x7f]+$")
+
+
+def _file_path_spec() -> FieldSpec:
+    """The one `path` contract shared by every file-I/O schema.
+
+    A function rather than a shared instance so the two schemas cannot end up aliasing
+    one mutable spec, and rather than two literals so they cannot drift apart again.
+    """
+    return FieldSpec("path", str, required=True, max_len=4096, pattern=_FILE_PATH_RE)
+
+
 FILE_READ_SCHEMA = ToolSchema(
     tool_name="file_read",
-    fields=[
-        FieldSpec(
-            "path", str, required=True, max_len=4096, pattern=re.compile(r"^[~/][-\w.@~/ ]+$")
-        ),
-    ],
+    fields=[_file_path_spec()],
 )
 
 FILE_WRITE_SCHEMA = ToolSchema(
     tool_name="file_write",
     fields=[
-        FieldSpec(
-            "path", str, required=True, max_len=4096, pattern=re.compile(r"^[~/][-\w.@~/ ]+$")
-        ),
+        _file_path_spec(),
         FieldSpec("content", str, required=True, max_len=512000),
     ],
 )

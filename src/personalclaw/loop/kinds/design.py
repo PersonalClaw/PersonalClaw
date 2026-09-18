@@ -33,6 +33,7 @@ class DesignKind(LoopKindStrategy):
     # currently free-runs off its brief/cycle_nudge like general. Flip to True when the
     # Design slice produces a step plan that should seed per-step TaskLists.
     provisions_tasks = False
+    tracks_phases = True  # on_new_cycle advances the design step (set_phase_status below)
 
     def default_kind_config(self) -> dict:
         return {

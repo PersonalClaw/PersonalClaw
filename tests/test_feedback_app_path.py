@@ -7,8 +7,11 @@ declares ``/api/feedback`` in ``permissions.api``:
   **server-side** (never client-claimed) and its producer forced into the app
   namespace — ``producer_kind="app"``, ``producer_id="<app>:<producer>"`` — so an
   app can never impersonate a core producer (contract C3).
-* The in-process ``sdk.feedback.record_feedback`` path lands an equivalent record
-  (the SDK caller namespaces its own producer, per the SDK contract).
+* Its TARGET is forced to ``app_judgment`` too, so an app cannot supersede the
+  user's own verdict on a core target (#2784) — see
+  ``TestAnAppCannotSupersedeACoreVerdict``, which drives BOTH doors.
+* The in-process ``sdk.feedback.record_feedback`` path lands an equivalent record;
+  core namespaces the producer, so the SDK caller passes a bare producer id.
 * An app path the fixture did NOT declare is rejected 403 by the enforcement
   middleware before the handler runs.
 
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -169,14 +173,16 @@ class TestSdkInProcessPath:
             fb._invalidate()
             from personalclaw.sdk import feedback as sdk_fb
 
-            # SDK contract: an in-process app caller namespaces its own producer.
+            # An app-scoped SDK caller passes a BARE producer id; core namespaces it. The
+            # caller used to be told to pre-namespace, which was the rule living in two
+            # places at once — see the module docstring and #2784.
             rec = sdk_fb.record_feedback(
                 target_kind="app_judgment",
                 target_id="sdk-1",
                 verdict="down",
                 reason="sdk path",
                 producer_kind="app",
-                producer_id=f"{FIXTURE_APP}:sdk-producer",
+                producer_id="sdk-producer",
                 source_app=FIXTURE_APP,
             )
             assert rec is not None
@@ -186,3 +192,171 @@ class TestSdkInProcessPath:
             # Re-export identity: the SDK surface IS core's record_feedback.
             assert sdk_fb.record_feedback is fb.record_feedback
             fb._invalidate()
+
+
+# ── the app boundary on the TARGET, across every door (#2784) ─────────────────
+
+
+class TestAnAppCannotSupersedeACoreVerdict:
+    """The half of the boundary that was unreachable, and the parity it has to hold.
+
+    ``handlers/feedback.py`` used to force the target kind with
+    ``"app_judgment" if target_kind not in fb.TARGET_KINDS else target_kind`` — thirty lines
+    below a guard that had already 400'd every kind outside ``TARGET_KINDS``, so the
+    condition was invariantly false and the line was a self-assignment. An installed app
+    declaring ``/api/feedback`` could therefore POST ``target_kind:
+    "inbox_classification"`` against a real inbox item id and, because the supersede index
+    is keyed ``(target_kind, target_id)`` with last-write-wins, flip the verdict the USER's
+    own 👎 had set on that item.
+
+    Every case below drives an app claiming a CORE target kind, which no case in this file
+    did before — they all passed ``app_judgment`` explicitly, so the record landed in the
+    right place whether the forcing worked or not.
+
+    **Two doors, asserted for parity, and the enumeration is closed by construction:** the
+    HTTP route and ``sdk.feedback.record_feedback``. The last test proves the pair is
+    exhaustive rather than merely the two that came to mind — every write goes through
+    ``fb.record_feedback``, and the SDK name IS that function object.
+    """
+
+    CORE_KIND = "inbox_classification"
+    CORE_ID = "inbox_item_7"
+
+    @pytest.mark.asyncio
+    async def test_the_http_door_lands_the_app_record_under_app_judgment(self, tmp_path):
+        async with _client(tmp_path, api_scope=["/api/feedback"]) as c:
+            # The user's own verdict on a core target, recorded first (no source_app).
+            assert (
+                fb.record_feedback(
+                    target_kind=self.CORE_KIND,
+                    target_id=self.CORE_ID,
+                    verdict="down",
+                    producer_kind="prompt",
+                    producer_id="classifier",
+                )
+                is not None
+            )
+
+            resp = await c.post(
+                "/api/feedback",
+                json={
+                    "target_kind": self.CORE_KIND,  # the app CLAIMS a core kind
+                    "target_id": self.CORE_ID,  # against the user's real target
+                    "verdict": "up",
+                },
+            )
+            assert resp.status == 200
+
+            # The user's 👎 survives — the app's record did not supersede it.
+            core = fb.current_verdict(self.CORE_KIND, self.CORE_ID)
+            assert core is not None
+            assert core.verdict == "down", "an app flipped the user's verdict on a core target"
+            assert core.source_app == ""
+
+            # ...and the app's record is observable where it belongs.
+            landed = fb.current_verdict("app_judgment", self.CORE_ID)
+            assert landed is not None
+            assert landed.verdict == "up"
+            assert landed.source_app == FIXTURE_APP
+            assert landed.producer_id == f"{FIXTURE_APP}:default"
+
+    def test_the_sdk_door_lands_the_app_record_under_app_judgment(self, tmp_path):
+        """Parity: the in-process door had NO target boundary at all before this."""
+        with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+            fb._invalidate()
+            from personalclaw.sdk import feedback as sdk_fb
+
+            assert (
+                fb.record_feedback(
+                    target_kind=self.CORE_KIND,
+                    target_id=self.CORE_ID,
+                    verdict="down",
+                    producer_kind="prompt",
+                    producer_id="classifier",
+                )
+                is not None
+            )
+            rec = sdk_fb.record_feedback(
+                target_kind=self.CORE_KIND,
+                target_id=self.CORE_ID,
+                verdict="up",
+                source_app=FIXTURE_APP,
+            )
+            assert rec is not None
+            assert rec.target_kind == "app_judgment"
+
+            core = fb.current_verdict(self.CORE_KIND, self.CORE_ID)
+            assert core is not None and core.verdict == "down"
+            assert fb.current_verdict("app_judgment", self.CORE_ID).verdict == "up"
+            fb._invalidate()
+
+    def test_a_core_caller_is_untouched(self, tmp_path):
+        """The vacuity floor: forcing must apply to app callers ONLY.
+
+        A `record_feedback` that forced `app_judgment` unconditionally would satisfy both
+        cases above and break every core surface, so the pass is only meaningful next to
+        this.
+        """
+        with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+            fb._invalidate()
+            rec = fb.record_feedback(
+                target_kind=self.CORE_KIND,
+                target_id="core-only",
+                verdict="up",
+                producer_kind="prompt",
+                producer_id="classifier",
+            )
+            assert rec is not None
+            assert rec.target_kind == self.CORE_KIND
+            assert rec.producer_id == "classifier"  # NOT namespaced
+            fb._invalidate()
+
+    def test_an_app_typo_is_still_dropped_rather_than_laundered(self, tmp_path):
+        """Forcing runs AFTER the vocabulary check, so the closed vocabulary still binds.
+
+        Forcing first would turn any string an app sent into a valid `app_judgment` record,
+        which trades one boundary hole for a different one.
+        """
+        with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+            fb._invalidate()
+            assert (
+                fb.record_feedback(
+                    target_kind="inbox_clasification",  # typo, not in TARGET_KINDS
+                    target_id="t",
+                    verdict="up",
+                    source_app=FIXTURE_APP,
+                )
+                is None
+            )
+            fb._invalidate()
+
+    def test_record_feedback_is_the_only_door_so_the_two_cases_above_are_exhaustive(self):
+        """Closes the enumeration: an enumerated rail cannot see its own blind spot.
+
+        Both doors are asserted above. This is what makes "both" mean "all": the SDK export
+        is core's own function object (not a wrapper that could drift), and no other module
+        in the tree appends to the store.
+        """
+        import ast
+
+        from personalclaw.sdk import feedback as sdk_fb
+
+        assert sdk_fb.record_feedback is fb.record_feedback
+
+        root = Path(fb.__file__).resolve().parents[1]
+        writers: set[str] = set()
+        for path in sorted(root.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if "record_feedback" not in text and "feedback" not in path.name:
+                continue
+            for node in ast.walk(ast.parse(text)):
+                if not isinstance(node, ast.Call):
+                    continue
+                target = node.func
+                name = getattr(target, "attr", None) or getattr(target, "id", None)
+                if name in ("_append",) and path.name != "feedback.py":
+                    writers.add(str(path.relative_to(root)))
+        assert writers == set(), (
+            "something outside personalclaw/feedback.py appends feedback records, so the "
+            f"app boundary has a third door: {sorted(writers)}"
+        )

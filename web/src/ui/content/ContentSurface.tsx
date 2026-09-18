@@ -67,6 +67,13 @@ interface ContentSurfaceProps {
   /** Notified on every draft edit with the live draft + dirty — lets a file host
    *  compare it against incoming disk content to raise a concurrent-edit warning. */
   onDraftChange?: (draft: string, dirty: boolean) => void
+  /** A CUSTOM editor (`type.edit.render`) saved, with the version the server cut.
+   *
+   *  Distinct from `onSave`, and necessarily so: `onSave` persists the string draft, while a
+   *  custom editor owns its own persistence and posts a parsed MODEL. So the host learns nothing
+   *  from `onSave` about a document save, and its own version/event summary stayed on the
+   *  pre-save number until a reload. Omit it and a custom editor saves exactly as before. */
+  onDocumentSaved?: (version: number) => void
   /** A gate run before persisting (return false to abort) — the file host uses it
    *  for the "file changed on disk, overwrite anyway?" confirm. */
   confirmSave?: () => boolean | Promise<boolean>
@@ -99,7 +106,7 @@ interface ContentSurfaceProps {
  *  forced single abstraction (Monaco and an iframe share nothing internally). */
 export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfaceProps>(function ContentSurface(
   { type, content, title, docId, path, readOnly, onSave, commentTarget, compact = false, initialView, draftStore, truncated, actions,
-    onDirtyChange, onDraftChange, confirmSave, language, headerLeft, headerExtras, banner, iterate }, ref,
+    onDirtyChange, onDraftChange, onDocumentSaved, confirmSave, language, headerLeft, headerExtras, banner, iterate }, ref,
 ) {
   const { mode } = useMode()
   const previewScrollRef = useRef<HTMLDivElement | null>(null)
@@ -211,7 +218,11 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
 
   function renderEditor(split = false) {
     if (CustomEditor && custom) {
-      return createElement(CustomEditor, { slug: docId, title, mode, readOnly, onDirty: setCustomDirty })
+      return createElement(CustomEditor, {
+        slug: docId, title, mode, readOnly,
+        onDirty: setCustomDirty,
+        onSaved: onDocumentSaved,
+      })
     }
     return (
       <Suspense fallback={<Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>}>

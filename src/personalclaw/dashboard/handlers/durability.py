@@ -33,6 +33,7 @@ from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted, confirm_granted_query
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +267,7 @@ async def api_durability_import(request: web.Request) -> web.Response:
     from personalclaw.portability import apply_import_zip, validate_import_zip
 
     mode = request.query.get("mode")
-    confirm = str(request.query.get("confirm", "")).lower() in ("1", "true", "yes")
+    confirm = confirm_granted_query(request.query)
     if mode is not None:
         mode = mode.strip().lower()
         if mode not in ("merge", "replace"):
@@ -471,7 +472,7 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
                 },
                 status=409,
             )
-        if body.get("confirm") is not True:
+        if not confirm_granted(body):
             # `merge` is non-destructive (copy-if-missing) but still writes into the live
             # home, so it is confirmed too — one signal for "look", two for "write".
             return web.json_response(
@@ -677,7 +678,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             status=400,
         )
     choice = str(body.get("choice", "") or "").strip()
-    if body.get("confirm") is not True:
+    if not confirm_granted(body):
         _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:unconfirmed")
         return web.json_response(
             {
@@ -999,7 +1000,7 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
             {"error": {"code": "unknown_commit", "message": str(exc)}}, status=404
         )
 
-    if not body.get("confirm"):
+    if not confirm_granted(body):
         # Phase one. The preview IS the response, and it carries both tokens phase
         # two must echo: the head it was taken at and the path set it describes.
         return web.json_response(

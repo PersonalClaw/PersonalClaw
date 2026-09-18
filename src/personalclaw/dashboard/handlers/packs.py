@@ -46,6 +46,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ async def api_pack_update(request: web.Request) -> web.Response:
         archive = build_bundled(name, staging / f"{name}.pclaw")
         from personalclaw.supply_chain import TrustTier
 
-        if bool(body.get("confirm", False)):
+        if confirm_granted(body):
             plan = apply_update(name, archive, tier=TrustTier.BUILTIN)
         else:
             plan = plan_update(name, archive, tier=TrustTier.BUILTIN)

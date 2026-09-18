@@ -170,6 +170,17 @@ def record_feedback(
     Re-thumbing the same target supersedes (last-verdict-wins in the index; the
     old record stays in the JSONL for audit). ``reason`` rides 👎 only and is
     clipped to 500 chars. SEL-logged + WS-broadcast.
+
+    **A ``source_app`` caller is confined to the app namespace, HERE (#2784).** Both the
+    producer (``("app", "<app>:<producer>")``) and the target kind (``app_judgment``) are
+    forced, so an app cannot write a record that supersedes a core verdict. This lives in
+    the write API rather than in the HTTP handler because the handler is only ONE of the two
+    doors: ``sdk.feedback.record_feedback`` IS this function, so an app's server-side code
+    reaches the store without passing through any route. The handler's copy of the rule
+    forced the producer and — through an unreachable conditional — never the target, which
+    let an app POST ``{"target_kind": "inbox_classification", "target_id": <a real id>}``
+    and flip the verdict the user's own 👎 had set on that item. Defaulting it at the
+    handler would have left the SDK door open.
     """
     try:
         if target_kind not in TARGET_KINDS:
@@ -178,6 +189,13 @@ def record_feedback(
         if verdict not in ("up", "down"):
             logger.warning("record_feedback: bad verdict %r — dropped", verdict)
             return None
+        if source_app:
+            # AFTER the vocabulary check, so an app's typo is still a dropped record rather
+            # than being laundered into a valid `app_judgment` one — the closed vocabulary
+            # keeps its meaning for apps too.
+            target_kind = "app_judgment"
+            producer_kind = "app"
+            producer_id = f"{source_app}:{producer_id or 'default'}"
         if producer_kind and producer_kind not in PRODUCER_KINDS:
             logger.warning("record_feedback: unknown producer_kind %r — dropped", producer_kind)
             return None

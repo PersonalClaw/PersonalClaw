@@ -32,6 +32,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import (
     is_sensitive_path,
     redact_credentials,
@@ -537,7 +538,7 @@ async def api_app_install(request: web.Request) -> web.Response:
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)
-    confirm = bool(body.get("confirm", False))
+    confirm = confirm_granted(body)
 
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src)
@@ -596,7 +597,7 @@ async def api_app_update(request: web.Request) -> web.Response:
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)
-    confirm = bool(body.get("confirm", False))
+    confirm = confirm_granted(body)
 
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src)

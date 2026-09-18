@@ -58,6 +58,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.documents.limits import MAX_BLOCKS, truncation_detail
 from personalclaw.documents.model import (
     PAGE_SIZE_IN,
     PAGE_SIZES,
@@ -213,6 +214,13 @@ LOSS_KINDS = (
     "slide_shape",
     "bullet_run_style",
     "slide_feature",
+    # ── untrusted-input caps (documents/limits.py) ────────────────────────────
+    # A STRUCTURAL cap's truncation, shared by all three parsers for the reason the
+    # sheet and deck kinds are shared: one loss report, one vocabulary. Distinct from
+    # the archive caps, which never reach a report at all — those refuse the document
+    # outright (``DocumentTooLarge`` → ``document_too_large`` on the wire), because a
+    # half-opened ZIP has no honest partial answer.
+    "size_limit",
 )
 
 
@@ -342,9 +350,17 @@ def parse_docx(data: bytes) -> tuple[DocumentModel, LossReport]:
     Raises whatever python-docx raises for a file that is not a .docx (a corrupt package
     is not a "loss" — there is no document to report about, and swallowing it would hand
     the caller an empty model that looks like an empty document).
+
+    Raises :class:`~personalclaw.documents.limits.DocumentTooLarge` BEFORE python-docx
+    sees the bytes when the package's XML exceeds the archive caps — python-docx opens
+    the ZIP itself, so this is the only point at which "do not decompress that" can still
+    be said. The block cap is the other half and lives in :class:`_Parser`.
     """
     from docx import Document
 
+    from personalclaw.documents.limits import assert_archive_within_limits
+
+    assert_archive_within_limits(data)
     return _Parser(Document(io.BytesIO(data))).run()
 
 
@@ -434,6 +450,7 @@ class _Parser:
         self._title = ""
         self._ordinal = -1  # incremented per body paragraph, INCLUDING consumed ones
         self._pending_list: Block | None = None
+        self._truncated = False  # the block cap has already been reported
 
     # -- entry point ---------------------------------------------------------------
 
@@ -466,6 +483,8 @@ class _Parser:
         from docx.text.paragraph import Paragraph
 
         for child in parent.iterchildren():
+            if self._at_block_cap():
+                return
             name = _local(child)
             if name == "p":
                 self._paragraph(Paragraph(child, self._doc))
@@ -484,6 +503,30 @@ class _Parser:
                 for content in child.iterchildren():
                     if _local(content) == "sdtContent":
                         self._walk(content)
+
+    def _at_block_cap(self) -> bool:
+        """Whether the parsed-block cap is reached — reporting it exactly once (#2747).
+
+        TRUNCATES rather than raising, and that choice is the whole point: a raise would
+        tell a user their 40,000-paragraph document is broken, while a ``size_limit`` loss
+        tells them it was too big and names what fit. It is reported through the same
+        report every other unrepresentable construct uses, so a surface that already warns
+        before an edit needs no new branch to warn about this one.
+
+        A cap without a way out is the outage, so there is one: the loss detail points at
+        the artifact's raw route, which serves the original bytes untouched.
+        """
+        if len(self._blocks) < MAX_BLOCKS:
+            return False
+        if not self._truncated:
+            self._truncated = True
+            self._flush_list()
+            self.report.add(
+                "size_limit",
+                truncation_detail("blocks", MAX_BLOCKS),
+                block_index=len(self._blocks) - 1,
+            )
+        return True
 
     # -- page ----------------------------------------------------------------------
 

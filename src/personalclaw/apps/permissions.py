@@ -15,7 +15,11 @@ handler runs. A request with no app identity (the owner/dashboard) is unaffected
 The checker is the seam every capability enforcement consults (untrusted-app
 sandbox). Enforcement status of each method:
 
-* ``can_use_api``   — app-permission middleware (server.py), 403 on undeclared path.
+* ``can_use_api``   — app-permission middleware (server.py), 403 on undeclared path, and
+  403 on an :data:`OWNER_ONLY_API_PATHS` path whatever the app declared. The second half
+  exists because ``permissions.api`` is a path-PREFIX allowlist and a prefix says nothing
+  about power: ``/api/ws`` prefix-matched ``/api/ws/terminal/{id}``, so declaring the event
+  socket also handed the app an owner shell (#2964). See that registry.
 * ``can_use_agent`` — the app agent-run endpoints (handlers/apps.py), checked
   against the CALLING app's identity rather than the ``{name}`` path segment, plus
   a per-run ownership check so an app only reads runs it spawned.
@@ -81,9 +85,16 @@ class PermissionChecker:
 
         An app with no declared ``api`` scope can reach NO gateway API (deny by
         default). Its own backend proxy route (``/apps/{name}/api/*``) is always
-        allowed — that's the app talking to itself, not the gateway API."""
+        allowed — that's the app talking to itself, not the gateway API.
+
+        🔴 An :data:`OWNER_ONLY_API_PATHS` path is refused REGARDLESS of the declaration,
+        including ``"*"`` — see that registry for why prefix matching alone could not
+        express this.
+        """
         if path.startswith(f"/apps/{self.app_name}/api"):
             return True
+        if owner_only_api_reason(path):
+            return False
         return _matches_any(path, self.permissions.api)
 
     # -- event subscriptions ---------------------------------------------
@@ -215,6 +226,95 @@ def _matches_any(value: str, patterns: list[str]) -> bool:
     return False
 
 
+#: API paths NO app declaration can reach, and the capability each one really is (#2964).
+#:
+#: **Why a registry and not a matcher tweak.** ``permissions.api`` is a path-PREFIX
+#: allowlist, and a prefix is a claim about the URL space, not about power. ``/api/ws`` is
+#: a prefix of ``/api/ws/terminal/{session_id}`` — the built-in CLI panel's PTY — so an app
+#: declaring the event socket was handed an interactive shell running as the owner, in the
+#: owner's ``$HOME``, with the real ``~/.personalclaw`` credential store readable from it.
+#: The shipped first-party ``menu-bar-companion`` declares exactly ``["/api/loops",
+#: "/api/approvals", "/api/ws"]``, so this was not a third-party hypothetical. Install
+#: consent showed the user the string ``/api/ws`` and nothing on that screen said "and a
+#: terminal": a consent-integrity defect, not merely an over-broad grant.
+#:
+#: No adjustment to the matching grammar fixes that. Making prefixes segment-aware does
+#: not help (``/api/ws/terminal/x`` IS under the ``/api/ws`` segment); requiring the
+#: terminal be named exactly does not help either, because the Store would then render
+#: "API: /api/ws/terminal" as one more path string beside ``/api/loops`` — a bullet that
+#: silently means "and everything you can do", which is not a grant a user can evaluate.
+#:
+#: **So the rule is a CLASS rule, stated once here.** A path belongs in this registry when
+#: holding it makes every other permission in the manifest moot — arbitrary code as the
+#: owner, the owner's credentials, the owner's authentication material, the integrity of
+#: the audit trail, or the gateway's own lifecycle. There is nothing to scope: an app with
+#: a shell does not have "some" access. Deny-by-construction, not deny-by-default.
+#:
+#: **The way OUT** (a refusal with no escape becomes the outage). None of these removes a
+#: capability an app can legitimately need:
+#:
+#: * Run commands → an app ships a BACKEND (its own OS process, ``app.json``) or declares
+#:   ``permissions.desktop`` capabilities; both are separately disclosed at install.
+#: * Reach a secret → the app's own config/credential surface, not the owner's vault.
+#: * The owner keeps every one of these paths at full strength from the dashboard; the
+#:   refusal is scoped to requests carrying an app identity.
+#:
+#: The refusal names the capability, so a developer reads why rather than "403".
+#:
+#: Three of these were ALREADY refused inside their handlers
+#: (``security_credentials._refuse_app``, ``secrets._refuse_app``,
+#: ``security_audit._refuse_app``, ``computer_use``) — that idiom, copied four times, is
+#: the evidence the class is real and the reason it now lives in ONE place that the
+#: middleware consults for every route. Those handler checks stay as defence in depth at
+#: the seam; this registry is what makes a route that forgot to write one still safe.
+OWNER_ONLY_API_PATHS: dict[str, str] = {
+    # #2964's measured hole: `GET /api/ws/terminal/{id}` + an app token returned 101 and
+    # ran `whoami` as the owner. No handler check existed — `api_terminal_ws` authorizes on
+    # `request.get("user")` plus the feature flag, both of which an app-scoped request
+    # satisfies.
+    "/api/ws/terminal": "an interactive shell running as you",
+    # The PTY's other half: `POST /api/terminal/sessions` chooses the `cwd` the next WS
+    # spawn opens in, and the list/delete routes enumerate and kill the owner's own
+    # sessions. Same class as the socket, and the same prefix shape would have reached it
+    # from a declared `/api/terminal`.
+    "/api/terminal": "your terminal sessions",
+    # Synthetic keyboard/mouse into the owner's session — shell-equivalent by another road.
+    "/api/computer-use": "control of your keyboard, mouse and screen",
+    # The credential store and the secrets vault.
+    "/api/security/credentials": "your stored provider credentials",
+    "/api/secrets": "your secrets vault",
+    # The signed audit trail: reading it is the owner's, and rotating it destroys evidence.
+    "/api/security/audit": "your security audit log",
+    "/api/sel/rotate": "rotation of your security event log",
+    # The owner's own authentication material: password set, TOTP enrollment, session.
+    # Segment-aware on purpose — `/api/auth-status` is a DIFFERENT path and stays reachable.
+    "/api/auth": "your login password and second factor",
+    # Gateway lifecycle. An app that can restart the gateway can deny service to every
+    # other app and to the owner.
+    "/api/system/restart": "restarting the gateway",
+    # Mints a gateway token from the loopback secret — the bootstrap identity itself.
+    "/api/token/local": "a gateway token minted as you",
+}
+
+
+def owner_only_api_reason(path: str) -> str:
+    """The capability *path* really grants when it is owner-only, else ``""``.
+
+    Matching is SEGMENT-aware, which is load-bearing in both directions: ``/api/auth``
+    must cover ``/api/auth/password`` (the escalated child) and must NOT cover
+    ``/api/auth-status`` (an unrelated sibling that a raw string prefix would have
+    swallowed). The registry is the reason this cannot be folded into ``_matches_any``:
+    that function answers "did the app ask for this", and this one answers "is this
+    askable at all".
+    """
+    if not path:
+        return ""
+    for root, capability in OWNER_ONLY_API_PATHS.items():
+        if path == root or path.startswith(root + "/"):
+            return capability
+    return ""
+
+
 def checker_for(app_name: str) -> PermissionChecker | None:
     """Build a :class:`PermissionChecker` for an installed app, or ``None`` if the
     app/manifest can't be resolved.
@@ -310,6 +410,14 @@ def app_request_denial(app_name: str, path: str) -> str:
     checker = checker_for(app_name)
     if checker is None:
         return "app manifest could not be read"
+    # #2964. Named BEFORE the allowlist so the reason is the true one. "api path not in
+    # declared permissions" would be a lie for an app that declared `/api/ws` and was
+    # refused the terminal under it: the path IS in its permissions by the prefix grammar,
+    # and what refused it is that the capability is not app-grantable at all. A developer
+    # who reads the wrong reason adds `/api/ws/terminal` to the manifest and files a bug.
+    owner_only = owner_only_api_reason(path)
+    if owner_only:
+        return f"owner-only capability, not grantable to an app: {owner_only}"
     if not checker.can_use_api(path):
         return "api path not in declared permissions"
     # A memory API path additionally requires the ``memory`` capability (sandbox P3) —

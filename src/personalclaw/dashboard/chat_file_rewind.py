@@ -29,6 +29,7 @@ from aiohttp import web
 from personalclaw import turn_checkpoints
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
 
     turn_checkpoints.resume_incomplete_rewind(session.key)
     pv = turn_checkpoints.preview_rewind(session.key, turn)
-    if body.get("confirm") is not True:
+    if not confirm_granted(body):
         return json_error(
             "confirmation_required",
             message="a rewind overwrites files on disk — resend with confirm: true",

@@ -6,6 +6,7 @@ import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { SidePanel } from '../../ui/SidePanel'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
+import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
@@ -480,6 +481,32 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                         <div data-type="caption" className="truncate text-on-surface-low">{n.failure.remediation}</div>
                       )}
                     </div>
+                    {/* Cache-origin (WF2-A1), at a glance on the ROW rather than only inside the
+                        per-node drawer. "Did my edit actually re-run anything?" is a question about
+                        the whole run, and answering it by opening twenty drawers in turn is the
+                        per-node version of a run-level question.
+
+                        🔑 ONE VOCABULARY, three places. Same word and same title text as
+                        `NodeInspectorDrawer`'s badge, and the same `accentChip` it paints the
+                        cached state with — a different tint here would make "cached" mean two
+                        things on two surfaces of the same run.
+
+                        🪤 Only the CACHED state is marked. The drawer renders `fresh` too, which is
+                        right for a single node under inspection (a badge that failed to render is
+                        otherwise indistinguishable from an absent one) and wrong for a list, where
+                        it would put a chip on every row of every normal run. The word carries the
+                        state, so the tint only confirms it. */}
+                    {n.cached && (
+                      <span
+                        data-testid="node-cached-badge"
+                        data-type="caption"
+                        className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5"
+                        style={accentChip}
+                        title="Output served from the resume cache"
+                      >
+                        cached
+                      </span>
+                    )}
                     <span data-type="caption" className={`shrink-0 ${nl.tone}`}>{nl.label}</span>
                     {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
                       <span className="flex shrink-0 items-center gap-xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">

@@ -184,12 +184,19 @@ describe('the thin-handle hit target', () => {
     expect(handle).toMatch(/onKeyDown=/)
   })
 
-  it('`.hit-24` is left alone — it is a different shape for a different problem', () => {
-    // Its one adopter (`ui/BoardCollapse`) must keep behaving identically; this change adds a sibling
-    // rather than editing a shipped primitive, so that call site is byte-identical.
+  it('`.hit-24` is a different shape for a different problem, and stays symmetric', () => {
+    // `BoardCollapse` must keep behaving identically. This file's change added `.hit-24-x` as a
+    // SIBLING rather than editing `.hit-24`; a later change reworked `.hit-24`'s band to derive
+    // from the element's own size, which was measured equivalent for that adopter — 24×24
+    // reachable before and after, position and box byte-identical.
     const base = ruleBody('.hit-24')
     expect(base, '`.hit-24` still establishes its own containing block').toMatch(/position:\s*relative/)
-    expect(base).toMatch(/--hit-size:\s*21px/)
+    expect(base, 'the floor stays a variable').toMatch(/--hit-min:\s*24px/)
+    // 🔁 Was `--hit-size: 21px`. That knob restated the control's drawn size at the call site and
+    // defaulted to `BoardCollapse`'s 21px, so a 16px adopter silently landed 3px short. The band
+    // is now `max(var(--hit-min), 100%)`, where `100%` is the originating element's own box — see
+    // `ui/nestedTargetSize.test.tsx`, which owns the full property assertion.
+    expect(base, 'no adopter restates its drawn size any more').not.toMatch(/--hit-size/)
     expect(
       readFileSync(join(SRC, 'ui/BoardCollapse.tsx'), 'utf8'),
       'BoardCollapse must still use the symmetric idiom, not this one',

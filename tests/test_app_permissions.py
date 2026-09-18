@@ -532,7 +532,13 @@ def test_a_declared_path_is_still_allowed(tmp_path):
         _install_on_disk(tmp_path, "demo", permissions={"api": ["/api/notes"]})
         assert app_request_denial("demo", "/api/notes") == ""
         assert app_request_denial("demo", "/api/notes/sub") == ""
-        assert app_request_denial("demo", "/api/secrets") == "api path not in declared permissions"
+        # An UNDECLARED-but-grantable path: the allowlist reason. `/api/secrets` used to
+        # stand here and no longer can — it is an owner-only capability now (#2964), so it
+        # is refused for a STRONGER reason, asserted on the next line rather than dropped.
+        assert (
+            app_request_denial("demo", "/api/knowledge") == "api path not in declared permissions"
+        )
+        assert "owner-only" in app_request_denial("demo", "/api/secrets")
 
 
 def test_an_uninstalled_app_is_refused_rather_than_unscoped(tmp_path):

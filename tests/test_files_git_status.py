@@ -597,3 +597,92 @@ def test_git_commit_rejects_non_hex_hash(git_repo, monkeypatch):
     )
     resp = asyncio.run(F.api_file_git_commit(req))
     assert resp.status == 400
+
+
+# ── #428: a repo one level INSIDE the browsed root was indistinguishable from a folder ──
+#
+# The explorer hides `.git` from every listing and fetches status for the ACTIVE root only,
+# and none of the three root tabs (Workspace/Home/Outbox) is ever a repo — so the whole git
+# surface (branch chip, porcelain badges) stayed dark on the default landing view, and a
+# checked-out project rendered as an ordinary folder. `api_file_list` now marks the repo
+# ROOTS it lists, which is what makes the feature findable at all.
+
+
+def _list(path: str):
+    req = make_mocked_request("GET", f"/api/file-list?path={quote(path)}")
+    resp = asyncio.run(F.api_file_list(req))
+    return resp.status, json.loads(resp.body.decode())
+
+
+@pytest.fixture
+def workspace_with_nested_repo(tmp_path, monkeypatch):
+    """The layout the issue reports: a NON-repo workspace root holding a real repo."""
+    ws = tmp_path / "workspace"
+    (ws / "translation-memory").mkdir(parents=True)
+    (ws / "notes").mkdir()  # an ordinary folder, the control
+    (ws / "loose.txt").write_text("x\n")  # a file — never marked
+    subprocess.run(
+        ["git", "init", "-q"], cwd=ws / "translation-memory", check=True, capture_output=True
+    )
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Workspace", str(ws))])
+    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: raw or None)
+    monkeypatch.setattr(F, "_sel", lambda: _mock())
+    return ws
+
+
+def test_file_list_marks_a_nested_repo_root(workspace_with_nested_repo):
+    status, body = _list(str(workspace_with_nested_repo))
+    assert status == 200
+    by_name = {e["name"]: e for e in body["entries"]}
+    assert by_name["translation-memory"]["repo"] is True, "the nested repo must be marked"
+    # The controls — otherwise a rail that marks EVERYTHING would pass just as well.
+    assert by_name["notes"]["repo"] is False
+    assert by_name["loose.txt"]["repo"] is False
+
+
+def test_the_browsed_root_itself_is_not_marked_from_inside(workspace_with_nested_repo):
+    """The flag is about the CHILD, never inherited from an enclosing repo.
+
+    A repo's own subdirectories must not each claim to be repo roots — that would put a
+    branch marker on every folder in a checked-out project.
+    """
+    repo = workspace_with_nested_repo / "translation-memory"
+    (repo / "glossaries").mkdir()
+    status, body = _list(str(repo))
+    assert status == 200
+    by_name = {e["name"]: e for e in body["entries"]}
+    assert by_name["glossaries"]["repo"] is False
+
+
+def test_a_gitfile_pointing_outside_the_roots_is_not_marked(tmp_path, monkeypatch):
+    """The marker carries the SAME gitdir validation as ``_git_repo_root`` (#430).
+
+    ``.git`` may be a one-line ``gitdir:`` pointer, and the dashboard will happily write one
+    (``.git`` is not a blocked basename). Marking such a directory would advertise a repo the
+    git endpoints then refuse to read — a branch marker whose branch never loads.
+    """
+    ws = tmp_path / "ws"
+    (ws / "sneaky").mkdir(parents=True)
+    outside = tmp_path / "outside" / "real.git"
+    outside.mkdir(parents=True)
+    (ws / "sneaky" / ".git").write_text(f"gitdir: {outside}\n")
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Workspace", str(ws))])
+    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: raw or None)
+    monkeypatch.setattr(F, "_sel", lambda: _mock())
+    assert F._is_git_repo_root(str(ws / "sneaky")) is False
+    _, body = _list(str(ws))
+    assert {e["name"]: e["repo"] for e in body["entries"]}["sneaky"] is False
+
+
+def test_a_gitfile_pointing_inside_the_roots_is_marked(tmp_path, monkeypatch):
+    """The legitimate gitfile shape (a worktree/submodule of an in-root repo) IS marked —
+    else the previous test would pass by refusing every pointer, which is not the contract."""
+    ws = tmp_path / "ws"
+    (ws / "wt").mkdir(parents=True)
+    inside = ws / "main-repo" / ".git" / "worktrees" / "wt"
+    inside.mkdir(parents=True)
+    (ws / "wt" / ".git").write_text(f"gitdir: {inside}\n")
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Workspace", str(ws))])
+    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: raw or None)
+    monkeypatch.setattr(F, "_sel", lambda: _mock())
+    assert F._is_git_repo_root(str(ws / "wt")) is True

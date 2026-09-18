@@ -1125,6 +1125,11 @@ export interface ScheduleJob {
   channel?: string | null; approval_mode?: string | null
   silent?: boolean; strict_schedule?: boolean; timezone?: string | null
   skip_dates?: string[]
+  // Failure routing. `failure_delivery` is `Trigger.failure_delivery` verbatim — '' means
+  // "inherit `delivery`", which is `route_for`'s fall-back branch, so the empty string is a real
+  // value and not an absent one. `failure_dedupe` is the flattened `failure_policy.dedupe_hash`: the
+  // form owns one key of that dict and must not send (and so clobber) `autopause_after` beside it.
+  failure_delivery?: string | null; failure_dedupe?: boolean
   script?: string | null; command?: string | null  // zero-token exec modes
   action?: { provider?: string; config?: Record<string, unknown> }  // canonical {provider, config}
   last_run_ts?: number | null; next_run_ts?: number | null
@@ -1158,6 +1163,19 @@ export interface ScheduleRun {
   reason?: string                           // the mandatory one-line why, for any non-clean row
   weight?: string                           // "ledger" | "full" — a ledger row has no openable run
   incomplete?: boolean                      // this row SUMMARISES N fires ("at least N")
+  // 🔴 THE ROW'S IDENTITY AND ITS LABEL, on the unified shape (issue 466). This type describes TWO
+  // endpoints, and only the per-trigger one sends `job_name`/`job_id`; the cross-trigger
+  // `/api/triggers/history` sends `trigger_id` and (since 466) `trigger_name`. Neither was declared
+  // here, so the Schedule widget's `r.job_name || r.job_id || 'Schedule'` could not resolve on a
+  // projected row and fell all the way to the literal — measured: five different automations, five
+  // rows reading "Schedule", and four of them failures nobody could tell apart.
+  //
+  // Every field on this interface is optional, which is exactly why an 8-of-8 shape mismatch
+  // compiled silently for a month. The type cannot fix that alone (the two endpoints genuinely
+  // disagree), so the enforcement lives in `tests/test_dashboard_widget_payload_reads.py`, which
+  // derives BOTH sides — what the handler really sends and what the widget really reads.
+  trigger_id?: string
+  trigger_name?: string
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).
@@ -1390,6 +1408,12 @@ export interface WorkflowNodeState {
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
   item_index?: number; item_total?: number; item_label?: string
+  // This node's terminal output was served from the resume/rewind cache (WF2-A1) rather than
+  // freshly produced — "did my edit actually re-run anything?" answered at a glance. A TERMINAL
+  // qualifier like `degraded_reason`: absent means freshly produced, so it is never carried
+  // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
+  // the old value would keep claiming a cache hit the run just superseded).
+  cached?: boolean
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
@@ -3153,6 +3177,12 @@ export interface InboxItem {
   // payload rides here too under `refs.proposal` — hence the widened value type. Read the
   // typed payload through `proposalOf()` rather than indexing this directly.
   refs?: Record<string, any>
+  // Attribution, the same two fields the run ledger carries. Optional
+  // because every row written before attribution existed has neither; an EMPTY
+  // `owner_username` reads as the local owner's (the shipped `belongs_to` bargain), which is
+  // why `isForeign()` compares against the owner rather than testing for presence.
+  owner_username?: string
+  origin_harness?: string
 }
 /** INU-7 C6 — the proposal payload carried in `refs.proposal` on a `proposal` item.
  *  `apply` holds EXACTLY ONE of `action` / `workflow` / `skill_promotion` / `app_callback`;
@@ -3177,6 +3207,15 @@ export interface InboxProposalApplyResult {
 }
 /** One row of the inbox kind-filter chips: what's present, and how much is unresolved. */
 export interface InboxKindCount { kind: InboxItemKind; total: number; open: number; channel: boolean }
+/** One row of the shared inbox's OWNER-filter chips.
+ *
+ *  `username` is `''` for the unattributed rows, reported honestly rather than folded into
+ *  the owner's count — folding them in would make this census disagree with the `?owner=`
+ *  filter it drives, which excludes them. */
+export interface InboxOwnerCount { username: string; total: number; open: number; is_me: boolean }
+/** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
+ *  unattributed rows) — the same number `InboxStatus.my_pending_count` reports. */
+export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
@@ -3186,6 +3225,12 @@ export interface InboxStatus {
   watched_channels?: Array<{ id: string; name: string }>
   pending_count: number; total_count: number; health: InboxHealth
   poll_interval_seconds?: number
+  // The owner-scoped counters, ALONGSIDE the shared totals above. Two numbers
+  // because a shared inbox has two questions: how much is in it, and how much of it is mine.
+  // Optional so a frontend built against an older gateway still renders the shared totals.
+  owner?: string
+  my_pending_count?: number
+  my_total_count?: number
 }
 export interface InboxSettings {
   // alert_keywords / alert_on_name_mention removed in plan 42 S3 — alerting is now a
@@ -3201,17 +3246,28 @@ export interface SelEvent {
   agent?: string; source?: string; operation?: string; tool_kind?: string; outcome?: string
   resources?: string; error?: string; prev_hash?: string; entry_hash?: string
   downstream_service?: string; request_id?: string; integrity_ok?: boolean
+  /** How this row's `outcome` READS, decided server-side by the same table and matcher that
+   *  define the filter pills (`sel.audit_outcome_tone`) — one of `danger`/`warning`/`success`/
+   *  `neutral`, and `neutral` for a word nobody classified. The dashboard used to map outcome
+   *  words to colours itself and had drifted: `not_found` is a member of the `failed` family and
+   *  rendered in neutral grey, so a row the Failed pill called a failure did not look like one. */
+  outcome_tone?: string
 }
-// One page of /api/security/audit. `next_cursor` empty = no further page (the server
-// only hands out a cursor once it has seen a match beyond the page). `truncated` = the
-// bounded tail scan filled up, so older records may exist beyond the window.
+// One page of /api/security/audit. `next_cursor` empty = the walk reached the START of the log, so
+// what you have is the whole answer; anything else is an opaque resumable anchor
+// (`<byte offset>.<event_id>`, verified server-side, refused when stale). `truncated` = this
+// request stopped on its per-page scan BUDGET, not on the end of the log, and is always paired
+// with a usable `next_cursor` — the difference between "still looking" and "that is everything".
+// It used to mean the read hit a WALL at the newest 50,000 entries, with nothing older reachable
+// at any page depth (13,653 of 63,653 rows, measured).
 export interface AuditPage {
   events: SelEvent[]; count: number; next_cursor: string; scanned: number; truncated: boolean
   // The outcome filters, shipped by the module that owns the log's vocabulary
   // (`sel.AUDIT_OUTCOME_FAMILIES`). `values` are matched ANY-OF server-side, so a family is
   // one query and the pill cannot disagree with the pagination cursor. The dashboard used to
-  // keep its own two-word list here and missed most of what the writers emit.
-  outcome_families: { key: string; label: string; values: string[] }[]
+  // keep its own two-word list here and missed most of what the writers emit. `tone` travels
+  // with the family for the same reason, and is the same value each row is stamped with.
+  outcome_families: { key: string; label: string; tone?: string; values: string[] }[]
 }
 // Server-side filters for the audit read. Empty strings are omitted by the caller —
 // an unknown key is REFUSED by the endpoint, never ignored.
@@ -3923,6 +3979,10 @@ export interface PendingApproval {
   id: string; source: string; tool: string
   tool_input?: unknown; tool_purpose?: string
   session: string; ts: number
+  // The backend's command-screening verdict (`task_modes.read_only_command`), #2821.
+  // `null` when this call runs no shell — the tri-state matters, so decode it with
+  // `readOnlyCommandOf` rather than testing truthiness.
+  is_read_only?: boolean | null
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has.
@@ -4600,6 +4660,12 @@ export interface Loop {
   spend?: LoopSpend
   intake_rigor?: string
   plan?: LoopPhase[]; phase_status?: Record<string, string>
+  /** Whether this kind's engine ever ADVANCES `phase_status` — declared by the kind
+   *  strategy (`tracks_phases`) and derived onto both redacted views by the store, so the
+   *  FE never re-enumerates the phase-tracking kinds. Every kind may carry a descriptive
+   *  `plan`; only code + design maintain per-phase done-state, and asking `kind !== 'goal'`
+   *  instead made a completed 20-cycle research run read "0/5 stages" (#448). */
+  phase_tracked?: boolean
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   strategy_config?: Record<string, unknown>
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
@@ -4703,7 +4769,14 @@ export interface NudgeLoop {
 }
 
 // ── files + artifacts ──
-export interface FsEntry { name: string; path: string; is_dir: boolean; size?: number; mtime?: number }
+export interface FsEntry {
+  name: string; path: string; is_dir: boolean; size?: number; mtime?: number
+  /** This directory is a git repo ROOT (validated server-side, gitdir included). The
+   *  listing hides `.git`, so this is the only way a client can tell a checked-out project
+   *  from an ordinary folder — without it the explorer's git surface is invisible from the
+   *  default view, since no root tab is itself a repo (#428). Always false for files. */
+  repo?: boolean
+}
 export interface FsRoot { label: string; path: string; name: string; is_dir: boolean }
 export interface FileListResp { roots: FsRoot[]; entries: FsEntry[]; path: string }
 export interface GitStatusResp { repoRoot: string; branch: string; statuses: Record<string, string> }
@@ -6863,6 +6936,11 @@ export const api = {
   // Kinds PRESENT in the store (not the whole enum) — a chip for an empty kind is a dead
   // control, so the backend drives the chip row from real data.
   inboxKinds: () => get<{ kinds: InboxKindCount[] }>('/api/inbox/kinds').then((d) => d.kinds),
+  // Owners PRESENT in the store, same "real data drives the chips" reasoning as
+  // `inboxKinds`. The shared view filters CLIENT-side off this census plus the full listing,
+  // so switching owner chips costs no refetch; `?owner=` exists on the endpoint for callers
+  // that want the narrowing server-side.
+  inboxOwners: () => get<InboxOwners>('/api/inbox/owners'),
   // Advance PENDING → SEEN. Omit both fields to mark everything; a resolved item is never
   // dragged backwards. Idempotent.
   markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>

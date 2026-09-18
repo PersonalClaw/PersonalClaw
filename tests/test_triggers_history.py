@@ -521,7 +521,7 @@ def test_the_legacy_shape_is_still_available(app_with_all_kinds):
     """The cron-history UI renders the raw `ScheduleRun` fields the typed row does not carry.
 
     Asserts `summary`, NOT `trace`: the store's cross-job INDEX is written without a trace on
-    purpose (`_append_sync` writes `include_trace=False` there), and the FE lazy-loads the full
+    purpose (`append_sync` writes `include_trace=False` there), and the FE lazy-loads the full
     record from `/api/triggers/{id}/history/{run_id}` on expand — `api.ts` says so in as many words
     ("no trace" from /history). Before S105 this asserted `trace`, and it passed only because the
     fixture's fake service returned a hand-built dict that the real store never writes. Pinning a

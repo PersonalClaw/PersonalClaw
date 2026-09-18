@@ -78,7 +78,7 @@ function DeckLossList({ loss }: { loss: DocumentLossReport }) {
   )
 }
 
-export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProps) {
+export function SlideDeck({ slug, title, readOnly, onDirty, onSaved }: DocumentEditorProps) {
   const [loaded, setLoaded] = useState<{ model: DeckModelJson; loss: DocumentLossReport; version: number } | null>(null)
   const [model, setModel] = useState<DeckModelJson | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -155,6 +155,9 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
       // Re-baseline on what the server accepted: the next save must carry the NEW version
       // or it would fail its own If-Match.
       setLoaded({ ...loaded, model, version: res.version })
+      // …and tell the HOST, which owns the version/event summary this save is the only receipt
+      // for (see `DocumentEditorProps.onSaved`).
+      onSaved?.(res.version)
     } catch (e) {
       const stale = e instanceof ApiError && e.status === 409
       setSaveError(

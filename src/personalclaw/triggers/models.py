@@ -1069,7 +1069,20 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         session=str(data.get("session", "fresh") or "fresh"),
         model_tier=str(data.get("model_tier", "background") or "background"),
         delivery=str(data.get("delivery", "none") or "none"),
-        failure_delivery=str(data.get("failure_delivery", "inbox") or "inbox"),
+        # 🔴 AN EXPLICIT `""` SURVIVES, unlike its `delivery`/`session` neighbours.
+        # `delivery.route_for` documents a third state — *"falls back to `delivery` when
+        # `failure_delivery` is empty"* — and the old `or "inbox"` made that branch UNREACHABLE for
+        # every row loaded from disk: `to_dict` wrote `""` faithfully and this line read it straight
+        # back as `"inbox"`. Measured by PATCHing `failure_delivery: ""` and re-reading the store:
+        # it came back `"inbox"`. So "route failures wherever results go" was a documented,
+        # implemented
+        # semantic that no persisted trigger could hold, and the UI control for it could not stick.
+        #
+        # Absent, `None`, or a non-string still defaults — those mean "nothing was said", where `""`
+        # means "follow `delivery`", and collapsing the two is the distinction that was lost.
+        failure_delivery=(
+            data["failure_delivery"] if isinstance(data.get("failure_delivery"), str) else "inbox"
+        ),
         retry=dict(data["retry"]) if isinstance(data.get("retry"), dict) else {},
         failure_policy=(
             dict(data["failure_policy"]) if isinstance(data.get("failure_policy"), dict) else {}
@@ -1128,6 +1141,16 @@ class FireRecord:
     id: str
     trigger_id: str
     outcome: str
+    #: The automation's DISPLAY NAME, resolved where the row is projected.
+    #:
+    #: 🔴 Without this the feed carried identity but no legibility. `trigger_id` is an opaque
+    #: `schedule:clock:nightly-digest`, and every kind's source already knows the name — a schedule
+    #: run arrives at the projection with the handler's `job_name` join already on it, and a hook
+    #: and an event trigger each carry `.name`. The projection dropped all three, so the
+    #: dashboard's Recent-activity widget rendered the literal word "Schedule" on every row: five
+    #: different automations, five identical labels, measured on a live gateway. Resolving the name
+    #: once HERE is what stops a second consumer re-deriving the join and disagreeing with this one.
+    trigger_name: str = ""
     #: The one-line reason. MANDATORY for anything other than a clean run: an
     #: outcome without a reason
     #: tells the user their automation did not happen and nothing else.
@@ -1150,6 +1173,7 @@ class FireRecord:
         return {
             "id": self.id,
             "trigger_id": self.trigger_id,
+            "trigger_name": self.trigger_name,
             "outcome": self.outcome,
             "reason": self.reason,
             "weight": self.weight,
@@ -1182,6 +1206,7 @@ class FireRecord:
         return cls(
             id=str(d.get("id", "") or ""),
             trigger_id=str(d.get("trigger_id", "") or ""),
+            trigger_name=str(d.get("trigger_name", "") or ""),
             outcome=outcome,
             reason=str(d.get("reason", "") or ""),
             weight=weight if weight in {w.value for w in RunWeight} else RunWeight.LEDGER.value,

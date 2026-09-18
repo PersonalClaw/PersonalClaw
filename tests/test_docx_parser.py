@@ -50,6 +50,7 @@ from personalclaw.documents.writers.docx_writer import render_docx
 # coverage rail below reads that module's namespace so a single registry can still be
 # asserted complete against the whole tuple — two registries could leave a kind in neither.
 from tests import test_decks as _deck_suite
+from tests import test_document_parser_limits as _limits_suite
 from tests import test_sheets as _sheet_suite
 
 _W = nsdecls("w")
@@ -1050,15 +1051,19 @@ _COVERED_BY = {
     "slide_shape": "test_a_free_shape_is_reported_not_dropped_silently",
     "bullet_run_style": "test_character_formatting_inside_a_bullet_is_reported_at_that_bullet",
     "slide_feature": "test_a_slide_that_overrides_its_background_is_reported",
+    # ── untrusted-input caps — exercised in tests/test_document_parser_limits.py ────────
+    # The only kind EVERY parser can emit, so its test asserts all three at once (#2747).
+    "size_limit": "test_size_limit_is_reported_by_every_structural_cap",
 }
 
 
 def test_every_loss_kind_has_a_test():
     assert sorted(_COVERED_BY) == sorted(LOSS_KINDS)
-    # A name must resolve to a callable in one of the three suites that own the
-    # vocabulary's producers — stricter than a bare namespace membership check, which a
-    # same-named constant or an accidental import would have satisfied.
-    known = {**vars(_sheet_suite), **vars(_deck_suite), **globals()}
+    # A name must resolve to a callable in one of the suites that own the vocabulary's
+    # producers — stricter than a bare namespace membership check, which a same-named
+    # constant or an accidental import would have satisfied. `test_document_parser_limits`
+    # joined the set with `size_limit` (#2747), the one kind all three parsers emit.
+    known = {**vars(_sheet_suite), **vars(_deck_suite), **vars(_limits_suite), **globals()}
     missing = [
         name
         for name in set(_COVERED_BY.values())

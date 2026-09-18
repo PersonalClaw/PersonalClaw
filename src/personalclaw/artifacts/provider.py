@@ -118,6 +118,12 @@ class ArtifactProvider(ABC):
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         collection: str | None = None,
         event_metadata: dict | None = None,
+        #: ADOPT an existing artifact as the live pointer to a file (#290). `create` takes
+        #: `source_path` and `update` did not, so the only way to make an already-saved
+        #: artifact file-backed was to create a second one — which is precisely how a
+        #: completed loop ended up with two byte-identical rows, one file-backed and one a
+        #: snapshot. `None` leaves it untouched; `""` detaches.
+        source_path: str | None = None,
     ) -> Artifact | None: ...
 
     def revert(

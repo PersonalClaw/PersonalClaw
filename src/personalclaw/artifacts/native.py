@@ -785,6 +785,7 @@ class NativeArtifactProvider(ArtifactProvider):
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         collection: str | None = None,
         event_metadata: dict | None = None,
+        source_path: str | None = None,
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -813,6 +814,12 @@ class NativeArtifactProvider(ArtifactProvider):
                 meta_changed = True
             if collection is not None:
                 art.collection = collection.strip()[:MAX_NAME_LEN]
+                meta_changed = True
+            # ADOPTION (#290) — set BEFORE the content write below, so the same call that
+            # attaches the pointer also pushes the body through it. Attaching afterwards
+            # would leave the file and the artifact one version apart on the first write.
+            if source_path is not None:
+                art.source_path = source_path.strip()
                 meta_changed = True
 
             # Track REAL change so the event / version / recency triad follows what

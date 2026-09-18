@@ -111,15 +111,40 @@ def host_matches(host: str, patterns: tuple[str, ...]) -> bool:
 
     ``example.com`` matches ``example.com`` and ``api.example.com`` (but not
     ``notexample.com``). Case-insensitive.
+
+    There is exactly one rule and no glob support, so a pattern containing ``*`` — or one
+    that normalises to nothing, like ``""`` or ``"."`` — can never match anything. The
+    config write boundary refuses those now (``config/edit_spec.py``, issue 2956), but a
+    hand-edited ``config.json`` bypasses it entirely, so an unmatchable pattern is logged
+    once here rather than skipped in silence. A ``deny_hosts`` entry that quietly matches
+    nothing is a security control the user believes is armed.
     """
     h = host.lower().rstrip(".")
     for pat in patterns:
         p = pat.lower().rstrip(".")
-        if not p:
+        if not p or "*" in p:
+            _warn_unmatchable(pat)
             continue
         if h == p or h.endswith("." + p):
             return True
     return False
+
+
+#: Patterns already reported by :func:`_warn_unmatchable`. ``host_matches`` runs on every
+#: fetch, so the warning is per unique pattern for the process, not per request.
+_UNMATCHABLE_SEEN: set[str] = set()
+
+
+def _warn_unmatchable(pattern: str) -> None:
+    if pattern in _UNMATCHABLE_SEEN:
+        return
+    _UNMATCHABLE_SEEN.add(pattern)
+    logger.warning(
+        "security.egress host %r can never match any host and is being IGNORED. There is "
+        "no glob support: write the bare domain, which already covers its subdomains. "
+        "Fix it in Settings -> Security -> Egress, or in config.json.",
+        pattern,
+    )
 
 
 def _resolve(host: str) -> list[str]:

@@ -33,6 +33,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **A read-only session GET no longer WRITES a session workspace for any id the caller invents.**
+- **A brand-new conversation's title, pin, colour, folder, tags and `never_archive` now survive a restart instead of being accepted `200 {"ok": true}` and lost.**
+- **An ABSENT field on a session-metadata PATCH is no longer read as a request to CLEAR it.**
+- **`{"confirm": "false"}` no longer reads as a YES on a destructive door — one strict predicate replaced two incompatible ones across 24 gates (issue 3000).**
+- **`security.egress` no longer accepts a host entry the matcher can never match, so a denylist that reads as blocking a domain family can no longer block nothing (issue 2956).**
+- **`GET /api/security/audit?token=…` no longer 400s as an unknown filter, so a query-token client can read the audit trail at all (issue 2927).**
+- **The forwarded-header contract is true: `trusted_proxies` and `docs/guides/remote-access.md` now name the header the code actually reads.**
+- **An app that declares `permissions.api: ["/api/ws"]` no longer gets an owner shell with it (#2964).**
+- **A 56 KB `.docx` no longer costs 153 seconds of gateway CPU, and the office parsers finally inherit the zip-bomb posture the rest of the codebase has shipped for years (#2747).**
 - **Swapping to a different embedding model of the SAME dimension no longer leaves semantic search silently scoring the old model's vectors, and the re-index can no longer report success over a half-converted library.**
 - **`deploy/compose/compose.yaml` is finally true to its own header, and the guide no longer describes the failure backwards.**
 - **An app-scoped WebSocket no longer receives events its manifest never declared.**

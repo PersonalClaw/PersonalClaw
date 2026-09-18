@@ -388,9 +388,6 @@ class RunController:
         #: Run-scoped "always allow" decisions. Cleared on rewind: remembering
         #: across one would auto-approve the very step the user rewound to reconsider.
         self._allow_memory = gate_policy.AllowMemory()
-        #: event-gate path -> re-hold accounting. Bounded, because an unbounded hold is a
-        #: wedge that looks like patience.
-        self._event_holds: dict[str, gate_policy.HoldState] = {}
         #: Monotonic SSE sequence. Separate from the journal's `seq`: the journal counts
         #: persisted records, this counts published events, and conflating them would make a
         #: consumer's gap detection fire on every unpublished journal write.
@@ -963,6 +960,14 @@ class RunController:
 
         A `wait` is parked on the CLOCK and resolves itself, so surfacing it as needs_input
         would ask a human to answer something nobody asked them.
+
+        `approval` and `event` are ONE case here on purpose, and #375 read that as the bug
+        it is not. An event gate's wake-up arrives as a trigger-declared resume against this
+        run (`triggers.loop._apply_resume` → `service.resume_run` → `resume`), which is the
+        same continuation a human answering the card consumes — so an event gate is
+        answerable by a human too, and `bundled/goal-pursuit-monitor`'s `park` message says
+        exactly that ("answer this gate to force a check now"). Splitting them would hide a
+        parked monitor from needs_input, leaving no surface for the escape hatch.
         """
         node = dict(_walk(self.root)).get(_base_path(path))
         if node is None or node.kind != NodeKind.GATE:
@@ -2414,6 +2419,11 @@ class RunController:
             inst.state = state
             inst.output_ref = str(hit.get("output_ref", "") or "")
             inst.completed_at = _now()
+            # …and on the INSTANCE, not only in the ledger. The `step_cached` event below is the
+            # durable record, but a status read would have to scan the whole ledger to answer
+            # "was this row cached?" — so the projection is stamped here, one of the two places
+            # that decide a node's outcome-origin (the fresh dispatch below is the other).
+            inst.cached = True
             if item.node.id:
                 self._outputs[item.node.id] = store.read_output(self.run.id, item.path)
             self.journal.step_cached(
@@ -2443,6 +2453,10 @@ class RunController:
         inst.state = InstanceState.RUNNING
         inst.started_at = _now()
         inst.attempt += 1
+        # The other half of the cache-origin stamp. Cleared here rather than at each of the six
+        # rewind reset sites: every path to a terminal state runs through this dispatch, so a
+        # re-run after a rewind cannot leave the previous epoch's `cached` behind.
+        inst.cached = False
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable

@@ -48,9 +48,13 @@ describe('the Schedule widget outcome mapping', () => {
     expect(statusMeta('skipped_gate').tone).not.toBe(statusMeta('blocked_injection').tone)
   })
 
-  it('falls back to `status` when a row has no typed outcome', () => {
-    // The same widget also renders legacy ScheduleRun rows, which DO carry `status` and no
-    // `outcome`. Both shapes must work: the widget reads `r.outcome ?? r.status`.
+  it('says "never run" for a row with no outcome, rather than claiming success', () => {
+    // 🔴 This case used to be titled "falls back to `status`" and asserted, in prose, that the
+    // widget reads `r.outcome ?? r.status`. That fallback is GONE (issue 466): the Schedule widget
+    // has exactly ONE data source — `/api/triggers/history`'s unified shape — and that shape
+    // carries no `status` at all, so the fallback was unreachable while making an 8-of-8 contract
+    // mismatch look handled. `statusMeta` still accepts both vocabularies, because the per-trigger
+    // routes genuinely do send `status`; what changed is which of them THIS widget hands it.
     expect(statusMeta(undefined as unknown as string).label).toBe('never run')
     expect(statusMeta('success').label).toBe('ok')
   })

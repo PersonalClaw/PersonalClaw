@@ -330,6 +330,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # say so instead of borrowing that answer. Without it, an empty card and a broken card
     # are the same bytes — and a client would stop asking.
     "a2a_catalog_unavailable": "The published-workflow catalog could not be read.",
+    # A SECOND code rather than reusing the one above, because the two need different
+    # operator actions and a peer branches on the code: `catalog_unavailable` is a read
+    # that failed and may succeed on retry, `origin_unresolved` is a missing declaration
+    # that will never resolve itself. The card is withheld rather than published with a
+    # guessed address (#2620) — advertising a guess to a third party is failing open.
+    "a2a_origin_unresolved": (
+        "This instance could not determine the address peers should use to reach it, so "
+        "no agent card was published."
+    ),
     # ── desktop computer use (handlers/computer_use.py) ──
     # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
     # AgentError the dispatch composed has to reach the model unchanged, and the wire code is
@@ -427,6 +436,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     "model_parse_failed": (
         "The stored bytes could not be parsed as a document of this artifact's kind."
+    ),
+    # DISTINCT from `model_parse_failed` on purpose (#2747): the document is intact, it is
+    # merely too large to open in the editor without spending minutes of CPU and gigabytes
+    # of RAM, and calling that "could not be parsed" would tell a user their file is
+    # corrupt. Carries the way OUT in its own sentence, because a cap with no escape is the
+    # outage: the raw route still serves the whole file.
+    "document_too_large": (
+        "The document's compressed XML exceeds this build's parse caps, so it was not "
+        "opened. Fix: read the original bytes through the artifact's raw route."
     ),
     "invalid_model": (
         "The posted document model is not a valid model. The message names the offending path."

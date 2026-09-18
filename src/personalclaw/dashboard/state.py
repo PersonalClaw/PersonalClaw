@@ -28,6 +28,7 @@ from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
+    read_only_command,
     resolve_effective_risk,
     shell_command,
 )
@@ -1273,6 +1274,15 @@ class DashboardState:
             "tool_purpose": safe_purpose,
             "session": session,
             "ts": time.time(),
+            # #2821: the same command-screening verdict the chat card gets, from the same
+            # owner, so the two surfaces that ask a human for permission cannot describe
+            # one call differently. This entry is BOTH the `approval` WS payload and the
+            # `GET /api/approvals` row, so supplying it here reaches both doors at once.
+            #
+            # Screened on the RAW `tool_input`: `safe_input` has had URLs and credentials
+            # rewritten, and screening a string the shell will never see is how a verdict
+            # stops describing the actual call. `None` when this is not a shell call.
+            "is_read_only": read_only_command(tool, "", tool_input),
         }
         self.broadcast_ws("approval", self._pending_approvals[approval_id])
         self._push_approval(approval_id)
@@ -1402,13 +1412,22 @@ class DashboardState:
             await asyncio.get_running_loop().run_in_executor(None, self._flush_dirty_sessions)
 
     def _flush_dirty_sessions(self) -> None:
-        """Write any session with new messages to its JSONL file."""
+        """Write any DIRTY session to its JSONL file — messages or metadata.
+
+        The message-count half of this guard (``or not session.messages``) is gone (#2969).
+        ``_dirty`` already means "something changed"; the colour and natural-voice handlers
+        set only that and nothing else, so on a conversation with no turns yet their writes
+        were accepted `200 {"ok": true}` and then dropped. Whether the change was a turn or
+        a piece of metadata is ``save_session_to_history``'s question, not this loop's — and
+        it answers it, refusing to write an empty buffer over a persisted transcript and
+        refusing to mint a file for a pristine tab.
+        """
         if not self.conversation_log:
             return
         from personalclaw.dashboard.chat import save_session_to_history
 
         for session in list(self._sessions.values()):
-            if not session._dirty or not session.messages:
+            if not session._dirty:
                 continue
             try:
                 save_session_to_history(self, session)

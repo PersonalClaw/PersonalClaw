@@ -382,6 +382,20 @@ _BYPASS_EXACT.add("/pair")
 # 24 hours for local installs; the URL only works on loopback anyway.
 LINK_WINDOW_SECS = 24 * 3600
 # Maximum session TTL — sessions effectively never expire for local installs.
+#: Query params this module CONSUMES as credentials, so they are not the handler's arguments.
+#:
+#: ``?token=`` is the query-token auth path: read here (and in ``handlers/auth.py``) and
+#: deliberately **not stripped** from ``request.query``, so it arrives at every handler along
+#: with the caller's real parameters. A route with a strict, fail-closed query allowlist must
+#: therefore subtract this set before diffing, or it refuses the very callers the auth mode
+#: requires — which is exactly what ``GET /api/security/audit`` did (issue 2927): a
+#: catch-22 where no token meant 403 from auth and a token meant 400 ``unknown_filter`` from
+#: the handler, so a query-token client could never read the audit trail at all.
+#:
+#: Subtracting is the fix, not widening the route's own allowlist: ``token`` is a credential,
+#: not a filter, and it must never reach a SEL query as one.
+RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token"})
+
 # The cookie is re-issued on every page load via the session renewal path so
 # the clock only matters for completely idle browsers.
 MAX_SESSION_TTL_SECS = 365 * 24 * 3600  # 1 year

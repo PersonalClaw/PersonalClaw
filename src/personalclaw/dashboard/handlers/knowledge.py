@@ -26,6 +26,7 @@ from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbn
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -930,7 +931,7 @@ async def merge_items(request: web.Request) -> web.Response:
     merge_id = str(body.get("merge_id") or "").strip()
     if not merge_id:
         return web.json_response({"error": "merge_id is required"}, status=400)
-    if not body.get("confirm"):
+    if not confirm_granted(body):
         return web.json_response(
             {"error": "merging deletes an item — pass confirm: true"}, status=400
         )
@@ -2920,7 +2921,7 @@ async def merge_tag(request: web.Request) -> web.Response:
     # it, so it is strictly more destructive than `delete_tag` — which the UI already gates behind
     # a confirm naming its blast radius. The wider operation must not be the ungated one, and an
     # accidental double-post must not silently fold two tags together.
-    if not body.get("confirm"):
+    if not confirm_granted(body):
         return web.json_response(
             {
                 "error": {
@@ -3595,7 +3596,7 @@ async def restructure_item(request: web.Request) -> web.Response:
     except restructure.RestructureError as exc:
         return _restructure_refusal(exc)
 
-    if not body.get("confirm"):
+    if not confirm_granted(body):
         return web.json_response({"confirmed": False, "token": plan.token, "plan": plan.to_dict()})
 
     try:

@@ -103,3 +103,10 @@ playwright-responses/
 # Owner-provided local secrets — never committed. The real file lives at the
 # workspace root (outside every repo); this rule is belt-and-braces.
 .secrets.env
+
+# Outstanding mutation session (scripts/mutation_harness.py): pristine copies of the
+# files a mutation run is holding, plus its journal. Ignored so the residue-detection
+# directory never becomes a staged file — but NOT ignored by the rail: `pre-commit`
+# tests for the directory itself and refuses the commit, so an ignored residue is a
+# LOUD residue rather than a hidden one.
+/.mutation-session/

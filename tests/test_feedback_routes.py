@@ -82,12 +82,20 @@ class TestRecordRoute:
 
     @pytest.mark.asyncio
     async def test_app_caller_forcibly_namespaced(self):
-        """An app-scoped token's producer is forced to app:<name>:<producer> —
-        it can never impersonate a core producer (e.g. a bound prompt)."""
+        """An app-scoped token's producer is forced to app:<name>:<producer> — it can never
+        impersonate a core producer (e.g. a bound prompt) — AND its target kind is forced to
+        `app_judgment`, so it cannot supersede the user's verdict on a core target (#2784).
+
+        This case used to assert the record landed under `inbox_classification` (the kind
+        `BODY` claims), which is the defect written down as the expectation: the handler's
+        target forcing was unreachable, so an app's record went straight into the core
+        target's slot in the last-write-wins supersede index.
+        """
         async with TestClient(TestServer(_make_app(app_token_name="weather"))) as c:
             resp = await c.post("/api/feedback", json=BODY)
             assert resp.status == 200
-        rec = fb.current_verdict("inbox_classification", "item-1")
+        assert fb.current_verdict("inbox_classification", "item-1") is None
+        rec = fb.current_verdict("app_judgment", "item-1")
         assert rec is not None
         assert rec.producer_kind == "app"
         assert rec.producer_id == "weather:native:inbox-classify"

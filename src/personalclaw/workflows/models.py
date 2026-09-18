@@ -1126,6 +1126,19 @@ class NodeInstance:
     #: liveness stays owned by `SubagentManager.get` -- and it is per-INSTANCE because a
     #: `foreach` fan-out of stages has one subagent per leaf.
     subagent_id: str = ""
+    #: True when THIS instance's terminal output was served from the resume/rewind cache
+    #: (WF2-A1) rather than freshly produced. The `step_cached` ledger event is the durable
+    #: record; this is the projection a status read can answer from without scanning it, which
+    #: is what lets the run view mark cached rows on a page load rather than only on the live
+    #: event stream.
+    #:
+    #: Written at exactly the two points in `RunController._launch` where a node's
+    #: outcome-origin is decided -- True on a cache hit, False on a fresh dispatch -- so a
+    #: rewind that re-runs the node clears it by construction rather than by a reset site
+    #: remembering to. Read ONLY for a terminal instance (`_nodes_of` gates on that): between a
+    #: rewind and the re-dispatch the instance is PENDING and this still holds the previous
+    #: epoch's answer, which is stale for a node that has not run yet.
+    cached: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1143,6 +1156,7 @@ class NodeInstance:
             "wake_at": self.wake_at,
             "item_label": self.item_label,
             "subagent_id": self.subagent_id,
+            "cached": self.cached,
         }
 
     @classmethod
@@ -1168,4 +1182,5 @@ class NodeInstance:
             wake_at=float(d.get("wake_at", 0.0) or 0.0),
             item_label=str(d.get("item_label", "") or ""),
             subagent_id=str(d.get("subagent_id", "") or ""),
+            cached=bool(d.get("cached", False)),
         )

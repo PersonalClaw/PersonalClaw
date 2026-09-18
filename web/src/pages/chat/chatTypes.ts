@@ -3,6 +3,10 @@
  *  prompts, driven by the live WS events (tool_call → tool_result by id;
  *  approval → approval_resolved by id). */
 
+// `approvalMeta` imports ApprovalSegment from here as `import type`, which is erased at
+// compile time, so this value import creates no runtime cycle.
+import { readOnlyCommandOf } from './approvalMeta'
+
 export interface TextSegment { kind: 'text'; text: string }
 
 export interface ToolSegment {
@@ -46,6 +50,10 @@ export interface ApprovalSegment {
   input?: string
   purpose?: string
   risk?: 'safe' | 'caution' | 'destructive'  // effective per-invocation risk indicator
+  // The backend's command-screening verdict (`task_modes.read_only_command`), decoded
+  // from the wire by `readOnlyCommandOf`. Tri-state: absent means the call runs no
+  // shell, which must stay distinct from `false` ("screened, and it mutates"). #2821.
+  readOnlyCommand?: boolean
   // The settled outcome, as the backend persisted it. Typed as the raw wire `string`
   // (not the ApprovalResolution union) because a session persisted by another build
   // can carry an outcome this one doesn't know — approvalOutcome() maps the known set
@@ -328,7 +336,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; is_read_only?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -471,7 +479,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // reloaded transcript re-armed live Allow/Deny buttons for a call that had already
       // run. approvalOutcome() owns interpreting the value, in one place, for both paths.
       const resolved = m.meta?.resolved || undefined
-      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], resolved })
+      // `is_read_only` has been in this meta since #443 and was read by nothing until
+      // #2821. Decoded, never cast: on this path it is the legacy `"1"`/`""` string.
+      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: m.content })

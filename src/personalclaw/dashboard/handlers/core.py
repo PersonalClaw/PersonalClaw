@@ -16,6 +16,7 @@ from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
 from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
 
 logger = logging.getLogger(__name__)
@@ -1473,7 +1474,7 @@ async def api_incident_resume(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not (isinstance(body, dict) and body.get("confirm") is True):
+    if not confirm_granted(body):
         return web.json_response({"error": 'resume requires {"confirm": true}'}, status=400)
     st = _incident.resume()
     return web.json_response({"active": st.active})

@@ -32,6 +32,12 @@ class ResearchKind(GoalKind):
     # Research wants no required workspace (the report is the deliverable; a bound
     # workspace, when present, is where the report file lands — Goal's brief handles that).
     wants_workspace = False
+    # Restated (not just inherited from GoalKind) so `grep tracks_phases kinds/` answers
+    # "which kinds track phases?" for EVERY kind. Research carries a real, descriptive
+    # plan[] of objectives, but nothing advances it: the run progresses by cycles, and a
+    # completed 20-cycle run used to render "0/5 stages" because the FE assumed otherwise
+    # (#448). A descriptive plan is not a progress tracker.
+    tracks_phases = False
 
     def default_kind_config(self) -> dict:
         # Research is always open-ended (returns-exhaustion on the granularity dial is

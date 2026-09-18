@@ -311,6 +311,37 @@ Two runtime facts that save debugging time:
   the dataclass (+ `_meta`), `load()`, `to_dict()`, and a write path —
   `test_config_roundtrip.py` enforces most of this generically.
 
+### Mutation testing: never edit the source by hand
+
+If you are checking whether a test can actually FAIL — deliberately breaking a line
+to see a rail fire — apply the change through the harness, not by hand:
+
+```bash
+python scripts/mutation_harness.py run  --spec mutations.json --command "pytest -q tests/test_x.py"
+python scripts/mutation_harness.py apply --spec mutations.json   # mutate and leave it mutated
+python scripts/mutation_harness.py restore                       # put it back, byte-exactly
+python scripts/mutation_harness.py check                         # did a run die mid-mutation?
+```
+
+A spec file is a JSON list of `{"path", "old", "new", "label"?}`; `old` must occur
+exactly once in the file. `run` applies one mutation at a time and reports each as
+`caught` (your command failed — good) or `SURVIVED` (your command passed against
+mutated code — a hole in the tests).
+
+**Why the harness rather than an editor.** A hand-driven run that dies partway
+through — a `pkill`, a closed laptop, an OOM — leaves the mutation **in the
+source**. Every later suite then honestly passes against mutated code, and if the
+mutated line is uncovered, everything is green and a later commit carries the
+mutation to `main`. This happened (#2710). A `finally:` does not fix it: `SIGKILL`
+runs no `finally:`, no `atexit` handler and no signal handler.
+
+So the harness copies each file's pristine bytes into `.mutation-session/` and
+fsyncs a journal naming that copy **before the first edit**. Two consequences:
+`restore` works from any later process, and the session directory's mere existence
+proves a run did not finish — which is why `pre-commit` refuses a commit while one
+is outstanding. `restore` refuses to overwrite a file you edited after the mutation
+(it records both digests), so it cannot eat real work; pass `--force` to discard.
+
 ## Pull requests
 
 - **One concern per PR.** Keep refactors separate from behavior changes.

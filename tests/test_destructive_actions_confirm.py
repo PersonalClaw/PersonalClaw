@@ -138,6 +138,12 @@ class TestNoNewUngatedDestructiveRoute:
     # excluded deliberately: the verb itself warns, and they are gated at the UI by `confirmDelete`.
     _DESTRUCTIVE = re.compile(r"/(merge|reset|purge|wipe|clear|prune|revoke|rotate)\b")
 
+    # What "gates on confirm" LOOKS like in a handler body. Since issue 3000 there is exactly
+    # one answer: `safety_flags.confirm_granted`, the single strict predicate every confirm door
+    # calls. A bare `get("confirm")` is deliberately NOT a tell — see
+    # `test_the_gate_tell_is_the_predicate_not_a_bare_field_read` for why that was the bug.
+    _GATE_TELLS = ("confirm_granted(",)
+
     # path -> why it legitimately needs no confirm gate. Every entry was read before being
     # written; "pre-existing" is not a reason, it is a TODO wearing one.
     _REVIEWED_UNGATED: dict[str, str] = {
@@ -187,9 +193,29 @@ class TestNoNewUngatedDestructiveRoute:
             name = handler.rsplit(".", 1)[-1]
             m = re.search(rf"^async def {re.escape(name)}\(.*?(?=^async def |\Z)", src, re.S | re.M)
             body = m.group(0) if m else ""
-            if 'get("confirm")' not in body and "'confirm'" not in body:
+            if not any(tell in body for tell in self._GATE_TELLS):
                 ungated.append(f"{path} -> {name} ({py.relative_to(SRC)})")
         assert not ungated, "destructive POST routes with no confirm gate:\n" + "\n".join(ungated)
+
+    def test_the_gate_tell_is_the_predicate_not_a_bare_field_read(self):
+        """FLOOR 3, added with issue 3000. This rail used to look for `get("confirm")` in the
+        handler body — it detected the IMPLEMENTATION, not the property. Two consequences:
+
+        * It read a handler as gated on any incidental read of the field, including one that
+          coerced with `bool(...)` — which is the defect 3000 turned out to be: nine doors read
+          `confirm` and accepted the string `"false"` as a yes, and this rail called all nine
+          gated.
+        * When the coercion was centralised into `safety_flags.confirm_granted`, the tell
+          vanished from every handler and four correctly-gated routes read as ungated.
+
+        So the tell is now the PREDICATE CALL, and `tests/test_confirm_gate_parity.py` bans the
+        bare field read outright. The two rails are complementary: that one says nobody may read
+        the field directly, this one says a destructive route must actually call the predicate.
+        A bare `get("confirm")` must therefore NOT satisfy this rail, or the pair would let a
+        route regress to its own coercion while both stayed green.
+        """
+        assert self._GATE_TELLS == ("confirm_granted(",)
+        assert not any("get(" in tell for tell in self._GATE_TELLS)
 
     def test_the_exemption_list_cannot_rot(self):
         """An exemption for a route that no longer exists silently widens the rail."""

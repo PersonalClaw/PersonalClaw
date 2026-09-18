@@ -22,6 +22,9 @@ class GoalKind(LoopKindStrategy):
     description = "Research + action toward a goal — verifiable, open-ended, or monitoring."
     wants_workspace = False
     default_agent = "personalclaw-loop"
+    # Advances by CYCLES against sub-goals, never a per-phase done-state — no
+    # set_phase_status call site anywhere in this module (or ResearchKind below it).
+    tracks_phases = False
 
     def default_kind_config(self) -> dict:
         return {

@@ -165,8 +165,8 @@ describe('the detail routes added after the first census', () => {
 //
 // The idiom is only trustworthy if the inset is DERIVED. A hand-tuned `-1.5px` per call site would be
 // the raw-px class the note above rejected, and it would silently be wrong on any control that is not
-// 21px. `--hit-min` is the floor and `--hit-size` is the drawn size, so the pseudo-element grows by
-// half the shortfall — which is why applying it to a 16px control is a one-line `--hit-size` override
+// 21px. `--hit-min` is the floor and the pseudo-element's `max(var(--hit-min), 100%)` resolves 100%
+// against the originating element's own box, so applying it to a 16px control needs NO override at all
 // rather than new arithmetic.
 describe('.hit-24 expands the pointer target without touching layout', () => {
   const tokens = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
@@ -182,14 +182,25 @@ describe('.hit-24 expands the pointer target without touching layout', () => {
     expect(rule).toMatch(/\.hit-24 \{[^}]*position:\s*relative/s)
   })
 
-  it('the inset is DERIVED from the floor, never a hand-tuned pixel', () => {
-    expect(rule, 'the floor must be a variable so a call site can state its own drawn size')
+  it('the band is DERIVED from the floor and the element, never hand-tuned or restated', () => {
+    expect(rule, 'the floor must be a variable, not a literal at the call site')
       .toMatch(/--hit-min:\s*24px/)
-    expect(rule).toMatch(/--hit-size:/)
-    // half the shortfall per side, clamped so an already-large control is unaffected
-    expect(rule, 'inset must compute from --hit-min and --hit-size').toMatch(/inset:\s*calc\([^)]*var\(--hit-min\)/)
-    expect(rule, 'the shortfall must be halved — a full inset overshoots by 2x').toMatch(/\/\s*2\s*\)/)
-    expect(rule, 'clamp at 0 so a control already at the floor does not shrink').toMatch(/max\(0px,/)
+    // 🔁 THIS ASSERTION WAS RETARGETED FROM A MECHANISM TO A PROPERTY. It used to require a
+    // `--hit-size` variable holding the control's drawn size and an
+    // `inset: calc(-1 * max(0px, (--hit-min - --hit-size) / 2))`. That knob duplicated a fact
+    // the browser already has, and it defaulted to 21px — so the `ui/forms` Checkbox, which
+    // draws 16px, would have inherited a 21px assumption and landed at 21px reachable. The
+    // property both forms were reaching for is "at least the floor, never smaller than the
+    // control", and a percentage on a pseudo-element resolves against its ORIGINATING
+    // element's box, which expresses that directly for any size.
+    expect(rule, 'the band must be at least the floor').toMatch(/max\(\s*var\(--hit-min\)/)
+    expect(rule, 'and never smaller than the control — 100% is the originating box')
+      .toMatch(/max\(\s*var\(--hit-min\)\s*,\s*100%\s*\)/)
+    expect(rule, 'both axes, or one of them stays short').toMatch(/height:\s*max\(/)
+    // Centred, so the growth is symmetric and the control does not appear to shift.
+    expect(rule, 'centred on the control').toMatch(/translate\(-50%,\s*-50%\)/)
+    expect(rule, 'no adopter may have to restate its own drawn size')
+      .not.toMatch(/--hit-size/)
   })
 
   it('the ::before paints nothing and forwards its events', () => {

@@ -93,6 +93,117 @@ class TestDeleteRefusals:
         assert (await service.delete_run(run.id))["ok"] is True
 
 
+class TestADraftRunIsNotPermanent:
+    """A draft run used to be UNDELETABLE, and the 409 named the path that could not work.
+
+    Two halves of one dead end:
+
+    * ``cancel_run`` answered ``200 {"cancel_requested": true}`` on a DRAFT run and never
+      changed its status. Nothing else would: a draft has no controller to see the sticky
+      intent, and the watchdog's ``_honor_cancel`` only walks ``store.active_runs()``,
+      which is RUNNING / PAUSED / NEEDS_INPUT and never DRAFT. An acknowledged write that
+      was never performed.
+    * ``delete_run`` then refused with ``WF_RUN_NOT_TERMINAL`` and told the user to cancel
+      — the one thing that had just silently done nothing.
+
+    So every draft run ever created stayed forever, and the leak accumulated. These drive
+    the whole loop the user is in, not just the one call, because either half alone reads
+    as working.
+    """
+
+    def _draft(self, *, queued: bool = False) -> WorkflowRun:
+        extra: dict = {}
+        if queued:
+            from personalclaw.workflows import overlap
+
+            extra = overlap.queued_extra()
+        run = store.create(WorkflowRun(id="", workflow_name="del", extra=extra))
+        store.write_spec(run.id, SPEC)
+        assert store.get(run.id).status is RunStatus.DRAFT
+        return run
+
+    async def test_cancelling_a_draft_run_actually_cancels_it(self) -> None:
+        run = self._draft()
+        result = service.cancel_run(run.id)
+        assert result["ok"] is True and result["cancel_requested"] is True
+        after = store.get(run.id)
+        assert after is not None
+        assert after.status is RunStatus.CANCELLED, "the 200 must correspond to a real write"
+        assert after.completed_at, "a terminal run carries an end timestamp"
+        # The sticky intent is consumed, not left to be re-honoured by a later sweep.
+        assert store.cancel_requested(run.id) is False
+
+    async def test_a_draft_run_can_then_be_deleted(self) -> None:
+        """The dead end, driven end to end: cancel, then delete, and it is really gone."""
+        run = self._draft()
+        run_dir = store.run_dir(run.id)
+        assert service.cancel_run(run.id)["ok"] is True
+        result = await service.delete_run(run.id)
+        assert result["ok"] is True, result
+        assert store.get(run.id) is None
+        assert not run_dir.exists()
+
+    async def test_a_cancelled_draft_leaves_the_overlap_queue(self) -> None:
+        """A queued start is a DRAFT row + marker, so cancelling it must un-queue it.
+
+        Otherwise a cancelled queue head would still block every start behind it.
+        """
+        from personalclaw.workflows import overlap
+
+        run = self._draft(queued=True)
+        assert [r.id for r in overlap.queued_runs("del")] == [run.id]
+        service.cancel_run(run.id)
+        assert overlap.queued_runs("del") == []
+
+    async def test_the_refusal_names_a_remedy_that_can_complete(self) -> None:
+        """A launched run's cancel IS asynchronous, so the message must say cancel AND wait.
+
+        "cancel it before deleting" was the sentence that sent a user round a loop with no
+        exit; for a launched run it is also incomplete, because the controller applies the
+        intent on its next step.
+        """
+        run = store.create(WorkflowRun(id="", workflow_name="del"))
+        store.write_spec(run.id, SPEC)
+        run.status = RunStatus.RUNNING
+        store.save(run)
+        result = await service.delete_run(run.id)
+        assert result["code"] == "WF_RUN_NOT_TERMINAL"
+        assert "terminal" in result["message"]
+        assert "next step" in result["message"]
+
+    async def test_a_launched_run_with_a_controller_still_defers_to_it(self) -> None:
+        """WF2-R10 is intact: the in-band write is scoped to PRELAUNCH.
+
+        A DRAFT run has no controller, which is what makes finalizing it here safe — the
+        same reasoning ``overlap.drain`` already relies on. A run whose controller is live
+        must still be left for that controller to finish.
+        """
+
+        class _FakeController:
+            def __init__(self) -> None:
+                self.asked = False
+
+            def request_cancel(self) -> None:
+                self.asked = True
+
+        class _FakeSupervisor:
+            def __init__(self, ctrl: _FakeController) -> None:
+                self._ctrl = ctrl
+
+            def controller(self, run_id: str) -> _FakeController:
+                return self._ctrl
+
+        ctrl = _FakeController()
+        run = store.create(WorkflowRun(id="", workflow_name="del"))
+        store.write_spec(run.id, SPEC)
+        run.status = RunStatus.RUNNING
+        store.save(run)
+        assert service.cancel_run(run.id, supervisor=_FakeSupervisor(ctrl))["ok"] is True
+        assert ctrl.asked is True
+        assert store.get(run.id).status is RunStatus.RUNNING, "the handler must not write it"
+        assert store.cancel_requested(run.id) is True, "the sticky intent stands"
+
+
 class TestDeleteEffects:
     async def test_the_row_and_the_directory_both_go(self) -> None:
         """A row-only delete would leave the journal, outputs and continuation tokens on disk

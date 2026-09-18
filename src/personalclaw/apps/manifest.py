@@ -1745,6 +1745,30 @@ class AppManifest:
             dupes = sorted({c for c in self.uiCapabilities if self.uiCapabilities.count(c) > 1})
             errors.append(f"uiCapabilities has duplicate entries: {dupes}")
 
+        # #2964. A ``permissions.api`` entry naming an owner-only capability is an INSTALL
+        # error, not a silently-ignored line. The gateway refuses those paths for any app
+        # identity whatever the manifest says, so leaving the declaration in place would
+        # ship a manifest whose consent screen advertises reach the app will never have —
+        # the same dishonest-consent failure from the other direction. Refusing at validate
+        # time is where the author can act on it; a 403 at first request is where they
+        # cannot tell a policy from a bug.
+        #
+        # Deliberately checks only entries that LITERALLY name an owner-only root: a bare
+        # ``"*"`` or a shorter prefix such as ``/api/ws`` stays valid (it is a legitimate
+        # declaration that simply does not reach the terminal), so ``menu-bar-companion``
+        # and every other shipped manifest install unchanged.
+        from personalclaw.apps.permissions import owner_only_api_reason
+
+        for entry in self.permissions.api:
+            literal = entry[:-1] if entry.endswith("*") else entry
+            reason = owner_only_api_reason(literal.rstrip("/"))
+            if reason:
+                errors.append(
+                    f"permissions.api entry {entry!r} names an owner-only capability "
+                    f"({reason}) that no app may hold. Remove it: an app that needs to run "
+                    f"commands ships a backend or declares permissions.desktop instead."
+                )
+
         return errors
 
     def _validate_sources(self) -> list[str]:

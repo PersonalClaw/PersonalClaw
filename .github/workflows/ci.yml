@@ -324,18 +324,51 @@ jobs:
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
-    # This job carries the STABLE `test` id (branch-protection required check + roadmap
-    # references). It goes green only when EVERY shard succeeded, and `if: always()` makes it
-    # report RED — never "skipped" — when a shard fails, so a required status check is always
-    # produced (a skipped required check would wedge the PR). It needs no checkout or toolchain:
-    # it only reads the matrix's aggregate result.
+    # This job carries the STABLE `test` id (the branch-protection required-check name and the id
+    # roadmap plans reference). It goes green only when EVERY shard succeeded, and a FAILING shard
+    # still reports RED here rather than skipped — `fail-fast: false` above means a shard failure
+    # never cancels the run, so `!cancelled()` is satisfied and this job runs. It needs no
+    # checkout or toolchain: it only reads the matrix's aggregate result.
+    #
+    # ── 🪤 `!cancelled()`, NOT `always()`. THE RED NO TEST PRODUCED (#2946) ────────────────────
+    # `always()` runs a job even when the RUN ITSELF was cancelled, and the step below then turned
+    # `result == 'cancelled'` into `exit 1`. The concurrency group above deliberately collapses
+    # this branch's `pull_request` and `push` runs, so ONE of the two is always cancelled — and
+    # the cancelled one was publishing a `test` FAILURE. Check-runs key on the SHA, not the run,
+    # so that red landed on the exact commit whose surviving run went green.
+    #
+    # MEASURED 2026-09-18 on `9801cf068`: the cancelled `push` run 35338585659
+    # had all TWELVE of its other jobs `cancelled` and `test` → `failure`, while the surviving
+    # `pull_request` run 35338682195 had `test` → `success`. Both check-runs sit on that one SHA.
+    # Every open PR therefore carried a red `test` no test produced, `mergeStateStatus` was
+    # permanently `UNSTABLE`, and every merge decision began by re-deriving which red was real.
+    #
+    # A cancelled run measured NOTHING, so the honest report is no `test` verdict at all — which
+    # is what `!cancelled()` produces (the job is SKIPPED, not failed). What it costs: the loser
+    # leaves a `test` check-run with conclusion `skipped` beside the winner's `success`. That is
+    # not a failing check, so it no longer makes the PR unstable. The `:289` warning this comment
+    # replaced — that a *skipped* required check wedges the PR — does not bite: `main` currently
+    # has ZERO required status checks, and when several check-runs share a name GitHub reads the
+    # most recent, which is the winner (measured above: the survivor's `test` started 11:36:16Z,
+    # the loser's 11:15:00Z — the loser is always the earlier one, since it is cancelled BY the
+    # arrival of the other). Re-check this if `test` is ever made a required check.
     needs: [test-shard]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: every test shard passed
         run: |
           result='${{ needs.test-shard.result }}'
+          # Reachable only when a SHARD was cancelled while this run itself lived on — the job
+          # above is skipped outright when the run is cancelled. A missing answer on a live run
+          # is red, never green: same doctrine as full.yml's install-smoke legs.
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=test shards unproven::a test shard was cancelled while this run" \
+                 "was still live, so the suite measured nothing. This is NOT the superseded-run" \
+                 "case (that skips this job entirely) — re-run and, if it repeats, look for a" \
+                 "runner the shard is losing rather than a failing test."
+            exit 1
+          fi
           if [ "$result" != "success" ]; then
             echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
                  "(expected 'success'). Open the red 'test-shard (N)' job(s) above, or download the" \

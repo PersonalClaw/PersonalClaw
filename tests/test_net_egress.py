@@ -8,6 +8,7 @@ operator allow/deny, loopback-inversion, and the redirect-hop re-evaluation cont
 
 from __future__ import annotations
 
+import logging
 import socket
 
 import pytest
@@ -188,6 +189,63 @@ def test_deny_does_not_match_suffix_lookalike():
     pol = STRICT.with_overrides(deny_hosts=("example.com",))
     d = evaluate("https://notexample.com", pol, resolver=_resolver({"notexample.com": ["8.8.8.8"]}))
     assert d.allow is True  # notexample.com is NOT a subdomain of example.com
+
+
+# ── An unmatchable pattern is announced, not silently skipped (issue 2956) ─────
+
+
+@pytest.mark.parametrize("inert", ["*", "*.example.com", "", "."])
+def test_an_unmatchable_deny_pattern_is_logged_not_silently_ignored(inert, caplog):
+    """The config write boundary refuses these now, but a hand-edited `config.json` bypasses it
+    and reaches the guard as-is. There is one matching rule and no glob, so the entry blocks
+    NOTHING — and before this it did so in total silence, which is the whole defect: a deny list
+    that reads as armed and is not. It still does not match (inventing a glob here would mint a
+    second spelling for a policy that already has one), but it now says so.
+    """
+    from personalclaw.net import guard as guard_mod
+
+    guard_mod._UNMATCHABLE_SEEN.clear()
+    pol = STRICT.with_overrides(deny_hosts=(inert,))
+    with caplog.at_level(logging.WARNING, logger="personalclaw.net.guard"):
+        d = evaluate(
+            "https://api.example.com", pol, resolver=_resolver({"api.example.com": ["8.8.8.8"]})
+        )
+    assert d.allow is True, "no glob support — the entry genuinely matches nothing"
+    said = [r.getMessage() for r in caplog.records]
+    assert any(
+        "can never match" in m for m in said
+    ), f"the inert entry {inert!r} was skipped silently: {said}"
+    assert any(repr(inert) in m for m in said), f"the warning must NAME the entry: {said}"
+
+
+def test_the_unmatchable_warning_is_once_per_pattern_not_once_per_fetch(caplog):
+    """`host_matches` runs on every egress. A per-request warning would be a log flood, which is
+    its own way of being unreadable."""
+    from personalclaw.net import guard as guard_mod
+
+    guard_mod._UNMATCHABLE_SEEN.clear()
+    pol = STRICT.with_overrides(deny_hosts=("*.example.com",))
+    resolver = _resolver({"api.example.com": ["8.8.8.8"]})
+    with caplog.at_level(logging.WARNING, logger="personalclaw.net.guard"):
+        for _ in range(5):
+            evaluate("https://api.example.com", pol, resolver=resolver)
+    hits = [r for r in caplog.records if "can never match" in r.getMessage()]
+    assert len(hits) == 1, f"expected one warning for five fetches, got {len(hits)}"
+
+
+def test_a_real_pattern_is_not_warned_about(caplog):
+    """Guards the two tests above from passing for the wrong reason — a warning on every pattern
+    would satisfy them while telling the user nothing."""
+    from personalclaw.net import guard as guard_mod
+
+    guard_mod._UNMATCHABLE_SEEN.clear()
+    pol = STRICT.with_overrides(deny_hosts=("example.com",))
+    with caplog.at_level(logging.WARNING, logger="personalclaw.net.guard"):
+        d = evaluate(
+            "https://api.example.com", pol, resolver=_resolver({"api.example.com": ["8.8.8.8"]})
+        )
+    assert d.allow is False
+    assert not [r for r in caplog.records if "can never match" in r.getMessage()]
 
 
 # ── LOOPBACK_INTERNAL inversion ────────────────────────────────────────────────

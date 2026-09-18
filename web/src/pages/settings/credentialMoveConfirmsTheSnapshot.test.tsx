@@ -157,7 +157,16 @@ describe('the dialog body is TRUE of the handler', () => {
     expect((impl.match(/if not confirm:/g) ?? []).length, 'migrate AND rollback').toBe(2)
     const h = py('dashboard/handlers/security_credentials.py')
     expect((h.match(/if not await _confirmed\(request\):/g) ?? []).length).toBe(2)
-    expect(h, 'a malformed body is a NO, never a yes').toMatch(/return isinstance\(body, dict\) and body\.get\("confirm"\) is True/)
+    // The predicate itself lives in `safety_flags` — every destructive door shares one, so a
+    // second door cannot re-derive a looser spelling (that is what `test_confirm_gate_parity.py`
+    // bans). Follow the delegation rather than re-asserting inlined text here, and assert the
+    // strictness where it is actually written: consent is the JSON literal `true`, so a body of
+    // `{"confirm": "false"}` — or no dict at all — is a refusal.
+    expect(h, 'this door reads the shared predicate').toContain('return confirm_granted(body)')
+    const flags = py('safety_flags.py')
+    const granted = flags.slice(flags.indexOf('def confirm_granted('))
+    expect(granted, 'a malformed body is a NO, never a yes')
+      .toMatch(/return isinstance\(payload, Mapping\) and payload\.get\(field\) is True/)
   })
 })
 

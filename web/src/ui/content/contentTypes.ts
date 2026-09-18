@@ -64,6 +64,14 @@ export interface DocumentEditorProps {
   /** Raised whenever the editor's unsaved state flips, so the host's dirty dot and
    *  tab markers work for a custom editor exactly as they do for Monaco. */
   onDirty?: (dirty: boolean) => void
+  /** Raised with the NEW version after a save the server accepted.
+   *
+   *  A custom editor owns its own persistence, which means the host never learns a version was
+   *  cut — so the host's own version/event summary went on reading `v1` until a reload, and for a
+   *  binary document that summary is the ONLY save receipt there is (no visible content diff, and
+   *  a lossless document gets no confirm dialog either). This is the editor telling the host what
+   *  it already has in hand from the write's response, rather than the host polling for it. */
+  onSaved?: (version: number) => void
 }
 
 /** Where this type's content originates (agent-facing), so generation lives

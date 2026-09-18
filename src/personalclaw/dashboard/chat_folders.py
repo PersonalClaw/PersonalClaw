@@ -203,6 +203,18 @@ async def api_chat_session_folder(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    # ABSENT IS NOT "CLEAR" (#2970). `""` is a legitimate explicit un-folder, and
+    # `folder_exists(state, "")` passes, so an EMPTY body used to walk straight through to
+    # the write and remove the session from its folder at `200 {"ok": true}`. Requiring the
+    # key keeps the explicit clear and refuses the accidental one — the same line the
+    # /lifecycle sibling draws with its `nothing_to_set` 400.
+    if "folder_id" not in body:
+        return web.json_response(
+            {"error": "body must include 'folder_id' (use \"\" to remove from its folder)"},
+            status=400,
+        )
     folder_id = str(body.get("folder_id") or "")
     if not folder_exists(state, folder_id):
         return web.json_response({"error": "folder not found"}, status=400)
@@ -231,6 +243,13 @@ async def api_chat_session_pin(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    # ABSENT IS NOT "UNPIN" (#2970). `bool(body.get("pinned", False))` made an empty body
+    # indistinguishable from `{"pinned": false}`, so `PATCH .../pin {}` silently dropped the
+    # pin at `200 {"ok": true}` — and a pin is the user saying *keep this*.
+    if "pinned" not in body:
+        return web.json_response({"error": "body must include 'pinned'"}, status=400)
     session.pinned = bool(body.get("pinned", False))
     save_session_to_history(state, session, force=True)
     state.push_sessions_update()

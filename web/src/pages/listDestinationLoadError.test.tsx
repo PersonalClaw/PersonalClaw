@@ -291,9 +291,21 @@ describe('every useQuery list destination adopts LoadError', () => {
       //
       // The lesson for the next holdout: an exemption written for a FILE can be wrong about one read
       // inside it. Check whether the reason covers every read, or only most of them.
-      // Renders the week grid from a prop, and its own reads go through useState + try/catch rather
-      // than the hook's `error` — a different mechanism, so a different fix. Deliberately not bulked in.
-      'triggers/WeekGridView.tsx',
+      // 🎓 GRADUATED (#498): `triggers/WeekGridView.tsx` was the last entry, and its exemption was
+      // simply WRONG about the code. It read "its own reads go through useState + try/catch rather
+      // than the hook's `error` — a different mechanism, so a different fix". The component had no
+      // try/catch and no useState read at all: it called `useQuery<WeekProjection>` like every other
+      // destination and bound `{ data: week }`, declining to read the `error` the hook already
+      // populated. So it was never a different mechanism — it was the SAME one, and the exemption's
+      // description of it is what kept it out of the family for a whole convergence pass.
+      //
+      // The lesson to carry, alongside the ToolsPage one above: an exemption is prose, and prose
+      // does not fail when the code moves underneath it. Re-read the mechanism against the file
+      // before renewing an entry — this one had been inherited, not verified.
+      //
+      // The list is now EMPTY, which is the converged state, not a disabled rail: the vacuity floor
+      // above (>20 files must use the hook) is what keeps an empty result meaningful, and any new
+      // list destination that renders `<EmptyState` off a `useQuery` without `LoadError` reds here.
     ])
   })
 })

@@ -57,7 +57,7 @@ const INK: Record<Ink, string> = {
 export function TextLink({
   children, href, external = false, onClick, icon: Icon, iconPosition = 'leading',
   iconSize = 13, size = 'inherit', ink = 'primary', disabled = false, title, className,
-  'aria-label': ariaLabel,
+  'aria-label': ariaLabel, 'aria-expanded': ariaExpanded,
 }: {
   children: ReactNode
   href?: string
@@ -74,6 +74,10 @@ export function TextLink({
   /** Accessible name when the visible label alone does not say what the link
    *  opens ("open" beside a row) — same passthrough precedent as forms' id. */
   'aria-label'?: string
+  /** For the disclosure idiom: a TextLink that toggles a folded region (e.g. a
+   *  "Show N more" reveal) forwards its expanded state so the control announces
+   *  it, not just its flipping label. */
+  'aria-expanded'?: boolean
 }) {
   // `py-0.5 -my-0.5`: measured 10 of these at **20px tall** inside `#/tasks`' clickable rows, where
   // SC 2.5.8's spacing exception cannot apply — a link nested in a larger target can never clear it.
@@ -100,14 +104,14 @@ export function TextLink({
 
   if (href !== undefined) {
     return (
-      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} data-type={role} className={cls}
+      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} aria-expanded={ariaExpanded} data-type={role} className={cls}
         {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
         {body}
       </a>
     )
   }
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} data-type={role} className={cls}>
+    <button type="button" onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} aria-expanded={ariaExpanded} data-type={role} className={cls}>
       {body}
     </button>
   )

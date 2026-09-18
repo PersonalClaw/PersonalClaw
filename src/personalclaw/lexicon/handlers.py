@@ -13,6 +13,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.lexicon import get_lexicon_service
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +177,7 @@ async def api_lexicon_reset(request: web.Request) -> web.Response:
             body = await request.json()
         except Exception:
             body = {}
-    if not isinstance(body, dict) or not body.get("confirm"):
+    if not confirm_granted(body):
         return web.json_response(
             {
                 "error": {

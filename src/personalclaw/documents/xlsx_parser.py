@@ -23,6 +23,11 @@ import io
 from typing import Any
 
 from personalclaw.documents.docx_parser import LossReport
+from personalclaw.documents.limits import (
+    MAX_CELLS,
+    assert_archive_within_limits,
+    truncation_detail,
+)
 from personalclaw.documents.model import ALIGNMENTS, Sheet, SheetCell, SheetModel
 
 #: Alignments the model can hold. openpyxl also reports ``general``/``fill``/
@@ -50,13 +55,26 @@ def parse_xlsx(data: bytes) -> tuple[SheetModel, LossReport]:
     the formulas away, which would turn every re-render into a spreadsheet of frozen
     numbers. The cost is that the cached result is not available, and that cost is
     REPORTED (``formula_cached_value``) rather than hidden.
+
+    Raises :class:`~personalclaw.documents.limits.DocumentTooLarge` before ``openpyxl``
+    sees the bytes when the package's XML exceeds the archive caps (#2747). That check is
+    the load-bearing one here: ``load_workbook`` reads parts the model never uses, and a
+    real 8.6 MB business workbook carrying a 92 MB pivot cache measured **88 s inside
+    ``load_workbook`` alone** — before a single cell was walked, so no cell cap could have
+    bounded it.
     """
     from openpyxl import load_workbook
 
+    assert_archive_within_limits(data)
     report = LossReport()
     wb = load_workbook(io.BytesIO(data), data_only=False)
     try:
-        sheets = [_sheet(ws, report) for ws in wb.worksheets]
+        sheets = []
+        remaining = MAX_CELLS
+        for ws in wb.worksheets:
+            sheet, used = _sheet(ws, report, remaining)
+            sheets.append(sheet)
+            remaining -= used
     finally:
         wb.close()
     if wb.defined_names:
@@ -68,21 +86,45 @@ def parse_xlsx(data: bytes) -> tuple[SheetModel, LossReport]:
     return SheetModel(sheets=sheets), report
 
 
-def _sheet(ws: Any, report: LossReport) -> Sheet:
+def _sheet(ws: Any, report: LossReport, budget: int) -> tuple[Sheet, int]:
+    """One worksheet, plus how many cells of *budget* it consumed (#2747).
+
+    The budget is the WORKBOOK's remaining cell allowance, not the sheet's, so 400 sheets
+    of 10,000 cells are capped exactly as one sheet of 4,000,000 is — a per-sheet cap
+    would have been trivially evaded by adding sheets.
+
+    Truncation is reported as a ``size_limit`` loss and never raises: a spreadsheet that
+    is merely enormous still opens, showing what fit, and the loss names the raw route for
+    the whole file. Rows are dropped whole so a truncated sheet is never a ragged grid.
+    """
     name = str(ws.title)
     merges = sorted(str(ref) for ref in ws.merged_cells.ranges)
-    cells = [
-        [_cell(cell, report, f"{name}!{cell.coordinate}") for cell in row]
-        for row in ws.iter_rows(min_row=1, min_col=1)
-    ]
+    cells: list[list[SheetCell]] = []
+    used = 0
+    for row in ws.iter_rows(min_row=1, min_col=1):
+        if used + len(row) > budget:
+            report.add(
+                "size_limit",
+                truncation_detail(
+                    "cells",
+                    MAX_CELLS,
+                    f"Reading stopped at row {len(cells) + 1} of sheet {name!r}; "
+                    "any later row or sheet was not read.",
+                ),
+                location=name,
+            )
+            break
+        cells.append([_cell(cell, report, f"{name}!{cell.coordinate}") for cell in row])
+        used += len(row)
     _report_sheet_features(ws, name, report)
-    return Sheet(
+    sheet = Sheet(
         name=name,
         cells=cells,
         column_widths=_column_widths(ws),
         merges=merges,
         frozen_header=str(ws.freeze_panes or "") == "A2",
     )
+    return sheet, used
 
 
 def _report_sheet_features(ws: Any, name: str, report: LossReport) -> None:

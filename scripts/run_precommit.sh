@@ -22,6 +22,29 @@ set -eu
 repository_root=$(git rev-parse --show-toplevel)
 cd "$repository_root"
 
+# Mutation residue (#2710) — checked FIRST, and before the Python fast path, because
+# this is the one failure a formatter cannot see: a mutation run that was killed leaves
+# the mutation IN THE SOURCE, every suite then honestly passes against mutated code, and
+# a commit can carry it to main. The signal is the on-disk session directory
+# scripts/mutation_harness.py writes before its first edit, so a SIGKILL — which runs no
+# `finally:`, no atexit and no signal handler — cannot erase it. Unconditional and cheap
+# (one directory existence test): a residue in a .py file must block a docs-only commit
+# too, since the residue is in the tree either way.
+if [ -d "$repository_root/.mutation-session" ]; then
+  if [ -x ".venv/bin/python" ]; then
+    mutation_python=".venv/bin/python"
+  else
+    mutation_python="python3"
+  fi
+  # The directory's existence already means "not clean"; this call is what NAMES the
+  # affected files and prints the restore command, and its exit status is the refusal.
+  "$mutation_python" scripts/mutation_harness.py check || {
+    echo "" >&2
+    echo "pre-commit: refusing the commit — restore the tree first." >&2
+    exit 1
+  }
+fi
+
 # Staged, still-present Python files (Added/Copied/Modified/Renamed — not
 # Deleted), NUL-delimited so paths with spaces survive.
 staged_py=$(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py' | tr '\0' '\n')

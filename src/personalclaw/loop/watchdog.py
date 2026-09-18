@@ -749,8 +749,23 @@ class LoopWatchdog:
         file-backed artifact (a live pointer to the on-disk file, not a copy), tagged
         ``loop:<id>`` so the cockpit Outputs panel finds it. Kinds with no document
         deliverable (verifiable/code: the code/check IS the output) declare "" and
-        nothing is registered. Dedup by source_path so a re-completed loop bumps the
-        existing artifact. Best-effort — never wedges completion."""
+        nothing is registered. Best-effort — never wedges completion.
+
+        🔴 TWO WRITERS, ONE DELIVERABLE (#290). This is not the only path into the library
+        for this document: the kind briefs tell the worker to ``artifact_save`` its output
+        *tagged* ``loop:<id>`` (`kinds/goal.py`, `kinds/design.py`), so the same bytes
+        arrive twice and the user saw two rows — identical content, different slugs,
+        different names, one file-backed and one a snapshot, provenance unanswerable.
+
+        The dedupe that was meant to prevent that keyed on ``source_path``, and
+        ``artifact_save`` has no such parameter, so it could never match a worker save in
+        EITHER order. Now:
+          1. ``find_by_source_path`` — the framework's own prior graduation (re-completion).
+          2. ``dedupe.find_same_deliverable`` — the loop tag + byte-identical content, the
+             one pair that exists on both calls. On a hit we ADOPT: same artifact, plus the
+             ``source_path`` that makes it the live pointer, so step 1 owns it from then on.
+        The worker side consults the same rule from ``mcp_artifacts`` — one definition, both
+        ends, so the order the two writers happen to land in stops mattering."""
         try:
             loop = store.get(loop_id)
             if loop is None:
@@ -761,6 +776,7 @@ class LoopWatchdog:
             content = deliverable.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
                 return
+            from personalclaw.artifacts import dedupe as artifact_dedupe
             from personalclaw.artifacts import registry as artifact_registry
 
             prov = artifact_registry.get_provider()
@@ -768,11 +784,18 @@ class LoopWatchdog:
                 return
             source_path = str(deliverable.resolve())
             name = f"{loop.name} — deliverable" if loop.name else f"Loop {loop_id} deliverable"
-            existing = prov.find_by_source_path(source_path)
+            tags = ["loop", f"loop:{loop_id}", loop.kind]
+            existing = prov.find_by_source_path(
+                source_path
+            ) or artifact_dedupe.find_same_deliverable(prov, tags=tags, content=content)
             if existing is not None:
+                # Adopt: attach the pointer (a no-op when it is already ours) and record the
+                # loop tags, so the worker's row becomes THE deliverable rather than a twin.
                 prov.update(
                     existing.slug,
                     content=content,
+                    source_path=source_path,
+                    tags=sorted(set(existing.tags) | set(tags)),
                     snapshot=True,
                     event_type="iterated",
                     actor="agent",
@@ -786,7 +809,7 @@ class LoopWatchdog:
                 source_path=source_path,
                 actor="agent",
                 description=(loop.task[:280] if loop.task else ""),
-                tags=["loop", f"loop:{loop_id}", loop.kind],
+                tags=tags,
             )
         except Exception:
             logger.debug("deliverable→artifact registration failed for %s", loop_id, exc_info=True)

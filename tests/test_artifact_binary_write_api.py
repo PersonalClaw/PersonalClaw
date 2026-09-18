@@ -820,6 +820,45 @@ async def test_unparseable_stored_bytes_are_a_400_not_a_500(patched_native) -> N
 
 
 @pytest.mark.asyncio
+async def test_an_oversized_document_is_a_413_that_names_the_way_out(patched_native) -> None:
+    """#2747's refusal reaches the wire as its OWN code, with the escape in the message.
+
+    Two things a caller must be able to tell apart and could not: "this file is not a
+    document of that kind" (``model_parse_failed``, 400) and "this document is intact but
+    too large for the editor" (``document_too_large``, 413). Answering the first for the
+    second tells a user their spreadsheet is corrupt.
+
+    And the way OUT is asserted, not just documented — a refusal a user cannot get past is
+    worse than the CPU it saved. ``…/raw`` still serves the whole file.
+    """
+    import io
+    import zipfile
+
+    from personalclaw.documents.limits import MAX_XML_PART_BYTES
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        # Compresses to a few KB, so the 16 MiB write cap is not what refuses it — the
+        # point of the issue is that the write cap bounds the COMPRESSED size only.
+        archive.writestr("word/document.xml", b"<a>" + b"x" * (MAX_XML_PART_BYTES + 1) + b"</a>")
+    payload = buf.getvalue()
+    assert len(payload) < 1_000_000, "the fixture must be small compressed, or it proves nothing"
+
+    prov = patched_native
+    art = _docx_artifact(prov, data=payload)
+    client = await _client()
+    try:
+        resp = await client.get(f"/api/artifacts/{art.slug}/model")
+        assert resp.status == 413
+        body = await resp.json()
+        assert body["error"]["code"] == "document_too_large"
+        assert "raw" in body["error"]["message"]
+        assert (await client.get(f"/api/artifacts/{art.slug}/raw")).status == 200
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_a_restricted_session_cannot_save_a_model(patched_native) -> None:
     art = _docx_artifact(patched_native)
     with patch.object(handlers_mod, "_is_restricted_session", return_value=True):

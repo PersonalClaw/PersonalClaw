@@ -56,9 +56,8 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
-    is_read_only_bash,
+    read_only_command,
     resolve_effective_risk,
-    shell_command,
 )
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
@@ -3533,10 +3532,6 @@ async def run_chat(
                         continue
                     _pre_tool_hooks_fired = True
                     # Hooks passed — fall through to trust-reads/trust/yolo/interactive
-                # SCOPED: this feeds the card's "read-only" indicator below. Reading a
-                # `command` key off a non-shell tool labelled a destructive call as a
-                # read to the human deciding on it — the presentational half of #443.
-                cmd = shell_command(event.title, event.tool_kind, event.tool_input)
                 yolo_active = state.is_yolo_active()
                 # Effective risk of THIS call (per-invocation): the tool's declared
                 # risk downgraded to safe when it's a read-only invocation. The
@@ -3769,9 +3764,17 @@ async def run_chat(
                     sanitized, _ = redact_exfiltration_urls(input_text)
                     sanitized, _ = redact_credentials(sanitized)
                     perm_meta["tool_input"] = sanitized
-                # Flag read-only bash commands for context-aware buttons
-                if cmd:
-                    perm_meta["is_read_only"] = "1" if is_read_only_bash(cmd) else ""
+                # The command-screening verdict, for the context-aware buttons AND for the
+                # card's blast-radius derivation (#2821). Tri-state from the one owner:
+                # None means "not a shell call", which must stay distinguishable from
+                # "screened and it mutates" — the consumer treats absence as
+                # not-established, never as verified-absent.
+                read_only = read_only_command(event.title, event.tool_kind, event.tool_input)
+                if read_only is not None:
+                    # Persisted spelling stays "1"/"" — this string is already in every
+                    # session transcript's `cls` column and rehydrating history must keep
+                    # reading it. The live wire below carries a real boolean.
+                    perm_meta["is_read_only"] = "1" if read_only else ""
                 # Effective risk of this call (computed above) — a user-facing
                 # INDICATOR on the card so the human can weigh the decision. It does
                 # not gate: an explicit trust/YOLO still auto-approves everything.
@@ -3795,6 +3798,11 @@ async def run_chat(
                         "tool_input": perm_meta.get("tool_input", ""),
                         "tool_purpose": event.tool_purpose or "",
                         "risk": effective_risk,
+                        # #2821: the third input Contract C2 names. Computed per approval
+                        # since #443 and dropped on the floor until now — the frontend
+                        # declared the parameter and one branch of its derivation was
+                        # unreachable in production. `null` when the call runs no shell.
+                        "is_read_only": read_only,
                     },
                 )
                 loop = asyncio.get_running_loop()

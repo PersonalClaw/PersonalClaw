@@ -11,6 +11,7 @@ attributed as the agent so updates snapshot + emit lifecycle events.
 import logging
 from typing import Any
 
+from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.mcp_core import _resolve_session_key
 
 logger = logging.getLogger(__name__)
@@ -574,6 +575,35 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if content is None:
                 _audit("denied", error="no content")
                 return "Error: provide content or content_file"
+            # Same-deliverable dedup (#290): a save tagged `loop:<id>` whose bytes are
+            # already in the library under that same tag IS that artifact, whatever the
+            # model chose to call it. The framework's completion-time graduation of a
+            # loop's deliverable carries the same tag, so without this the two writers
+            # produce two byte-identical rows for one document — and `find_similar` below
+            # cannot see it, because it matches on the NAME's slug and the two names
+            # differ. Updated in place rather than refused with a hint: the worker is
+            # ending its turn, so a hint has no next turn to land in.
+            if not args.get("slug") and not args.get("force"):
+                same = artifact_dedupe.find_same_deliverable(
+                    prov, tags=args.get("tags"), content=content or ""
+                )
+                if same is not None:
+                    upd = prov.update(
+                        same.slug,
+                        content=content,
+                        snapshot=True,
+                        event_type="iterated",
+                        actor="agent",
+                        session_id=sk,
+                        tags=sorted(set(same.tags) | set(args.get("tags") or [])),
+                    )
+                    _audit("deduped", same.slug)
+                    version = upd.version if upd is not None else same.version
+                    return (
+                        f"That content is already saved as '{same.name}' "
+                        f"(slug: {same.slug}) under the same tag — updated it in place "
+                        f"(version {version}) instead of saving a duplicate."
+                    )
             # List-before-save dedup (ARTIFACTS S1): a fresh save (no explicit slug,
             # not forced) whose name matches an existing artifact refuses with a hint
             # so the agent updates the existing one instead of minting a "-2" twin.

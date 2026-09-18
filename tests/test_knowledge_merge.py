@@ -562,6 +562,35 @@ def test_the_route_refuses_a_merge_without_confirm_and_deletes_nothing(store):
     assert _collections_of(store, keep) == set(), "nothing may have moved"
 
 
+@pytest.mark.parametrize("said_no", ["false", "False", "0", "no", {"nested": 1}, ["x"], 1, "true"])
+def test_the_route_refuses_a_confirm_that_is_not_the_literal_true(store, said_no):
+    """Issue 3000. The gate was `if not body.get("confirm")`, and `bool("false")` is `True`, so a
+    body that literally says do-not-confirm read as confirmed and this route DELETED the
+    merged-away item at HTTP 200. Every truthy JSON value was a yes; only `0`/`[]`/`{}` refused.
+
+    `"false"` is the value clients actually send — a bool that has been through a template, a
+    query string or a model's JSON emitter arrives as a string. `"true"` is refused too, which
+    is the same bar the nine strict sibling doors on this gateway already set: only a predicate
+    that demands the literal can tell a yes from a stringified no.
+    """
+    keep, loser = _item(store, "Keep"), _item(store, "Loser")
+    shelf = store.create_collection(name="Archive")
+    store.add_to_collection(shelf, loser)
+
+    resp, data = _call(
+        store,
+        "merge_items",
+        "POST",
+        f"/api/knowledge/items/{keep}/merge",
+        match_info={"id": keep},
+        body={"merge_id": loser, "confirm": said_no},
+    )
+
+    assert resp.status == 400 and "confirm" in data["error"]
+    assert store.get_item(loser) is not None, f"confirm={said_no!r} deleted the merged-away item"
+    assert _collections_of(store, keep) == set(), "nothing may have moved"
+
+
 def test_the_route_refuses_a_self_merge(store):
     """The path id and the body id being equal would cascade-delete the survivor."""
     keep = _item(store, "Keep")

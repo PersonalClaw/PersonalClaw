@@ -160,6 +160,29 @@ def _persistable(msgs: list[dict]) -> list[dict]:
     return [m for m in msgs if m.get("role", "assistant") not in _NON_TRANSCRIPT_ROLES]
 
 
+#: Meta-line keys a session can carry without anyone having written to it — the structural
+#: ones plus everything ``POST /api/chat/sessions`` sets from the create request. Used by
+#: :func:`save_session_to_history` to tell a message-less conversation someone actually
+#: titled/pinned/coloured/filed (persist it — #2969) from a pristine empty tab (don't).
+_CREATE_TIME_META_KEYS = frozenset(
+    {
+        "_type",
+        "created_at",
+        "last_consolidated",
+        "memory_mode",
+        "model",
+        "agent",
+        "mode",
+        "reasoning_effort",
+        "workspace_dir",
+        "project_id",
+        "task_mode",
+        "tab_id",
+        "app",
+    }
+)
+
+
 def _persisted_message_count(state: DashboardState, history_key: str) -> int:
     """How many transcript messages the PERSISTED side already holds for *history_key*.
 
@@ -673,7 +696,7 @@ def save_session_to_history(
     a link/unlink) has to flush it, or the thread it just changed is lost on restart.
     """
     msgs = messages if messages is not None else session.messages
-    if not state.conversation_log or not msgs:
+    if not state.conversation_log:
         return
     # Save back under the key this session is actually persisted under — the one owner
     # of on-disk identity (a channel-provider thread keeps its own bare key; a dashboard
@@ -708,6 +731,29 @@ def save_session_to_history(
     # predicate (`session._resumed_count = 0`), which also corrupted the count
     # `chat_fork` reads off the same field; they now pass `force` and say so.
     outgoing = _persistable(msgs)
+    # 🔴 A CONVERSATION WITH NO TURNS YET IS STILL REAL STATE (#2969). This function used
+    # to return on `not msgs` before it ever reached the meta line, so a brand-new chat's
+    # title, pin, colour, folder, tags and `never_archive` were accepted `200 {"ok": true}`
+    # and then lost on restart — and `force=True` could not reach past it either, so
+    # /pin and /folder asking for an immediate write got nothing. `never_archive` was the
+    # sharpest case: the one flag whose entire job is protection could not protect itself.
+    #
+    # The transcript-empty case now falls through to the single write below, which emits
+    # the meta line and zero message lines — a metadata-only persist, no second write path.
+    #
+    # It is gated on the DISK holding no transcript either, and that gate is what makes it
+    # safe under `force`. `force` means "my buffer is authoritative, write it even though it
+    # is shorter"; it has never meant "write my EMPTY buffer over five persisted turns", and
+    # `save_all_sessions_to_history` passes it for every resident session on shutdown. That
+    # case returns without writing, exactly as `not msgs` did — and it now also covers a
+    # buffer holding only non-transcript rows (chunk/done/streaming/queued/permission),
+    # which `not msgs` let through to a forced full rewrite.
+    if not outgoing and _persisted_message_count(state, history_key):
+        logger.debug(
+            "metadata-only save skipped for %s: buffer holds no transcript, disk does",
+            history_key,
+        )
+        return
     if not force:
         _persisted = _persisted_message_count(state, history_key)
         if _persisted and len(outgoing) <= _persisted:
@@ -832,6 +878,16 @@ def save_session_to_history(
         _app = getattr(session, "_app", "") or existing_meta.get("app", "")
         if _app:
             meta_line["app"] = _app
+        # A message-less session is only worth a file if something was written to it AFTER
+        # it was created. Every key below is one the CREATE path itself populates, so a
+        # meta line carrying nothing else describes a pristine empty tab — and minting a
+        # file for each of those on every shutdown flush would resurrect them all on the
+        # next restart. Derived from the meta line rather than a hand-listed set of session
+        # attributes, so a newly persisted field counts as real state without this gate
+        # having to learn about it.
+        if not outgoing and not (set(meta_line) - _CREATE_TIME_META_KEYS):
+            logger.debug("metadata-only save skipped for %s: nothing set since create", history_key)
+            return
         lines = [json.dumps(meta_line) + "\n"]
         for m in outgoing:
             role = m.get("role", "assistant")

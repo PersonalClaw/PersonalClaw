@@ -80,6 +80,24 @@ class LoopKindStrategy(Protocol):
     def provisions_tasks(self) -> bool:
         return False
 
+    #: Whether this kind's engine actually ADVANCES ``phase_status`` — i.e. whether a
+    #: plan phase ever reaches ``done`` for a loop of this kind. Only a kind with an
+    #: ``on_new_cycle`` hook that calls ``store.set_phase_status`` may declare True
+    #: (today: code + design). Absent ⇒ False (read via getattr, so a kind need not
+    #: declare it), and ``tests/test_loop_kinds.py`` asserts each declaration against
+    #: the kind module's real ``set_phase_status`` call sites.
+    #:
+    #: This exists because a plan[] is NOT a progress tracker. Every kind may carry a
+    #: descriptive ``plan`` — research plans five objectives, goal lists sub-goals — but
+    #: only these two maintain per-phase done-state. The frontend used to decide with
+    #: ``kind !== 'goal'``, so a COMPLETED 20-cycle research run rendered "0/5 stages"
+    #: (#448): the reader's phased set was three kinds wider than the writer set, and
+    #: nothing tied the two enumerations together. The declaration travels to the FE on
+    #: the redacted loop view as ``phase_tracked``, so there is one source of truth.
+    @property
+    def tracks_phases(self) -> bool:
+        return False
+
     def default_kind_config(self) -> dict:
         """The initial ``kind_config`` for a freshly-created loop of this kind
         (goal_type/granularity, entry_stage, design targets, …)."""

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ChevronDown, Pencil, Trash2, Upload, FilePlus2, FolderPlus, MoreHorizontal } from 'lucide-react'
+import { ChevronRight, ChevronDown, GitBranch, Pencil, Trash2, Upload, FilePlus2, FolderPlus, MoreHorizontal } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { FsEntry } from '../../../lib/api'
 import { menuCursorKeydown, useMenuCursor } from '../../../lib/useMenuCursor'
@@ -241,6 +241,21 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
             <span className="truncate text-[0.8125rem]" style={{ color: isActive ? 'var(--color-on-surface)' : undefined }}>{entry.name}</span>
             {!entry.is_dir && artifactPaths.has(entry.path) && (
               <span className="ml-1 size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Saved as an artifact" />
+            )}
+            {/* A git repo ROOT nested inside the browsed root. The per-file badges next to
+              * this come from `gitStatuses`, which is fetched for the ACTIVE root only — and
+              * no root tab is ever a repo, so a project checked out one level down showed no
+              * branch chip and no badges, and looked identical to an unversioned folder
+              * (issue 428). This marker is what makes it findable: it says "there is a repo
+              * here, open it" — exactly the step that lights the rest of the surface up. */}
+            {entry.is_dir && entry.repo && (
+              // Title on the WRAPPER, not the icon: lucide's props omit `title`, and this
+              // matches the two markers either side of it (the artifact dot and the git
+              // badge) rather than introducing a third way to label a row affordance.
+              <span className="ml-1 inline-flex shrink-0 text-on-surface-low/70"
+                title="Git repository — open it to see its branch and file status">
+                <GitBranch size={12} aria-hidden="true" />
+              </span>
             )}
             {badge && (
               // On row hover/focus the "⋯" actions button overlays the right edge —

@@ -58,6 +58,12 @@ export interface WorkflowViewModel {
   nodes: WorkflowNodeState[]
   doneCount: number
   totalCount: number
+  /** Nodes whose output was served from the resume cache (WF2-A1) rather than re-run.
+   *
+   *  A COUNT, not a per-row flag, because that is the shape of the question: "did my edit
+   *  re-run anything?" is about the whole run, and the compact chat card renders only the
+   *  currently-active node — which is by definition never a cache hit. */
+  cachedCount: number
   /** Nodes that reached a terminal state, over the total — the progress fraction. */
   progress: number
   tokens: number
@@ -100,6 +106,7 @@ export function foldSnapshot(snap: WorkflowRunDetailData): WorkflowViewModel {
     nodes,
     doneCount: done,
     totalCount: nodes.length,
+    cachedCount: nodes.filter((n) => n.cached).length,
     progress: nodes.length ? done / nodes.length : 0,
     tokens: snap.tokens ?? 0,
     elapsedSecs: snap.elapsed_secs ?? 0,
@@ -259,6 +266,12 @@ function patchNode(
     state,
     attempt: existing?.attempt,
     degraded_reason: (env.degraded_reason as string) || '',
+    // Cache-origin (WF2-A1). Read from THIS event, deliberately not carried forward like
+    // `item_*` below: only a cache hit publishes `cached`, so a re-run after a mid-flight edit
+    // emits `node_done` without it — and inheriting `existing.cached` would keep the row
+    // claiming a cache hit the edit just invalidated, which is the exact question the flag
+    // exists to answer.
+    cached: env.cached === true,
     failure: existing?.failure ?? null,
     // Per-item context arrives on `node_started` and is NOT re-sent on `node_done` — so it is
     // carried forward rather than overwritten, or a finished item would lose the label that
@@ -297,6 +310,10 @@ function recount(vm: WorkflowViewModel): WorkflowViewModel {
     ...vm,
     doneCount: done,
     totalCount: vm.nodes.length,
+    // Recounted from the nodes on every fold rather than incremented on a `cached` event: a
+    // rewind clears the flag on the node it re-runs, and a counter that only ever went up
+    // would keep reporting a cache hit the re-run superseded.
+    cachedCount: vm.nodes.filter((n) => n.cached).length,
     progress: vm.nodes.length ? done / vm.nodes.length : 0,
   }
 }

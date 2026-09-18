@@ -22,6 +22,7 @@ import re
 
 from aiohttp import web
 
+from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
 from personalclaw.http_errors import json_error
 from personalclaw.sel import (
     _VERIFY_WINDOW,
@@ -120,7 +121,14 @@ async def api_security_audit(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
 
-    unknown = sorted(set(request.query) - _QUERY_PARAMS)
+    # `RESERVED_QUERY_PARAMS` comes out FIRST. `?token=` is the gateway's query-token
+    # credential, read by the auth middleware and deliberately left in `request.query`, so it
+    # reaches every handler. Diffing the whole query string against a filter allowlist made
+    # this the only route in the tree a query-token client could not call at all (issue 2927):
+    # without the token, auth answered 403; with it, this check answered 400 `unknown_filter`.
+    # It is SUBTRACTED rather than added to `_QUERY_PARAMS` on purpose — `token` is a
+    # credential, not a filter, and it must never travel into the SEL query as one.
+    unknown = sorted(set(request.query) - _QUERY_PARAMS - RESERVED_QUERY_PARAMS)
     if unknown:
         # Fail closed. A typo'd filter that is ignored returns the WHOLE log while the
         # caller believes it was narrowed.
@@ -191,11 +199,16 @@ async def api_security_audit(request: web.Request) -> web.Response:
             # The panel used to keep its own two-word list and missed most of what the
             # writers emit (see sel.AUDIT_OUTCOME_FAMILIES); shipping them means a word
             # added to a family reaches the UI without anyone editing the dashboard.
+            # `tone` travels with them for the same reason: the panel's own outcome->colour
+            # map had drifted from this table (`not_found` is a `failed` member and had no
+            # entry, so a failure rendered neutral), and each ROW now carries the tone the
+            # same matcher assigned it.
             "outcome_families": [
                 {
                     "key": f["key"],
                     "label": f["label"],
-                    "values": list(f["values"]),  # type: ignore[call-overload]
+                    "tone": f["tone"],
+                    "values": list(f["values"]),
                 }
                 for f in AUDIT_OUTCOME_FAMILIES
             ],

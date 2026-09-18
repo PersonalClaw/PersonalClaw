@@ -10,7 +10,9 @@ own negative control:
 2. **An empty card and a broken card are different answers.** A zero-skill card is a 200
    carrying every ``CARD_REQUIRED_KEYS`` entry; a catalog that could not be read is a 503
    with ``a2a_catalog_unavailable``. Both directions are asserted, including the case the
-   service layer's own exception-swallowing hides.
+   service layer's own exception-swallowing hides. A THIRD answer joined these in #2620 —
+   an instance that cannot state its own address refuses with ``a2a_origin_unresolved``
+   rather than publishing a guessed one; ``test_a2a_card_origin.py`` owns that case.
 3. **Artifacts are fenced by ``security.fence_untrusted``**, reached through the single
    ``inbound.framing`` wrapper — asserted by patching ``fence_untrusted`` itself and
    requiring the sentinel to reach the wire, so a second hand-rolled fence would red.
@@ -52,6 +54,13 @@ def _isolate(tmp_path, monkeypatch):
     recorded and therefore never undoes.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    # A gateway is serving these routes, so it has published its bound port (#2620) —
+    # `gateway_base.publish()` writes this env var right after bind, and the A2A surface
+    # is only reachable through a running gateway. Without it the card correctly refuses
+    # with `a2a_origin_unresolved` (it will not advertise a guessed address to a peer),
+    # which would mask every OTHER property this module asserts behind one 503.
+    # `test_a2a_card_origin.py` owns the unresolvable case deliberately.
+    monkeypatch.setenv("PERSONALCLAW_PORT", "10771")
     from personalclaw.config.loader import config_dir
 
     assert str(config_dir()) == str(tmp_path), "the isolated-home redirect did not bind"

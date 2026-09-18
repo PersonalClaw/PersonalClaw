@@ -177,9 +177,8 @@
         ]
       },
       "src/personalclaw/workflows/gate_policy.py": {
-        "count": 2,
+        "count": 1,
         "sites": [
-          "verdict-type:HoldVerdict",
           "verdict-type:PolicyVerdict"
         ]
       },
@@ -207,10 +206,10 @@
       "by_family": {
         "durable-write": 5,
         "http-error-envelope-helper": 4,
-        "verdict-type": 24
+        "verdict-type": 23
       },
       "files": 29,
-      "sites": 33
+      "sites": 32
     }
   },
   "structural-import-direction": {

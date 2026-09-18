@@ -212,7 +212,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
  *  suggestion chip enough times that it stopped being suggested), with an Unmute control.
  *  A muted agent is otherwise invisible on this page — the mute is a routing preference the
  *  user set implicitly, so surfacing it here is the one place they can see and reverse it. */
-function RoutingStatusView({ agentName }: { agentName: string }) {
+export function RoutingStatusView({ agentName }: { agentName: string }) {
   const [muted, setMuted] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
