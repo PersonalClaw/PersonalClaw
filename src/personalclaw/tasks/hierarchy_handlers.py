@@ -10,6 +10,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import is_sensitive_path, is_system_path
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.workflows import containers, leases
@@ -818,7 +819,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not isinstance(body, dict) or not body.get("confirm"):
+    if not confirm_granted(body):
         return web.json_response(
             {
                 "error": {

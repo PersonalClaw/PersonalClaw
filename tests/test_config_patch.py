@@ -335,6 +335,75 @@ class TestEgressValidator:
             assert "bare domain" in (await resp.json())["error"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["*", "*.example.com", "example.*", "a*b.com"])
+    async def test_rejects_a_wildcard_host(self, tmp_config, bad) -> None:
+        """Issue 2956. These were accepted with 200 OK, persisted, and echoed back by
+        `GET /api/security/egress` as configured policy — while `net.guard.host_matches`
+        implements exactly one rule ("a bare domain covers its subdomains") and no glob, so
+        every one of them matched NOTHING. `deny_hosts: ["*.example.com"]` therefore read as
+        blocking a domain family and blocked nothing, which is strictly weaker than the bare
+        form the user probably meant. The refusal names that form.
+        """
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(
+                c,
+                "security.egress",
+                {"allow_hosts": [], "deny_hosts": [bad], "allow_private": False},
+            )
+            assert resp.status == 400
+            err = (await resp.json())["error"]
+            assert "wildcard" in err and "bare domain" in err
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["", ".", "..", "-bad.com", "bad-.com", "a..b"])
+    async def test_rejects_a_host_no_host_can_ever_match(self, tmp_config, bad) -> None:
+        """The other half of 2956: `host_matches` skips a pattern that normalises to nothing
+        (`if not p: continue`), so `""` and `"."` were accepted, shown in the UI, written to
+        `config.json` — and inert. An entry that can never match is refused, not stored."""
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(
+                c,
+                "security.egress",
+                {"allow_hosts": [bad], "deny_hosts": [], "allow_private": False},
+            )
+            assert resp.status == 400
+            assert "can ever match" in (await resp.json())["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_host_is_normalised_to_what_the_matcher_compares(self, tmp_config) -> None:
+        """`host_matches` lowercases and strips a trailing dot before comparing, so storing the
+        raw value would leave `config.json` and the Settings panel showing something other than
+        what is enforced — the split-brain this module's `sanitize` hook exists to prevent."""
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(
+                c,
+                "security.egress",
+                {
+                    "allow_hosts": ["EXAMPLE.COM."],
+                    "deny_hosts": ["Evil.COM"],
+                    "allow_private": False,
+                },
+            )
+            assert resp.status == 200
+            saved = json.loads(tmp_config.read_text())["security"]["egress"]
+            assert saved["allow_hosts"] == ["example.com"]
+            assert saved["deny_hosts"] == ["evil.com"]
+
+    @pytest.mark.asyncio
+    async def test_an_ipv4_literal_is_still_accepted(self, tmp_config) -> None:
+        """The documented homelab case. `net.guard` matches against `urlparse().hostname`, so a
+        literal address is a legitimate entry and the new host rule must not close it."""
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(
+                c,
+                "security.egress",
+                {"allow_hosts": ["192.168.1.5", "nas"], "deny_hosts": [], "allow_private": False},
+            )
+            assert resp.status == 200
+            saved = json.loads(tmp_config.read_text())["security"]["egress"]
+            assert saved["allow_hosts"] == ["192.168.1.5", "nas"]
+
+    @pytest.mark.asyncio
     async def test_rejects_non_dict(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
             resp = await _patch(c, "security.egress", ["not", "a", "dict"])

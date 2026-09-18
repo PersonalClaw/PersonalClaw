@@ -136,18 +136,26 @@ Setting `public_url` changes three things:
 |---|---|---|
 | Session cookie | gains `Secure` | so the browser refuses to send it over plain http |
 | WebSocket CSP | allows `wss://<your-host>` | otherwise the dashboard loads and then silently receives nothing |
-| `X-Forwarded-*` | honored **only** from `trusted_proxies` | see below |
+| `X-Real-IP` | honored **only** from `trusted_proxies` | see below |
 
 `trusted_proxies` is the address your tunnel connects **from**, as PersonalClaw sees it — usually
 `127.0.0.1` for a local tunnel daemon, or the container/bridge address in Docker (e.g.
 `172.18.0.0/16`). Single addresses and CIDR blocks both work.
 
-**Why this list matters.** Your tunnel tells PersonalClaw the real client address via a header;
-without it every request looks like it came from the tunnel. But any process that can reach the
-gateway could *claim* to be your tunnel and set that header to anything — which would let it move
-a session's IP binding. So on an exposed instance the header is believed **only** from a peer you
+**Why this list matters.** Your tunnel tells PersonalClaw the real client address via
+`X-Real-IP`; without it every request looks like it came from the tunnel. But any process that
+can reach the gateway could *claim* to be your tunnel and set that header to anything — which
+would let it move a session's IP binding. So on an exposed instance the header is believed **only** from a peer you
 named here. Leave it empty and no forwarded header is trusted at all (safe, but sessions bind to
 the tunnel's address rather than the real client's).
+
+`X-Real-IP` is the **only** forwarded header PersonalClaw reads. `X-Forwarded-For` and
+`X-Forwarded-Proto` are ignored on every path, trusted peer or not — one source for the client
+address beats two with a precedence rule, and the `Secure`-cookie/`wss://` decisions come from
+`public_url`, which is your own statement rather than a header anyone upstream can set.
+Configure your proxy to send `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`).
+`tests/test_forwarded_header_docs_match_code.py` fails the build if this promise and the code
+ever drift apart again.
 
 `public_url` is deliberately **not** editable from the Settings UI — widening a network surface
 should be a deliberate file edit, not a click.

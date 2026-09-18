@@ -34,7 +34,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
-from personalclaw.safety_flags import strict_bool
+from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
 from personalclaw.workflows.review_service import apply_triage, review_findings
@@ -793,7 +793,7 @@ async def api_run_drop(request: web.Request) -> web.Response:
     # `confirm` may arrive as a form field ahead of the files (a browser sends parts in order), so
     # it is read as the stream advances rather than from a pre-parsed body — request.post() would
     # buffer every file into memory to give the same answer.
-    confirmed = request.query.get("confirm", "").lower() == "true"
+    confirmed = confirm_granted_query(request.query)
     accepted: list[dict[str, Any]] = []
     while True:
         try:
@@ -999,7 +999,7 @@ async def api_run_edit(request: web.Request) -> web.Response:
         ops,
         supervisor=_supervisor(request),
         expect_version=int(expect) if isinstance(expect, (int, float)) else None,
-        confirm_cascade=bool(body.get("confirm_cascade")),
+        confirm_cascade=confirm_granted(body, "confirm_cascade"),
         actor="user",
     )
     _audit(request, "workflow_run_edit", "success" if result.get("ok") else "failure", run_id)

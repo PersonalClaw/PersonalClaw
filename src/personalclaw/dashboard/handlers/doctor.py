@@ -22,6 +22,7 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.resilience import degraded
 from personalclaw.resilience.doctor import DoctorContext, run_capability, run_doctor
+from personalclaw.safety_flags import confirm_granted
 
 # Full-report cache (§11 risk mitigation: 30s TTL so the dashboard rollup poll
 # reuses one run instead of re-probing every capability each tick).
@@ -135,7 +136,7 @@ async def api_doctor_fix_apply(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not (isinstance(body, dict) and body.get("confirm") is True):
+    if not confirm_granted(body):
         return json_error("confirm_required", status=400)
     from personalclaw.resilience import fixes as _fixes
 
@@ -665,7 +666,7 @@ async def api_doctor_remediation_run(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not (isinstance(body, dict) and body.get("confirm") is True):
+    if not confirm_granted(body):
         return json_error("confirm_required", status=400)
 
     def _run() -> dict:

@@ -1352,8 +1352,9 @@ class DashboardConfig:
         metadata=_meta(
             "Trusted Proxies",
             "Addresses or CIDR blocks of the proxy/tunnel in front of this gateway. "
-            "X-Forwarded-Proto / X-Forwarded-For are honored ONLY from these peers — "
-            "anyone else can forge them. Empty (the default) trusts none.",
+            "X-Real-IP is honored ONLY from these peers — anyone else can forge it. "
+            "Empty (the default) trusts none. No other forwarded header is read: "
+            "X-Forwarded-For and X-Forwarded-Proto are ignored everywhere.",
         ),
     )
     restore_sessions: bool = field(
