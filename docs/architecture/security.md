@@ -27,11 +27,19 @@ from configuration even though their request-side halves are built.
 | `oauth2` | ❌ **not selectable** | OIDC JWT verification is implemented (`auth/oidc.py`, imported lazily only in this mode) but no env value reaches it. |
 
 **What that means in practice.** Setting `PERSONALCLAW_AUTH_MODE=api_key` leaves
-the gateway on `local_token` and silently ignores `PERSONALCLAW_API_KEY`. It fails
+the gateway on `local_token` and ignores `PERSONALCLAW_API_KEY`. It fails
 **closed** — a client presenting `Authorization: Bearer <that key>` is refused, not
 admitted — so the cost is lost access, not weakened auth. But it is a configuration
 that reads as working and is not, which is why it is stated here rather than left to
 be discovered.
+
+**The runtime says so out loud.** A mode it cannot honor — `api_key`, `oauth2`, or
+any unrecognised string — is not applied *silently*: `classify_auth_mode_request()`
+in `auth/modes.py` describes the request, `AuthConfig.from_env()` logs a warning
+naming the requested mode, that it was not applied, and the mode actually in force,
+and `personalclaw doctor` prints the same sentence as an `auth mode:` row. This is
+legibility only — it changes no admission decision, and `doctor`'s exit status is
+unaffected.
 
 Wiring the selector is tracked as roadmap scope, and it carries one design question
 worth settling deliberately rather than in passing: whether an unhonourable mode
