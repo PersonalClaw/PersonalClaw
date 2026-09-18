@@ -714,6 +714,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     r"|sk-proj-[A-Za-z0-9_-]{20,}"  # OpenAI project key
     r"|sk-[A-Za-z0-9]{32,}"  # OpenAI classic / compatible
     r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub token
+    r"|hf_[A-Za-z0-9]{20,}"  # HuggingFace token (static, broad-privilege — LMMV-4)
     r"|AIza[0-9A-Za-z_-]{35}"  # Google API key
     # Measured while wiring the ConfirmationRequest preview (S57): the patterns above missed
     # THREE shapes that a real payload carries. `sk-[A-Za-z0-9]{32,}` cannot match a key with

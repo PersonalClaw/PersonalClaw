@@ -35,6 +35,8 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsAvailable: () => Promise.resolve([]),
       modelsActive: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      // The panel's HuggingFace-token section (LMMV-4) fetches on mount too.
+      hfTokenStatus: () => Promise.resolve({ sources: [] }),
       // ES-4: the panel reads the judge benchmark's tier recommendations on mount to offer
       // the one-click rebind. 404 (no benchmark yet) is the ordinary case, so a reject here
       // is what the panel really sees on a fresh install.

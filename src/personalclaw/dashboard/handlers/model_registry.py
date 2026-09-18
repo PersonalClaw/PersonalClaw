@@ -207,6 +207,21 @@ def _step_down_name(
     return None
 
 
+async def _hf_token_ready() -> bool | None:
+    """Whether a gated download can proceed without pre-warning for a token (LMMV §5).
+
+    Delegates to the HF-token cascade's server-side pre-warn policy. Best-effort: returns
+    ``None`` when the cascade can't answer, so the caller leaves ``token_ready`` off the row
+    and does not pre-warn on a transient failure (never a false nag)."""
+    try:
+        from personalclaw.local_models import hf_token
+
+        return await hf_token.gated_prewarn_ok()
+    except Exception:  # noqa: BLE001 — a pre-warn probe must never break the models list
+        logger.debug("hf token pre-warn check failed", exc_info=True)
+        return None
+
+
 async def api_models_available(request: web.Request) -> web.Response:
     """GET /api/models/available — discover models from all configured providers.
 
@@ -272,6 +287,14 @@ async def api_models_available(request: web.Request) -> web.Response:
     # header can never quote different capacities.
     host, budget_bytes, hide_unrunnable = await asyncio.to_thread(_fit_probe)
 
+    # Gated pre-warn (LMMV §4.3/§5): a gated model row carries a server-side ``token_ready``
+    # computed from the HF-token cascade, so the UI can warn BEFORE the user clicks Download
+    # when no valid token is present — instead of letting the download fail. Computed at most
+    # once per response (only when a gated row is actually present) and whoami-cached, so a
+    # frequent list render never hammers HuggingFace. Best-effort: if the cascade can't answer,
+    # ``token_ready`` stays absent and the UI simply doesn't pre-warn (never a false nag).
+    token_ready: bool | None = None
+
     # Key each card by the REGISTRY key (the app name) — matches the Providers UI's ext
     # name AND the ``provider:model`` binding refs — not the provider's internal .name.
     for pkey, prov in _local_registered():
@@ -308,6 +331,10 @@ async def api_models_available(request: web.Request) -> web.Response:
             d["fit_reason"] = assessment.reason
             d["fit_need_mb"] = round(assessment.need_bytes / _BYTES_PER_MB, 1)
             d["fit_step_down"] = _step_down_name(rows, family, assessment.verdict, budget_bytes)
+            if d.get("gated"):
+                if token_ready is None:
+                    token_ready = await _hf_token_ready()
+                d["token_ready"] = token_ready
             models.append(d)
         result.append(
             {
