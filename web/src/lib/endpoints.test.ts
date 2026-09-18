@@ -468,6 +468,25 @@ describe('endpointSocketUrl', () => {
     expect(endpointSocketUrl('wss://already.wss')).toBeUndefined()
   })
 
+  it('refuses a SUBPATH base_url instead of silently dropping it (RUA-7)', () => {
+    // The gateway serves `/api/ws` at its ORIGIN ROOT — there is no base-path mode, and seven
+    // root-origin assumptions (PWA manifest scope, service-worker scope, …) depend on that. So a
+    // row like `https://h/claw` is a broken registry entry, exactly like a `file:` or bare-host row.
+    //
+    // 🪤 WHY A REFUSAL AND NOT A PASS-THROUGH. This used to return `wss://h/api/ws` — it parsed the
+    // URL, took `.host`, and DISCARDED `/claw` without a word. That is the one outcome the docstring
+    // forbids ("Returns `undefined` — never a guess"): the owner declared a subpath, and the shell
+    // dialled a DIFFERENT origin path than the one configured, then reported a generic handshake
+    // failure. `undefined` lets the shell say "this endpoint is misconfigured" on that row.
+    expect(endpointSocketUrl('https://h/claw')).toBeUndefined()
+    expect(endpointSocketUrl('https://pc.example.com/personalclaw')).toBeUndefined()
+    expect(endpointSocketUrl('http://claw.local:10000/sub/path')).toBeUndefined()
+    // A trailing-slash-only path IS the root and must still work — the distinction the pass-through
+    // blurred. `new URL('https://h').pathname` is already `'/'`, so root and bare must agree.
+    expect(endpointSocketUrl('https://h/')).toBe(`wss://h${WS_PATH}`)
+    expect(endpointSocketUrl('https://h')).toBe(`wss://h${WS_PATH}`)
+  })
+
   it('never carries a credential — the device session rides as the cookie', () => {
     const url = endpointSocketUrl('https://pc.example.com/?token=sekrit')
     expect(url).toBe('wss://pc.example.com/api/ws')

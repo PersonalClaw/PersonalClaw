@@ -153,12 +153,102 @@ the tunnel's address rather than the real client's).
 `X-Forwarded-Proto` are ignored on every path, trusted peer or not — one source for the client
 address beats two with a precedence rule, and the `Secure`-cookie/`wss://` decisions come from
 `public_url`, which is your own statement rather than a header anyone upstream can set.
-Configure your proxy to send `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`).
+Configure your proxy to send `X-Real-IP` (see the recipes in Step 2b below).
 `tests/test_forwarded_header_docs_match_code.py` fails the build if this promise and the code
 ever drift apart again.
 
 `public_url` is deliberately **not** editable from the Settings UI — widening a network surface
 should be a deliberate file edit, not a click.
+
+### Step 2b — the proxy config itself (nginx / Caddy)
+
+**⚠️ Mount PersonalClaw at the ORIGIN ROOT — never under a subpath.** `https://pc.example.com` works;
+`https://example.com/claw` does not. There is no base-path mode: the SPA's asset URLs, its
+origin-relative WebSocket (`/api/ws`), the PWA manifest's `start_url`, and the service worker's
+registration scope are all rooted at `/`. A **subpath** mount loads a blank or half-broken dashboard
+and is not a configuration you can fix from the proxy side — give PersonalClaw its own hostname (or
+subdomain) instead. The companion registry refuses a subpath `base_url` outright for the same reason
+(`endpointSocketUrl` returns `undefined` rather than silently dialling the root).
+
+**The one failure this section exists to prevent: a broken WebSocket upgrade.** An HTTP-only proxy
+config serves the dashboard perfectly and then the page never updates, because `/api/ws` is not a
+plain request — it needs an explicit protocol upgrade. This is the single most common way a
+self-hosted reverse proxy in front of this gateway goes wrong.
+
+**nginx** — all four upgrade-related directives are load-bearing; omitting any one of them is the
+broken-socket failure above:
+
+```nginx
+# In the http{} block, once. `Connection` must vary with the request: hardcoding "upgrade" sends it
+# on ordinary requests too and breaks keepalive to the backend.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name pc.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/pc.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pc.example.com/privkey.pem;
+
+    # Root only — see the subpath warning above. Do not use `location /claw/`.
+    location / {
+        proxy_pass http://127.0.0.1:10000;
+
+        # ── the WebSocket upgrade: all four lines are required ──
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header X-Real-IP  $remote_addr;
+
+        proxy_set_header Host $host;
+
+        # The event socket is long-lived and mostly idle. nginx's 60s default closes it and the
+        # dashboard reconnect-loops; 1h is comfortable.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        # Streamed agent output must not be buffered, or tokens arrive in batches.
+        proxy_buffering off;
+    }
+}
+```
+
+**Caddy** — the upgrade is handled for you; `X-Real-IP` is not:
+
+```caddy
+pc.example.com {
+	# reverse_proxy negotiates the WebSocket upgrade automatically — there is no equivalent of
+	# nginx's four directives to forget. It does NOT set X-Real-IP, so set it explicitly.
+	reverse_proxy 127.0.0.1:10000 {
+		header_up X-Real-IP {remote_host}
+
+		# Match the long-lived event socket; Caddy's default would otherwise cut it.
+		transport http {
+			read_timeout 3600s
+			write_timeout 3600s
+		}
+	}
+}
+```
+
+**Who must set `X-Real-IP`, and why it is not a detail.** `X-Real-IP` carries a claim about *who the
+client is*, and the gateway uses it to bind a session to an address. It is only trustworthy because
+**your proxy overwrites it on every request**: both recipes above *set* the header from the connection
+nginx/Caddy actually sees (`$remote_addr` / `{remote_host}`), which discards whatever the client sent.
+Never `add_header`/append it, never pass a client-supplied value through, and never copy a value out of
+`X-Forwarded-For` — a header a client can write is not evidence, and forwarding one lets a caller
+choose its own apparent IP.
+
+That is also why the gateway believes the header **only** from an address listed in `trusted_proxies`,
+and why `X-Forwarded-For` is **ignored** on every path (see above). Two controls, both required: the
+proxy must be the sole writer of the header, and the gateway must know which peer is allowed to assert
+it. If the proxy runs on the same host, `trusted_proxies: ["127.0.0.1"]` matches these recipes; in
+Docker use the bridge network's address instead, and bind the gateway so only the proxy can reach it —
+a gateway reachable directly, bypassing the proxy, is a gateway whose `X-Real-IP` anyone can set.
 
 ### Step 3 — 2FA (recommended if you are actually on the internet)
 

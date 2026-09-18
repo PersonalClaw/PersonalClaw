@@ -125,6 +125,10 @@ full backend+UI apps install through a quarantine → scan → consent lifecycle
 ### ⏰ Automation
 Cron/interval/webhook triggers, background subagents, an inbox that watches channels and
 drafts replies, and workflow SOPs surfaced automatically when they match.
+Built to be left alone: **a run that fails reaches your inbox even when the automation is set to
+deliver nothing**, a run that was gated is labelled inert rather than green, and a run whose process
+died is terminalized instead of reading as running forever — with a recipe that
+[falsifies all three](docs/guides/automations.md).
 
 ### 🛡️ Security-first
 Tool approval modes, a shell-command denylist, an egress guard with allow/deny host policy,
@@ -253,6 +257,7 @@ run on every push to `main`.
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
 - [Working inside a chat](docs/guides/chat-surface.md) — the nine things the chat surface does beyond a send button: rewind to any earlier message, branch a conversation two ways, have a plan approved before anything runs, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
+- [Automations you can leave alone](docs/guides/automations.md) — the three guarantees about unattended runs (a failure reaches your inbox even when delivery is off; a gated run is labelled inert, not green; a run whose host died is terminalized), each with the surface it is checked on, plus a recipe that falsifies all three in one automation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
 - [Companion apps](docs/guides/companion-apps.md) — a phone or a second machine on your own network: pairing, the optional LAN discovery (off by default), and exactly what it announces.
 - [Build a channel app](docs/guides/build-a-channel-app.md) — bringing a new chat app or mailbox to PersonalClaw: the transport/delivery obligations, trust and pairing, and the conformance kit.

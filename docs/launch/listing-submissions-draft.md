@@ -47,11 +47,33 @@ Facts, each verifiable in-tree: MIT ([`LICENSE`](../../LICENSE)), Python 3.12+ a
 add a new `software/personalclaw.yml` (kebab-case filename) based on their `addition.md` template,
 remove unused optional fields, commit as `add PersonalClaw`, and open a PR.
 
-**⛔ Eligibility gate — not met yet.** Their guideline: *the project's first release must be more
-than 4 months old.* PersonalClaw's first release `v0.1.0` was tagged **2026-07-21**, so it becomes
-eligible on **2026-11-21**. Submitting before then will be closed per their template. **Hold this PR
-until 2026-11-21**; if you want a placeholder sooner, open an *issue* on the data repo instead (they
-tag issues to mature rather than closing them).
+**⛔ Eligibility gate — not met yet, and the exact date is AMBIGUOUS.** Their guideline: *the
+project's first release must be more than 4 months old.* Their canned reply adds that *"this count
+initiates only after a release has been created."*
+
+**The first-release instant, measured three ways — they do not agree on the calendar day:**
+
+| Reading | Value | How to re-measure |
+|---|---|---|
+| `v0.1.0` tag, **local** timezone of the machine that tagged it | `2026-07-21T21:14:56-07:00` | `git log -1 --format=%aI v0.1.0` |
+| the **same instant** in **UTC** | `2026-07-22T04:14:56Z` | `gh release view v0.1.0 --json createdAt` |
+| the **release publication** (what their tooling would scrape) | `2026-07-22T04:59:16Z` | `gh release view v0.1.0 --json publishedAt` |
+
+One instant, two calendar days. The tag reads **07-21** locally and **07-22** in UTC, so "four months
+later" lands on **11-21** under the local reading and **2026-11-22** under the UTC one — and the
+release they would actually scrape was published **2026-07-22**, i.e. the later of the two.
+
+**⏳ Therefore hold this PR until 2026-11-23, and do not tighten it.** The margin is one day past the
+latest defensible reading, and it exists for a reason a future editor must not discard: **the
+maintainers' own evaluation timezone is UNMEASURED.** We do not know which clock they compare against,
+and their template closes a PR judged even one day early. The cost of the two choices is asymmetric —
+waiting two extra days costs nothing, while submitting on the earliest arguably-legal day risks a
+closure on a project that can be submitted exactly once. Do not "correct" 2026-11-23 down to
+2026-11-22 (or 11-21) on the reasoning that four months have technically elapsed: that reasoning is
+precisely what this note exists to refuse, because it presumes a timezone we never measured.
+
+If you want a placeholder sooner, open an *issue* on the data repo instead (they tag issues to mature
+rather than closing them) — an issue is not subject to the age gate.
 
 **⚠️ Human submission required.** Their CONTRIBUTING states machine/LLM-generated contributions that
 do not respect the guidelines are not allowed and result in a ban. The owner must review, adapt, and
@@ -191,7 +213,10 @@ product names into this draft.
 - **P0 launch gate.** Do not submit any of the four until every P0 item in
   [`launch-checklist-draft.md`](launch-checklist-draft.md) is green — CI green with the badge, the
   install one-liner verified on a clean machine, and the screenshots live.
-- **awesome-self-hosted age gate.** Blocked until 2026-11-21 (§1). The other three have no age gate.
+- **awesome-self-hosted age gate.** Blocked until **2026-11-23** (§1). That is a deliberate margin,
+  not the arithmetic answer: the `v0.1.0` instant falls on **2026-07-21** local and **2026-07-22** UTC,
+  so the four-month date is itself timezone-ambiguous and the maintainers' evaluation timezone is
+  unmeasured. Read §1 before changing this date. The other three targets have no age gate.
 - **Owner submits, as a human.** Every target needs an account; awesome-self-hosted bans
   guideline-violating machine-generated PRs. These drafts are inputs to a human submission.
 - **Pre-1.0 name-scrub ruling.** No peer/competitor product names on public surfaces. This is why the

@@ -264,7 +264,9 @@ function saveRegistry(store, reg, key = REGISTRY_STORAGE_KEY) {
 // ── the native socket URL (CA-7) ───────────────────────────────────────────────────────────────
 
 /** `https:` → `wss:`, `http:` → `ws:`. Returns `undefined` — never a guess — for an unparseable
- *  `base_url`, a bare host, or a non-http scheme. */
+ *  `base_url`, a bare host, a non-http scheme, or a `base_url` carrying a path (the gateway is
+ *  origin-rooted, so a subpath is a broken row; dropping it would dial a different origin path).
+ *  Mirrors `web/src/lib/endpoints.ts` — `desktop/test/endpointRegistry.test.js` proves the parity. */
 function endpointSocketUrl(baseUrl, path = WS_PATH) {
   const raw = String(baseUrl === null || baseUrl === undefined ? "" : baseUrl).trim();
   if (!raw) return undefined;
@@ -277,6 +279,8 @@ function endpointSocketUrl(baseUrl, path = WS_PATH) {
   const proto = url.protocol === "https:" ? "wss:" : url.protocol === "http:" ? "ws:" : "";
   if (!proto) return undefined;
   if (!url.host) return undefined;
+  // `''` and `'/'` are both the root (a query-only URL parses as `'/'`); anything else is a subpath.
+  if (url.pathname !== "" && url.pathname !== "/") return undefined;
   const suffix = path.startsWith("/") ? path : `/${path}`;
   return `${proto}//${url.host}${suffix}`;
 }
