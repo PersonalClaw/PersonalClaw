@@ -745,15 +745,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [renameVal, setRenameVal] = useState('')
   const [linkCopied, setLinkCopied] = useState(false)
   const [regenningTitle, setRegenningTitle] = useState(false)
-  // when true, the next chat_chunk starts a FRESH text segment (after a tool /
-  // chat_segment boundary) rather than appending to the prior text run.
-  const breakText = useRef(false)
   // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
   // replaces the ACTIVE text run's text with the revealed-so-far prefix. `coalescing`
   // marks whether the trailing segment is the coalescer's active text run (so onFlush
-  // replaces vs. appends). flushNow() on every segment boundary lands buffered text
-  // before the run changes; reset() clears for the next run.
+  // replaces vs. appends). Every boundary goes through `endTextRun`/`dropTextRun` below,
+  // which both CLEAR the buffer — see the note there.
   const coalescing = useRef(false)
   // Streaming reveal cadence (CHAT-CRAFT S3): 'immediate' short-circuits the rAF
   // coalescer so each chunk paints the instant it arrives; 'smooth' (default) keeps
@@ -787,6 +784,26 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       return r.segs
     })
   }, { immediate: streamRevealCfg === 'immediate' })
+  // 🔴 K44 / issue #548 — ONE mechanism for ending a coalesced text run, in two flavours, and
+  // BOTH clear the coalescer buffer. That is the invariant that makes the leak unreachable: a
+  // finished run holds no text, so no later flush can re-emit it.
+  //
+  // What used to be here was a `breakText` ref whose clearing was DEFERRED to the `chat_chunk`
+  // branch — the one branch of six that consulted it. `chat_thinking`, `chat_message` (error),
+  // `tool_call`, `approval`, `chat_segment` and `chat_done` all called a drain-only `flushNow()`
+  // without it, and a drain leaves `pending` intact. So a turn whose FIRST frame was a tool call
+  // (an agent leading with a search/read — an ordinary turn shape) drained the PREVIOUS turn's
+  // whole answer into the new turn's bubble, above the tool card.
+  //
+  //  * `endTextRun` — a boundary INSIDE a live turn (thinking / error / tool / approval /
+  //    segment / done). Lands the buffered tail into the run's own segment first: the transcript
+  //    tail is still that turn, so the text belongs there and dropping it would lose words the
+  //    model already sent.
+  //  * `dropTextRun` — a boundary the CLIENT makes (a fresh send, regenerate, edit-resend, a
+  //    queued turn being dequeued, a session switch). Those all move the transcript tail FIRST,
+  //    so landing the tail would write the old answer into the new turn — discard is correct.
+  const endTextRun = () => { coalescer.seal(); coalescing.current = false }
+  const dropTextRun = () => { coalescer.reset(); coalescing.current = false }
   const started = turns.length > 0
   // show the thinking indicator while streaming and the active assistant turn
   // has produced nothing renderable yet (no text/tool/approval segment)
@@ -822,7 +839,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Resume a deep-linked session: hydrate its messages from history.
   useEffect(() => {
     sessionRef.current = sessionId
-    coalescer.reset(); coalescing.current = false  // drop any in-flight reveal from the prior session
+    dropTextRun()  // drop any in-flight reveal from the prior session
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
@@ -918,7 +935,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       // resuming a still-running turn: show the live indicators and make the first
       // incoming chunk start a fresh text run (don't concat onto hydrated text).
-      if (d.running) { markStreaming(true); breakText.current = true }
+      if (d.running) { markStreaming(true); dropTextRun() }
       setLoadingHistory(false)
     }).catch(() => { if (alive) setLoadingHistory(false) })
     return () => { alive = false }
@@ -953,22 +970,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_chunk': {
         setStatusText('')
         const chunk = String(d.content ?? '')
-        // A boundary (tool/approval/segment/chat_done/new-turn) set breakText → start a
-        // FRESH coalesced run. Just RESET: every boundary that sets breakText already
-        // called flushNow() itself to land its buffered tail, and flushNow() only
-        // drains (revealed=pending) — it never CLEARS pending. So calling flushNow()
-        // again HERE re-emits the PRIOR turn's full text into THIS (new) turn's segment
-        // before reset() wipes it → turn N+1 visibly absorbed turn N's answer (K44).
-        // reset() alone discards the stale buffer and opens a clean new run (coalescing
-        // flips false so onFlush appends a fresh segment).
-        // A boundary (tool/approval/segment/chat_done) or a fresh send set breakText →
-        // start a NEW coalesced run. reset() alone (NOT flushNow) is correct: every
-        // boundary that sets breakText already called flushNow() to land its buffered
-        // tail, and flushNow only drains (revealed=pending) — it never CLEARS pending.
-        // Calling flushNow() again here would re-emit the PRIOR run's full text into
-        // the NEW turn's segment before reset() wipes it. reset() discards the stale
-        // buffer and opens a clean run (coalescing flips false so onFlush appends fresh).
-        if (breakText.current) { coalescer.reset(); coalescing.current = false; breakText.current = false }
+        // No break-flag check here any more: whichever boundary preceded this chunk already
+        // CLEARED the coalescer (endTextRun / dropTextRun), so a push always opens a fresh run
+        // when it needs to. Deferring the clear to this branch is what left the other five
+        // boundaries unguarded (#548).
         coalescer.push(chunk)  // rAF-coalesced; onFlush does the setTurns once/frame
         break
       }
@@ -977,17 +982,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // "Show thinking inline" toggle is on — off drops the frame here, so no
       // thinking segment ever enters transcript state (and none is persisted:
       // the backend keeps thinking out of the response text and history).
-      // Boundary discipline mirrors the tool/approval cards: land any buffered
-      // prose first (flushNow), append-or-extend the thinking block, then mark
-      // breakText so the next chat_chunk opens a FRESH coalesced run instead of
-      // extending a segment that now sits above the thinking block.
+      // Boundary discipline mirrors the tool/approval cards: END the text run (land any
+      // buffered prose, then clear), then append-or-extend the thinking block. The next
+      // chat_chunk opens a FRESH run rather than extending a segment that now sits above
+      // the thinking block.
       case 'chat_thinking': {
         if (!showThinkingRef.current) break
         const chunk = String(d.content ?? '')
         if (!chunk) break
-        coalescer.flushNow()
+        endTextRun()
         patchLastAssistant((segs) => appendThinking(segs, chunk))
-        breakText.current = true
         break
       }
       // A non-streamed message appended server-side (the only one that reaches
@@ -996,7 +1000,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_message': {
         if (d.session && d.session !== sessionRef.current) break
         if (d.role === 'error') {
-          coalescer.flushNow()  // land buffered text before the error segment
+          endTextRun()  // land buffered text before the error segment
           markStreaming(false); setStatusText(''); setLatestActivity(null)
           patchLastAssistant((segs) => [...segs, { kind: 'error', text: String(d.content ?? 'The model returned an error.') }])
         }
@@ -1024,7 +1028,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'tool_call': {
-        coalescer.flushNow()  // land any buffered text before the tool card
+        endTextRun()  // land any buffered text before the tool card
         const id = String(d.tool_call_id ?? '')
         patchLastAssistant((segs) => {
           // a tool_call_update (resolved input/title) refines the existing card
@@ -1046,7 +1050,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             purpose: String(d.purpose ?? ''), auto: !!d.auto, done: false })
           return segs
         })
-        breakText.current = true  // text after a tool starts a new run
         break
       }
       case 'tool_result':
@@ -1064,20 +1067,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             : sg))
         break
       case 'approval':
-        coalescer.flushNow()  // land buffered text before the approval card
+        endTextRun()  // land buffered text before the approval card
         patchLastAssistant((segs) => {
           const id = String(d.id ?? '')
           if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
           segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'] })
           return segs
         })
-        breakText.current = true
         break
       case 'approval_resolved':
         setTurns((prev) => prev.map((t) => ({ ...t, segments: t.segments.map((sg) =>
           sg.kind === 'approval' && sg.id === String(d.id ?? '') ? { ...sg, resolved: d.approved ? 'approved' : 'rejected' } as ApprovalSegment : sg) })))
         break
-      case 'chat_segment': coalescer.flushNow(); breakText.current = true; break
+      case 'chat_segment': endTextRun(); break
       // A regenerated answer landed (fresh reply → new variant) OR the user switched
       // which variant is active (here or in another tab). The backend has already
       // swapped the stored content; reflect it in place: replace the LAST assistant
@@ -1116,8 +1118,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'chat_done': {
-        coalescer.flushNow()  // fully reveal any buffered tail before the turn closes
-        breakText.current = true; markStreaming(false); setStatusText(''); setLatestActivity(null)
+        endTextRun()  // fully reveal any buffered tail before the turn closes
+        markStreaming(false); setStatusText(''); setLatestActivity(null)
         setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace (PLATFORM-RESILIENCE §6.3): this turn was superseded by a
         // rapid follow-up. The replacement was queued server-side and the next turn
@@ -1260,12 +1262,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // A queued message the server just dequeued and is about to run. Normal sends
       // add the user bubble optimistically; queued ones only had a strip card, so
       // render the bubble now (the strip card is removed by the paired queue_pop).
-      // breakText so the next chat_chunk starts a fresh assistant turn beneath it.
+      // dropTextRun so the next chat_chunk starts a fresh assistant turn beneath it — and
+      // discards, not lands: the user bubble is pushed below, so a landed tail would end up
+      // in the NEW turn.
       case 'chat_user_message': {
         if (d.session !== sessionRef.current) break
         const content = String(d.content ?? '')
         if (!content) break
-        breakText.current = true
+        dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
         break
@@ -1727,15 +1731,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return (prev[prev.length - 1] === h ? prev : [...prev, h]).slice(-50) })
     const knowledgeIds = mentionedKnowledge.map((k) => k.id)
     const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
-    // breakText=TRUE: a fresh send must open a NEW coalesced text run. A follow-up in
-    // an existing chat streams in right after the prior turn — the backend does NOT
-    // always emit a chat_done/chat_segment boundary between turns (esp. YOLO/queued
-    // dispatch), so without this the new turn's chunks would append onto the PRIOR
-    // turn's still-live coalescer run → turn N+1's bubble absorbed turn N's whole
-    // answer (K44). true is safe on the very first turn too (reset on an empty core
-    // is a no-op). We add the user turn locally above, so the next chat_chunk's
-    // reset() lands the fresh assistant turn beneath it.
-    setInput(''); setPreOptimize(null); markStreaming(true); breakText.current = true
+    // dropTextRun: a fresh send must open a NEW coalesced text run. A follow-up in an
+    // existing chat streams in right after the prior turn — the backend does NOT always emit
+    // a chat_done/chat_segment boundary between turns (esp. YOLO/queued dispatch), so without
+    // this the new turn's chunks would append onto the PRIOR turn's still-live coalescer run
+    // → turn N+1's bubble absorbed turn N's whole answer (K44). Safe on the very first turn
+    // too (clearing an empty core is a no-op). DISCARD rather than seal: the user turn is
+    // added locally just above, so a landed tail would be written into the new turn instead
+    // of the finished one.
+    setInput(''); setPreOptimize(null); markStreaming(true); dropTextRun()
     setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([]); setMentionedArtifacts([])
     try {
       const meta: Record<string, unknown> = { client_ts: clientTs }
@@ -1974,7 +1978,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       const i = prev.map((t) => t.role).lastIndexOf('assistant')
       return i >= 0 ? prev.slice(0, i) : prev
     })
-    markStreaming(true); breakText.current = true
+    markStreaming(true); dropTextRun()
     try { await api.regenerate(s) }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
   }
@@ -2039,12 +2043,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // FE doesn't know). Falls back to the index when the original turn has no ts.
     const newTs = new Date().toISOString()
     setTurns((prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)])
-    // breakText=TRUE: the re-sent turn's fresh reply must open a NEW coalesced run.
-    // We truncate the turns above, but the coalescer core still holds the PRIOR
-    // answer's buffer; without breakText the incoming chunks append onto that stale
-    // run → the new answer renders glued onto the old one (K44/K45). The next
-    // chat_chunk's reset() discards the stale buffer and starts clean.
-    markStreaming(true); breakText.current = true
+    // dropTextRun: the re-sent turn's fresh reply must open a NEW coalesced run. We truncate
+    // the turns above, but the coalescer core still holds the PRIOR answer's buffer; without
+    // this the incoming chunks append onto that stale run → the new answer renders glued onto
+    // the old one (K44/K45). DISCARD rather than seal — the turn that text belonged to has
+    // just been truncated away.
+    markStreaming(true); dropTextRun()
     // rewind=true (edit of a NON-last turn): the backend retains the discarded tail
     // on the edited message and resets the provider so context rebuilds from the
     // truncated transcript. The chat_rewound WS re-hydrates so the divider chip +

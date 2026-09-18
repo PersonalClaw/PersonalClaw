@@ -255,7 +255,15 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: marketplaces = [] } = useQuery<SkillMarketplace[]>(
     'skills:marketplaces',
-    () => api.skillMarketplaces().then((m) => m.filter((x) => x.name !== 'installed' && x.name !== 'native')).catch(() => []),
+    // 🔴 `!== 'native'` was here too, and `/api/skills/marketplaces` returns exactly
+    // {installed, native} on a stock install — so this narrowed to `[]`, the `<select>` below
+    // emitted zero `<option>`s, and the only scope left was the "All marketplaces" default. Paired
+    // with a server-side fan-out that dropped every installed hit, Browse had no reachable scope
+    // that returned anything and every query rendered "No results — try a different search term or
+    // marketplace" over a dropdown offering no other marketplace (#301). `installed` stays out on
+    // its own terms: it mirrors the user's skills dir, so scoping to it would search the Installed
+    // tab from the Browse tab.
+    () => api.skillMarketplaces().then((m) => m.filter((x) => x.name !== 'installed')).catch(() => []),
     { persist: true },
   )
   const [marketplace, setMarketplace] = useQueryParam(query, setQuery, 'mkt', '') // '' = all
@@ -325,7 +333,10 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
       }
       panel={open && (
         <SidePanel key={open.id} fillHeight storeKey="skill-panel-w" icon={<Download size={18} className="text-warn" />} title={open.name || open.id} onClose={() => setOpenId("")}>
-          <MarketplaceDetail result={open} installed={installedIds.has(open.id)} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />
+          {/* Installed-ness comes from the SERVER's annotation, OR from what this session just
+              installed. Reading only the session set claimed "not installed" about every already-present
+              skill on first paint, which is most of them on a stock install. */}
+          <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />
         </SidePanel>
       )}
     >
@@ -344,7 +355,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
           : (
             <div className="flex flex-col gap-s">
               {results.map((r, i) => {
-                const installed = installedIds.has(r.id)
+                const installed = installedIds.has(r.id) || !!r.installed
                 // Right-click / long-press → open the marketplace result (install itself
                 // lives inside the detail panel, not this row), mirroring the click handler.
                 const menuItems: ContextMenuItem[] = [

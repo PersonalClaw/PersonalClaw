@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkflowNodeState } from '../../lib/api'
 import { COL_GAP, NODE_H, NODE_W, ROW_GAP, dagState, isAwaitingHuman, layoutRunDag } from './runDag'
+import { buildTree } from './nodeTree'
 
 /** Laying a run out as a DAG (TASKS-SOPS §7 R6 — S61j).
  *
@@ -11,11 +12,16 @@ import { COL_GAP, NODE_H, NODE_W, ROW_GAP, dagState, isAwaitingHuman, layoutRunD
  *  Measured while writing: `buildTree` derives parenthood from the instance PATH, and paths mix `.`
  *  and `[n]` separators (`root.children[1].children[0]`). A parent lookup that split on `.` alone
  *  would find no parent for any bracketed segment and every node would render as a root.
+ *
+ *  The ITERATION forms carry no bracket at all — `<path>.body#<i>` for a foreach item and
+ *  `<path>.body@<n>` for a while iteration (`workflows/tick.py`). Every path in this file is one
+ *  the engine actually emits; the fictional `body[n]` this suite used to test with is what let
+ *  issue #567 sit here for 85 cycles.
  */
 
 const node = (instance_path: string, state = 'done'): WorkflowNodeState => ({
   instance_path,
-  node_id: (instance_path.split(/[.[]/).filter(Boolean).pop() ?? instance_path).replace(/]$/, ''),
+  node_id: (instance_path.split(/[.[#@]/).filter(Boolean).pop() ?? instance_path).replace(/]$/, ''),
   state,
 })
 
@@ -37,8 +43,8 @@ describe('layout', () => {
   it('uses the instance PATH as the node id, not the node_id', () => {
     // Two iterations of one foreach node share a `node_id` and would collide into one box, hiding
     // whichever item was stuck.
-    const out = layoutRunDag([node('root.body[0]'), node('root.body[1]')])
-    expect(out.nodes.map((n) => n.id)).toEqual(['root.body[0]', 'root.body[1]'])
+    const out = layoutRunDag([node('root.body#0'), node('root.body#1')])
+    expect(out.nodes.map((n) => n.id)).toEqual(['root.body#0', 'root.body#1'])
   })
 
   it('columns by DEPTH so nesting reads left to right', () => {
@@ -105,7 +111,7 @@ describe('layout', () => {
   it('renders the per-item label when a foreach node has one', () => {
     // A twelve-way fan-out otherwise renders as twelve boxes distinguishable only by index.
     const out = layoutRunDag(
-      [{ ...node('root.body[0]'), item_label: 'auth.py' }],
+      [{ ...node('root.body#0'), item_label: 'auth.py' }],
       { label: (n) => (n.item_label ? `${n.node_id} · ${n.item_label}` : n.node_id) },
     )
     expect(out.nodes[0].content).toBe('0 · auth.py')
@@ -174,5 +180,94 @@ describe('answerability', () => {
     const out = layoutRunDag([gate], { continuations: [] })
     expect(out.nodes[0].state).toBe('awaiting') // mapped from `waiting`, but not answerable
     expect(isAwaitingHuman(gate, [])).toBe(false)
+  })
+})
+
+/** Issue #567 — the fan-out grammar the ENGINE emits.
+ *
+ *  `foreach` fans out to `<path>.body#<i>` and `while` iterates as `<path>.body@<n>`
+ *  (`workflows/tick.py`). Neither carries a bracket, so the old reader — which derived a column by
+ *  counting `[` and parentage by raw string prefix — scored every item at its container's depth and
+ *  reparented every double-digit item onto its own sibling `#1`. Both are asserted here against the
+ *  real paths, plus the invariant the module claims: the DAG and `buildTree` agree about parenthood.
+ */
+describe('foreach / while fan-out layout (#567)', () => {
+  const CONTAINER = 'root.children[0]'
+  const items = (n: number, sep: '#' | '@') =>
+    Array.from({ length: n }, (_, i) => node(`${CONTAINER}.body${sep}${i}`))
+  const fanout = (n: number, sep: '#' | '@' = '#') => [node('root'), node(CONTAINER), ...items(n, sep)]
+  const byId = (out: ReturnType<typeof layoutRunDag>) =>
+    Object.fromEntries(out.nodes.map((nd) => [nd.id, nd]))
+
+  it('gives foreach items their OWN column, one past the container', () => {
+    // Counting `[` scored `root.children[0].body#3` at depth 1 — the container's own depth — so the
+    // container and all twelve items shared one column and the graph showed no fan-out at all.
+    const out = layoutRunDag(fanout(12))
+    const at = byId(out)
+    expect(at[CONTAINER].x).toBe(NODE_W + COL_GAP)
+    for (let i = 0; i < 12; i += 1) {
+      expect(at[`${CONTAINER}.body#${i}`].x).toBe(2 * (NODE_W + COL_GAP))
+    }
+    expect(new Set(out.nodes.map((nd) => nd.x)).size).toBe(3)
+  })
+
+  it('parents the TENTH item to its container, not to sibling #1', () => {
+    // `'body#10'.startsWith('body#1')` is true — no delimiter between the `1` and the `0` — so a
+    // prefix scan silently reparented every item from #10 up. `children[10]` escaped it only
+    // because the `]` blocks the match, which is why bracketed test data never showed the bug.
+    const out = layoutRunDag(fanout(12))
+    const parentsOf = (id: string) => out.edges.filter((e) => e.to === id).map((e) => e.from)
+    expect(parentsOf(`${CONTAINER}.body#10`)).toEqual([CONTAINER])
+    expect(parentsOf(`${CONTAINER}.body#11`)).toEqual([CONTAINER])
+    expect(out.edges.some((e) => e.from === `${CONTAINER}.body#1`)).toBe(false)
+  })
+
+  it('draws every containment edge FORWARD', () => {
+    // Parent and child in one column made x1 > x2 on every item edge — an arrow pointing back at
+    // the node it came from, which reads as a rendering fault rather than a layout one.
+    const out = layoutRunDag(fanout(12))
+    expect(out.edges.length).toBeGreaterThan(0)
+    for (const e of out.edges) expect(e.x2).toBeGreaterThan(e.x1)
+  })
+
+  it('treats a while iteration (`body@n`) exactly like a foreach item', () => {
+    const out = layoutRunDag(fanout(11, '@'))
+    const at = byId(out)
+    expect(at[`${CONTAINER}.body@10`].x).toBe(2 * (NODE_W + COL_GAP))
+    expect(out.edges.filter((e) => e.to === `${CONTAINER}.body@10`).map((e) => e.from))
+      .toEqual([CONTAINER])
+  })
+
+  it('nests a step INSIDE a fan-out item one column deeper again', () => {
+    const item = `${CONTAINER}.body#7`
+    const out = layoutRunDag([node('root'), node(CONTAINER), node(item), node(`${item}.children[0]`)])
+    const at = byId(out)
+    expect(at[`${item}.children[0]`].x).toBe(3 * (NODE_W + COL_GAP))
+    expect(out.edges.filter((e) => e.to === `${item}.children[0]`).map((e) => e.from)).toEqual([item])
+  })
+
+  it('does not split a `cases[label]` whose label contains a dot', () => {
+    // The label is spec-authored text. Counting separators inside brackets would score
+    // `root.cases[auth.py]` a level deeper than the sibling branch beside it.
+    const out = layoutRunDag([node('root'), node('root.cases[auth.py]'), node('root.cases[b]')])
+    const at = byId(out)
+    expect(at['root.cases[auth.py]'].x).toBe(NODE_W + COL_GAP)
+    expect(at['root.cases[b]'].x).toBe(NODE_W + COL_GAP)
+  })
+
+  it('agrees with buildTree about who contains whom', () => {
+    // The module's own stated invariant. It was FALSE for a fan-out: `buildTree` reported
+    // `body#1.descendants = []` while `runDag` gave that same node two children (#10 and #11).
+    const nodes = fanout(12)
+    const rows = buildTree(nodes)
+    const out = layoutRunDag(nodes)
+    const childrenOf = (id: string) => out.edges.filter((e) => e.from === id).map((e) => e.to).sort()
+    for (const row of rows) {
+      const direct = row.descendants.filter((d) => {
+        const rest = d.slice(row.node.instance_path.length + 1)
+        return !rest.includes('.')
+      })
+      expect(childrenOf(row.node.instance_path)).toEqual([...direct].sort())
+    }
   })
 })

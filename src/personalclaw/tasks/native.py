@@ -600,6 +600,11 @@ class NativeTaskProvider(TaskProvider):
             if not path.exists():
                 return False
             path.unlink()
+            # The comment sidecar goes with the task. It used to SURVIVE the delete, so
+            # `GET /api/tasks/<gone-id>/comments` still returned the thread of a task nobody
+            # could open, and a recycled id would have inherited it. `missing_ok` because an
+            # uncommented task has no sidecar, which is the common case, not an error.
+            self._comments_path(task_id).unlink(missing_ok=True)
             # Sync-only delete marker (DAS-6c-iii): the hard unlink above is the store's
             # truth; this breadcrumb lets the delete propagate across machines instead of a
             # peer resurrecting the task. Best-effort — never fails the delete.

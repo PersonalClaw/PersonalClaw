@@ -18,7 +18,11 @@ import { runtime } from '../../design/runtime'
  *     drainFactor ramps as the backlog grows so we never lag past MAX_LAG chars.
  *
  *  The adaptive-budget MATH lives in a pure `CoalescerCore` (no rAF, no React) so it's
- *  unit-testable; the hook is a thin rAF+refs wrapper around it. */
+ *  unit-testable; the hook is a thin rAF+refs wrapper around it.
+ *
+ *  BOUNDARIES: a text run ends exactly two ways — `seal()` (land the tail, then clear) or
+ *  `reset()` (clear without landing). Both CLEAR, which is the invariant: a finished run's
+ *  text can never be re-emitted, so no caller needs a "did we already break?" flag. */
 
 export const FRAME_MS = 16
 export const MIN_BUDGET = 2       // chars/frame floor while animating (never stalls)
@@ -40,6 +44,14 @@ export class CoalescerCore {
 
   /** Chars not yet revealed. */
   backlog(): number { return this.pending.length - this.revealed }
+
+  /** Whether this run holds any text at all — revealed or not.
+   *
+   *  NOT `backlog() > 0`: a fully-revealed run still HOLDS its text (`drainAll` moves the
+   *  cursor, it does not empty the buffer), and a boundary has to know the difference
+   *  between "nothing to land" and "already landed". Used by `seal()` so a boundary on an
+   *  empty run emits nothing instead of writing an empty text segment. */
+  hasText(): boolean { return this.pending.length > 0 }
 
   /** The revealed prefix (what the consumer should render right now). */
   revealedText(): string { return this.pending.slice(0, this.revealed) }
@@ -106,9 +118,19 @@ export class CoalescerCore {
 export interface StreamCoalescer {
   /** Append a streamed chunk. Schedules one rAF (animated) or flushes now (immediate). */
   push: (chunk: string) => void
-  /** Drain the entire backlog immediately + emit. Call on segment/turn boundaries. */
-  flushNow: () => void
-  /** Clear all buffered state for a fresh segment/turn. */
+  /** END this text run at a boundary: land whatever is still buffered into the run's own
+   *  segment, then CLEAR the buffer so the next `push` opens a fresh one.
+   *
+   *  🔴 The clear is the whole point (K44 / issue #548). A drain-only flush left the finished
+   *  run's text in `pending`, so the NEXT boundary flush — a `tool_call` opening the next turn,
+   *  say — re-emitted the previous turn's entire answer into the new turn's bubble. Callers
+   *  used to defer the clearing to a "break" flag consulted in ONE branch of six, which is a
+   *  guard the other five silently skipped. Sealing here removes the flag and the choice. */
+  seal: () => void
+  /** DISCARD this text run: clear the buffer without emitting. For a boundary the CLIENT
+   *  creates — a fresh send, regenerate, edit-resend, a queued turn being dequeued, or a
+   *  session switch — where the transcript tail has already moved on, so landing the old
+   *  text would write it into the new turn. */
   reset: () => void
 }
 
@@ -141,20 +163,33 @@ export function useStreamCoalescer(
     if (core.backlog() > 0) rafRef.current = requestAnimationFrame(frame)
   }, [])
 
-  const flushNow = useCallback(() => {
+  // Reveal-everything-now, WITHOUT clearing — immediate mode only, where every push emits the
+  // whole accumulated run and the next push must extend it. Deliberately private: this is the
+  // drain-without-clear that leaked a finished run into the next turn when boundaries called it
+  // (#548). Boundaries get `seal`, which clears.
+  const drain = useCallback(() => {
     stop(); lastTsRef.current = 0
     onFlushRef.current(coreRef.current!.drainAll())
   }, [])
 
   const reset = useCallback(() => { stop(); lastTsRef.current = 0; coreRef.current!.reset() }, [])
 
+  const seal = useCallback(() => {
+    const core = coreRef.current!
+    stop(); lastTsRef.current = 0
+    // Emit only when the run HOLDS text. An unconditional emit on an empty run wrote an empty
+    // text segment above the tool card of every turn that opens with a tool call.
+    if (core.hasText()) onFlushRef.current(core.drainAll())
+    core.reset()
+  }, [])
+
   const push = useCallback((chunk: string) => {
     coreRef.current!.push(chunk)
-    if (isImmediate()) { flushNow(); return }
+    if (isImmediate()) { drain(); return }
     if (!rafRef.current) rafRef.current = requestAnimationFrame(frame)
-  }, [frame, flushNow])
+  }, [frame, drain])
 
   useEffect(() => () => stop(), [])
 
-  return { push, flushNow, reset }
+  return { push, seal, reset }
 }

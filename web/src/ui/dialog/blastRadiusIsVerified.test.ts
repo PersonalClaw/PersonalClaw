@@ -40,7 +40,7 @@ describe('the task delete states what the backend really does', () => {
     // was never rendered. Third time this session a rail of mine checked a DEFINITION instead of its
     // SUPPLY; the composed string is the only thing a user sees.
     expect(ui, 'and the body interpolates it').toMatch(
-      /body: `This cannot be undone\.\$\{unblocks\}`/,
+      /body: `This cannot be undone\.\$\{unblocks\}\$\{withComments\}`/,
     )
     const impl = py('tasks/native.py')
     const del = impl.slice(impl.indexOf('async def delete_task'), impl.indexOf('def graph(self)'))
@@ -66,19 +66,29 @@ describe('the task delete states what the backend really does', () => {
     expect(ui, 'the anonymous form must not come back').not.toMatch(/title: 'Delete this task\?'/)
   })
 
-  it('says NOTHING about comments, because the backend does not remove them', () => {
-    // 🔑 THE MOST USEFUL ASSERTION HERE PINS AN ABSENCE. Task comments live in a separate
-    // `_comments_<id>.json`, and `delete_task` unlinks only the task file — so the comments are
-    // orphaned on disk. Filed as a backend defect; until it is fixed, copy must not claim the cleanup.
-    //
-    // When someone DOES fix it, this test fails — which is the point: it tells them the dialog can now
-    // say so, instead of leaving the sentence stale forever.
+  it('claims the comments, because the backend now removes them', () => {
+    // 🔑 THIS ASSERTION USED TO PIN AN ABSENCE, and the absence was a BACKEND DEFECT it existed to
+    // stop the copy from papering over: task comments live in a separate `_comments_<id>.json`, and
+    // `delete_task` unlinked only the task file, so the thread was orphaned on disk and still served
+    // by `GET /api/tasks/<gone-id>/comments`. The rail's own closing note said "when someone DOES fix
+    // it, this test fails — which is the point: it tells them the dialog can now say so." That is what
+    // happened (#554), so the pin flips rather than being deleted: the cleanup must stay, and the
+    // sentence that now describes it must stay true.
     const impl = py('tasks/native.py')
     const del = impl.slice(impl.indexOf('async def delete_task'), impl.indexOf('def graph(self)'))
-    expect(del, 'still no comments cleanup — if this fails, update the dialog copy too')
-      .not.toMatch(/_comments_/)
-    expect(web('pages/tasks/TaskDetail.tsx'), 'so the dialog claims nothing about them')
-      .not.toMatch(/body: `This cannot be undone\.[^`]*comment/)
+    expect(del, 'the sidecar is unlinked with the task').toMatch(
+      /self\._comments_path\(task_id\)\.unlink\(missing_ok=True\)/,
+    )
+    const ui = web('pages/tasks/TaskDetail.tsx')
+    // COUNTED from the same derived field the row badge reads, so the claim cannot appear on a task
+    // with no comments — the discipline the highlight sentence below already follows.
+    expect(ui, 'the dialog counts them').toMatch(/const comments = task\.comment_count \?\? 0/)
+    expect(ui, 'and says they go').toMatch(/Its \$\{comments\} comment\$\{comments === 1 \? '' : 's'\}/)
+    // 🪤 AND THAT THE BODY SUPPLIES IT — the same mutation that caught `unblocks` being defined and
+    // never rendered.
+    expect(ui, 'the body interpolates it').toMatch(
+      /body: `This cannot be undone\.\$\{unblocks\}\$\{withComments\}`/,
+    )
   })
 })
 
