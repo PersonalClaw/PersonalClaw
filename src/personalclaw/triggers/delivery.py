@@ -373,6 +373,34 @@ def is_muted(destination: str) -> bool:
     return str(destination or "").strip().lower() == "none"
 
 
+#: A channel destination's prefix, matching `schedule_view.channel_of`'s reading of `delivery`.
+CHANNEL_ROUTE_PREFIX = "channel:"
+
+#: The bare destinations a route may name. `""` is a REAL value, not an absent one: `route_for`
+#: treats an empty `failure_delivery` as "inherit `delivery`", which is the third choice a user has.
+ROUTE_VALUES: frozenset[str] = frozenset({"", "inbox", "none"})
+
+
+def is_valid_route(destination: Any) -> bool:
+    """Whether *destination* is a route this substrate can honour (WF2AUT-15).
+
+    ONE vocabulary in ONE place. `failure_delivery` reached the entity through the
+    `automation_update` allowlist with no validation at all, so an agent (and now a form) could
+    store `"slack"` or `"emial"` and get a 200 — and `route_for` would hand it to `deliver`, which
+    mutes only `"none"`, so the automation would notify through the default path while its stored
+    setting said otherwise. A setting that is accepted and not honoured is the inert shape this
+    program keeps finding, one layer out.
+
+    Deliberately NOT case-folding: `is_muted` lowercases before comparing, but the stored value is
+    what a surface renders back to the user, and silently accepting `"None"` would show them a route
+    spelled differently from every other row.
+    """
+    value = str(destination or "").strip()
+    return value in ROUTE_VALUES or (
+        value.startswith(CHANNEL_ROUTE_PREFIX) and len(value) > len(CHANNEL_ROUTE_PREFIX)
+    )
+
+
 def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
     """Whether this delivery has already gone out — the "does not double-ping" half.
 

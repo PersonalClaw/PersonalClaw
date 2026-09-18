@@ -127,6 +127,16 @@ PATCHABLE: frozenset[str] = frozenset(
         "model_tier",
         "delivery",
         "failure_delivery",
+        # 🔴 `failure_policy` joins the allowlist (WF2AUT-15). `failure_delivery` has been patchable
+        # since S158 while the policy beside it was not, so `dedupe_hash` — the opt-in
+        # `gateway._dedupe_repeat_failure` gates on — was settable by the MIGRATION and by nothing
+        # else. A control only a one-time migration can turn on is not a control.
+        #
+        # `autopause_after` rides in the same dict and is a threshold §3.7 acts on, which is why the
+        # dashboard handler MERGES one key rather than sending the dict: this allowlist protects the
+        # health *fields*, not the keys inside a patchable dict, so a caller that sends
+        # `{"dedupe_hash": true}` alone would drop a tuned threshold. See `_update_schedule`.
+        "failure_policy",
         "yield_to_user",
         "catch_up",
         "expires_at",

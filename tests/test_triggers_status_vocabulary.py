@@ -467,6 +467,14 @@ def test_the_writer_file_census_is_pinned() -> None:
         "gateway.py",
         "triggers/service.py",
         "dashboard/handlers/triggers.py",
+        # WF2AUT-16's boot sweep. Named here rather than added to `WRITERS` because it is the one
+        # writer with nothing for the table floors to catch: it writes a single module-level
+        # constant, `reaper.RESTART_INTERRUPTED_STATUS = "timeout"`, which is already a key of
+        # `SCHEDULE_STATUS_TO_OUTCOME` (→ `failed`), so there is no per-branch status to drift and
+        # no set of values for `min_values` to hold a floor under. A `min_sites=1, min_values=1`
+        # entry would assert the inference can resolve a named constant, which is a claim about
+        # this rail rather than about the writer.
+        "triggers/reaper.py",
     }, f"the set of modules constructing a ScheduleRun changed: {sorted(call_files)}"
 
 

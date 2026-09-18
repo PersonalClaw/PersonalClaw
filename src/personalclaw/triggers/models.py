@@ -1069,7 +1069,20 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         session=str(data.get("session", "fresh") or "fresh"),
         model_tier=str(data.get("model_tier", "background") or "background"),
         delivery=str(data.get("delivery", "none") or "none"),
-        failure_delivery=str(data.get("failure_delivery", "inbox") or "inbox"),
+        # 🔴 AN EXPLICIT `""` SURVIVES (WF2AUT-15), unlike its `delivery`/`session` neighbours.
+        # `delivery.route_for` documents a third state — *"falls back to `delivery` when
+        # `failure_delivery` is empty"* — and the old `or "inbox"` made that branch UNREACHABLE for
+        # every row loaded from disk: `to_dict` wrote `""` faithfully and this line read it straight
+        # back as `"inbox"`. Measured by PATCHing `failure_delivery: ""` and re-reading the store:
+        # it came back `"inbox"`. So "route failures wherever results go" was a documented,
+        # implemented
+        # semantic that no persisted trigger could hold, and the UI control for it could not stick.
+        #
+        # Absent, `None`, or a non-string still defaults — those mean "nothing was said", where `""`
+        # means "follow `delivery`", and collapsing the two is the distinction that was lost.
+        failure_delivery=(
+            data["failure_delivery"] if isinstance(data.get("failure_delivery"), str) else "inbox"
+        ),
         retry=dict(data["retry"]) if isinstance(data.get("retry"), dict) else {},
         failure_policy=(
             dict(data["failure_policy"]) if isinstance(data.get("failure_policy"), dict) else {}

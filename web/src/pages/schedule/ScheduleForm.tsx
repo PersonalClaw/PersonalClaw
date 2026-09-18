@@ -37,13 +37,39 @@ export interface ScheduleDraft {
   timezone: string
   approval_mode: string  // '' | 'auto'
   skip_dates: string[]
+  // failure routing (WF2AUT-15) — a SEPARATE route for failures, so an automation the user asked to
+  // stay quiet can still say it broke. '' inherits the result route (`delivery.route_for`'s
+  // fall-back branch); see FAILURE_ROUTES.
+  failure_delivery: string  // '' | 'inbox' | 'none'
+  failure_dedupe: boolean   // → `failure_policy.dedupe_hash`
 }
+
+/** The failure routes `delivery.route_for` can actually honour.
+ *
+ *  🔴 WHY THESE THREE AND NO MORE. `route_for(trigger, ok=False)` reads `failure_delivery` and falls
+ *  back to `delivery` when it is empty, and `delivery.is_muted` recognises exactly `'none'`. So the
+ *  vocabulary is: send it to the inbox, mute it, or inherit whatever results do. `channel:<id>` is
+ *  deliberately absent — the Notify-channel field a few rows up owns a channel id, and a second
+ *  place to type one is how two settings start disagreeing about where a message goes.
+ *
+ *  'inbox' is FIRST because it is the entity default (`Trigger.failure_delivery = "inbox"`) and the
+ *  contract the field exists for: "failures reach the inbox even when `delivery` is none".
+ */
+export const FAILURE_ROUTES: Array<{ value: string; label: string }> = [
+  { value: 'inbox', label: 'Inbox' },
+  { value: 'none', label: "Don't tell me" },
+  { value: '', label: 'Same as results' },
+]
 
 export function emptyDraft(): ScheduleDraft {
   return {
     name: '', message: '', kind: 'every', intervalValue: 1, intervalUnit: 'h', cron: '0 9 * * *', at: '',
     mode: 'agent', agent: '', model: '', script: '', command: '',
     channel: '', silent: false, strict_schedule: false, timezone: '', approval_mode: '', skip_dates: [],
+    // Both match the entity's own defaults: `failure_delivery = "inbox"` and an empty
+    // `failure_policy` (so dedup is opt-in). A form that defaulted dedup ON would silently coalesce
+    // repeat alerts for every automation created through the UI.
+    failure_delivery: 'inbox', failure_dedupe: false,
   }
 }
 
@@ -57,6 +83,11 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     script: j.script ?? '', command: j.command ?? '',
     channel: j.channel ?? '', silent: !!j.silent, strict_schedule: !!j.strict_schedule,
     timezone: j.timezone ?? '', approval_mode: j.approval_mode ?? '', skip_dates: j.skip_dates ?? [],
+    // `??`, not `||`: an EMPTY `failure_delivery` is a real setting ("inherit the result route"),
+    // and coercing it to 'inbox' here would show the user a route their trigger does not have —
+    // then WRITE that invented route the next time they saved the form. Only a row that carries the
+    // field not at all (`null`/`undefined`) falls back to the entity default.
+    failure_delivery: j.failure_delivery ?? 'inbox', failure_dedupe: !!j.failure_dedupe,
   }
 }
 
@@ -76,6 +107,17 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
     strict_schedule: d.strict_schedule,
     channel: d.channel.trim(),
     skip_dates: d.skip_dates,
+    // 🔴 FAILURE ROUTING, unconditionally (WF2AUT-15). Both are DELIVERY on the trigger entity —
+    // `Trigger.failure_delivery` and `failure_policy.dedupe_hash` — not `invoke-agent` action
+    // config, so unlike `approval_mode` two lines down they have a home on the wire top level
+    // whatever the action is and must ride EVERY mode. Guarding them behind a mode would strip
+    // failure routing from every notify / script / command automation.
+    //
+    // Sent by PRESENCE, not truthiness: 'Same as results' is the empty string and turning dedup off
+    // is `false`, and omitting either would leave the stored value in place — the user's edit would
+    // silently not happen (the rule issues 268/689 established).
+    failure_delivery: d.failure_delivery,
+    failure_dedupe: d.failure_dedupe,
   }
   if (d.kind === 'cron') body.cron = d.cron.trim()
   else if (d.kind === 'every') body.every = intervalToSecs(d.intervalValue, d.intervalUnit)
@@ -215,7 +257,23 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
           <Field label="Skip dates" hint="ISO dates (YYYY-MM-DD) to skip — holidays, blackout days.">
             <ChipInput values={draft.skip_dates} onChange={(v) => set('skip_dates', v)} placeholder="2026-12-25, Enter" />
           </Field>
+          {/* 🔴 FAILURE ROUTING (WF2AUT-15). The whole contract was built and wired on the backend —
+              `Trigger.failure_delivery`, the PATCH allowlist, `delivery.route_for` picking the route
+              per OUTCOME, and the opt-in repeat-failure dedup — and had no control anywhere, so a
+              user could not reach any of it. It belongs HERE, beside Notify channel and Silent,
+              because it answers the same question those do: where does this automation talk to me.
+              The hint states the contract rather than the field name: the reason a separate route
+              exists is that a silent automation still has to be able to say it broke. */}
+          <Field label="If it fails" hint="Failures can reach you even when results stay silent.">
+            <NativeSelect value={draft.failure_delivery} onChange={(v) => set('failure_delivery', v)}
+              options={FAILURE_ROUTES} label="Where failures go" name="failure-delivery" />
+          </Field>
           <div className="flex flex-col gap-s">
+            {/* `failure_policy.dedupe_hash`. Opt-in, matching the declared schema: coalescing alerts
+                for a user who did not ask is the opposite failure — a broken automation going
+                quieter than they expect. The hint names the 1h re-alert window because "collapse
+                repeats" and "stop telling me" must not read alike. */}
+            <CheckRow label="Collapse repeat failures" hint="Only alert once an hour while the same error keeps happening." checked={draft.failure_dedupe} onChange={(v) => set('failure_dedupe', v)} />
             <CheckRow label="Silent" hint="Suppress auto-delivery; the agent decides when to send." checked={draft.silent} onChange={(v) => set('silent', v)} />
             <CheckRow label="Strict schedule" hint="Fire exactly on schedule with no jitter." checked={draft.strict_schedule} onChange={(v) => set('strict_schedule', v)} />
             {/* Shown only where it can actually persist. `approval_mode` is `invoke-agent` action

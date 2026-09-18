@@ -204,7 +204,7 @@ class ScheduleRunStore:
 
     # ── Write ─────────────────────────────────────────────────────────
 
-    def _append_sync(self, run: ScheduleRun) -> None:
+    def append_sync(self, run: ScheduleRun) -> None:
         # 🔴 REDACT BEFORE WRITE (criterion 11 — S138). The criterion is explicit that
         # `{{secret:KEY}}` "never appears resolved in triggers.json, journals, LEDGER, or
         # `automation_history` output". Measured: the API's `_redact_run` cleans the response, but
@@ -213,7 +213,7 @@ class ScheduleRunStore:
         # both carried by `personalclaw snapshot` (S113), and both readable by anything that reads
         # the home. Redacting only on read is a read-path control over a storage-path leak.
         #
-        # At the single write point, deliberately: `_append_sync` is the one funnel every run record
+        # At the single write point, deliberately: `append_sync` is the one funnel every run record
         # passes through, so a future caller cannot forget it — the per-call-site alternative is how
         # the screen and the fence gaps happened.
         run.summary = _redact_stored(run.summary)[:_SUMMARY_CAP]
@@ -242,7 +242,7 @@ class ScheduleRunStore:
     async def append(self, run: ScheduleRun) -> None:
         import asyncio
 
-        await asyncio.to_thread(self._append_sync, run)
+        await asyncio.to_thread(self.append_sync, run)
 
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
 

@@ -123,6 +123,16 @@ def is_silent(trigger: Any) -> bool:
     return str(getattr(trigger, "delivery", "") or "") == "none"
 
 
+def _failure_policy(trigger: Any) -> dict[str, Any]:
+    """`Trigger.failure_policy` as a dict, whatever the row actually holds.
+
+    The store's load is lenient (S87), so a hand-edited `triggers.json` can put a string here and
+    still list; a projection that assumed a dict would 500 the whole schedule list over one bad row.
+    """
+    policy = getattr(trigger, "failure_policy", None)
+    return policy if isinstance(policy, dict) else {}
+
+
 def session_key_of(trigger: Any) -> str:
     """The pinned session key, or "" for a fresh session."""
     session = str(getattr(trigger, "session", "") or "")
@@ -182,6 +192,18 @@ def to_schedule_row(
         "channel": channel_of(trigger) or None,
         "approval_mode": str(config.get("approval_mode") or "") or None,
         "silent": is_silent(trigger),
+        # 🔴 FAILURE ROUTING, published (WF2AUT-15). Both were declared, persisted, round-tripped and
+        # READ BY THE FIRE PATH — `delivery.route_for` picks the route per outcome and
+        # `gateway._dedupe_repeat_failure` gates on the policy key — and neither appeared on this
+        # wire row, so no surface could show a user what their automation was set to, let alone
+        # change it. `failure_delivery` is published RAW (not `or None`, unlike `channel`/`timezone`
+        # above): '' means "inherit `delivery`", so collapsing it to null would erase the difference
+        # between that choice and an unset field.
+        "failure_delivery": str(getattr(trigger, "failure_delivery", "") or ""),
+        # The one key of `failure_policy` a user can set, FLATTENED. The dict also holds
+        # `autopause_after`, so publishing it whole would invite a form to send the whole dict back
+        # and clobber a threshold it never edited.
+        "failure_dedupe": bool(_failure_policy(trigger).get("dedupe_hash", False)),
         "strict_schedule": bool(spec.get("strict", False)),
         "timezone": str(spec.get("timezone") or "") or None,
         "skip_dates": list(spec.get("skip_dates") or []),

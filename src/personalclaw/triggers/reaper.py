@@ -39,6 +39,15 @@ from disk, correctly, after a restart and from any process. Reaping reads that i
 The sweep is therefore: read every live claim, and for each one older than its deadline, release the
 claim, mark the trigger's health, and write a `timeout` ledger row so the run shows up in history as
 reaped rather than as still-running-forever.
+
+**🔴 THE SECOND TERMINALIZER: the BOOT ORPHAN PASS (WF2AUT-16).** Everything above is bounded by a
+CLOCK, and that is the wrong first answer after a restart. `overdue` waits 1800s and claim expiry
+waits 3600s, so a run whose owning process died one second ago reads as IN FLIGHT for half an hour —
+the phantom `guardrails/self_destruct.py` describes. A restart kills the owner of every in-flight
+run, and death is observable, so `terminalize_orphans` answers at boot instead: it reads each live
+claim's `owner_pid` (S97's claim now carries one) and terminalizes only the claims whose owner is
+PROVABLY gone. The deadline sweep stays as the backstop for a run that is alive and merely stuck —
+two different questions, two passes, one shared `_mark_degraded` so both look the same to a user.
 """
 
 from __future__ import annotations
@@ -61,6 +70,17 @@ REAPER_INTERVAL_SECS = 60.0
 #: — the plan keeps the reaper "as defense-in-depth over ALL trigger-fired runs", so the number a
 #: user already reasons about for a cron has to be the number a store-backed trigger gets.
 RUN_DEADLINE_SECS = 1800.0
+
+#: The `ScheduleRun.status` a restart-interrupted run carries (WF2AUT-16).
+#:
+#: 🔴 DELIBERATELY NOT A NEW MEMBER. `ScheduleRun.status` is closed at four values
+#: (`success|failure|timeout|launched`) and `web/src/pages/schedule/scheduleMeta.ts` switches on
+#: exactly those; an unrecognised value falls through `statusMeta` to "never run" in neutral grey —
+#: the one label a genuinely-ended run must never render as. `timeout` because that is what the
+#: vocabulary already means here ("it did not finish"), and it is what `migrate._HEALTH_FROM_STATUS`
+#: maps to DEGRADED. WHY it did not finish rides in the row's `error`, which is the field both
+#: `ScheduleDetail`'s `Last run` block and `RunHistory` render.
+RESTART_INTERRUPTED_STATUS = "timeout"
 
 
 def overdue(
@@ -128,42 +148,65 @@ def reap_one(
         int(RUN_DEADLINE_SECS),
         elapsed,
     )
+    record["recorded"] = _mark_degraded(
+        store,
+        trigger_id,
+        f"Reaped after {int(elapsed)}s (exceeded {int(RUN_DEADLINE_SECS)}s deadline)",
+    )
+    _audit(trigger_id, tool_name="reaper_force_kill", outcome="reaped", elapsed=elapsed)
+    return record
 
-    # Mark the trigger's health so the reap is visible on the surface a user actually looks at.
-    # DEGRADED, not FAILING: `migrate.py`'s `_HEALTH_FROM_STATUS` maps a legacy `timeout` status to
-    # DEGRADED, and that reading is the honest one — the trigger is not broken, its last run did not
-    # finish. The fields are `health_status`/`last_error_summary` (NOT `last_status`/`last_error`,
-    # which are the LEGACY names `LEGACY_FIELD_MAP` translates FROM — writing those would set two
-    # attributes nothing reads and leave the health dot green on a reaped run).
-    if store is not None:
-        try:
-            row = store.get(trigger_id)
-            if row is not None:
-                trigger = row.trigger
-                trigger.health_status = TriggerHealth.DEGRADED.value
-                trigger.last_error_summary = (
-                    f"Reaped after {int(elapsed)}s (exceeded {int(RUN_DEADLINE_SECS)}s deadline)"
-                )
-                store.upsert(trigger)
-                record["recorded"] = True
-        except Exception:  # noqa: BLE001 - one unreadable row must not stop the sweep
-            logger.debug("Reaper: could not record the reap for %s", trigger_id, exc_info=True)
 
-    # SEL audit, matching what the cron reaper logged so an operator's existing query still finds
-    # reaps after the cutover.
+def _mark_degraded(store: Any, trigger_id: str, summary: str) -> bool:
+    """Record on the TRIGGER that its last run did not finish. True when the row was written.
+
+    DEGRADED, not FAILING: `migrate.py`'s `_HEALTH_FROM_STATUS` maps a legacy `timeout` status to
+    DEGRADED, and that reading is the honest one — the trigger is not broken, its last run did not
+    finish. The fields are `health_status`/`last_error_summary` (NOT `last_status`/`last_error`,
+    which are the LEGACY names `LEGACY_FIELD_MAP` translates FROM — writing those would set two
+    attributes nothing reads and leave the health dot green on a reaped run).
+
+    Shared by both terminalizers in this module — the deadline sweep and WF2AUT-16's boot orphan
+    pass — because "how a non-finishing run appears to the user" must be one answer. Two copies is
+    how a reaped run and an interrupted one start rendering differently for no reason.
+
+    Never raises: one unreadable row must not stop the pass from freeing the others.
+    """
+    if store is None:
+        return False
+    try:
+        row = store.get(trigger_id)
+        if row is None:
+            return False
+        trigger = row.trigger
+        trigger.health_status = TriggerHealth.DEGRADED.value
+        trigger.last_error_summary = summary
+        store.upsert(trigger)
+        return True
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("Reaper: could not record the outcome for %s", trigger_id, exc_info=True)
+        return False
+
+
+def _audit(trigger_id: str, *, tool_name: str, outcome: str, elapsed: float) -> None:
+    """SEL audit for a terminalized run. Never raises — an audit failure must not mask the reap.
+
+    `reaper_force_kill` matches what the cron reaper logged, so an operator's existing query still
+    finds reaps after the cutover; the boot pass logs its own name so the two are distinguishable
+    in one query rather than being conflated as one control.
+    """
     try:
         from personalclaw.sel import sel
 
         sel().log_tool_invocation(
             session_key=f"cron:{trigger_id}",
             source="cron",
-            tool_name="reaper_force_kill",
-            outcome="reaped",
+            tool_name=tool_name,
+            outcome=outcome,
             metadata={"job_id": trigger_id, "elapsed": int(elapsed)},
         )
-    except Exception:  # noqa: BLE001 - an audit failure must not mask the reap
+    except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("Reaper: SEL audit failed for %s", trigger_id, exc_info=True)
-    return record
 
 
 def sweep_once(
@@ -183,6 +226,135 @@ def sweep_once(
     for trigger_id, elapsed in overdue(now=now, deadline_secs=deadline_secs, base_dir=base_dir):
         records.append(reap_one(trigger_id, elapsed, store=store, now=now, base_dir=base_dir))
     return records
+
+
+def terminalize_orphans_sync(
+    *,
+    store: Any = None,
+    now: float = 0.0,
+    base_dir: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """Terminalize every live claim whose OWNING PROCESS is gone. NEVER raises (WF2AUT-16).
+
+    🔴 THE DEFECT THIS CLOSES: an orphaned run read as HUNG until a DEADLINE elapsed.
+    `guardrails/self_destruct.py` states it in its own words — *"the ScheduleRunStore row never
+    reaches a terminal state and the fire reads afterwards as a HUNG run rather than as a
+    self-inflicted stop. The user is left debugging a phantom."* Everything in this module above
+    this line is bounded by a clock: `overdue` compares `now - claimed_at` against 1800s, and
+    read-time claim expiry against 3600s. Both are the right BACKSTOP and the wrong FIRST ANSWER. A
+    gateway restart kills the owner of every in-flight run, and after one the owner's death is an
+    observable fact — so the honest answer is available at boot, not half an hour later.
+
+    Measured before this existed, on a claim one second old whose pid was gone: `overdue()` → `[]`,
+    `claims.is_running()` → `True`. Thirty minutes of "still running" about a process that did not
+    exist.
+
+    Three writes per orphan, and each one is a surface a user reads:
+
+    1. **Release the claim**, so `is_running` goes false — the schedule row stops rendering as in
+       flight, and the next tick's `overlap: skip` gate stops suppressing the fire it should grant.
+    2. **A terminal run row**, so the run history shows an ending instead of an open row. `status`
+       stays inside `ScheduleRun`'s closed four-member set (`success|failure|timeout|launched`) —
+       WF2AUT-16 forbids a fifth member, because `scheduleMeta.ts` switches on that vocabulary and
+       an unknown value renders as "never run" grey. The interrupted-by-restart distinction rides in
+       `error`, which both `ScheduleDetail`'s `Last run` block and `RunHistory` already render.
+    3. **The trigger's health**, via the same `_mark_degraded` the deadline sweep uses.
+
+    Release-then-record, for the reason `reap_one` gives: a crash between the two leaves the trigger
+    FREE with no row (noisy, harmless), where the reverse could leave a recorded-as-ended run whose
+    claim still blocks every future fire.
+
+    Sync, matching `sweep_once` and `service.boot`, so a test can drive it at an exact instant; see
+    `terminalize_orphans` for the async face the gateway awaits.
+    """
+    from personalclaw.triggers import claims
+
+    now = now or time.time()
+    records: list[dict[str, Any]] = []
+    for trigger_id, owner_pid in claims.orphaned_ids(now=now, base_dir=base_dir):
+        started = claims.running_since(trigger_id, now=now, base_dir=base_dir) or now
+        elapsed = max(0.0, now - started)
+        released = claims.release_claim(trigger_id, base_dir=base_dir)
+        logger.warning(
+            "Boot: trigger %s was running under pid %d, which is gone; terminalizing after %.0fs",
+            trigger_id,
+            owner_pid,
+            elapsed,
+        )
+        reason = (
+            f"Interrupted by a gateway restart: the process running this "
+            f"(pid {owner_pid}) is gone. It ran {int(elapsed)}s."
+        )
+        record: dict[str, Any] = {
+            "trigger_id": trigger_id,
+            "owner_pid": owner_pid,
+            "elapsed": int(elapsed),
+            "released": bool(released),
+            "reason": reason,
+            "recorded": False,
+        }
+        record["recorded"] = _mark_degraded(store, trigger_id, reason)
+        _write_interrupted_row(
+            trigger_id, started_at=started, now=now, reason=reason, base_dir=base_dir
+        )
+        _audit(
+            trigger_id, tool_name="boot_orphan_terminalize", outcome="interrupted", elapsed=elapsed
+        )
+        records.append(record)
+    return records
+
+
+async def terminalize_orphans(
+    *,
+    store: Any = None,
+    now: float = 0.0,
+    base_dir: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """`terminalize_orphans_sync` off the event loop. What the gateway boot path awaits.
+
+    Async for the reason `ScheduleRunStore.append` is: the pass writes a JSONL row per orphan under
+    a file lock, and boot runs on the loop that is about to start serving.
+    """
+    return await asyncio.to_thread(
+        terminalize_orphans_sync, store=store, now=now, base_dir=base_dir
+    )
+
+
+def _write_interrupted_row(
+    trigger_id: str,
+    *,
+    started_at: float,
+    now: float,
+    reason: str,
+    base_dir: Path | str | None = None,
+) -> None:
+    """The terminal run row for an interrupted run. Never raises.
+
+    Rooted at `base_dir`, never at the ambient `config_dir()`, for the leak `service._run_store`
+    documents: a row describing a fire from `<base_dir>/triggers.json` belongs beside it, and a pass
+    that reached for the active home instead would deposit rows in the operator's real
+    `~/.personalclaw/cron-history/` whenever it ran against another store.
+    """
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+        root = Path(base_dir) if base_dir is not None else config_dir()
+        ScheduleRunStore(root).append_sync(
+            ScheduleRun(
+                run_id=f"interrupted-{int(now * 1000)}",
+                job_id=trigger_id,
+                trigger="scheduled",
+                started_at=started_at,
+                finished_at=now,
+                duration_ms=int(max(0.0, now - started_at) * 1000),
+                status=RESTART_INTERRUPTED_STATUS,
+                summary="",
+                error=reason,
+            )
+        )
+    except Exception:  # noqa: BLE001 - the claim is already freed; losing the row must not undo it
+        logger.debug("Boot: could not record the interrupted row for %s", trigger_id, exc_info=True)
 
 
 async def run_forever(

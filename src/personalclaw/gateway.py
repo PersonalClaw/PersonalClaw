@@ -2180,6 +2180,34 @@ class GatewayOrchestrator:
                 self._surface_missed_review(boot_report)
             except Exception:
                 logger.warning("trigger boot sweep failed", exc_info=True)
+            # 🔴 THE BOOT ORPHAN PASS (WF2AUT-16). A run this gateway's PREDECESSOR was executing
+            # left a live claim behind, and until now the only thing that could end it was
+            # `reaper.run_forever`'s 1800s deadline — so for half an hour after every crash or
+            # restart the run read as still in flight. `guardrails/self_destruct.py` names the cost:
+            # "the ScheduleRunStore row never reaches a terminal state and the fire reads afterwards
+            # as a HUNG run rather than as a self-inflicted stop. The user is left debugging a
+            # phantom." The claim now carries its `owner_pid`, so at boot the answer is an
+            # OBSERVATION rather than a wait: a claim whose owner is provably gone is released, its
+            # run row is closed, and its trigger reads DEGRADED with the reason.
+            #
+            # HERE, and the position is load-bearing twice: BEFORE the clock loop, so the first tick
+            # does not evaluate `existing_claim` against a dead owner's claim and suppress the fire
+            # it should grant (`overlap: skip`); and BEFORE the reaper, so the answer never depends
+            # on which background task happens to sweep first.
+            try:
+                from personalclaw.triggers import reaper as _reaper
+
+                interrupted = await _reaper.terminalize_orphans(
+                    store=_trigger_store, base_dir=_trigger_store.base_dir
+                )
+                if interrupted:
+                    logger.info(
+                        "boot orphan pass: %d run(s) interrupted by a restart terminalized (%s)",
+                        len(interrupted),
+                        ", ".join(str(r.get("trigger_id") or "?") for r in interrupted),
+                    )
+            except Exception:
+                logger.warning("boot orphan pass failed", exc_info=True)
             # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
             # legacy timer is gone entirely as of S112, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())

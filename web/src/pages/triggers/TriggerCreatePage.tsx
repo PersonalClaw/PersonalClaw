@@ -162,6 +162,12 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           name: name.trim(),
           timezone: sched.timezone || '', silent: sched.silent, strict_schedule: sched.strict_schedule,
           channel: sched.channel.trim(), skip_dates: sched.skip_dates,
+          // Failure routing (WF2AUT-15). Sent HERE as well as from `draftToPayload`, because this
+          // page builds its own body and takes `_scheduleBodyToWire`'s early return — the branch
+          // that made "Auto-approve tools" decorative (issue 268). These two are trigger DELIVERY,
+          // not action config, so they survive that return as part of `rest`; leaving them out would
+          // draw both controls in the shared Advanced block and persist neither at create time.
+          failure_delivery: sched.failure_delivery, failure_dedupe: sched.failure_dedupe,
         }
         if (sched.kind === 'cron') body.cron = sched.cron.trim()
         else if (sched.kind === 'every') body.every = intervalToSecs(sched.intervalValue, sched.intervalUnit)
