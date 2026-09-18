@@ -40,8 +40,27 @@ on:
 # the other half of that). The promise is narrower and is the one "main is verified" needs:
 # main's HEAD converges on a COMPLETED run, and no running verification is ever killed. Naming
 # which of a batch of merges broke something is bisect's job, not this workflow's.
+#
+# ── the SCHEDULED verification needs its own lane, or queueing starves it (measured) ──────────
+# 🪤 QUEUEING PROTECTS WHATEVER IS ALREADY RUNNING, WHICH UNDER A FAST CADENCE IS NEVER THE
+# NIGHTLY. Re-measured 2026-09-18T14:00Z over the last 150 runs on main: 9 success · 16 failure ·
+# 124 cancelled, and a completed run takes 40-59 min (median ~55) while main merged every ~6-11
+# min across the last 40. That ratio is the whole problem: with one in-flight and one pending
+# slot, the pending slot is replaced every ~10 min but only frees every ~55, so the push lane
+# cannot converge — of the last 40 runs, 37 cancelled, 2 failed, 1 queued, ZERO green.
+#
+# Sharing one group made the nightly a casualty of that. `schedule` resolves `github.ref` to
+# `refs/heads/main`, so the cron run queued behind the merge stream and was superseded by the
+# next push before it ever started. It is the ONE run whose whole purpose is to verify main
+# independently of the merge cadence, and it had a ~10-min window to win a slot the pushes hold
+# for ~55. So it is keyed on `github.event_name` here: `push` keeps its own serialized lane, and
+# `schedule`/`workflow_dispatch` get a lane no merge can evict.
+#
+# This does not remove the cap the per-SHA note above rejects — it raises it from one in flight
+# to at most two, and only while the nightly is actually running. That is the price of having any
+# guaranteed completed verification of main at all, and it is why `main` gets a green to read.
 concurrency:
-  group: full-${{ github.ref }}
+  group: full-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'scheduled' }}
   cancel-in-progress: false
 
 permissions:

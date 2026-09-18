@@ -351,6 +351,21 @@ REMOTE_TIP_SCOPE = 'range="$remote_sha..$local_sha"'
 #: on its first run.
 GATING = "frontend changes outgoing — running the render-smoke gate"
 
+#: The SCOPING decision on its own — the shared prefix of all three "the frontend half is owed"
+#: outcomes (chain running · toolchain absent · topic branch). The vacuity floor below measures
+#: this rather than :data:`GATING`, because TWO rungs sit between the scope and that
+#: announcement — ``command -v npm`` and the ``release_ref`` ruling — and neither is scope.
+#:
+#: 🪤 The ``pre-push: `` prefix is LOAD-BEARING, not decoration. :data:`REACHED_THE_END` is
+#: ``"no frontend changes outgoing"``, which CONTAINS ``"frontend changes outgoing"`` — so the
+#: bare phrase is satisfied by the very cheap exit this floor exists to rule out. Asserted.
+FRONTEND_OWED = "pre-push: frontend changes outgoing"
+
+#: Does THIS machine have the chain's own tools? ``run_prepush.sh`` degrades gracefully when it
+#: does not (its own "mise-managed here and NOT on the default PATH" note), so whether
+#: :data:`GATING` is reachable at all is a property of the PATH, not of the gate.
+_HAVE_WEB_TOOLCHAIN = bool(shutil.which("npm")) and bool(shutil.which("node"))
+
 
 class Rebased:
     """A sandbox where a branch was rebased and its remote tip left behind.
@@ -464,7 +479,29 @@ def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased)
     branch and assert the expensive half is owed. The assertion is on the announcement
     rather than the exit code, because `npm ci` in a repo with no `package.json` fails
     for its own reasons and that failure would look like a gate either way.
+
+    🪤 IT USED TO ASSERT `GATING`, AND THAT MADE IT MEASURE THE LOCAL PATH INSTEAD OF THE
+    SCOPE. `run_prepush.sh` grew an npm/node-absent rung — added because those tools "are
+    mise-managed here and are NOT on the default PATH" — and it sits BETWEEN the scoping
+    decision and the `GATING` announcement. So this floor started failing wherever `npm` is
+    not on the PATH pytest inherits, which is every agent lane, while passing in CI where
+    the runners preinstall node. MEASURED on origin/main 2026-09-18 in a clean worktree:
+    RED with a plain PATH (`stdout` was the toolchain-skip line), GREEN with the mise shims
+    prepended. The gate was never wrong; the marker was.
+
+    So the floor now asserts the SCOPING decision (:data:`FRONTEND_OWED`), which is what its
+    name and its whole purpose are about, and keeps the stronger :data:`GATING` assertion for
+    machines where that announcement is reachable at all. Strictly more than before on a
+    CI runner, and honest rather than red on a machine without the web toolchain.
     """
+    # The floor's own floor. `REACHED_THE_END` contains the phrase `FRONTEND_OWED` is built
+    # from, so without the `pre-push: ` prefix the assertion below would be satisfied by the
+    # cheap exit it exists to rule out — vacuous in the one direction that matters.
+    assert FRONTEND_OWED not in f"pre-push: {REACHED_THE_END}", (
+        "FRONTEND_OWED is a substring of the skip line, so the assertion below can no longer "
+        "tell 'the frontend half is owed' from 'no frontend changes outgoing'"
+    )
+
     (rebased.root / "web" / "Extra.tsx").write_text("export const Extra = () => null\n", "utf-8")
     _git("add", "-A", cwd=rebased.root)
     _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "my own frontend change", cwd=rebased.root)
@@ -475,11 +512,17 @@ def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased)
     # pass for the wrong reason — the skip would be the ref rule rather than the scoping this
     # test exists to measure. `main` is where the chain is still reachable.
     result = _run(f"refs/heads/main {head} refs/heads/main {rebased.old_tip}\n", cwd=rebased.root)
-    assert GATING in result.stdout, (
+    assert FRONTEND_OWED in result.stdout, (
         "the gate skipped the frontend chain for a branch that changes a `web/` file — "
         f"the scoping is now too narrow: stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert REACHED_THE_END not in result.stdout
+    if _HAVE_WEB_TOOLCHAIN:
+        assert GATING in result.stdout, (
+            "npm and node are both on PATH, so the render-smoke chain is reachable and a "
+            "release ref must run it — nothing upstream may skip it: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
 
 
 def test_no_shared_history_with_main_gates_unconditionally(tmp_path: Path):
