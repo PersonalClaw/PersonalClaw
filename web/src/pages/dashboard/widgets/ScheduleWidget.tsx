@@ -85,18 +85,35 @@ export function ScheduleWidget({ navigate }: RouteProps) {
   // `suppressed.length`, which only sees the page fetched — the label must not shrink to the fold.
   const visible = showSuppressed ? [...did, ...suppressed] : did
 
+  // 🔴 EVERY READ HERE NOW RESOLVES ON THE SHAPE THIS WIDGET ACTUALLY RECEIVES (issue 466). The
+  // endpoint was re-pointed underneath this file: until S84 `/api/triggers/history` returned raw
+  // `ScheduleRun` dicts, and this row has read `job_name`/`job_id`/`status`/`trigger` since the
+  // initial public commit. S84 made the default shape the UNIFIED `FireRecord` — deliberately; the
+  // handler's docstring calls it "the honest cross-kind answer" — and those rows carry none of
+  // those four names. Measured on a live gateway with five real fires: every row rendered the
+  // literal word "Schedule", so five different automations were indistinguishable (four of them
+  // sharing ONE accessible name), and the failures among them said "failed" and nothing else
+  // because `reason` — the row's MANDATORY one-line why — had no reader on this surface.
+  //
+  // So the reads follow the live row: `trigger_name` (the name join, restored to the PROJECTION
+  // rather than re-derived here, so two consumers cannot disagree about a trigger's name),
+  // `trigger_id` as the honest fallback for a row whose kind has no name, and `reason` in the slot
+  // the dead `r.trigger` provenance read used to occupy. `?? r.status` is gone with them: this
+  // widget has exactly ONE data source, that source does not send `status`, and a fallback onto a
+  // field that never arrives made the mismatch look handled while rendering nothing.
   const row = (r: typeof schedule[number], i: number) => {
-    const o = statusMeta(r.outcome ?? r.status)
+    const o = statusMeta(r.outcome)
     const when = r.finished_at ?? r.started_at
+    const name = r.trigger_name || r.trigger_id || 'Schedule'
     return (
-      <WidgetRow key={r.id ?? r.run_id ?? `${r.job_id}-${i}`} onClick={() => navigate('triggers')}
-        label={rowSubject([r.job_name || r.job_id || 'Schedule', statusMeta(r.outcome ?? r.status).label])}>
+      <WidgetRow key={r.id ?? r.run_id ?? `run-${i}`} onClick={() => navigate('triggers')}
+        label={rowSubject([name, o.label, r.reason])}>
         <div className="flex items-center gap-s">
           <StatusDot color={o.tone} />
           <div className="min-w-0 flex-1">
-            <p data-type="title-m" className="truncate text-on-surface">{r.job_name || r.job_id || 'Schedule'}</p>
+            <p data-type="title-m" className="truncate text-on-surface">{name}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">
-              <span style={{ color: o.tone }}>{o.label}</span>{r.trigger ? ` · ${r.trigger}` : ''}
+              <span style={{ color: o.tone }}>{o.label}</span>{r.reason ? ` · ${r.reason}` : ''}
             </p>
           </div>
           <span data-type="body-m" className="shrink-0 text-on-surface-low">{rel(when)}</span>
