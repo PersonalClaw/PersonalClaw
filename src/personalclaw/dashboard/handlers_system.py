@@ -72,12 +72,80 @@ def _get_telemetry_salt() -> bytes:
         return _IN_MEMORY_SALT
 
 
+def home_fingerprint(path: object) -> str:
+    """A short, stable, non-reversible id for a resolved ``PERSONALCLAW_HOME``.
+
+    Deliberately a fingerprint and not the path: ``/api/healthz`` is auth-exempt
+    (``token_auth._BYPASS_EXACT``) and the gateway can bind ``0.0.0.0``, so shipping an
+    absolute path there would hand every unauthenticated LAN client the operator's username
+    and directory layout. A caller does not need the path — it needs to COMPARE — and a
+    fingerprint answers that without disclosing anything.
+
+    Reproduce it for the home you expect, then compare::
+
+        python3 -c 'import hashlib,pathlib,os,sys; \
+            p=pathlib.Path(os.environ["PERSONALCLAW_HOME"]).expanduser().resolve(); \
+            print(hashlib.sha256(str(p).encode()).hexdigest()[:16])'
+    """
+    import hashlib
+
+    return hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+
+
+def _serving_root() -> Path | None:
+    """The directory the RUNNING code is imported from, or ``None`` if unknowable.
+
+    For an editable install this is the checkout's ``src/personalclaw`` — which is exactly
+    what disappears when a pinned worktree is removed from under a still-running gateway.
+    """
+    try:
+        return Path(personalclaw.__file__).resolve().parent
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 async def api_healthz(request: web.Request) -> web.Response:
     """Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 
     Used by container/compose healthchecks. No secret values returned.
+
+    It also answers WHOSE gateway this is, because "something answered on this port" is not
+    the question a caller is actually asking. A gateway whose pinned worktree had been
+    deleted kept answering this route 200; two probes read that as their own gateway being
+    healthy and killed the same work twice. The identity fields close that:
+
+    * ``pid`` — the answering process. A caller that spawned the gateway asserts this equals
+      the child pid it holds. Not a disclosure: any local user reads it from ``ps``.
+    * ``home_id`` — ``home_fingerprint()`` of the resolved ``PERSONALCLAW_HOME``. A caller
+      that knows only its own home (the common case — ``make serve`` in one shell, a probe in
+      another) recomputes it and compares. The path itself is never sent; see
+      ``home_fingerprint``.
+    * ``root_ok`` — does the directory this code is being served FROM still exist on disk.
+      ``false`` is the zombie: a live process serving code from a removed checkout. Computed
+      live on every call, because becoming false is the whole event worth catching.
+
+    ``status`` stays ``"ok"`` and the code stays 200 when ``root_ok`` is false, on purpose. A
+    deleted serving root is a *provenance* fault, not an inability to serve, and this route is
+    a container/compose healthcheck: flipping it would restart-loop a gateway that is working,
+    including during the window when ``pip install --upgrade`` replaces the package directory
+    under a running process. Callers that care assert on ``root_ok``.
     """
-    return web.json_response({"status": "ok", "version": personalclaw.__version__})
+    root = _serving_root()
+    try:
+        # This module's own resolver, so the fingerprint is of the home the rest of the
+        # process actually uses — a second reimplementation here could drift from it.
+        home_id = home_fingerprint(_path_home_pclaw())
+    except (OSError, RuntimeError):  # pragma: no cover — an unresolvable home must not 500 here
+        home_id = None
+    return web.json_response(
+        {
+            "status": "ok",
+            "version": personalclaw.__version__,
+            "pid": os.getpid(),
+            "home_id": home_id,
+            "root_ok": bool(root is not None and root.exists()),
+        }
+    )
 
 
 def _safe_surfaces_flag() -> bool:
