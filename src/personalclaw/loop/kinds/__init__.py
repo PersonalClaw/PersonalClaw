@@ -45,6 +45,25 @@ class CycleContext:
     complete: Callable[[str, str], Awaitable[None]]  # complete(loop_id, reason) — terminal
 
 
+#: The plan-row fields a phase's stable key is read from, in priority order — ONE
+#: vocabulary shared by every kind and by the frontend.
+#:
+#: ``stage`` is the phase id every planner emits (``code_plan_briefs`` and
+#: ``design_plan_briefs`` both ask their model for ``{"stage", "title", …}``, and
+#: ``LoopPhase.stage`` is the field the wire type declares). ``title`` is the fallback for
+#: a genuinely stage-less row — goal sub-goals, general phases, and a titled-but-stageless
+#: code row.
+#:
+#: This tuple exists so the field NAMES are stated once instead of being re-spelled at each
+#: reader. Design used to spell the same id ``step``, which no reader outside the design
+#: kind knew: the writer keyed ``phase_status`` by ``step`` and the frontend's fold keyed it
+#: by ``stage``, so every design stage rendered ``todo`` forever under a header counter that
+#: read ``3/5 stages`` (issue 494). ``web/src/pages/loops/loopPhases.ts`` carries the
+#: frontend's copy of this list and ``tests/test_loop_phase_key_one_owner.py`` asserts the
+#: two agree, so renaming a field on either side reds a test instead of a screen.
+PHASE_KEY_FIELDS: tuple[str, ...] = ("stage", "title")
+
+
 @runtime_checkable
 class LoopKindStrategy(Protocol):
     """The behavior contract for one loop kind. The engine calls these; the
@@ -104,10 +123,22 @@ class LoopKindStrategy(Protocol):
         ...
 
     def phase_key(self, phase: dict) -> str:
-        """The stable key for a plan phase — what ``phase_status`` /
-        ``task_list_ids`` are keyed by. Goal/general: title; code: stage-or-title;
-        design: step id. Must match how the kind's planner emits phases."""
-        ...
+        """The stable key for a plan phase — what ``phase_status`` / ``task_list_ids`` are
+        keyed by, and what the frontend looks a phase's state up by.
+
+        ONE implementation for every kind: the first non-empty :data:`PHASE_KEY_FIELDS`
+        value. A kind MUST NOT override this. Four hand-written copies used to say three
+        different things (goal/general ``title``, code ``stage``-or-title, design
+        ``step``-or-title) and nothing checked that any reader agreed — which is how
+        design's writer and the frontend's reader ended up keyed on different words. A
+        kind that needs a different phase id changes its planner to emit ``stage``, not
+        this function; ``tests/test_loop_phase_key_one_owner.py`` reds on a new override.
+        """
+        for field in PHASE_KEY_FIELDS:
+            value = str(phase.get(field, "") or "").strip()
+            if value:
+                return value
+        return ""
 
     async def classify(
         self,

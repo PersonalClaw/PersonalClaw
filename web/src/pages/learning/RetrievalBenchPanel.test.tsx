@@ -9,7 +9,9 @@ import { api, ApiError, type RetrievalArmContribution, type RetrievalBenchView, 
  *  1. An UNMEASURED metric must not render as a zero. The control mask retrieves nothing by
  *     construction, so `p_at_k: null` is its correct value; drawing "0.0%" would report the
  *     retriever as scoring zero.
- *  2. An arm with NO EXECUTOR never ran, so its zero delta must not read as "worthless".
+ *  2. An arm that produced NO CANDIDATES never ran, so it must not read as "worthless" — and
+ *     the advice attached to it must not assume the cause is an unbound model, because a bound
+ *     model with an expired credential produces exactly this state.
  *  3. Saving an EMPTY hand-label selection is a real judgement and must be SUBMITTED — the
  *     bug being pinned is a card that drops it and lets the mined weak label survive.
  *  4. A 404 is the ORDINARY state, and it is the state where the card is still useful. */
@@ -96,22 +98,27 @@ describe('the per-arm retrieval ablation table', () => {
     expect(screen.getByText(/Not measured yet/)).toBeTruthy()
   })
 
-  it('warns that an arm with no executor never ran', () => {
+  it('warns that an arm which produced no candidates never ran', () => {
     render(<RetrievalBenchPanel
       bench={view({
         stores: {
           knowledge: report({
             table: { ...report().table!, arm_executors: { keyword: true, graph: true, vector: false } },
             contributions: [contribution({
-              arm: 'vector', contribution_p: 0, verdict: 'unmeasured',
-              reasons: ['no executor: the arm could not run in this process (no embedder?)'],
+              arm: 'vector', contribution_p: null, verdict: 'unmeasured',
+              reasons: ['no candidates: the arm returned nothing under its own mask, so it never ran'],
             })],
           }),
         },
       })}
       error={undefined} onRetry={() => {}} />)
-    expect(screen.getByText(/No executor for vector/)).toBeTruthy()
-    expect(screen.getByText(/no executor: the arm could not run/)).toBeTruthy()
+    expect(screen.getByText(/vector returned no candidates in this run/)).toBeTruthy()
+    // The advice must not be "bind a model": a bound model with an expired credential is
+    // the case that produced this, and telling that user to bind one sends them nowhere.
+    expect(screen.getByText(/an expired credential leaves the model bound/)).toBeTruthy()
+    expect(screen.getByText(/no candidates: the arm returned nothing/)).toBeTruthy()
+    // A dead arm's delta is withheld, so the cell reads "no delta" rather than "+0.0pp".
+    expect(screen.getByText('no delta')).toBeTruthy()
   })
 
   it('renders an absent delta as "no delta", distinct from a delta of zero', () => {

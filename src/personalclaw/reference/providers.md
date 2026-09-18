@@ -13,6 +13,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `memory`
 - `model`
 - `notification`
+- `ocr`
 - `prompt`
 - `sandbox`
 - `search`

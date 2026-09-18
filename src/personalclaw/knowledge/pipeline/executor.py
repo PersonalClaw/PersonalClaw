@@ -20,7 +20,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
-from personalclaw.knowledge.pipeline.registry import can_resolve_use_case, get_node
+from personalclaw.knowledge.pipeline.registry import (
+    can_resolve_use_case,
+    get_node,
+    node_available,
+    resolve_runnable,
+)
 from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput, PoolRow
 
 logger = logging.getLogger(__name__)
@@ -34,6 +39,14 @@ class ExecutionResult:
     ran: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    #: Nodes whose incoming CONDITIONAL edge did not match — the branch was not taken.
+    #: Distinct from ``skipped`` (a real degradation: a model or engine that should have
+    #: been there was not), because a graph with an either/or branch would otherwise
+    #: report every clean run as ``partial``. The document graph's scan branch made that
+    #: concrete: a text-layer PDF leaves ``pdf_rasterize`` and ``ocr`` untaken, and
+    #: calling that "partially ingested" would tell the user something was missing from a
+    #: document that was read completely.
+    not_taken: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -110,7 +123,7 @@ class PipelineExecutor:
         """Drop a node set's recorded outputs/phases so a re-run can re-resolve them."""
         for nt in nodes:
             result.outputs.pop(nt, None)
-            for lst in (result.ran, result.failed, result.skipped):
+            for lst in (result.ran, result.failed, result.skipped, result.not_taken):
                 while nt in lst:
                     lst.remove(nt)
 
@@ -210,10 +223,14 @@ class PipelineExecutor:
             self._notify(node_type, "skipped")
             return
         if not self._edges_satisfied(node_type, result):
-            result.skipped.append(node_type)
+            # The branch was not taken, which is not a degradation — see
+            # ``ExecutionResult.not_taken``. Still reported as "skipped" to the UI: the
+            # live node timeline shows what did and did not run, and it has no third badge.
+            result.not_taken.append(node_type)
             self._notify(node_type, "skipped")
             return
 
+        pinned = bool(params.get("backend"))
         backend = params.get("backend") or spec.backend
         use_case = params.get("use_case", spec.uses_use_case)
         node = get_node(node_type, backend)
@@ -224,10 +241,41 @@ class PipelineExecutor:
             return
         # Model-backed node with no active model → graceful skip (item goes partial).
         if not can_resolve_use_case(use_case):
-            logger.info("skipping node %s — use-case %s has no active model", node_type, use_case)
-            result.skipped.append(node_type)
-            self._notify(node_type, "skipped")
-            return
+            # …unless ANOTHER registered backend for this node type can run. One node type may
+            # have alternative implementations (`ocr` is model-backed by default and
+            # engine-backed when an OCR app is installed), and skipping a step whose work IS
+            # available just because the DEFAULT route needs a model the user never bound is
+            # the graceful-skip path overreaching. A user-PINNED backend is authoritative and
+            # never substituted; only the graph's default is reconsidered.
+            alt = None if pinned else resolve_runnable(node_type, backend)
+            if alt is None:
+                logger.info(
+                    "skipping node %s — use-case %s has no active model", node_type, use_case
+                )
+                result.skipped.append(node_type)
+                self._notify(node_type, "skipped")
+                return
+            node, backend = alt
+            # The substitute resolves its OWN use-case (an engine backend has none), so the
+            # spec's use-case no longer describes this run.
+            use_case = node.uses_use_case
+            logger.info(
+                "node %s: use-case %s unresolved → running runnable backend %r instead",
+                node_type,
+                spec.uses_use_case,
+                backend,
+            )
+        elif not node_available(node):
+            # The use-case resolves but the backend's own dependency does not (an engine app
+            # was disabled mid-session). Same substitution, same graceful skip if none runs.
+            alt = None if pinned else resolve_runnable(node_type, backend)
+            if alt is None:
+                logger.info("skipping node %s — backend %r is unavailable", node_type, backend)
+                result.skipped.append(node_type)
+                self._notify(node_type, "skipped")
+                return
+            node, backend = alt
+            use_case = node.uses_use_case
 
         self._notify(node_type, "running")
         inputs = {

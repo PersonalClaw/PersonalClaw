@@ -133,6 +133,7 @@ export function layoutRunDag(
     const y = slot * (NODE_H + ROW_GAP)
     placed.set(row.node.instance_path, { x, y, depth })
     const awaiting = isAwaitingHuman(row.node, continuations)
+    const name = options.label ? options.label(row.node) : row.node.node_id
     out.push({
       id: row.node.instance_path,
       x,
@@ -142,7 +143,11 @@ export function layoutRunDag(
       // An awaiting gate is `awaiting` regardless of what the state map says, because that is the
       // one state a user can ACT on and it must not be flattened into the generic `blocked` look.
       state: awaiting ? 'awaiting' : dagState(row.node.state),
-      content: options.label ? options.label(row.node) : row.node.node_id,
+      content: name,
+      // Accessible name (#474). The ENGINE state, not the six-way visual state, because the
+      // engine's word is the one the run's list view shows next to the same node — and an
+      // awaiting gate is named as such, since that is the node a user has to come back to.
+      label: `${name} — ${awaiting ? 'awaiting approval' : row.node.state}`,
     })
   }
 

@@ -3,8 +3,8 @@ import { TaskCreatePage } from './TaskCreatePage'
 import { useEditFlag, type RouteProps } from '../../app/useQueryState'
 
 /** Tasks navigation — fully URL-addressable:
- *    #/tasks                       → list (view/filter/search/sort/scope/list/open via ?query)
- *    #/tasks?view=board&filter=open&q=foo&sort=recent&scope=<proj>&list=<id>&open=<id>
+ *    #/tasks                       → list (view/filter/search/sort/scope/list/tag/open via ?query)
+ *    #/tasks?view=board&filter=open&q=foo&sort=recent&scope=<proj>&list=<id>&tag=<tag>&open=<id>
  *    #/tasks/new                   → create page
  *  View/edit of an existing task happens in the list page's SidePanel (the
  *  `?open=<id>` query, with `?edit=1` for the edit toggle); only create is its own
@@ -19,6 +19,7 @@ export function TasksSection({ sub, navigate, query, setQuery, navEpoch }: Route
     <TasksListPage key={navEpoch}
       view={query.view || ''} filter={query.filter || 'all'} openId={query.open || null}
       q={query.q || ''} sort={query.sort || ''} scope={query.scope || ''} list={query.list || ''}
+      tag={query.tag || ''}
       editing={editing} setEditing={setEditing}
       onCreate={() => navigate('tasks/new')}
       // view-mode + status filter are in-place refinements (canonical §3) → replace,
@@ -30,6 +31,7 @@ export function TasksSection({ sub, navigate, query, setQuery, navEpoch }: Route
       setQ={(v) => setQuery({ q: v || null }, { replace: true })}
       setSort={(v) => setQuery({ sort: v || null }, { replace: true })}
       setScope={(v) => setQuery({ scope: v || null }, { replace: true })}
-      setList={(v) => setQuery({ list: v || null }, { replace: true })} />
+      setList={(v) => setQuery({ list: v || null }, { replace: true })}
+      setTag={(v) => setQuery({ tag: v || null }, { replace: true })} />
   )
 }

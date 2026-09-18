@@ -371,6 +371,11 @@ class InboxView:
     """
 
     rows: list[Row] = field(default_factory=list)
+    #: How many SKILL proposals wait in the ladder's own store — a count and a pointer, never rows
+    #: (#321). It rides the view rather than being pasted onto the payload by the handler, because
+    #: the wire-envelope census reads a handler-built dict as the indirection it exists to expose:
+    #: the response body must stay a composer's return value.
+    skill_proposals_pending: int = 0
 
     @property
     def total(self) -> int:
@@ -414,6 +419,7 @@ class InboxView:
             "flagged": self.flagged,
             "unrenderable": self.unrenderable,
             "bulk_acceptable": sum(1 for r in self.rows if r.bulk_acceptable),
+            "skill_proposals_pending": self.skill_proposals_pending,
         }
 
 
@@ -424,18 +430,21 @@ def build_view(
     kind: str = "",
     tier: str = "",
     flagged_only: bool = False,
+    skill_proposals_pending: int = 0,
 ) -> InboxView:
     """Assemble the inbox from stored proposals.
 
     `tiers` maps proposal id → risk tier, supplied by the caller that has the typed ops. Passing it
     in keeps this module from importing the refiner's op vocabulary for a value only one kind has.
+    `skill_proposals_pending` is passed in for the same reason: the skill ladder's store is not this
+    module's to read, but the count belongs in the body this composer owns.
     """
     rows = [
         row_from_proposal(prop, risk_tier=(tiers or {}).get(str(getattr(prop, "id", "")), ""))
         for prop in proposals or []
     ]
     rows = filter_rows(rows, kind=kind, tier=tier, flagged_only=flagged_only)
-    return InboxView(rows=order_rows(rows))
+    return InboxView(rows=order_rows(rows), skill_proposals_pending=skill_proposals_pending)
 
 
 def audit_denial(*, action: str, actor: str, pid: str, gate: Gate) -> dict[str, Any]:

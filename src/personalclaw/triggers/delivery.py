@@ -259,11 +259,18 @@ def route_for(trigger: Any, *, ok: bool) -> str:
     Falls back to `delivery` when `failure_delivery` is empty, and only for a FAILURE — a success
     must never inherit the failure route, or a quiet automation would start announcing its ordinary
     runs through the inbox.
+
+    🔴 A BLANK IS NOT THE SILENT VALUE (#450). This used to read `str(trigger.delivery or "none")`,
+    the same `or "none"` `parse_trigger` carried — so fixing the loader alone left the latch
+    standing, because THIS is the layer that decides delivery. It also contradicted `is_muted`'s own
+    stated rule four functions down ("an empty destination is NOT muted … defaulting that to silence
+    would let a bug turn into missing alerts"). A blank now travels as a blank and `is_muted`
+    remains the single place that decides what silence is.
     """
     if ok:
-        return str(getattr(trigger, "delivery", "") or "none")
+        return str(getattr(trigger, "delivery", "") or "")
     failure = str(getattr(trigger, "failure_delivery", "") or "")
-    return failure or str(getattr(trigger, "delivery", "") or "none")
+    return failure or str(getattr(trigger, "delivery", "") or "")
 
 
 #: Volatile patterns stripped before hashing a failure for dedup: ISO timestamps and UUIDs. Without

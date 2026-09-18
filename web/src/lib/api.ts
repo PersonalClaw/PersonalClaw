@@ -5,6 +5,7 @@
 
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
+import { activePersonaTheme } from '../design/personalities'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
 // into it is the SPA's ONE declaration site: the number lives only in
@@ -847,6 +848,10 @@ export interface AppCatalog {
   /** The remote HOSTS a Store read contacts, so the surface that triggers the egress can
    *  disclose it. Empty ⇒ opening the Store reaches nothing off this machine. */
   networkSources?: string[]
+  /** Sources that contributed nothing to THIS build — unreachable, or cut off by the scan
+   *  budget (#408). The backend used to discard this, so one typo'd source read as "the
+   *  Store is broken" rather than "remove that one". `reason` is `unreachable` | `budget`. */
+  unavailableSources?: { source: string; reason: string }[]
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
@@ -2201,6 +2206,10 @@ export interface LearningInbox {
   rows: LearningRow[]; total: number
   by_kind: Record<string, number>; by_tier: Record<string, number>
   flagged: number; unrenderable: string[]; bulk_acceptable: number
+  /** SKILL proposals awaiting review — a count and a pointer, never rows. A different store
+   *  (`skills/.proposals`) with its own review UI; the Learning empty state names it so it
+   *  stops claiming "Nothing to review" while they sit one page away (#321). */
+  skill_proposals_pending?: number
 }
 // One day of the capture panel. An EMPTY bucket is the signal: `health()` cannot see a day where
 // capture never ran, which is the failure the staging tier exists to expose.
@@ -2612,10 +2621,11 @@ export interface RetrievalMaskRow {
 /** One arm's leave-one-out marginal contribution and its offline verdict.
  *
  *  `verdict` is 'enable' | 'hold' | 'unmeasured'. `unmeasured` is first-class and covers
- *  three different truths — no delta, too few scored queries, or no executor at all — so
- *  `reasons[0]` is what a reader acts on. An arm with no executor never ran, which makes
- *  its `contribution_p` exactly 0.0; rendering that as "worthless" is the mistake the
- *  verdict exists to prevent. */
+ *  three different truths — no delta, too few scored queries, or the arm never ran — so
+ *  `reasons[0]` is what a reader acts on. An arm that never ran has `contribution_p: null`,
+ *  NOT 0.0: its delta would be a mask differenced against itself, so the server withholds
+ *  the number rather than publishing a zero that reads as a measured "this arm is
+ *  worthless". Render `null` as "not measured"/"no delta" and never as 0. */
 export interface RetrievalArmContribution {
   arm: string
   full_p_at_k: number | null
@@ -3331,7 +3341,28 @@ export interface BrowseExpiredSite {
    *  re-auth will REUSE the existing profile rather than establish a new one. */
   key_present: boolean
 }
-export interface BrowseStatus { kill: BrowseKillState; expired: BrowseExpiredSite[] }
+/** One per-task browse grant awaiting a human answer. The `user_browser` target drives the
+ *  operator's OWN already-logged-in browser, so it cannot start on the autonomy ladder's say-so: it
+ *  needs a fresh grant naming the sites it will touch, and nobody answering is a REJECT.
+ *
+ *  `requested_at` (epoch seconds) + `timeout` are the fail-closed deadline, handed over as the two
+ *  raw facts rather than a pre-computed "seconds left" — which would be stale before it rendered.
+ *  Carries the task label and host scope ONLY: never a credential, cookie or token. */
+export interface BrowsePendingGrant {
+  request_id: string
+  /** The task label, also the name of the tab group the run's tabs live under. */
+  task: string
+  /** The hostnames the task intends to touch — what the human is actually authorizing. */
+  scope: string[]
+  group: string
+  requested_at: number
+  timeout: number
+}
+export interface BrowseStatus {
+  kill: BrowseKillState
+  expired: BrowseExpiredSite[]
+  grants: BrowsePendingGrant[]
+}
 // One live browse step, off the `browse_step` WS frame (browse/mirror.py:WS_BROWSE_STEP). This is a
 // genuine PAYLOAD, not a refetch signal: the step stream has one producer and no GET slice to read
 // it back from, so the panel reads the frame's fields directly. `screenshot` is a filesystem PATH
@@ -3389,7 +3420,12 @@ export interface ProjectImportResult {
   project_id?: string; written?: string[]; error?: string
 }
 // Update + changelog.
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string }
+/** `GET /api/update/check`. Carries EVERY `updates.*` field the Settings > Updates screen edits
+ *  (RUM-10), so the six controls render from one snapshot rather than a second config read:
+ *  `channel`/`pin`/`auto`/`check_enabled`/`check_interval_hours`, plus `last_version` — the
+ *  rollback offer, which has no other source. `release_notes` describe the release the
+ *  channel/pin RESOLVES to, not `releases/latest`. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -3618,7 +3654,11 @@ export interface MemoryEvent {
   old_value?: string; new_value?: string; source?: string; created_at?: string
   undone_at?: string | null
 }
-export interface MemoryContextPreview { semantic_context: string; episodic_context: string }
+export interface MemoryContextPreview {
+  semantic_context: string
+  episodic_context: string
+  ranking: RecallRanking
+}
 // Memory health lint: auto-fixed counts + per-flag advisories (near-dup / stale / orphan / contradiction).
 export interface MemoryLintFlag { check: string; key: string; detail: string }
 export interface MemoryLint { auto_fixed: Record<string, number>; flags: MemoryLintFlag[]; flag_count: number }
@@ -3658,6 +3698,7 @@ export interface MemoryEntitiesResponse {
   entities: MemoryEntity[]
   summary: MemoryGraphSummary | Record<string, never>
   enabled: boolean
+  ranking: RecallRanking
 }
 export interface MemoryGraphRebuild {
   ok: boolean
@@ -3714,10 +3755,24 @@ export interface MemoryEntityEdge {
   provenances: string[]
   confidence: number
 }
+/** HOW a memory recall actually ranked — served by every recall-ish endpoint, composed
+ *  by ONE backend owner (`personalclaw/memory_ranking.py`). `summary` is a whole sentence
+ *  to render verbatim; never re-word it client-side, or the panels drift apart again.
+ *  `mode` is the closed vocabulary to branch on (`semantic` | `keyword` | `unranked`). */
+export interface RecallRanking {
+  vector: boolean
+  full_text_search: boolean
+  entity_graph: boolean
+  mode: 'semantic' | 'keyword' | 'unranked'
+  degraded: boolean
+  label: string
+  summary: string
+}
 export interface MemoryEntityGraph {
   nodes: MemoryEntityNode[]
   edges: MemoryEntityEdge[]
   enabled: boolean
+  ranking: RecallRanking
 }
 /** A record's outbound entity link. `entity_name` is resolved server-side — a row holding
  *  only `ent_9f2c` names nothing, and the name IS the evidence tag the inspect view shows. */
@@ -4628,9 +4683,10 @@ export type LoopKind = 'general' | 'goal' | 'code' | 'design' | 'research'
 export type UnifiedLoopStatus =
   | 'intake' | 'planning' | 'review' | 'ready' | 'running' | 'paused'
   | 'stagnant' | 'blocked' | 'needs_input' | 'complete' | 'failed' | 'stopped'
-// One phase in the kind-agnostic plan: goal sub-goals (keyed by title), code SDLC
-// stages (keyed by stage), design steps. Only `title` is universal; the rest are
-// kind-specific and pass through untouched.
+// One phase in the kind-agnostic plan: goal sub-goals, code SDLC stages, design steps.
+// `stage` is the phase id EVERY kind's planner emits and `title` is its fallback — together
+// they are `loopPhases.PHASE_KEY_FIELDS`, the one vocabulary `phase_status` is keyed by.
+// Anything else on a row is kind-specific and passes through untouched.
 export interface LoopPhase {
   title?: string; stage?: string; objective?: string; exit_criteria?: string[]
   deliverable?: string; tasks?: Record<string, unknown>[]
@@ -4739,6 +4795,11 @@ export interface PlanStep {
 }
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]
+  /** Epoch SECONDS of the session's last real progress (a step transition, an artifact,
+   *  a comment) — stamped server-side. Stall detection reads this instead of the client's
+   *  mount time, so the verdict survives a reload. Absent on a session written before the
+   *  field existed; the backend backfills it from `created_at` on read. */
+  updated_at?: number
   // Set when a design pass ran but produced no usable steps — the walkthrough shows
   // a failed state + explicit Retry instead of silently re-spawning a fresh pass.
   design_error?: string
@@ -5118,10 +5179,24 @@ export interface InstalledPackRec {
   setup_skill: string
   setup_pending: boolean
   installed_at: string
+  // The ids of the pack's staged triggers, installed DISABLED. A non-empty list lets
+  // the pack row offer "Add triggers to Automations" (`packTriggersDeploy`), which lands them in
+  // the live store STILL disabled for the user to review and arm one at a time.
+  staged_triggers?: string[]
   // Which paths the pack claims ongoing ownership of, and the per-component
   // `{source, computedHash}` drift lock an update compares against.
   pack_owned?: string[]
   component_locks?: Record<string, { source: string; computedHash: string; path: string }>
+}
+
+// The result of adding a pack's staged triggers to Automations. Every `deployed` id lands
+// in the live store DISABLED — the user arms each in Automations (`#/triggers`); the deploy never
+// arms one. `skipped` names any staged file too broken to run (reported, never raised).
+export interface PackTriggersDeployRec {
+  ok: boolean
+  pack: string
+  deployed: string[]
+  skipped: string[]
 }
 
 // One Domain OS pack shipped in this build — the pack store's catalog row.
@@ -5314,6 +5389,10 @@ export const api = {
   // the interview runs in chat under normal tool approval — never server-side).
   packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
   packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
+  // Add a pack's staged triggers to Automations, DISABLED. The sibling of the roster
+  // deploy: it never lands one enabled (a pack cannot arm automation, even through its enable
+  // path) — the user reviews and arms each in Automations (`#/triggers`).
+  packTriggersDeploy: (name: string) => post<PackTriggersDeployRec>(`/api/packs/${encodeURIComponent(name)}/triggers/deploy`, {}),
   // ── Pack store + fingerprint discovery ──
   // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
   // integrity, leaves-first commit with rollback) at BUILTIN trust.
@@ -5397,6 +5476,12 @@ export const api = {
   browseStatus: () => get<BrowseStatus>('/api/browse/status'),
   browseKill: (reason = '') => post<{ kill: BrowseKillState }>('/api/browse/kill', { reason }),
   browseKillRelease: () => post<{ kill: BrowseKillState }>('/api/browse/kill/release', { confirm: true }),
+  // Answer one pending per-task grant. Resolves the fail-closed gate the run is parked on, so
+  // an approve lets it proceed and a reject refuses it NOW instead of making the operator wait out
+  // the 300s ceiling. 404 means it already resolved or timed out — the honest answer, not a retry.
+  browseGrantResolve: (requestId: string, action: 'approve' | 'reject') =>
+    post<{ ok: boolean; request_id: string; action: string }>(
+      `/api/browse/grants/${encodeURIComponent(requestId)}/${action}`, {}),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
       '/api/models/health',
@@ -5532,7 +5617,10 @@ export const api = {
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),
   memoryLint: () => get<MemoryLint>('/api/memory/lint'),
   memoryObservability: () => get<MemoryObservability>('/api/memory/observability'),
-  memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
+  // `ranking` is null ONLY when no recall ran (a temporary session blocks memory reads);
+  // otherwise it always describes the recall that produced `result`. `deep` is the request's
+  // own depth flag echoed back — it says nothing about how the results were scored.
+  memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean; ranking: RecallRanking | null }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
   memoryPromote: () => post<{ ok: boolean; promoted: number }>('/api/memory/promote'),
   // Entity graph — the typed links under recall.
   memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
@@ -6043,8 +6131,15 @@ export const api = {
   },
 
   // send / control
-  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) =>
-    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}) }),
+  // color_theme rides along automatically (issue 650): the backend's persona
+  // injection was a live reader of a key NO client ever wrote — the picker sold
+  // "a terse operator voice" while activate() only touched localStorage and CSS.
+  // Centralized here so every send path (chat, steer, comment-target) carries it;
+  // the server gates on first-turn-of-session and its own closed theme set.
+  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) => {
+    const color_theme = activePersonaTheme()
+    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
+  },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
   stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),

@@ -4,6 +4,7 @@ import { AnimatePresence, motion, LayoutGroup } from 'framer-motion'
 import { MessageSquare, GripVertical } from 'lucide-react'
 import type { TaskItem } from '../../lib/api'
 import { STATUSES, signalPriority, dueMeta, exitDoneCount } from './taskMeta'
+import { MetaChip } from '../../ui/MetaChip'
 import { prereqIds } from './dag'
 import { spring, physics, expr } from '../../design/motion'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../../ui/BoardCollapse'
@@ -175,7 +176,11 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {pm && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>}
           {due && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
-          {(t.labels ?? []).slice(0, 1).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var">{l}</span>)}
+          {/* The same chip the list and cards render, in its inert form. NOT a control here: the
+              card wrapper is the ONLY drag source, and a button across a `draggable` element puts
+              something between the pointer and the drag (see the note above). The Tag filter in
+              "Filter & sort" reaches this view too, so the axis is not lost — only the shortcut. */}
+          {(t.labels ?? []).slice(0, 1).map((l) => <MetaChip key={l} label={l} />)}
         </div>
         {(exit.length > 0 || prereqIds(t).length > 0 || (t.comment_count ?? 0) > 0) && (
           <div data-type="caption" className="mt-1.5 flex items-center gap-m text-on-surface-low">

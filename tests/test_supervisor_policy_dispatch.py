@@ -284,13 +284,22 @@ def test_the_declared_mechanism_is_the_one_that_runs(monkeypatch, case):
 def test_an_orchestrated_kind_does_not_reach_the_point_in_time_evaluator(monkeypatch):
     """The two ORCHESTRATED kinds are the reason the seam is a declaration and not a deletion: their
     per-cycle hook owns done-ness, so the declared signal must route AROUND the evaluator's
-    mechanisms rather than run one and ignore it."""
-    calls: list[str] = []
+    mechanisms rather than run one and ignore it.
+
+    The spy records the LOOP each call belongs to, because ``_poll_once`` sweeps every running
+    row — the positive control's loop is still running when the code loop is driven, so an
+    unattributed list conflates the two. (It read clean only while the watchdog swallowed a
+    finding that was already on disk at a fresh watchdog's first poll, #320: with that fixed,
+    the leftover row is correctly credited and lands in the spy.)"""
+    calls: list[tuple[str, str]] = []
     real_signal = supervisor.done_signal
 
     async def _spy(loop, findings, policy):
-        calls.append(policy.convergence.signal)
+        calls.append((loop.id, policy.convergence.signal))
         return await real_signal(loop, findings, policy)
+
+    def _for(loop) -> list[str]:
+        return [signal for lid, signal in calls if lid == loop.id]
 
     monkeypatch.setattr(supervisor, "done_signal", _spy)
     monkeypatch.setattr("personalclaw.loop.gates.run_verify_command", lambda *a, **k: _coro(None))
@@ -299,14 +308,13 @@ def test_an_orchestrated_kind_does_not_reach_the_point_in_time_evaluator(monkeyp
     # below would be indistinguishable from a spy that never fires.
     general = _running(kind="general", kind_config={"verify_command": "true"})
     _drive_one_cycle(_wd(), general)
-    assert calls == [DONE_VERIFY_COMMAND], f"positive control failed — evaluator calls: {calls}"
+    assert _for(general) == [DONE_VERIFY_COMMAND], f"positive control failed — calls: {calls}"
 
-    calls.clear()
     code = _running(kind="code", kind_config={})
     _drive_one_cycle(_wd(), code)
-    assert calls == [] or calls == [DONE_ORCHESTRATED], (
-        f"a code loop reached the evaluator with {calls} — its hook owns the cycle's done-ness, so "
-        f"either the hook stopped running or the declaration is wrong."
+    assert _for(code) == [] or _for(code) == [DONE_ORCHESTRATED], (
+        f"a code loop reached the evaluator with {_for(code)} — its hook owns the cycle's "
+        f"done-ness, so either the hook stopped running or the declaration is wrong."
     )
 
 

@@ -237,7 +237,7 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
     control.unmount()
 
     learningProposals.mockResolvedValue(inboxOf([row({ replay: replayed() })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/4\.200 → 1\.500/)).toBeTruthy()
     expect(screen.getByText(/replay drop/)).toBeTruthy()
@@ -247,7 +247,7 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
 
   it('paints "not replayed" and NO chip for a proposal nothing replayed', async () => {
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/not replayed/)).toBeTruthy()
     // The absence must not be dressed as a warning: doing that trains reviewers to ignore the chip
@@ -262,7 +262,7 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
    *  see it. */
   it('leaves Accept enabled on a REGRESSED replay — it is evidence, not a lock', async () => {
     learningProposals.mockResolvedValue(inboxOf([row({ replay: replayed() })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     await screen.findByText(/replay drop/)
     const accept = screen.getByRole('button', { name: /Accept/ })
@@ -272,7 +272,7 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
 
   it('leaves Accept enabled on a not-replayed proposal too', async () => {
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     await screen.findByText(/not replayed/)
     expect(screen.getByRole('button', { name: /Accept/ }).hasAttribute('disabled')).toBe(false)
@@ -289,7 +289,7 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
       },
       replay: replayed(),
     })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/0\.400 → 0\.900/)).toBeTruthy()
     expect(screen.getByText(/4\.200 → 1\.500/)).toBeTruthy()

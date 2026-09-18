@@ -60,6 +60,65 @@ describe('foldRunSnapshot — phased kinds', () => {
     expect(vm.steps[0].key).toBe('Kickoff')
   })
 
+  // ── the DESIGN-shaped row: the shape no case here used to cover ────────────────────────────
+  //
+  // A design plan row is `{stage, title, objective}` and its `phase_status` is keyed by the
+  // stage slug, exactly like the code rows above. It used to be keyed by a field this fold
+  // never read, so all six stages rendered `todo` forever while the header counter — which
+  // counts VALUES rather than looking keys up — showed real progress. Both halves are pinned
+  // here, and the second is the one that made the bug visible on screen.
+  const designRun = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
+    id: 'd1', kind: 'design', status: 'running', total_cycles: 4, max_cycles: 25,
+    // design is the OTHER phase-tracking kind (`tracks_phases = True`, kinds/design.py), so the
+    // store puts the same declaration on its view as it does for code. Omitting it folds every
+    // row to 'untracked' and makes the key-vocabulary assertions below pass vacuously.
+    phase_tracked: true,
+    plan: [
+      { stage: 'foundations', title: 'Foundations & audit', objective: 'audit references' },
+      { stage: 'palette', title: 'Color palette', objective: 'brand scales' },
+      { stage: 'typography', title: 'Typography & spacing', objective: 'type scale' },
+      { stage: 'components', title: 'Core components', objective: 'button, input, card' },
+      { stage: 'export', title: 'Document & export', objective: 'DESIGN.md' },
+    ],
+    phase_status: { foundations: 'done', palette: 'done', typography: 'done', components: 'active' },
+    ...over,
+  })
+
+  it('resolves a DESIGN row by its stage slug — the kind whose stages were frozen on todo', () => {
+    const vm = foldRunSnapshot(designRun())
+    expect(vm.steps.map((s) => s.key)).toEqual(
+      ['foundations', 'palette', 'typography', 'components', 'export'],
+    )
+    expect(vm.steps.map((s) => s.state)).toEqual(['done', 'done', 'done', 'active', 'todo'])
+    expect(vm.steps.map((s) => s.label)).toEqual(
+      ['Foundations & audit', 'Color palette', 'Typography & spacing', 'Core components', 'Document & export'],
+    )
+  })
+
+  it('the header counter and the stage rows agree — they are the two halves that contradicted', () => {
+    // `phaseDone` counts phase_status values; the rows look each plan row's key UP. A key
+    // mismatch makes only the second one wrong, so the strip reads "3/5 stages" over five
+    // empty circles. Requiring the two derivations to agree forbids that state for any kind.
+    for (const run of [phased(), designRun()]) {
+      const vm = foldRunSnapshot(run)
+      const lookedUp = vm.steps.filter((s) => s.state === 'done').length
+      expect(lookedUp, `${run.kind}: header says ${vm.phaseDone} done, rows say ${lookedUp}`)
+        .toBe(vm.phaseDone)
+    }
+  })
+
+  it('a row carrying ONLY the retired phase-id field resolves to nothing', () => {
+    // The vacuity floor on the fix. Reading either spelling would satisfy every case above
+    // while leaving two words in circulation for the next surface to pick the wrong one —
+    // which is how this happened. One name: a row spelled the old way keys on nothing.
+    const vm = foldRunSnapshot(phased({
+      plan: [{ step: 'foundations', objective: 'audit references' }],
+      phase_status: { foundations: 'done' },
+    }))
+    expect(vm.steps[0].key).toBe('')
+    expect(vm.steps[0].state).toBe('todo')
+  })
+
   it("treats 'running' phase_status the same as 'active'", () => {
     const vm = foldRunSnapshot(phased({ phase_status: { design: 'running' } }))
     expect(vm.steps[0].state).toBe('active')

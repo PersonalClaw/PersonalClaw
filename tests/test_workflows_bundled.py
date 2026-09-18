@@ -849,6 +849,194 @@ class TestContradictionReviewFastTier:
                 return node
         raise AssertionError("contradiction-review has no judge_conflicts node")
 
+    def _persist(self) -> Node:
+        root = Node.from_dict(_pipeline(_raw("contradiction-review"))["root"])
+        for _path, node in walk(root):
+            if node.id == "persist":
+                return node
+        raise AssertionError("contradiction-review has no persist node")
+
+    def test_the_persist_step_binds_claims_so_the_deterministic_tier_has_input(self) -> None:
+        """The vacuity, found live 2026-09-18: `knowledge-persist` only runs
+        `_detect_conflicts` when its `claims` config is non-empty (see
+        `KnowledgePersistActionProvider.execute`'s `if claims_raw:` gate) — and the `persist`
+        step's `with` binding used to omit `claims` entirely, passing only `title`/`content`/
+        `kind`/`mode`. That made `nodes.persist.output.conflicts` UNCONDITIONALLY `[]`
+        regardless of what the store held, so the fast-model judge downstream always received
+        an empty "already found" list — indistinguishable from a genuinely conflict-free
+        store. This asserts the binding that makes the deterministic tier's input real; the
+        end-to-end proof that it actually produces non-empty output against a real conflict
+        is `test_a_genuine_conflict_reaches_the_judge_prompt_non_vacuously` below.
+        """
+        persist = self._persist()
+        with_cfg = (persist.config or {}).get("with") or {}
+        claims = with_cfg.get("claims")
+        assert claims, (
+            "the persist step's `with.claims` is empty/absent — the conflict pass has "
+            "nothing to compare and `nodes.persist.output.conflicts` is unconditionally []"
+        )
+
+    async def test_a_genuine_conflict_reaches_the_judge_prompt_non_vacuously(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The composition, not just the shape: run the persist step through the REAL
+        `knowledge-persist` provider with EXACTLY the `with` config the template ships,
+        against a store that already holds a genuinely conflicting claim, then render the
+        judge's prompt with that real output. A rail that only checks "the pass ran" would
+        pass on an empty claim set too (a grep rail can be vacuous three ways) — this one
+        fails unless the rendered prompt text actually carries both sides of the conflict.
+        """
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.knowledge_persist_provider import (
+            KnowledgePersistActionProvider,
+        )
+        from personalclaw.workflows.bindings import BindingContext
+        from personalclaw.workflows.engine import resolve_config
+
+        persist_node = self._persist()
+        judge_node = self._judge()
+        provider = KnowledgePersistActionProvider()
+        action_ctx = ActionContext(event="workflow_node", payload={"node_id": "n-seed"})
+
+        # Seed: an EARLIER run of this same template storing the claim the new one will
+        # conflict with — through the identical shipped binding, not a hand-built config.
+        seed_cfg, failure = resolve_config(
+            persist_node,
+            BindingContext(
+                inputs={
+                    "title": "Cold start latency",
+                    "statement": "Cold start latency is 4.2 seconds",
+                }
+            ),
+        )
+        assert failure is None
+        await provider.execute(seed_cfg["with"], action_ctx, timeout=30)
+
+        # The run under test: a NEW, genuinely conflicting statement, through the same
+        # template binding a real invocation would use.
+        run_cfg, failure = resolve_config(
+            persist_node,
+            BindingContext(
+                inputs={
+                    "title": "Cold start latency redux",
+                    "statement": "Cold start latency is 9.1 seconds",
+                }
+            ),
+        )
+        assert failure is None
+        result = await provider.execute(run_cfg["with"], action_ctx, timeout=30)
+        output = json.loads(result.stdout)
+        assert output["conflicts"], (
+            "a genuinely conflicting claim produced an empty `conflicts` list end-to-end "
+            "through the shipped template binding — the vacuity is not actually fixed"
+        )
+
+        # What the judge's prompt would ACTUALLY contain, rendered against this real output —
+        # the same `resolve_config` call `dispatch_infer` makes before any model is touched.
+        judge_cfg, failure = resolve_config(
+            judge_node,
+            BindingContext(
+                inputs={"statement": "Cold start latency is 9.1 seconds"},
+                node_outputs={"persist": output},
+            ),
+        )
+        assert failure is None
+        prompt = judge_cfg["prompt"]
+        assert "9.1 seconds" in prompt, "the judge prompt is missing the NEW claim"
+        assert "4.2 seconds" in prompt, (
+            "the judge prompt is missing the STORED claim it is meant to compare against — "
+            "the fast-model call would run against nothing, even though `conflicts` is "
+            "non-empty on the Python side"
+        )
+
+    async def test_an_unsettled_stored_neighbour_still_reaches_the_judge_prompt(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The vacuity floor, and the case `conflicts` can NEVER cover.
+
+        The judge's prompt promises "Decide whether the NEW claim contradicts any of the STORED
+        claims below", and then tells the model not to re-litigate the deterministic tier's
+        findings — "judge only what is missing". So the claims it must actually be shown are the
+        ones the free pass could NOT settle. Those never appear in `conflicts` BY CONSTRUCTION:
+        a record exists there only when `deterministic_conflict` already proved the pair. A
+        prompt bound solely to `conflicts` therefore asks for a judgment on a set it never
+        renders, and the metered call is spent on nothing.
+
+        This pair is chosen to be exactly that case: "retry ceiling" vs "retry budget" decompose
+        to DIFFERENT subjects, so `deterministic_conflict` returns None (`ls != rs`), while
+        Jaccard similarity is 0.67 — far enough above zero to shortlist. Asserting on a pair the
+        deterministic tier settles would pass through the OLD `conflicts` binding too and prove
+        nothing about this fix.
+
+        The floor itself: an empty neighbour list must NOT satisfy this test. It asserts the
+        stored claim's own text is in the rendered prompt, so a `conflict_candidates` that came
+        back `[]` — the pre-fix behaviour, and the shape a "the binding exists" rail would
+        happily accept — fails here.
+        """
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.knowledge_persist_provider import (
+            KnowledgePersistActionProvider,
+        )
+        from personalclaw.workflows.bindings import BindingContext
+        from personalclaw.workflows.engine import resolve_config
+
+        persist_node = self._persist()
+        judge_node = self._judge()
+        provider = KnowledgePersistActionProvider()
+        action_ctx = ActionContext(event="workflow_node", payload={"node_id": "n-seed"})
+
+        seed_cfg, failure = resolve_config(
+            persist_node,
+            BindingContext(
+                inputs={"title": "Retry budget", "statement": "The retry budget is 3 attempts"}
+            ),
+        )
+        assert failure is None
+        await provider.execute(seed_cfg["with"], action_ctx, timeout=30)
+
+        run_cfg, failure = resolve_config(
+            persist_node,
+            BindingContext(
+                inputs={"title": "Retry ceiling", "statement": "The retry ceiling is 5 attempts"}
+            ),
+        )
+        assert failure is None
+        result = await provider.execute(run_cfg["with"], action_ctx, timeout=30)
+        output = json.loads(result.stdout)
+
+        # The premise this test rests on: the free tier genuinely could not settle this pair.
+        # If this ever fires, the pair stopped being an UNSETTLED one and the test below would
+        # be passing through `conflicts` instead — i.e. silently measuring the wrong thing.
+        assert not output["conflicts"], (
+            "this pair is supposed to be unsettleable by the deterministic tier; it now "
+            "produces a conflict record, so this test no longer covers the unsettled case"
+        )
+        assert output["conflict_candidates"], (
+            "a semantically-near stored claim produced an empty `conflict_candidates` — the "
+            "judge has nothing to judge, which is the vacuity this asserts against"
+        )
+
+        judge_cfg, failure = resolve_config(
+            judge_node,
+            BindingContext(
+                inputs={"statement": "The retry ceiling is 5 attempts"},
+                node_outputs={"persist": output},
+            ),
+        )
+        assert failure is None
+        prompt = judge_cfg["prompt"]
+        assert "The retry budget is 3 attempts" in prompt, (
+            "the rendered judge prompt carries no stored neighbour claim text, even though the "
+            "store holds one the deterministic tier could not settle — the fast-model call would "
+            "run against an empty STORED set while its own prompt asks it to judge that set"
+        )
+        assert "<untrusted_content source=knowledge>" in prompt, (
+            "stored claim text is interpolated into a model prompt without the fence — claims "
+            "partly derive from web and inbox content, and an unfenced one reads as instruction"
+        )
+
     def test_the_judge_is_a_metered_infer_node_not_a_subagent_stage(self) -> None:
         judge = self._judge()
         assert judge.kind.value == "infer", (

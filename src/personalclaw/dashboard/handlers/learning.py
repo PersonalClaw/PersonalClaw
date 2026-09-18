@@ -202,8 +202,45 @@ async def api_learning_proposals(request: web.Request) -> web.Response:
         pending = []
 
     tiers = {str(getattr(p, "id", "")): _tier_for(p) for p in pending}
-    view = build_view(pending, tiers=tiers, kind=kind, tier=tier, flagged_only=flagged)
+    view = build_view(
+        pending,
+        tiers=tiers,
+        kind=kind,
+        tier=tier,
+        flagged_only=flagged,
+        skill_proposals_pending=_skill_proposals_pending(),
+    )
     return web.json_response(view.to_dict())
+
+
+def _skill_proposals_pending() -> int:
+    """How many SKILL proposals await review — a COUNT and a pointer, never rows (#321).
+
+    `personalclaw.skills.proposals` is a different store from this endpoint's
+    `personalclaw.learning.proposals`, deliberately: this one is the learning pipeline's own
+    six-kind queue; that one is the skill ladder's, with its own review UI at
+    ``#/skills?mode=proposals``, its own accept/reject endpoints, and its own inbox routing.
+
+    So this does NOT union the rows. Merging them would make the Learning page a THIRD owner of
+    skill-proposal review (after Skills and the Inbox), with two record shapes and two accept
+    paths behind one list. It reports a count so the empty state can stop saying "Nothing to
+    review" while skill proposals sit one page away.
+
+    Bridging the stores properly belongs to Learning-Visibility S4 — and that ALREADY LANDED:
+    `learning_report._gather_proposals` reads this same store for the identity report. Which is
+    what made the bug worse than filed: measured with one pending proposal, the identity report
+    on this page counts it while the panel above says there is nothing to review. Two panels,
+    one page, opposite answers.
+
+    Fails soft to 0, matching the listing above: an unreadable store must not empty the queue.
+    """
+    try:
+        from personalclaw.skills import proposals as skill_store
+
+        return len(skill_store.list_pending())
+    except Exception:
+        logger.warning("skill-proposal count failed", exc_info=True)
+        return 0
 
 
 async def api_learning_proposal(request: web.Request) -> web.Response:

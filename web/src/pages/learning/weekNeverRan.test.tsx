@@ -68,7 +68,7 @@ describe('the silent-days chip waits for a first run', () => {
 
   it('renders never-ran as the quiet zero-state, not as an amber warning', async () => {
     learningStagingWeek.mockResolvedValue(week({ has_ever_run: false }))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/no capture pass has run yet/)).toBeTruthy()
     // The chip's whole form — count, "silent", warning styling — must be absent, because
@@ -78,7 +78,7 @@ describe('the silent-days chip waits for a first run', () => {
 
   it('keeps the chip for ran-then-died — silent days AFTER a first run are the signal', async () => {
     learningStagingWeek.mockResolvedValue(week({ has_ever_run: true }))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/7 silent/)).toBeTruthy()
     expect(screen.queryByText(/no capture pass has run yet/)).toBeNull()
@@ -88,7 +88,7 @@ describe('the silent-days chip waits for a first run', () => {
     // An older cached response has no `has_ever_run` at all. Suppressing on absence would hide
     // the one warning this panel exists to raise, on exactly the installs most likely to be stale.
     learningStagingWeek.mockResolvedValue(week())
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/7 silent/)).toBeTruthy()
     expect(screen.queryByText(/no capture pass has run yet/)).toBeNull()

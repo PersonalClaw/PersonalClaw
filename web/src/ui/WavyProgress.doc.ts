@@ -20,8 +20,13 @@ const doc: UiDoc = {
     { guidance: true, description: 'Pass value (0–1) when the total is known for a determinate fill; omit it entirely for indeterminate — the two modes render different markup (determinate adds the progressbar ARIA + faint track).' },
     { guidance: true, description: 'Reach for WavyProgress instead of a flat bar for loading/download progress — it is the accent-gradient replacement for the old M2 progress bar.' },
     { guidance: false, description: 'Do not pass a raw hex to color — use a design token (e.g. var(--color-primary)) so the wave tracks the theme.' },
+    { guidance: true, description: 'Both modes honor prefers-reduced-motion through design/motion\'s prefersReducedMotion() — the indeterminate crest is not started (an indefinite animation cannot be collapsed to a zero duration; repeat: Infinity would just loop faster) and the determinate fill lands instantly. Neither pathOffset nor pathLength is a transform, so the root MotionConfig reducedMotion="user" does NOT cover this component.' },
   ],
-  anatomy: ['svg', 'indeterminate: single motion.path (traveling crest)', 'determinate: faint full-width track path + overlaid motion.path filled to value'],
+  anatomy: [
+    'svg (data-wavy-progress states which motion branch ran: "animated" | "instant")',
+    'indeterminate: single motion.path (traveling crest) — under reduced motion a plain static path instead',
+    'determinate: faint full-width track path + overlaid motion.path filled to value',
+  ],
 }
 
 export default doc

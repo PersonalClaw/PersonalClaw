@@ -125,6 +125,10 @@ full backend+UI apps install through a quarantine → scan → consent lifecycle
 ### ⏰ Automation
 Cron/interval/webhook triggers, background subagents, an inbox that watches channels and
 drafts replies, and workflow SOPs surfaced automatically when they match.
+Built to be left alone: **a run that fails reaches your inbox even when the automation is set to
+deliver nothing**, a run that was gated is labelled inert rather than green, and a run whose process
+died is terminalized instead of reading as running forever — with a recipe that
+[falsifies all three](docs/guides/automations.md).
 
 ### 🛡️ Security-first
 Tool approval modes, a shell-command denylist, an egress guard with allow/deny host policy,
@@ -199,6 +203,28 @@ The dashboard opens at `http://localhost:10000`. Install a model-provider app fr
 Store, add your API key under **Settings → Providers**, and bind a chat model under
 **Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
 
+### Updating
+
+`personalclaw update` advances the install you actually have — the wheel, the checkout's
+release tag, or the container's image tag. It tracks **releases**, not `main`: a git clone
+checks out the resolved tag rather than fast-forwarding a branch.
+
+```bash
+personalclaw snapshot                        # pre-1.0: no automatic data migration
+personalclaw update                          # → the newest release on your channel
+personalclaw config set updates.pin 0.2.0    # …or stay on exactly 0.2.0
+personalclaw update --to 0.1.3               # roll back: pins that release and installs it
+```
+
+Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
+`nightly` for contributors), a **version pin**, **automatic applies**
+(`updates.auto=staged`, opt-in, held while work is in flight), the **check cadence**, and
+one-click **rollback**. The release check is the one outbound call this project makes and
+it can be switched off — see [Privacy](#privacy). Per-platform details:
+[Updating](docs/guides/getting-started.md#updating) ·
+[containers](docs/guides/containers.md#updates) ·
+[desktop](docs/guides/desktop.md#updating).
+
 > **Tech stack:** Python 3.12–3.13 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
 > **Run modes:** local process · Docker Compose · systemd/launchd service. (A macOS-only
 > Electron desktop shell exists but is experimental — not built, signed, or released by CI,
@@ -253,6 +279,7 @@ run on every push to `main`.
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
 - [Working inside a chat](docs/guides/chat-surface.md) — the nine things the chat surface does beyond a send button: rewind to any earlier message, branch a conversation two ways, have a plan approved before anything runs, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
+- [Automations you can leave alone](docs/guides/automations.md) — the three guarantees about unattended runs (a failure reaches your inbox even when delivery is off; a gated run is labelled inert, not green; a run whose host died is terminalized), each with the surface it is checked on, plus a recipe that falsifies all three in one automation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
 - [Companion apps](docs/guides/companion-apps.md) — a phone or a second machine on your own network: pairing, the optional LAN discovery (off by default), and exactly what it announces.
 - [Build a channel app](docs/guides/build-a-channel-app.md) — bringing a new chat app or mailbox to PersonalClaw: the transport/delivery obligations, trust and pairing, and the conformance kit.
@@ -288,4 +315,28 @@ rather than by PR'ing the owner's internal roadmap (not in this repo). See
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — and, as of **2026-09-18**, four commitments about keeping it that way:
+
+- **MIT only.** PersonalClaw has been MIT since its first commit and has never been under any
+  other licence. No dual licensing, no "open core" tier, no source-available or
+  sustainable-use variant.
+- **No CLA.** There is no contributor licence agreement and none is planned. Contributions
+  come in under the [DCO sign-off](CONTRIBUTING.md) and stay MIT — nobody is asked to assign
+  copyright, which means nobody here holds the paperwork it would take to relicense your work.
+- **No telemetry.** No analytics, no crash reporting, no usage pings. See
+  [Privacy](#privacy) for the single outbound call the product makes and how to switch it off.
+- **No relicensing of already-published releases.** Every version already on PyPI, GHCR and
+  the GitHub releases page is MIT permanently. A hypothetical future licence change could
+  only ever apply to *new* releases; it could not reach back to the one you installed.
+
+These are commitments, not a legal instrument — but they are **enforced against the tree**,
+which is the part a promise usually lacks. `tests/test_licence_governance.py` reds CI on a
+licence identifier that stops saying MIT anywhere in the repo, on a rewrite of `LICENSE`'s
+grant text, and on a `CLA`/`CONTRIBUTOR_LICENSE_AGREEMENT` file appearing;
+`tests/test_network_egress_hosts.py` reds it on a new outbound host. So changing any of the
+four takes a deliberate, reviewable edit to committed artifacts — never a quiet one.
+
+Why say this at all: several self-hosted AI projects have relicensed, added a CLA, reserved
+stricter future terms, or been acquired without a licence commitment, and their users left
+over it. PersonalClaw wins that comparison by having done none of it — which is invisible
+unless it is written down.

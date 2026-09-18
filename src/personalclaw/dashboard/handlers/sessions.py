@@ -214,7 +214,12 @@ async def api_session_delete(request: web.Request) -> web.Response:
             logger.warning("cleanup failed for session %s", key, exc_info=True)
         state.push_sessions_update()
         state.push_refresh("history")
-    return web.json_response({"ok": ok})
+        return web.json_response({"ok": True})
+    # A delete that deleted nothing must not answer 200 (#2941): the status would be
+    # indistinguishable from a real delete to a status-code-only client (including the
+    # `agent_callable` LLM path). Match the GET sibling twenty lines up, which 404s the
+    # same id on purpose for the same reason.
+    return json_error("session_not_found", status=404)
 
 
 def _live_session_key(state: DashboardState, key: str) -> str | None:

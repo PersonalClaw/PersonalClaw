@@ -83,13 +83,34 @@ describe('a refused write is visible, not merely non-confirmed', () => {
   // four, so "expect 1" was wrong about a file that legitimately has two. Slicing to the component
   // that owns the write is the only anchor that measures THIS fix — the same "bound the slice to the
   // construct" lesson a RiskBadge rail in this repo learned the hard way.
-  /** The component body, brace-matched from its `function X(` to its closing top-level `}`. */
+  /** The component body, brace-matched from its `function X(` to its closing top-level `}`.
+   *
+   *  🪤 THIS SLICER USED TO BE `indexOf('\n}')`, WHICH IS NOT A BRACE MATCH — it is "the first line
+   *  that starts with a closing brace". That reads a component whose props are destructured across
+   *  SEVERAL LINES as a body one line long, because `}) {` ends the PARAM LIST, not the function, so
+   *  the slice stopped at the signature and every count below came back 0. Multi-line props are
+   *  ordinary style in this tree (`StudioInspector`, two files over, is written that way), so the
+   *  heuristic was one reformat away from redding on a component it has no complaint about.
+   *  Now: skip the param list by paren depth, then brace-match the body. The assertions are
+   *  untouched — this widens what the rail can SEE, it does not soften what it demands. */
   const componentBody = (rel: string, name: string) => {
     const src = code(rel)
     const at = src.indexOf(`function ${name}(`)
     expect(at, `${rel} no longer defines ${name}`).toBeGreaterThan(-1)
-    const end = src.indexOf('\n}', at)
-    expect(end, `${name}'s body did not terminate`).toBeGreaterThan(at)
+    // Walk the param list on PAREN depth — braces in a destructured/typed param are irrelevant here.
+    let i = src.indexOf('(', at)
+    for (let depth = 0; i < src.length; i++) {
+      if (src[i] === '(') depth++
+      else if (src[i] === ')' && --depth === 0) break
+    }
+    const open = src.indexOf('{', i)
+    expect(open, `${name}'s body did not open`).toBeGreaterThan(at)
+    let end = -1
+    for (let j = open, depth = 0; j < src.length; j++) {
+      if (src[j] === '{') depth++
+      else if (src[j] === '}' && --depth === 0) { end = j + 1; break }
+    }
+    expect(end, `${name}'s body did not terminate`).toBeGreaterThan(open)
     return src.slice(at, end)
   }
 

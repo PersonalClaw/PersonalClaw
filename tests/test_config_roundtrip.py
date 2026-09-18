@@ -563,3 +563,62 @@ def test_every_apps_field_is_patchable_or_has_a_write_path():
     missing = [f.name for f in fields(AppsConfig) if f"apps.{f.name}" not in _EDITABLE_CONFIG]
     assert not missing, f"apps config fields with no PATCH write path: {missing}"
     assert _EDITABLE_CONFIG["apps.registry_source_enabled"]["type"] == "bool"
+
+
+def test_no_agent_sandbox_config_field_on_any_surface():
+    """#364 — the Settings → Agent defaults → "Sandbox" control was removed, and the
+    removal has to be complete on EVERY surface, not just the dataclass.
+
+    The control wrote `agent.sandbox` ("auto"/"off") and nothing read it: sandboxing is
+    decided by the `mode` argument threaded into `sandbox.wrap_argv`, which arrives from
+    per-provider options or a literal at each of its call sites — `AppConfig.agent.sandbox`
+    never entered that chain. A settings switch labelled "Sandbox" that makes no sandbox
+    decision is a false promise about a security control, so the field, its PATCH allowlist
+    entry, its frontend control, its docs row and the docstring that claimed the wiring
+    existed all go together. Wiring it instead would have required choosing which of
+    `wrap_argv`'s five call sites a global toggle overrides — including two deliberately
+    hardcoded boundaries (`knowledge_providers/pack_parse.py`'s "strict" for untrusted
+    pack parsing, `schedule_script.py`'s "standard") — which is a policy this codebase has
+    not decided and a test may not mint.
+
+    Asserted across all five surfaces in one rail on purpose: a per-surface check passes
+    while any single surface still carries the field, which is the exact shape that leaves
+    a "removed" control still reachable.
+    """
+    from pathlib import Path
+
+    from personalclaw.config.loader import AgentConfig
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    repo = Path(__file__).resolve().parent.parent
+
+    assert "sandbox" not in {
+        f.name for f in fields(AgentConfig)
+    }, "AgentConfig.sandbox is back: a config field nothing reads, under a security label"
+    assert "agent.sandbox" not in _EDITABLE_CONFIG, "agent.sandbox is PATCH-writable again"
+    assert "sandbox" not in AppConfig().to_dict()["agent"], "agent.sandbox is serialized again"
+
+    panel = (repo / "web/src/pages/settings/AgentDefaultsPanel.tsx").read_text(encoding="utf-8")
+    assert 'field="sandbox"' not in panel, "the Agent defaults Sandbox control is back"
+
+    docs = (repo / "docs/reference/configuration.md").read_text(encoding="utf-8")
+    assert "agent.sandbox" not in docs, "docs still document agent.sandbox as a real setting"
+
+    sandbox_src = (repo / "src/personalclaw/sandbox.py").read_text(encoding="utf-8")
+    assert "agent.sandbox" not in sandbox_src, (
+        "sandbox.py still claims agent.sandbox governs the backend — the docstring that "
+        "made this field look wired in the first place"
+    )
+
+
+def test_the_sandbox_decision_has_exactly_one_input():
+    """The positive half of the rail above: `wrap_argv`'s `mode` is the single input to the
+    sandbox decision, and it reaches `detect_backend` as `config_mode`. Without this, the
+    absence rail above could be satisfied by deleting the field AND the enforcement."""
+    import inspect
+
+    from personalclaw import sandbox
+
+    assert "mode" in inspect.signature(sandbox.wrap_argv).parameters
+    assert "config_mode" in inspect.signature(sandbox.detect_backend).parameters
+    assert sandbox.wrap_argv(["true"], mode="off") == (["true"], None)

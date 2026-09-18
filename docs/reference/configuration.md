@@ -37,7 +37,6 @@ Not everything is in `config.json` by design. Stored elsewhere:
 |---|---|---|---|---|
 | `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
 | `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
-| `agent.sandbox` | enum: `auto`, `off` | `auto` | Settings → Agent defaults | Sandbox mode for the ACP provider. |
 | `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. |
 | `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
 | `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Sanitized at the write boundary (markdown/braces stripped). Empty = default. |
@@ -264,7 +263,7 @@ Not config-file fields, but part of the same operator surface:
 | `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
 | `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories. |
 | `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
-| `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for loopback/RFC1918 clients (dev convenience; public origins still need a token). |
+| `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for any client whose **resolved** address is private (loopback/RFC1918/link-local/ULA). Dev convenience for a trusted LAN. **Do not set it behind a reverse proxy:** the address the gateway resolves is then the proxy's own, which is private, so requests forwarded from anywhere are admitted with no token. `personalclaw doctor`'s `remote` row fails when this is set together with `dashboard.trusted_proxies` or `dashboard.public_url`. See [remote-access.md](../guides/remote-access.md). |
 | `PERSONALCLAW_FIRST_PARTY_APPS_DIR` | Point a packaged install at a first-party apps directory. |
 | `PERSONALCLAW_SKIP_APP_BACKENDS` | Don't launch app backend subprocesses (test isolation). |
 | `PERSONALCLAW_CREDENTIAL_BACKEND` | Where new credentials are stored: `keychain` (OS secret service, needs the `keychain` extra) or `dotenv` (default — `~/.personalclaw/.env` at mode 0600). A `keychain` request on a machine with no usable secret service falls back to `.env` 0600 and `personalclaw doctor` says so. Reads always see both stores, so switching back never hides an existing secret. |

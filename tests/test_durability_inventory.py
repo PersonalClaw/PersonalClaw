@@ -45,8 +45,35 @@ class TestManifestWellFormed:
 
     def test_known_secrets_are_marked(self):
         secret = set(inv.secret_paths())
-        for path in (".env", ".local_secret", "sel_hmac.key", "telemetry_salt", "credentials"):
+        for path in (
+            ".env",
+            ".local_secret",
+            "sel_hmac.key",
+            "telemetry_salt",
+            "credentials",
+            "auth",
+        ):
             assert path in secret, f"{path} must be marked secret"
+
+    def test_the_auth_store_is_snapshotted_but_never_exported(self):
+        """#130: the ARGUED half of declaring `auth/` — which posture, not merely that it is
+        claimed. Both available answers make `audit_home()` pass, and only one is correct.
+
+        `IGNORED` was the tempting cheap fix and is the wrong one: `auth/credentials.json` is the
+        argon2id login hash, `auth/enroll_codes.json` the 2FA enrolment, so a user restoring
+        their own snapshot would come back locked out of their own gateway — a restore that
+        silently drops the login is worse than the coral health strip this closes. `secret=True`
+        is the posture the manifest's own docstring states for that case: excluded from exports,
+        captured by snapshots on purpose so a backup can restore the credential store. It is how
+        the neighbouring `credentials` tree is already declared.
+
+        Deliberately DISTINCT from `machine_id` / `session_key` / `sessions.json`, which are
+        `IGNORED` rather than secret because they are per-install IDENTITY — carrying those would
+        make a restored copy masquerade as the machine it came from. `auth/` is the owner's own
+        credential store, which travels with the owner.
+        """
+        assert "auth" in {e.path for e in inv.backup_entries()}, "a restore would drop the login"
+        assert "auth" not in {e.path for e in inv.export_entries()}, "credentials in an export"
 
     def test_derived_entries_excluded_from_backup_by_default(self):
         """A stale index restored alongside a newer store is worse than no index."""
@@ -79,6 +106,28 @@ class TestClaimsEverything:
         result = inv.audit_home(self._home(tmp_path))
         assert result.ok, f"unclaimed={result.unclaimed} dbs={result.undeclared_dbs}"
         assert result.claimed > 0 and result.ignored > 0
+
+    def test_a_home_that_has_set_a_password_is_still_fully_claimed(self, tmp_path):
+        """#130: `auth/` was declared nowhere, so the Doctor probe went coral on a normal install.
+
+        `audit_home()` is wired as the `durability.inventory` Doctor probe now, and `auth/` was in
+        neither `INVENTORY` nor `IGNORED` — so `GET /api/doctor` returned `worst: "durability"`
+        with `unclaimed: ["auth/"]` the moment the owner did the security-recommended thing.
+        `credentials.py`, `enrollment.py` and `pairing.py` all resolve into this directory, so it
+        appears on any install that has ever set a login password, enrolled 2FA, or generated a
+        pairing code — i.e. the ordering hazard the issue itself warned about, on one path.
+
+        Populated with all three of its real files: a fix that claimed only the credential file
+        would leave the ephemeral code files reporting the same unclaimed directory.
+        """
+        home = self._home(tmp_path)
+        (home / "auth").mkdir()
+        for name in ("credentials.json", "pair_codes.json", "enroll_codes.json"):
+            (home / "auth" / name).write_text("{}")
+        result = inv.audit_home(home)
+        assert result.ok, f"unclaimed={result.unclaimed} dbs={result.undeclared_dbs}"
+        claim = inv.claim_for("auth/credentials.json")
+        assert claim is not None and claim.id == "auth"
 
     def test_a_new_undeclared_store_fails_the_audit(self, tmp_path):
         """THE point of this module: add a store, forget the manifest → caught."""

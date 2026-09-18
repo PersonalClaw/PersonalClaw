@@ -22,10 +22,14 @@ def ensure_nodes_registered() -> None:
     global _REGISTERED
     if _REGISTERED:
         return
-    from personalclaw.knowledge.pipeline.nodes import media_nodes, text_nodes
+    from personalclaw.knowledge.pipeline.nodes import media_nodes, ocr_nodes, text_nodes
 
     text_nodes.register()
     media_nodes.register()
+    # AFTER media_nodes: registration order is what `resolve_runnable` walks when the
+    # preferred backend cannot run, so the model-backed `ocr`/`vision-llm` stays the
+    # default and `ocr`/`engine` is the fallback, not the other way round.
+    ocr_nodes.register()
     _REGISTERED = True
 
 

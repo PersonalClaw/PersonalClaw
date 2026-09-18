@@ -17,6 +17,7 @@ never a fixed taxonomy.
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
@@ -112,11 +113,41 @@ class PlanSession:
     # so the walkthrough surfaces the failure + an explicit Retry instead of silently
     # re-spawning a fresh investigation on every poll/remount. Cleared on a real retry.
     design_error: str = ""
+    #: When this session last actually PROGRESSED — a step transitioned, an artifact
+    #: landed, a comment was attached. Every mutator below stamps it.
+    #:
+    #: It exists because stall detection cannot be computed on the client. The walkthrough
+    #: seeded its quiet clock from `Date.now()` at component mount, so "how long has this
+    #: been quiet" really measured "how long since this page loaded": a session dead for
+    #: hours restarted its countdown on every reload and never offered Retry (issue 488).
+    #:
+    #: `created_at` alone cannot stand in for it. A HEALTHY session that has been planning
+    #: for 20 minutes is 20 minutes old, so a threshold of minutes would fire Retry on live
+    #: work — and Retry kills an in-flight pass. Only a real last-progress stamp separates
+    #: "quiet because dead" from "old because busy".
+    updated_at: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Backfill `updated_at` from `created_at` — ONE owner, every construction path.
+
+        A session written before this field existed carries no `updated_at`, and 0.0 reads as
+        "quiet since 1970": Retry offered on every pre-existing session the instant it is
+        opened, which is worse than the bug being fixed because Retry kills an in-flight pass.
+
+        A freshly CONSTRUCTED session has the same problem, which is why this lives here rather
+        than in `from_dict`: `dashboard/chat_plan.py` builds a session and serializes it straight
+        into a POST response with no read round-trip, so a read-time-only backfill still put
+        `updated_at: 0.0` on the wire. Creation time is the honest floor for "we know it
+        progressed at least then".
+        """
+        if not self.updated_at:
+            self.updated_at = self.created_at
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "steps": [s.to_dict() for s in self.steps],
             "design_error": self.design_error,
         }
@@ -132,6 +163,9 @@ class PlanSession:
         return cls(
             project_id=str(data.get("project_id", "")),
             created_at=float(data.get("created_at", 0.0) or 0.0),
+            # An absent or literal-zero `updated_at` is backfilled by `__post_init__`, which
+            # owns that rule for every construction path — not re-derived here.
+            updated_at=float(data.get("updated_at", 0.0) or 0.0),
             steps=[PlanStep.from_dict(s) for s in (data.get("steps") or []) if isinstance(s, dict)],
             design_error=str(data.get("design_error", "") or ""),
         )
@@ -158,6 +192,13 @@ def is_complete(session: PlanSession) -> bool:
     return bool(session.steps) and all(s.status == StepStatus.APPROVED.value for s in session.steps)
 
 
+def _touch(session: PlanSession) -> None:
+    """Stamp `updated_at`. Called by every mutator on the path where it really changed
+    something, so the field means LAST PROGRESS rather than last write — a poll that
+    rewrites unchanged state must not reset the stall clock (issue 488)."""
+    session.updated_at = time.time()
+
+
 def approve_step(session: PlanSession, step_id: str) -> bool:
     """Mark a step approved (the user accepted its artifact). Only an
     ``awaiting_review`` step can be approved. Returns True if it transitioned.
@@ -166,6 +207,7 @@ def approve_step(session: PlanSession, step_id: str) -> bool:
         if step.id == step_id:
             if step.status == StepStatus.AWAITING_REVIEW.value:
                 step.status = StepStatus.APPROVED.value
+                _touch(session)
                 return True
             return False
     return False
@@ -184,6 +226,7 @@ def comment_step(session: PlanSession, step_id: str, text: str, *, at: float = 0
             if step.status == StepStatus.AWAITING_REVIEW.value:
                 step.comments.append({"text": text, "at": at})
                 step.status = StepStatus.RUNNING.value
+                _touch(session)
                 return True
             return False
     return False
@@ -194,6 +237,7 @@ def mark_running(session: PlanSession, step_id: str) -> bool:
     for step in session.steps:
         if step.id == step_id and step.status == StepStatus.PENDING.value:
             step.status = StepStatus.RUNNING.value
+            _touch(session)
             return True
     return False
 
@@ -207,6 +251,7 @@ def mark_pending(session: PlanSession, step_id: str) -> bool:
     for step in session.steps:
         if step.id == step_id and step.status == StepStatus.RUNNING.value:
             step.status = StepStatus.PENDING.value
+            _touch(session)
             return True
     return False
 
@@ -218,6 +263,7 @@ def submit_artifact(session: PlanSession, step_id: str, artifact: dict) -> bool:
         if step.id == step_id and step.status == StepStatus.RUNNING.value:
             step.artifact = dict(artifact or {})
             step.status = StepStatus.AWAITING_REVIEW.value
+            _touch(session)
             return True
     return False
 
@@ -234,6 +280,7 @@ def edit_artifact(session: PlanSession, step_id: str, markdown: str) -> bool:
         if step.id == step_id:
             if step.status == StepStatus.AWAITING_REVIEW.value:
                 step.artifact = {**(step.artifact or {}), "markdown": str(markdown)}
+                _touch(session)
                 return True
             return False
     return False

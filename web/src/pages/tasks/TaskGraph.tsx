@@ -128,6 +128,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
           </div>
         )}
         <DagView width={svgW} height={height} className="block" onNodeClick={onOpen}
+          label={`Dependency graph — ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
           edges={edges.map((e): DagEdge => ({ id: e.id, from: e.from, to: e.to, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, bad: e.bad, active: e.active }))}
           nodes={nodes.map(({ x, y, t }): DagNode => {
             const sm = statusMeta(t.status)
@@ -139,6 +140,19 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
               state: nodeStateFor(t.status, bad),
               accent: sm.tone,
               ringed: criticalSet.has(t.id),
+              // The node's accessible name. It carries the two things that are
+              // otherwise PURELY VISUAL — the primary ring (critical path) and the
+              // red outline (cycle) — because a screen-reader user has no other
+              // route to either. Priority follows `signalPriority`, so the silent
+              // default ("medium") stays silent here too rather than naming an
+              // intent the task may never have expressed.
+              label: [
+                t.title,
+                ` — ${sm.label}`,
+                pm ? `, ${pm.label}` : '',
+                criticalSet.has(t.id) ? ', on the critical path' : '',
+                bad ? ', in a dependency cycle' : '',
+              ].join(''),
               content: (
                 <div className="flex h-full flex-col justify-center">
                   {/* 182px of 386 at 390px — 2.1x, the worst of the four. A DAG node is the smallest slot a

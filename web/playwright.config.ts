@@ -151,6 +151,38 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}-{platform}{ext}',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  // ── Why this is set at all, and why 3 ────────────────────────────────────
+  // Unset, playwright runs HALF the logical cores. `ubuntu-latest` on a public
+  // repo is 4-core, so CI was silently running 2 workers — and `e2e-a11y` is
+  // the binding constraint on this repo's merge rate. Measured 2026-09-18 from
+  // the Actions API across five CONCLUDED runs (35381670780, 35381697823,
+  // 35381857440, 35382011453, 35382279089): the job is 23.6–28.7 min while the
+  // next-longest job in the whole workflow is `test-shard` at ~9 min, so every
+  // PR waits on this one job for roughly 20 minutes after everything else is
+  // green.
+  //
+  // The cost is NOT setup — checkout+uv+npm+chromium total 54 SECONDS, the
+  // caches are doing their job. It is test VOLUME in two steps:
+  //   walkthrough.spec.ts  14.5–17.1 min   (~60% of the job)
+  //   a11y.spec.ts          5.8– 7.7 min
+  // walkthrough is 2 themes × ~55 surfaces × 3 properties; a11y is 2 themes ×
+  // ~55 surfaces. Both are pure read-only sweeps (navigate, tab, read computed
+  // styles, run axe), so they are embarrassingly parallel and were being run
+  // two-at-a-time for no reason other than an unset default.
+  //
+  // 🪤 3, NOT 4 (= `'100%'`). The sweeps share ONE gateway and ONE vite preview
+  // on the same 4-core box. Those two are near-idle while a read-only sweep
+  // runs, but pinning all 4 cores to chromium leaves nothing for them or for
+  // the test runner itself, and a CPU-starved page trips playwright's 30 s
+  // per-test default — which would convert a throughput win into flaky reds.
+  // Flaky-red CI is strictly worse for merge rate than slow-green CI, so this
+  // takes the +50% that needs no headroom argument rather than the +100% that
+  // does.
+  //
+  // This changes concurrency only. Every test still runs, once, asserting
+  // exactly what it asserted before; nothing is sharded, skipped or retimed.
+  // Local runs keep playwright's default so a dev machine is not pinned.
+  workers: process.env.CI ? 3 : undefined,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   expect: {

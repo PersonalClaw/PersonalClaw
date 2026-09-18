@@ -82,7 +82,8 @@ export function PlanStreamReview({ buffer, complete, names, goal }: {
       ) : view === 'graph' ? (
         dag.nodes.length > 0 ? (
           <div className="overflow-auto rounded-lg bg-surface-high p-s">
-            <DagView nodes={dag.nodes} edges={dag.edges} width={dag.width} height={dag.height} />
+            <DagView nodes={dag.nodes} edges={dag.edges} width={dag.width} height={dag.height}
+              label={`Plan graph — ${dag.nodes.length} ${dag.nodes.length === 1 ? 'step' : 'steps'}`} />
           </div>
         ) : (
           <p data-type="body-s" className="text-on-surface-low px-m py-l">Waiting for the first step…</p>

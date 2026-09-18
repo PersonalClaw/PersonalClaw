@@ -161,7 +161,7 @@ describe('LearningPage RENDERS the grade (the call site)', () => {
     control.unmount()
 
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/measured on\/off/)).toBeTruthy()
     // And the retirement it grades is the row on screen, not a detached chip.
@@ -170,7 +170,7 @@ describe('LearningPage RENDERS the grade (the call site)', () => {
 
   it('does not upgrade an ungraded row on the page either', async () => {
     learningProposals.mockResolvedValue(inboxOf([row({ evidence_strength: '' })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/ungraded/)).toBeTruthy()
     expect(screen.queryByText(/measured on\/off/)).toBeNull()

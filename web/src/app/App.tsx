@@ -151,7 +151,7 @@ function renderPage(active: string, r: RouteProps) {
     case 'prompts': return <PromptsSection {...r} />
     case 'workflows': return <WorkflowsSection {...r} />
     case 'skills': return <SkillsPage {...r} />
-    case 'learning': return <LearningPage />
+    case 'learning': return <LearningPage {...r} />
     case 'tools': return <ToolsPage {...r} />
     case 'agents': return <AgentsSection {...r} />
     case 'apps': return <AppsSection {...r} />

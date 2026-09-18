@@ -56,20 +56,36 @@ class BookmarkGraph(PipelineGraph):
 
 
 class DocumentGraph(PipelineGraph):
-    """pdf/document/sheet/slides → read file text (pure-python) → consolidate, ‖ slice.
+    """pdf/document/sheet/slides → read file text (pure-python) → consolidate, ‖ slice,
+    with a CONDITIONAL scan branch for a PDF that carries no text layer (KOCR-1):
+
+        document_read ─┬─> consolidate
+                       ├─> document_slice
+                       └─(no-text-layer)─> pdf_rasterize ─> ocr ─> consolidate
 
     ``document_slice`` (WATCHED-SOURCES §5) hangs off the reader as a LEAF and deliberately
     does NOT feed ``consolidate``: consolidate header-concats every upstream it has, so
     routing the slices through it would append three derived views of the document to the
     document itself — tripling the consolidated text the insights/embed stages read.
+
+    The scan branch is guarded by ``document_read``'s classification, not by a check inside
+    the OCR node. That placement is what makes "no double-OCR" structural: a PDF whose text
+    layer is non-empty is never classified ``no-text-layer``, the edge is never traversed,
+    and no OCR backend is constructed — as opposed to an OCR node that runs and then decides
+    to do nothing, which is the same cost and a far weaker guarantee.
     """
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="document_read", backend="native"))
         self.add(NodeSpec(node_type="consolidate", backend="concat"))
         self.add(NodeSpec(node_type="document_slice", backend="native"))
+        self.add(NodeSpec(node_type="pdf_rasterize", backend="pypdfium2"))
+        self.add(NodeSpec(node_type="ocr", backend="vision-llm", uses_use_case="image_modality"))
         self.edge("document_read", "consolidate")
         self.edge("document_read", "document_slice")
+        self.edge("document_read", "pdf_rasterize", when="no-text-layer")
+        self.edge("pdf_rasterize", "ocr")
+        self.edge("ocr", "consolidate")
 
 
 class ImageGraph(PipelineGraph):

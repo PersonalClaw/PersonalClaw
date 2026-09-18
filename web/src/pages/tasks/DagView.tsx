@@ -21,10 +21,27 @@ import { accentChip } from '../../design/accent'
  *  between them — and dims everything else. Implemented as direct classList
  *  toggles on the rendered SVG (`.dag-hovering` on the root, `.dag-lit` on the
  *  lineage) so a large graph never re-renders on hover; tokens.css owns the look.
+ *  KEYBOARD FOCUS lights the same lineage, so the affordance is not mouse-only.
+ *
+ *  KEYBOARD CONTRACT (#474). Every clickable node is a real button: `role="button"`,
+ *  a tab stop, Enter/Space activation, and an accessible name from `node.label`.
+ *  Before this, all three DAG surfaces (the task graph, the workflow run graph and
+ *  plan review) rendered each node as a bare `<g onClick>` — no role, no tabIndex,
+ *  no key handler, no name — so click was the ONLY way to open anything and a
+ *  keyboard or screen-reader user could not reach a single node. `ListScaffold`'s
+ *  rows are the in-repo reference for the pattern (the fix #307 landed).
+ *
+ *  Why the button is an INNER `<g>` rather than the node group itself: an
+ *  `awaiting` node renders real Approve/Deny `<button>`s, and nesting those inside
+ *  a `role="button"` subtree makes assistive tech present the node as a leaf and
+ *  swallow them. So the focusable/operable surface wraps only the node's own box
+ *  and content, and the gate buttons stay SIBLINGS of it — reachable in their own
+ *  right. The outer group keeps `data-dag-node`, the hover handlers and the
+ *  `.dag-node` class the lineage CSS keys off.
  *
  *  Node-level inline Approve/Deny is a declared extension point (`onApprove`/`onDeny`
- *  + the `awaiting` state) but is BACKEND-GATED: it needs a node-level approval seam
- *  that exists for chat/loop but NOT for tasks, so no current caller supplies it. */
+ *  + the `awaiting` state) but is BACKEND-GATED for tasks: it needs a node-level
+ *  approval seam that exists for chat/loop/workflow runs but NOT for tasks. */
 
 export type DagNodeState = 'todo' | 'active' | 'blocked' | 'awaiting' | 'done' | 'error'
 
@@ -37,6 +54,10 @@ export interface DagNode {
   accent?: string
   /** A primary-tone ring (e.g. critical-path marker) drawn UNDER any state ring. */
   ringed?: boolean
+  /** The node's ACCESSIBLE NAME — plain text, because `content` is arbitrary JSX
+   *  inside a `foreignObject` and gives assistive tech nothing dependable to read.
+   *  Every caller supplies it; omit it only for a purely decorative node. */
+  label?: string
   content: ReactNode
 }
 
@@ -62,7 +83,7 @@ const RING_TONE: Partial<Record<DagNodeState, string>> = {
 }
 
 export function DagView({
-  nodes, edges, width, height, onNodeClick, onApprove, onDeny, className,
+  nodes, edges, width, height, onNodeClick, onApprove, onDeny, className, label,
 }: {
   nodes: DagNode[]
   edges: DagEdge[]
@@ -73,6 +94,9 @@ export function DagView({
   onApprove?: (id: string) => void
   onDeny?: (id: string) => void
   className?: string
+  /** The whole graph's accessible name (e.g. "Dependency graph — 27 tasks"). An
+   *  unnamed region is announced as nothing useful, so every caller passes one. */
+  label?: string
 }) {
   const reduce = useReducedMotion()
   const svgRef = useRef<SVGSVGElement>(null)
@@ -134,7 +158,10 @@ export function DagView({
   }
 
   return (
-    <svg ref={svgRef} width={width} height={height} className={className} style={{ width: '100%' }}>
+    // `role="group"` (not `img`) keeps the nodes inside EXPOSED to assistive tech —
+    // `role="img"` would collapse the whole graph to its own label and hide all of them.
+    <svg ref={svgRef} width={width} height={height} className={className} style={{ width: '100%' }}
+      role={label ? 'group' : undefined} aria-label={label}>
       <defs>
         <marker id="dag-arrow" markerWidth="8" markerHeight="8" refX="6.5" refY="4" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M0,0 L8,4 L0,8 Z" fill="var(--color-outline)" />
@@ -173,10 +200,10 @@ export function DagView({
           : n.ringed ? 'var(--color-primary)'
           : 'var(--color-outline-variant)'
         const clip = `dag-clip-${n.id}`
+        const open = onNodeClick ? () => onNodeClick(n.id) : undefined
         return (
           <g key={n.id} transform={`translate(${n.x},${n.y})`} data-dag-node={n.id}
             className={onNodeClick ? 'dag-node cursor-pointer group' : 'dag-node group'}
-            onClick={onNodeClick ? () => onNodeClick(n.id) : undefined}
             onMouseEnter={() => showLineage(n.id)}
             onMouseLeave={clearLineage}>
             {/* State ring — a soft pulsing outline for gated nodes (blocked/awaiting/
@@ -190,16 +217,46 @@ export function DagView({
                 transition={reduce ? undefined : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
               />
             )}
-            <clipPath id={clip}><rect width={n.w} height={n.h} rx={r} /></clipPath>
-            <rect width={n.w} height={n.h} rx={r} fill="var(--color-surface-container)"
-              stroke={stroke} strokeWidth={n.state === 'error' || n.ringed ? 1.5 : 1}
-              className="group-hover:brightness-125 transition-all" />
-            {n.accent && <rect width={4} height={n.h} fill={n.accent} clipPath={`url(#${clip})`} />}
-            <foreignObject x={16} y={8} width={n.w - 28} height={n.h - 16}>
-              {n.content}
-            </foreignObject>
-            {/* Inline approve/deny for an awaiting-approval node (backend-gated seam —
-                no Tasks caller supplies onApprove today; kept as the extension point). */}
+            {/* ── The focusable, operable node surface ──
+                A tab stop with button semantics when the caller gave us an open
+                handler; a named `img` when it did not (plan review draws a
+                read-only graph, and an unnamed node reads as nothing at all).
+                Space is preventDefault'd so activating a node never also scrolls
+                the graph's container. Focus mirrors hover's lineage highlight. */}
+            <g
+              role={open ? 'button' : n.label ? 'img' : undefined}
+              tabIndex={open ? 0 : undefined}
+              aria-label={n.label}
+              className="dag-node-hit"
+              onClick={open}
+              onKeyDown={open ? (ev) => {
+                if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open() }
+              } : undefined}
+              onFocus={open ? () => showLineage(n.id) : undefined}
+              onBlur={open ? clearLineage : undefined}
+            >
+              {/* Focus ring — hidden until :focus-visible (tokens.css), so a keyboard
+                  user can see WHICH node they are on. Drawn outside the state ring so
+                  the two never overlap into one ambiguous outline. */}
+              {open && (
+                <rect className="dag-focus-ring" x={-5} y={-5} width={n.w + 10} height={n.h + 10} rx={r + 5}
+                  fill="none" stroke="var(--color-primary)" strokeWidth={2.5} />
+              )}
+              <clipPath id={clip}><rect width={n.w} height={n.h} rx={r} /></clipPath>
+              <rect width={n.w} height={n.h} rx={r} fill="var(--color-surface-container)"
+                stroke={stroke} strokeWidth={n.state === 'error' || n.ringed ? 1.5 : 1}
+                className="group-hover:brightness-125 transition-all" />
+              {n.accent && <rect width={4} height={n.h} fill={n.accent} clipPath={`url(#${clip})`} />}
+              {/* aria-hidden: the label above already names the node, and this is
+                  arbitrary JSX that would otherwise be re-read as unstructured text. */}
+              <foreignObject x={16} y={8} width={n.w - 28} height={n.h - 16} aria-hidden={n.label ? true : undefined}>
+                {n.content}
+              </foreignObject>
+            </g>
+            {/* Inline approve/deny for an awaiting-approval node. A SIBLING of the
+                focusable surface above, never a child: nested inside `role="button"`
+                these two would be announced as part of the node's name instead of as
+                the controls they are. */}
             {n.state === 'awaiting' && onApprove && onDeny && (
               <foreignObject x={0} y={n.h} width={n.w} height={34}>
                 <div className="flex items-center gap-1.5 pt-1.5">

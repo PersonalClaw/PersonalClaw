@@ -949,6 +949,33 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="the credential store",
     ),
+    # The gateway's OWN auth store: the argon2id login hash (`credentials.py`), the 2FA
+    # enrolment (`enrollment.py`) and device pairing codes (`pairing.py`) all resolve into
+    # `config_dir() / "auth"`. Declared late (#130), and the cost of the omission was not a
+    # missing backup but a FALSE ALARM: `audit_home()` is wired as the `durability.inventory`
+    # Doctor probe, so an undeclared real directory turned the health strip coral
+    # (`worst: "durability"`, `unclaimed: ["auth/"]`) the moment the owner set a password or
+    # paired a device — the ordering hazard of wiring a probe before the manifest is complete.
+    #
+    # `secret=True`, NOT `IGNORED`. The distinction the neighbours already draw: `machine_id`,
+    # `session_key` and `sessions.json` are IGNORED because they are per-install IDENTITY, and
+    # carrying them would let a restored copy masquerade as the machine it came from. This is
+    # the owner's own credential store, which travels with the owner — so it takes the posture
+    # stated at the top of this module for exactly that case: EXCLUDED from exports (via the
+    # `secret` projection) but CAPTURED by snapshots on purpose, because a restore that
+    # silently dropped the login would lock a user out of their own gateway. Declared as the
+    # whole tree rather than per-file: the pair/enrol code files are short-lived and expire on
+    # their own, and claiming only `credentials.json` would leave the directory unclaimed and
+    # the probe coral, which is the bug.
+    StateEntry(
+        id="auth",
+        kind=KIND_TREE,
+        path="auth",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
+    ),
     StateEntry(
         id="security_events",
         kind=KIND_JSONL_APPEND,
@@ -1056,6 +1083,16 @@ IGNORED: tuple[str, ...] = (
     # truth, so a restored stale release list is worse than the empty one the next
     # check refills.
     "update_releases.json",
+    # The run-state file (`self_update._RUN_STATE_FILENAME`): the version this install
+    # was running the last time a gateway started. MACHINE-LOCAL, and the one update file
+    # here whose restored copy would be actively WRONG rather than merely stale. It is the
+    # input `record_running_version` compares the running version against to derive
+    # `updates.last_version`, so a snapshot taken on 0.2.0 and restored onto a 0.1.3 install
+    # would make the next startup record `last_version = 0.2.0` and the Updates panel offer
+    # "Roll back to v0.2.0" — an UPGRADE, i.e. the exact mis-offer RUM-9 exists to prevent.
+    # Omitted, `record_running_version` writes nothing on that first run and makes no offer
+    # until it observes a real version change, which is the honest answer.
+    "update_run.json",
     # 🔴 #2906 — the per-day usage/spend fold (`routing/usage.py`). Ignored, not
     # declared, for the SAME reason as the two update caches directly above: it is a DERIVED
     # fold carrying no unique truth. `routing.usage.refresh` refolds it from scratch out of

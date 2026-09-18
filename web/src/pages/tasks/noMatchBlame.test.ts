@@ -32,7 +32,15 @@ describe('the tasks no-match state names its narrower', () => {
   it("the view escape resets EVERY in-page narrower, not just the status filter", () => {
     // A "View all tasks" that reset only `filter` would be a lying affordance whenever the list
     // bar or Assigned › Mine did the narrowing — clicking it would change nothing.
-    expect(src).toMatch(/setFilter\('all'\); setListFilter\(null\); setAssigned\(ASSIGNED_EVERYONE\)/)
+    //
+    // 🪤 THIS IS AN ENUMERATED RAIL, so it cannot see a narrower nobody added to it. The Tag filter
+    // (#477) became the FIFTH in-page narrower and had to be appended here at the same time: the
+    // regex below would have gone on passing while "View all tasks" left a tag applied, which is
+    // precisely the lying affordance the assertion exists to stop. Any future narrower joins here.
+    expect(src).toMatch(/setFilter\('all'\); setListFilter\(null\); setAssigned\(ASSIGNED_EVERYONE\); setTag\(TAG_ANY\)/)
+    // …and it must be one of the branch's own conditions, or the escape is unreachable when the tag
+    // is the ONLY thing narrowing.
+    expect(src).toMatch(/\|\| tagFilter !== TAG_ANY \? \(/)
   })
 
   it('both no-match variants count what is really there', () => {

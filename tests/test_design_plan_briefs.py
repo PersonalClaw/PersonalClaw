@@ -53,13 +53,16 @@ def test_build_plan_to_phases_projection():
     phases = pw.build_plan_to_phases(
         {
             "phases": [
-                {"step": "foundations", "title": "Foundations", "objective": "anchors"},
-                {"title": "Document & export", "objective": "DESIGN.md"},  # step derived from title
+                {"stage": "foundations", "title": "Foundations", "objective": "anchors"},
+                {
+                    "title": "Document & export",
+                    "objective": "DESIGN.md",
+                },  # stage derived from title
             ]
         }
     )
-    assert phases[0]["step"] == "foundations"
-    assert phases[1]["step"] == "document_export" and phases[1]["title"] == "Document & export"
+    assert phases[0]["stage"] == "foundations"
+    assert phases[1]["stage"] == "document_export" and phases[1]["title"] == "Document & export"
 
 
 def test_build_plan_to_phases_empty_on_garbage():

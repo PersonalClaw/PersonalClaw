@@ -34,6 +34,7 @@ import {
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
+import { phaseKey } from '../loops/loopPhases'
 import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
@@ -127,12 +128,14 @@ function resolveTouchedPath(raw: string, root: string): { abs: string; rel: stri
   return { abs: `${root}/${p.replace(/^\.?\//, '')}`, rel: p }  // bare relative → under root
 }
 
-// The effective key a stage is tracked under in stage_status / task_list_ids. The
-// backend keys a STAGELESS phase (blank stage id — e.g. an unlabeled decomposition
-// phase) by its TITLE everywhere (_stage_of/set_stage_status/ensure_stage_lists), so
-// the FE must use the same `stage || title` key — indexing by the bare s.stage would
-// miss a stageless phase's status + TaskList (it'd read 'pending'/'no tasks' forever).
-const stageKey = (s: CodeStage): string => (s.stage || s.title || '')
+// The effective key a stage is tracked under in stage_status / task_list_ids — the SHARED
+// resolution (`loopPhases.phaseKey`), not a local copy. The backend keys a STAGELESS phase
+// (blank stage id — e.g. an unlabeled decomposition phase) by its TITLE everywhere
+// (_stage_of/set_stage_status/ensure_stage_lists); indexing by the bare s.stage would miss
+// such a phase's status + TaskList (it'd read 'pending'/'no tasks' forever). This local copy
+// also never TRIMMED, so a whitespace-only stage id keyed on whitespace instead of falling
+// through to the title — the shared reader trims, like the backend does.
+const stageKey = (s: CodeStage): string => phaseKey(s)
 
 // Truncate a build/test command for an overflow-menu label. A blunt slice(0,48) on
 // the WHOLE "Run build (<cmd>)" string cut the command mid-word and dropped the

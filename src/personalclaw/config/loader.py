@@ -459,10 +459,6 @@ class AgentConfig:
             "mirroring the per-agent AgentProfile.provider field.",
         ),
     )
-    sandbox: str = field(
-        default="auto",
-        metadata=_meta("Sandbox", "Sandbox mode for ACP provider.", enum=["auto", "off"]),
-    )
     yolo: bool = field(
         default=False,
         metadata=_meta("YOLO Mode", "Skip tool approval confirmations."),
@@ -1954,6 +1950,30 @@ class KnowledgeConfig:
             "PersonalClaw config dir (~/.personalclaw); absolute paths are used as-is.",
         ),
     )
+    rerank_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Relevance Reranker",
+            "After hybrid retrieval's rank fusion (keyword + graph + vector, RRF-fused), "
+            "send the top candidates to the active `reasoning` model for a relevance pass "
+            "before returning results. Off by default: RRF fusion already ships and this "
+            "is an extra per-query model call on top of it, so the retrieval bench's "
+            "`rerank` arm (`personalclaw retrieval-eval`) is how you decide whether it "
+            "earns that cost on your own corpus before turning it on. A failed call (no "
+            "model bound, timeout, unparseable response) silently keeps the un-reranked "
+            "RRF order — this can never break a search.",
+        ),
+    )
+    rerank_candidates: int = field(
+        default=20,
+        metadata=_meta(
+            "Reranker Candidate Window",
+            "How many of the fused results the reranker is shown per query (always at "
+            "least the requested result limit, whichever is larger). A larger window gives "
+            "the reranker more to reorder at the cost of a bigger prompt; a smaller one is "
+            "cheaper and faster.",
+        ),
+    )
 
 
 @dataclass
@@ -2962,9 +2982,11 @@ class UpdatesConfig:
         default="",
         metadata=_meta(
             "Last Running Version",
-            "The version this install last ran, persisted so a rollback can offer "
-            "'Roll back to v<last_version>'. Maintained by the updater; empty until the "
-            "first recorded run.",
+            "The version this install ran BEFORE the one running now, so a rollback can "
+            "offer 'Roll back to v<last_version>'. Written by the updater at gateway "
+            "startup (`self_update.record_running_version`) the first time it sees the "
+            "version change — however it changed, including a hand-typed pip upgrade or a "
+            "recreated container. Empty until a change has been observed.",
         ),
     )
 
@@ -3461,7 +3483,6 @@ class AppConfig:
                 # AgentConfig.provider's field default). A config with no explicit
                 # agent.provider is native, NOT the legacy "acp" — ACP is opt-in.
                 provider=agent_data.get("provider", "native"),
-                sandbox=agent_data.get("sandbox", "auto"),
                 yolo=agent_data.get("yolo", False),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
                 # Defaults ON: caching is semantically
@@ -4107,6 +4128,11 @@ class AppConfig:
                     else "off"
                 ),
                 vault_path=str(knowledge_data.get("vault_path", "") or "knowledge-vault"),
+                # Same `or <default>` idiom as `max_mentions_per_claim` /
+                # `synthesis_window` above: an unset or zero window falls back to the
+                # shipped default; `_EDITABLE_CONFIG` bounds the PATCH path separately.
+                rerank_enabled=bool(knowledge_data.get("rerank_enabled", False)),
+                rerank_candidates=int(knowledge_data.get("rerank_candidates", 20) or 20),
             ),
             security=SecurityConfig(
                 denied_commands=[

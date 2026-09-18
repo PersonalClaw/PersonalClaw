@@ -107,9 +107,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/browse/connector` — detach the operator's browser. Idempotent.
 - `GET /api/browse/connector` — whether a browser is attached right now.
 - `POST /api/browse/connector` — record the operator's attached browser.
+- `POST /api/browse/grants/{request_id}/{action}` — answer one pending per-task browse grant.
 - `POST /api/browse/kill` — stop unattended browsing. Body: ``{reason?: str}``.
 - `POST /api/browse/kill/release` — re-enable unattended browsing.
-- `GET /api/browse/status` — the mirror's read model: kill state + expired sites.
+- `GET /api/browse/status` — the mirror's read model: kill state, expired sites, pending grants.
 - `GET /api/changelog` — read full CHANGELOG.md from project.
 - `POST /api/channel/profile` — read a channel user's profile.
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
@@ -579,6 +580,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
+- `POST /api/packs/{name}/triggers/deploy` — Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
 - `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/proactive/digest` — §5.1's card, assembled from the last digest run.
 - `POST /api/proactive/digest/reply` — one tap or one typed reply. Body ``{run_id, text}``.

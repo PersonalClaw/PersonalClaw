@@ -196,7 +196,7 @@ export const PERSONALITIES: Personality[] = [
     // Placeholder identity #1 (plan: "the registry entry shape is the deliverable").
     // Every field in the closed block is exercised by one of the two proofs, so the
     // registry shape is demonstrated rather than described — this one carries the
-    // persona snippet and the shell element; the arcade carries neither.
+    // persona snippet and the shell element; the arcade carries a persona only.
     id: 'retro-terminal',
     label: 'Retro Terminal',
     hint: 'Mono-green phosphor, dense CLI spacing, a scanline haze, and a terse operator voice.',
@@ -231,6 +231,7 @@ export const PERSONALITIES: Personality[] = [
       wordmarkLabel: 'CLAW ARCADE',
       documentTitle: 'CLAW ARCADE',
       faviconHref: '/icons/personality-claw-arcade.svg',
+      personaSnippet: 'persona-claw-arcade',
       uiDensity: 'comfortable',
       errorTreatment: 'arcade-panel',
       // A finished turn is a credit accepted.
@@ -251,4 +252,22 @@ export function getPersonality(id: string | undefined): Personality | undefined 
  *  override from a removed entry) — never leave the shell in a half-applied state. */
 export function resolvePersonality(id: string | undefined): Personality {
   return getPersonality(id) ?? getPersonality(DEFAULT_PERSONALITY) ?? PERSONALITIES[0]
+}
+
+/** The BACKEND persona-theme key for the currently active personality, or '' when it
+ *  carries no voice (issue 650). Derived from `personaSnippet` ('persona-<theme>') so
+ *  the snippet declaration stays the single source of a personality's voice identity.
+ *  The chat send path attaches this as `color_theme`; the server injects the persona
+ *  only on a session's first turn and validates against its own closed set, so
+ *  sending it on every message is safe and keeps mid-session theme switches honest.
+ *  Reads localStorage directly (the picker's own store) so the wire layer needs no
+ *  React context — and fails to '' on any storage fault, never blocking a send. */
+export function activePersonaTheme(): string {
+  try {
+    const active = resolvePersonality(localStorage.getItem('personality') || undefined)
+    const snippet = active.behavior.personaSnippet
+    return snippet?.startsWith('persona-') ? snippet.slice('persona-'.length) : ''
+  } catch {
+    return ''
+  }
 }

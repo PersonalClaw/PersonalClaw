@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
-import { expr, exprHeavy } from '../../design/motion'
+import { motion } from 'framer-motion'
+import { expr, exprHeavy, prefersReducedMotion } from '../../design/motion'
 import { familyFade, familyTween } from './vocabulary'
 
 /** A theme-tinted destructive-delete effect (P18b). Wrap the thing being deleted;
@@ -35,7 +35,7 @@ export function Disintegrate({
   children: ReactNode
   className?: string
 }) {
-  const reduce = useReducedMotion()
+  const reduce = prefersReducedMotion()
   const heavy = exprHeavy()
   // Reduced-motion: no animation — resolve on the next tick so callers can treat
   // `onDone` uniformly (always async) instead of branching on the motion mode.
@@ -48,7 +48,11 @@ export function Disintegrate({
 
   if (reduce) {
     // Instant removal: once resolved, render nothing; until then, the content as-is.
-    return done ? null : <div className={className}>{children}</div>
+    // `data-disintegrate` states which branch ran, the same way `data-bud` and
+    // `data-morph` do — without it this was the one family member whose off-switch
+    // could only be inferred from the ABSENCE of a wash, which an empty render
+    // satisfies for free.
+    return done ? null : <div data-disintegrate="instant" className={className}>{children}</div>
   }
 
   // Scatter amplitude is gated to the BOLD tier and scaled by the knob; refined
@@ -76,6 +80,7 @@ export function Disintegrate({
     : { opacity: 1, y: 0, rotate: 0, height: 'auto', ...(heavy ? { filter: 'blur(0px)' } : {}) }
   return (
     <motion.div
+      data-disintegrate="animated"
       className={className}
       style={{ overflow: 'hidden', position: 'relative' }}
       animate={animateProps}

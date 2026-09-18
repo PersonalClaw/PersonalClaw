@@ -184,6 +184,39 @@ State in `personalclaw_home` carries across the recreation. Snapshot before
 upgrading (see [Backups](#backups)); read the
 [CHANGELOG](../../CHANGELOG.md) for breaking changes (PersonalClaw is pre-1.0).
 
+### Rolling back
+
+Pin the older version and recreate — the `X.Y.Z` image tags are immutable, so every
+release stays pullable:
+
+```bash
+docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway \
+  personalclaw snapshot                       # first: no pre-1.0 migrations, either direction
+docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway \
+  personalclaw update --to 0.2.0              # pins updates.pin, prints the pull for :0.2.0
+PERSONALCLAW_IMAGE_TAG=0.2.0 docker compose -f deploy/compose/compose.yaml pull
+PERSONALCLAW_IMAGE_TAG=0.2.0 docker compose -f deploy/compose/compose.yaml up -d
+```
+
+The pin is what makes it a rollback rather than a one-off pull: without it, the next check
+resolves the channel's newest release and offers to take you straight back. Settings →
+Updates shows **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version
+change at least once; on this kind it pins and then prints the two commands above, because
+a container replaces its image from the host rather than patching itself.
+
+### Applying automatically, and turning the check off
+
+Two orthogonal switches, both in `config.json` inside the volume (or Settings → Updates):
+
+- `updates.auto` — `off` (default) only notifies; `staged` applies at the next safe point.
+  On a container install "apply" means *surface the exact pull/recreate commands*: nothing
+  inside the container can replace the image it is running from.
+- `updates.check_enabled` — `false` makes the updater issue **zero** outbound calls to
+  GitHub: no scheduled release check at all. While it is on,
+  `updates.check_interval_hours` (1–168, default 12) sets the cadence. This is the egress
+  kill switch, and it is independent of `updates.auto`: one governs whether PersonalClaw
+  *looks*, the other whether it *acts*.
+
 ## Slack channel (optional)
 
 The compose file includes an opt-in `personalclaw-slack` service behind the

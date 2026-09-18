@@ -37,12 +37,14 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **271** hinted publishers render today — **236** DIRECT call sites (Field 120,
- *  settingsUI's Row 77, NumberRow 39) plus **35** that arrive through five local wrappers which forward
- *  a hint into one of those three (ToggleRow 25, EnumRow 3, CheckList 3, TextRow 2, StrListField 2).
- *  Recounted **2026-08-27** with the depth-tracking scan `fieldHintCounts.test.ts` runs; the earlier
- *  196/99/69/28 reading is stale, and its "69" is the number of hinted `Row` CALL SITES, not the
- *  number of switches, which is a distinction the Q13/BE-8 queue entry lost.
+ *  expected to follow. **289** hinted publishers render today — **253** DIRECT call sites (Field 132,
+ *  settingsUI's Row 82, NumberRow 39) plus **36** that arrive through five local wrappers which forward
+ *  a hint into one of those three (ToggleRow 26, EnumRow 3, CheckList 3, TextRow 2, StrListField 2).
+ *  Recounted **2026-09-18** with the depth-tracking scan `fieldHintCounts.test.ts` runs; the earlier
+ *  271/236 (Field 120, Row 77, ToggleRow 25) reading is stale — three weeks of ordinary feature work
+ *  moved Field +12 and Row +5 — and the 196/99/69/28 reading before it is staler still, its "69" being
+ *  the number of hinted `Row` CALL SITES rather than of switches, a distinction the Q13/BE-8 queue
+ *  entry lost.
  *
  *  🪤 THESE NUMBERS ROT IN A DAY, so treat them as a dated observation, not a fact. The previous line
  *  here read 260/229 (Field 118, NumberRow 34) and was recounted **the day before** — one tick of

@@ -93,6 +93,13 @@ class ProcessingNode(Protocol):
     its model through at run-time; pure-python nodes leave it None. ``run`` receives
     the outputs of this node's direct predecessors (keyed by their ``node_type``)
     plus the :class:`NodeContext`, and returns a :class:`NodeOutput`.
+
+    A node MAY also define ``available() -> bool`` — not part of this Protocol, read
+    through ``registry.node_available`` — when its work depends on something installable
+    rather than on a bound model: an engine contributed by a removable ``ocr`` app, say.
+    It must be a LIVE probe of the dependency (is the engine resolvable now), never a
+    truthiness test on an imported symbol, and the executor uses it to pick a runnable
+    backend among a node type's alternatives before falling back to a graceful skip.
     """
 
     node_type: str

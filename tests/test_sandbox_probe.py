@@ -3,10 +3,25 @@
 import subprocess
 from unittest.mock import patch
 
-from personalclaw.sandbox import _probe_sandbox_exec
+import pytest
+
+from personalclaw.sandbox import _probe_sandbox_exec, reset_backend
 
 _MAC_VER_BELOW_26 = ("15.0.0", ("", "", ""), "")
 _MAC_VER_26_PLUS = ("26.4.1", ("", "", ""), "")
+
+
+@pytest.fixture(autouse=True)
+def _cold_probe():
+    """Re-measure the probe in every case below.
+
+    The probe is memoised per process (it spawns to read a host fact), so without this each
+    case after the first would assert against the FIRST case's cached answer instead of its
+    own mocked host — six tests collapsing into one. Clearing it keeps all six real.
+    """
+    reset_backend()
+    yield
+    reset_backend()
 
 
 @patch("personalclaw.sandbox.sys")

@@ -5,8 +5,9 @@ The gap this closes: the gateway imports every enabled provider app's module at 
 ``register_type`` / ``register_scanner`` / ``register_catalog`` and makes its provider
 resolvable. A CLI command (``personalclaw retrieval-eval`` and the rest of the eval
 family) runs in its OWN process that never did that, so its provider registry was empty
-— an app-provided embedding provider (Bedrock) was invisible and the retrieval bench's
-vector arm reported "no executor" even with the embedder bound.
+— an app-provided embedding provider (Bedrock) was invisible and the retrieval bench built
+its knowledge retriever with no embedder at all, so the vector arm could not run even
+though the user had bound an embedding model.
 
 These tests assert the extracted, reusable registration path (:func:`register_extension_providers`)
 imports an enabled installed provider app's module in this process, skips a disabled
@@ -315,12 +316,15 @@ def _embedding_app_env(monkeypatch):
         sys.modules.pop(namespaced_module_name(_EMBED_APP, "provider"), None)
 
 
-def test_bootstrap_makes_app_embedder_resolvable_and_revives_the_vector_arm(_embedding_app_env):
+def test_bootstrap_makes_app_embedder_resolvable_and_revives_the_vector_arm(
+    _embedding_app_env, monkeypatch
+):
     """#2912: a standalone process resolves an app-contributed embedder only AFTER the CLI
-    bootstrap, and the retrieval bench's knowledge vector arm goes from dead → live."""
+    bootstrap, and the retrieval bench binds THAT embedder into its knowledge retriever."""
     from personalclaw.embedding_providers import registry as emb_registry
     from personalclaw.evals import retrieval_bench
     from personalclaw.knowledge import get_knowledge_embedder
+    from personalclaw.knowledge import retrieval as knowledge_retrieval
     from personalclaw.knowledge.store import KnowledgeStore
 
     _install_embedding_provider_app(enabled=True)
@@ -348,15 +352,24 @@ def test_bootstrap_makes_app_embedder_resolvable_and_revives_the_vector_arm(_emb
     assert unified is not None and unified.is_available()
     assert unified.embed("hello") == _EMBED_VECTOR
 
-    # The retrieval bench binds the SAME embedder and reports the knowledge vector arm as
-    # having an executor — no longer the "no executor" dead arm of a bare CLI process.
+    # The retrieval bench binds the SAME embedder into the retriever it will search with —
+    # no longer the embedder-less dead arm of a bare CLI process. Asserted by CALLING what
+    # was bound, not merely by its presence: `arm_executors` deliberately no longer answers
+    # from a component, because a bound-but-failing embedder is present and retrieves
+    # nothing, so only a run's own output can say the arm ran.
+    bound: dict[str, object] = {}
+    real_init = knowledge_retrieval.HybridRetriever.__init__
+
+    def _capture_embedder(self, *args, **kwargs):
+        bound["embedder"] = kwargs.get("embedder")
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(knowledge_retrieval.HybridRetriever, "__init__", _capture_embedder)
     store = KnowledgeStore(retrieval_bench.knowledge_db_path())
     try:
         retrieval_bench.knowledge_retriever(store)
-        assert getattr(store, "_bench_retriever").embedder is not None
-        executors = retrieval_bench.arm_executors(retrieval_bench.STORE_KNOWLEDGE, store)
-        assert (
-            executors[retrieval_bench.ARM_VECTOR] is True
-        ), "the knowledge vector arm must have an executor once an app embedder is bound"
+        embedder = bound.get("embedder")
+        assert embedder is not None, "the bench built a retriever with no embedder"
+        assert embedder("hello") == _EMBED_VECTOR, "the bench bound an embedder that cannot embed"
     finally:
         store.close()

@@ -547,6 +547,40 @@ def _seeded_benchmark(knowledge_store) -> rb.RetrievalBenchmark:
     )
 
 
+def _wide_benchmark(knowledge_store) -> rb.RetrievalBenchmark:
+    """`_seeded_benchmark`, but above :data:`~rb.MIN_SCORED_QUERIES`.
+
+    Every query is keyword-reachable, so the full and leave-one-out masks both clear the
+    power floor and a per-arm verdict is a real judgement rather than "too few queries".
+    A test about an arm's verdict needs this: under the floor every verdict is `unmeasured`
+    already, so a broken arm and a healthy one are indistinguishable.
+    """
+    rows = knowledge_store.db.execute("SELECT id, title FROM items ORDER BY title").fetchall()
+    by_title = {r["title"]: r["id"] for r in rows}
+    pairs = (
+        ("fusion", "RRF fusion notes"),
+        ("vacuum runbook", "Postgres vacuum runbook"),
+        ("hydration", "Sourdough hydration log"),
+        ("terraform state", "Terraform state recovery"),
+        ("ciphers", "Nginx TLS ciphers"),
+        ("autovacuum thresholds", "Postgres vacuum runbook"),
+    )
+    assert len(pairs) > rb.MIN_SCORED_QUERIES, "the helper's own floor moved"
+    return rb.RetrievalBenchmark(
+        name="retrieval-knowledge",
+        store=rb.STORE_KNOWLEDGE,
+        queries=tuple(
+            rb.QrelsQuery(
+                query=query,
+                relevant_ids=(by_title[title],),
+                source=rb.SOURCE_MINED_INTENT,
+            )
+            for query, title in pairs
+        ),
+        corpus_snapshot_ref=rb.corpus_snapshot_ref(rb.STORE_KNOWLEDGE, knowledge_store),
+    )
+
+
 def test_a_mask_that_gates_nothing_refuses_to_publish(knowledge_store, bound_models, monkeypatch):
     """The falsification the harness performs on ITSELF.
 
@@ -683,28 +717,35 @@ def test_a_knowledge_run_refuses_a_write_to_the_memory_store(
 def test_arm_verdict_reads_its_floor_from_the_module_constant():
     at_floor = rb.MIN_ARM_CONTRIBUTION
     below = rb.MIN_ARM_CONTRIBUTION / 2
-    assert rb.arm_verdict(at_floor, rb.MIN_SCORED_QUERIES)[0] == rb.ARM_ENABLE
-    assert rb.arm_verdict(below, rb.MIN_SCORED_QUERIES)[0] == rb.ARM_HOLD
+    assert rb.arm_verdict(at_floor, rb.MIN_SCORED_QUERIES, arm_ran=True)[0] == rb.ARM_ENABLE
+    assert rb.arm_verdict(below, rb.MIN_SCORED_QUERIES, arm_ran=True)[0] == rb.ARM_HOLD
 
 
 def test_arm_verdict_is_unmeasured_below_the_power_floor():
-    verdict, reasons = rb.arm_verdict(1.0, rb.MIN_SCORED_QUERIES - 1)
+    verdict, reasons = rb.arm_verdict(1.0, rb.MIN_SCORED_QUERIES - 1, arm_ran=True)
     assert verdict == rb.ARM_UNMEASURED
     assert "low power" in reasons[0]
 
 
 def test_arm_verdict_is_unmeasured_when_there_is_no_delta():
-    assert rb.arm_verdict(None, 100)[0] == rb.ARM_UNMEASURED
+    assert rb.arm_verdict(None, 100, arm_ran=True)[0] == rb.ARM_UNMEASURED
 
 
-def test_an_arm_with_no_executor_is_unmeasured_not_worthless():
+def test_arm_verdict_refuses_to_assume_the_arm_ran():
+    """`arm_ran` has no default. The only default that would keep the signature usable is
+    True, and a fail-open default on "did this measurement happen" is the bug itself."""
+    with pytest.raises(TypeError):
+        rb.arm_verdict(0.0, 100)
+
+
+def test_an_arm_that_never_ran_is_unmeasured_not_worthless():
     """The exact prior failure mode: a declared arm that never ran scores identically to
     its own absence, so its delta is 0.0 and would read as a confident "remove it"."""
-    verdict, reasons = rb.arm_verdict(0.0, 100, has_executor=False)
+    verdict, reasons = rb.arm_verdict(0.0, 100, arm_ran=False)
     assert verdict == rb.ARM_UNMEASURED
-    assert "no executor" in reasons[0]
+    assert "no candidates" in reasons[0]
     # ...and a POSITIVE delta over a dead arm is still unmeasured, not an enable.
-    assert rb.arm_verdict(0.9, 100, has_executor=False)[0] == rb.ARM_UNMEASURED
+    assert rb.arm_verdict(0.9, 100, arm_ran=False)[0] == rb.ARM_UNMEASURED
 
 
 def test_contribution_is_the_leave_one_out_delta():
@@ -724,29 +765,160 @@ def test_contribution_power_is_the_weaker_of_the_two_differenced_masks():
     rows = [
         rb.ArmMaskRow(rb.mask_name(rb.ARMS), 5, 0.80, 0.70, 10, 10, 0, 0),
         rb.ArmMaskRow(rb.mask_name(("graph", "vector")), 5, 0.50, 0.40, 10, 2, 8, 0),
+        # The solo row says the keyword arm RAN, so the verdict below is the power floor
+        # firing and not the never-ran branch in front of it.
+        rb.ArmMaskRow(rb.mask_name(("keyword",)), 5, 0.45, 0.30, 10, 10, 0, 0),
     ]
     keyword = next(c for c in rb.contributions(rows) if c.arm == "keyword")
     assert keyword.scored_queries == 2
     assert keyword.verdict == rb.ARM_UNMEASURED
+    assert "low power" in keyword.reasons[0], keyword.reasons
 
 
 def test_a_dead_arm_is_marked_unmeasured_through_contributions():
+    """A solo row of all-no-candidates IS the dead arm — nothing else has to declare it."""
     rows = [
         rb.ArmMaskRow(rb.mask_name(rb.ARMS), 5, 0.80, 0.70, 10, 10, 0, 0),
         rb.ArmMaskRow(rb.mask_name(("keyword", "graph")), 5, 0.50, 0.40, 10, 10, 0, 0),
+        rb.ArmMaskRow(rb.mask_name(("vector",)), 5, None, 0.0, 10, 0, 10, 0),
     ]
-    vector = next(c for c in rb.contributions(rows, {"vector": False}) if c.arm == "vector")
+    vector = next(c for c in rb.contributions(rows) if c.arm == "vector")
     assert vector.verdict == rb.ARM_UNMEASURED
-    assert "no executor" in vector.reasons[0]
+    assert "no candidates" in vector.reasons[0]
+    # The +0.30 delta the full/leave-one-out masks imply is an artifact of an arm that never
+    # ran, so it is withheld rather than published as a number.
+    assert vector.contribution_p is None
+    assert vector.contribution_r is None
 
 
-def test_arm_executors_reports_the_vector_arm_dead_without_an_embedder(memory_store):
-    memory_store.embed_fn = None
-    executors = rb.arm_executors(rb.STORE_MEMORY, memory_store)
-    assert executors[rb.ARM_VECTOR] is False
+def test_arm_executors_reads_the_run_not_the_component(knowledge_store, bound_models):
+    """`arm_executors` answers "was this arm OBSERVED to run", off the published table.
+
+    Its input is the table because a component check cannot see a component that is present
+    and broken, and because a field derived from the same rows the report publishes can
+    never disagree with them.
+    """
+    ran = rb.ArmMaskRow(rb.mask_name(("keyword",)), 5, 0.40, 0.30, 8, 8, 0, 0)
+    silent = rb.ArmMaskRow(rb.mask_name(("vector",)), 5, None, 0.0, 8, 0, 8, 0)
+    absent_row_arm = rb.ARM_GRAPH
+    executors = rb.arm_executors([ran, silent])
     assert executors[rb.ARM_KEYWORD] is True
-    memory_store.embed_fn = lambda text: [0.1, 0.2, 0.3]
-    assert rb.arm_executors(rb.STORE_MEMORY, memory_store)[rb.ARM_VECTOR] is True
+    assert executors[rb.ARM_VECTOR] is False, "8 of 8 queries returned nothing — it never ran"
+    assert executors[absent_row_arm] is False, "an arm with no solo row was never measured"
+
+
+def test_an_embedder_that_reports_available_but_embeds_nothing_reads_as_not_measured(
+    knowledge_store, bound_models, monkeypatch
+):
+    """The measured false-success this whole field exists to prevent.
+
+    An expired credential does NOT make the embedder absent: ``UnifiedEmbedder.embed``
+    swallows the provider's ``ClientError`` and returns ``None``, while ``is_available()``
+    keeps answering True because a callable is still bound. A bench that checked the
+    component's PRESENCE therefore published ``vector -> hold, dP@k +0.0000`` over an arm
+    that never ran once — the exact sentence ``arm_executors``' docstring promises it will
+    never say. Presence is not availability, and availability is not success: only the run's
+    own output can say whether an arm ran.
+
+    The REAL ``UnifiedEmbedder`` is used, not a stub, so the swallow under test is the
+    shipped one. The keyword arm is asserted live in the same run: a fix that marked every
+    arm unmeasured would satisfy the vector clause and be worthless.
+    """
+    from personalclaw import knowledge as knowledge_pkg
+    from personalclaw.knowledge.embedder import UnifiedEmbedder
+
+    def _expired_credential(text: str):
+        raise RuntimeError("ExpiredTokenException: the security token included is expired")
+
+    broken = UnifiedEmbedder(_expired_credential, dim_hint=1024)
+    # The premise, pinned: the component lies in exactly this shape.
+    assert broken.is_available() is True, "premise gone: presence no longer reads as available"
+    assert broken.embed("anything") is None, "premise gone: the provider error is not swallowed"
+    monkeypatch.setattr(knowledge_pkg, "get_knowledge_embedder", lambda: broken)
+
+    # MIN_SCORED_QUERIES queries, not the two-query benchmark: below the power floor the
+    # verdict comes out `unmeasured` for an unrelated reason, and the defect hides behind it.
+    result = rb.run_retrieval_bench(
+        rb.STORE_KNOWLEDGE,
+        handle=knowledge_store,
+        db_path=knowledge_store.db_path,
+        benchmark=_wide_benchmark(knowledge_store),
+    )
+    keyword_row = next(r for r in result.table if r.mask == rb.mask_name((rb.ARM_KEYWORD,)))
+    assert (
+        keyword_row.scored_queries >= rb.MIN_SCORED_QUERIES
+    ), "the benchmark fell under the power floor, which would mask the defect"
+
+    assert (
+        result.executors[rb.ARM_VECTOR] is False
+    ), "the bench published an executor for an arm that produced nothing"
+    vector = next(c for c in result.contributions if c.arm == rb.ARM_VECTOR)
+    assert vector.verdict == rb.ARM_UNMEASURED, f"published {vector.verdict!r} over a dead arm"
+    # ...and not as a 0.00 either: the delta is an artifact of differencing a mask against
+    # itself, so there is no delta to print.
+    assert vector.contribution_p is None, "published a +0.0000 delta over an arm that never ran"
+    assert vector.contribution_r is None
+    assert vector.solo_p_at_k is None
+    assert any("no candidates" in reason for reason in vector.reasons), vector.reasons
+
+    # The vacuity floor: a fix that marked EVERY arm unmeasured would satisfy every clause
+    # above. The keyword arm ran in the same run and is not accused of having never run — it
+    # has a real solo P@k, and its verdict rests on the delta rather than on the never-ran
+    # branch. (Its delta is genuinely absent here: the complement mask is graph+vector, and
+    # with the embedder broken that mask retrieves nothing, so there is no difference to
+    # take. That is the harness reporting a missing measurement, not a dead arm.)
+    assert result.executors[rb.ARM_KEYWORD] is True, "the fix blinded a live arm"
+    keyword = next(c for c in result.contributions if c.arm == rb.ARM_KEYWORD)
+    assert keyword.solo_p_at_k is not None, "the live arm lost its own measured score"
+    assert not any("no candidates" in reason for reason in keyword.reasons), keyword.reasons
+    table = json.loads(
+        (evals_store.matrix_dir(result.bench_id) / "table.json").read_text(encoding="utf-8")
+    )
+    assert table["arm_executors"][rb.ARM_VECTOR] is False
+    assert table["arm_executors"][rb.ARM_KEYWORD] is True
+
+
+def test_the_cli_report_calls_a_dead_arm_unmeasured_not_worthless(capsys):
+    """The CLI is the THIRD surface publishing this verdict, and it had no test at all —
+    which is how it kept telling the user "no executor" and describing a "zero delta" that
+    the server no longer publishes. A dead arm must print no number here either.
+    """
+    from personalclaw.cli_commands import _print_retrieval_report
+
+    dead = rb.ArmContribution(
+        arm=rb.ARM_VECTOR,
+        full_p_at_k=1.0,
+        without_p_at_k=1.0,
+        contribution_p=None,
+        full_r_at_k=1.0,
+        without_r_at_k=1.0,
+        contribution_r=None,
+        solo_p_at_k=None,
+        scored_queries=6,
+        verdict=rb.ARM_UNMEASURED,
+        reasons=("no candidates: the arm returned nothing under its own mask, so it never ran",),
+    )
+    benchmark = rb.RetrievalBenchmark(
+        name="retrieval-knowledge", store=rb.STORE_KNOWLEDGE, queries=()
+    )
+    result = rb.RetrievalBenchResult(
+        bench_id="retrieval-knowledge-test",
+        spec=rb.build_spec(benchmark, k=5),
+        benchmark=benchmark,
+        table=(rb.ArmMaskRow(rb.mask_name((rb.ARM_VECTOR,)), 5, None, None, 6, 0, 6, 6),),
+        contributions=(dead,),
+        executors={rb.ARM_KEYWORD: True, rb.ARM_VECTOR: False},
+    )
+    _print_retrieval_report(result)
+    out = capsys.readouterr().out
+    assert "no candidates from: vector" in out, out
+    assert "no executor" not in out, "the CLI still blames a missing executor"
+    # The cause the user must actually check. A bound-but-unreachable model is the case that
+    # produced this, and "bind a model" sends that user nowhere.
+    assert "expired credential" in out, out
+    # And no fabricated number: the delta reads n/a, never +0.0000.
+    assert "ΔP@k=      n/a" in out, out
+    assert "0.0000" not in out, f"the CLI printed a delta over an arm that never ran: {out}"
 
 
 # ── 8. corpus versioning by reference ────────────────────────────────────────

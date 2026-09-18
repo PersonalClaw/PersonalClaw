@@ -607,7 +607,6 @@ def _scratchpad_path_sanitizer(value: str) -> str:
 _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.approval_mode": {"type": "enum", "values": ["auto", "interactive", "trust_reads"]},
     "agent.yolo": {"type": "bool"},
-    "agent.sandbox": {"type": "enum", "values": ["auto", "off"]},
     "agent.soft_stop_budget_secs": {"type": "float", "min": 0.5, "max": 60.0},
     "agent.max_subagents": {"type": "int", "min": 0, "max": 16},
     "agent.subagent_max_turns": {"type": "int", "min": 1, "max": 200},
@@ -1104,6 +1103,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # new indexing without a restart. Nothing already indexed is removed by turning it off;
     # that would delete search state on a settings toggle.
     "knowledge.auto_ingest_artifacts": {"type": "bool"},
+    # The relevance-reranker stage. Off by default; the retrieval bench's `rerank`
+    # arm (`personalclaw retrieval-eval`) is how an operator decides whether to flip it.
+    "knowledge.rerank_enabled": {"type": "bool"},
+    "knowledge.rerank_candidates": {"type": "int", "min": 1, "max": 200},
     # The owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

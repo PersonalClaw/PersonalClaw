@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { motion } from 'framer-motion'
+import { prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
 /** "Bud off" spawn — a spawned panel/form emerges FROM its trigger like a liquid
@@ -38,7 +39,7 @@ export function Bud({ from = 'bottom', className, children }: {
   className?: string
   children: ReactNode
 }) {
-  const reduce = useReducedMotion()
+  const reduce = prefersReducedMotion()
   // Not `layout={!reduce}` on one motion.div: a motion component still installs a
   // projection node and its own style pipeline, and `borderRadius` is not a transform
   // so `reducedMotion="user"` would keep animating it. The reduced-motion end is a

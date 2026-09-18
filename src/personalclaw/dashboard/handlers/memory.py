@@ -36,6 +36,24 @@ def _path_home_pclaw() -> Path:
         return Path.home() / ".personalclaw"
 
 
+def _ranking_payload(capable: Any) -> dict[str, Any]:
+    """The recall-ranking disclosure for a service/store, from the ONE owner.
+
+    ``capable`` is anything with ``capabilities()`` (a ``MemoryService`` or a
+    ``VectorMemoryStore``). Fail-OPEN on a provider that cannot answer: a broken
+    capability probe must not take the whole recall down, and the disclosure that
+    comes back then says nothing ranked — which is the safe direction to be wrong
+    in, because it under-claims rather than over-claims.
+    """
+    from personalclaw.memory_ranking import RecallRanking, ranking_payload
+
+    try:
+        return ranking_payload(capable.capabilities())
+    except Exception:
+        logger.debug("recall ranking disclosure unavailable", exc_info=True)
+        return RecallRanking(vector=False, full_text_search=False, entity_graph=False).to_dict()
+
+
 async def api_memory_preferences(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/preferences."""
     state: DashboardState = request.app["state"]
@@ -606,7 +624,10 @@ async def api_memory_episodic_search(request: web.Request) -> web.Response:
     for e in svc.search_episodic(query_text=query, limit=limit, tag_filter=tag_filter):
         d = {k: v for k, v in dict(e).items() if not isinstance(v, (bytes, memoryview))}
         results.append(_redact_memory_field(d))
-    return web.json_response({"results": results})
+    # A ranked list, so it carries the same disclosure as every other ranked list here —
+    # `search_episodic` is the vector arm when one is wired and FTS5 when one is not, and
+    # the rows look identical either way.
+    return web.json_response({"results": results, "ranking": _ranking_payload(svc)})
 
 
 async def api_memory_recall(request: web.Request) -> web.Response:
@@ -633,8 +654,11 @@ async def api_memory_recall(request: web.Request) -> web.Response:
             source="dashboard",
             resources=sk,
         )
+        # `ranking: None` rather than an all-false disclosure: no recall RAN here, so
+        # there is no ranking to describe, and claiming "not ranked" would read as a
+        # capability report on a store this request never touched.
         return web.json_response(
-            {"result": "No matching memory found.", "query": "", "deep": False}
+            {"result": "No matching memory found.", "query": "", "deep": False, "ranking": None}
         )
     svc = _get_service(request.app["state"])
     query = request.query.get("q", "")[:500]
@@ -694,7 +718,12 @@ async def api_memory_recall(request: web.Request) -> web.Response:
                 + "\n[End of recalled episodes]"
             )
     text = "\n\n".join(parts) if parts else "No matching memory found."
-    return web.json_response({"result": text, "query": query, "deep": deep})
+    # WHICH ranking actually ran. Without this the tab renders identically whether the
+    # vector arm scored these results or a keyword fallback did, and `deep` cannot answer
+    # it — that flag is the REQUEST's depth echoed back, not a property of the recall.
+    return web.json_response(
+        {"result": text, "query": query, "deep": deep, "ranking": _ranking_payload(svc)}
+    )
 
 
 async def api_memory_episodic_list(request: web.Request) -> web.Response:
@@ -923,6 +952,9 @@ async def api_memory_context_preview(request: web.Request) -> web.Response:
         {
             "semantic_context": semantic_ctx,
             "episodic_context": episodic_ctx,
+            # Same scorer as the real injection path, so the same disclosure: a preview
+            # that hides its degradation misreports what the model will actually get.
+            "ranking": _ranking_payload(store),
         }
     )
 
@@ -1184,7 +1216,18 @@ async def api_memory_entities(request: web.Request) -> web.Response:
         loop.run_in_executor(None, svc.graph_entities),
         loop.run_in_executor(None, svc.graph_summary),
     )
-    return web.json_response({"entities": entities, "summary": summary, "enabled": svc.has_graph})
+    # The entity-graph section's "what does the graph being off cost recall?" line is the
+    # SAME sentence the Recall tab renders — served, not re-authored client-side. That
+    # section used to author its own degradation clause while the Recall tab said nothing;
+    # one owner (memory_ranking) is what keeps them from drifting apart again (issue 521).
+    return web.json_response(
+        {
+            "entities": entities,
+            "summary": summary,
+            "enabled": svc.has_graph,
+            "ranking": _ranking_payload(svc),
+        }
+    )
 
 
 async def api_memory_entity_create(request: web.Request) -> web.Response:

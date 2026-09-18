@@ -69,7 +69,7 @@ function mount() {
         // 🪤 `scope` is the project NAME, not an id: `scopedProject = projects.find(p => p.name === scope)`,
         // and the list bar renders only under `isProjectScope && projectLists.length > 0`. With an empty
         // scope the bar — and so the Reset control — never mounts at all.
-        q="" sort="" scope="Repeatable" list="" setQ={noop} setSort={noop} setScope={noop} setList={noop}
+        q="" sort="" scope="Repeatable" list="" tag="" setQ={noop} setSort={noop} setScope={noop} setList={noop} setTag={noop}
       />
       <DialogHost />
     </>,

@@ -4,7 +4,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import {
   Database, BookOpen, ScrollText, Eye, Settings2, Search, Plus, Trash2,
   Loader2, RefreshCw, HeartPulse, GraduationCap, AlertTriangle, Share2, FileEdit, Save, UploadCloud, ArrowRightLeft, Moon,
-  Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, type LucideIcon,
+  Brain, History, CalendarDays, Users, Inbox, Check, X, Download, SlidersHorizontal, Sparkles, type LucideIcon,
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
 import {
@@ -15,6 +15,7 @@ import {
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
+  type RecallRanking,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
@@ -33,6 +34,7 @@ import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { tabListKeys } from '../../lib/tabListKeys'
+import { useUnsavedGuard } from '../../lib/useUnsavedGuard'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -284,6 +286,12 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // `initialSel` (e.g. `epi:42`, from a `[Memory N]` chat citation's deep-link)
   // preselects that memory once on mount; user selection takes over after.
   const [selUid, setSelUid] = useState<string | null>(initialSel ?? null)
+  // Unsaved markdown-doc edits, kept alive across a selection change. The Studio unmounts the
+  // editor when you click another item, so without a host-owned cache the text is simply gone —
+  // which it was, silently, while "Unsaved changes" was on screen (issue 525). Same shape as the
+  // `draftStore` the file/artifact viewers already take from their hosts. A ref, not state: it is
+  // written on every keystroke and must never re-render the list.
+  const docDrafts = useRef(new Map<string, string>())
   const [hopDepth, setHopDepth] = useState(1)
   const [addMode, setAddMode] = useState<'fact' | 'lesson' | 'entity' | 'proposals' | null>(null)
   // Which graph the canvas draws. Records is the historical view; Entities is the
@@ -648,7 +656,8 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             {addMode === 'proposals' && <ProposalQueue proposals={proposals} onDecided={reloadGraphSide} />}
           </div>
         ) : selected ? (
-          <StudioInspector item={selected} onDelete={removeSelected} onSaved={reloadAll} onSlotChanged={reloadSlots} />
+          <StudioInspector item={selected} onDelete={removeSelected} onSaved={reloadAll}
+            onSlotChanged={reloadSlots} docDrafts={docDrafts.current} />
         ) : (
           <div className="grid flex-1 place-items-center p-6 text-center">
             <div className="text-on-surface-low">
@@ -671,8 +680,11 @@ const ADD_MODE_TITLE: Record<'fact' | 'lesson' | 'entity' | 'proposals', string>
  *  their record, its entity backlinks + evidence tags, and a Delete; an Entity shows its
  *  identity + what links to it (the side drawer); a Slot opens its editor; a Document
  *  opens the reused markdown editor inline. */
-function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
+function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts }: {
   item: StudioItem; onDelete: () => void; onSaved: () => void; onSlotChanged: () => void
+  /** Host-owned per-doc draft cache — see `StudioDocEditor`. Owned by `MemoryStudio` because
+   *  THIS component is what unmounts the editor when the selection changes. */
+  docDrafts: Map<string, string>
 }) {
   const Icon = STUDIO_KIND_META[item.kind].icon
   // Slots and entities are not "delete"-able from here: a slot is a register (its LINES are
@@ -775,7 +787,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
           <SlotEditor slot={item.slot} onChanged={onSlotChanged} />
         )}
         {item.kind === 'doc' && item.doc && (
-          <StudioDocEditor which={item.doc.which} onSaved={onSaved} />
+          <StudioDocEditor which={item.doc.which} onSaved={onSaved} drafts={docDrafts} />
         )}
         {/* Per-record entity links + evidence tags. This is the citation deep-link
             target: a `[Memory N]` chip lands on `?sel=<uid>`, which selects the record HERE,
@@ -861,8 +873,33 @@ function StudioMeta({ pairs }: { pairs: [string, string][] }) {
  *
  *  This is the same defect the SAVE path below already fixed, one state earlier: two
  *  different situations told apart only by the ABSENCE of a signal. The save path got an
- *  explicit failure signal; the load path never did. */
-function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects' | 'history'; onSaved: () => void }) {
+ *  explicit failure signal; the load path never did.
+ *
+ *  These files are injected into every agent prompt, and the Studio UNMOUNTS this editor the
+ *  moment another item is clicked — so an unsaved edit used to vanish with no confirm and no
+ *  retained text, while "Unsaved changes" was on screen saying the app knew (issue 525). `dirty`
+ *  was computed and rendered and gated nothing.
+ *
+ *  The fix keeps the text instead of asking about it: `drafts` is the host's per-doc cache, so
+ *  switching away and back restores the edit exactly as it was, and `useUnsavedGuard` covers the
+ *  one exit the page cannot re-render its way out of (closing the tab / reloading). A confirm was
+ *  the other option the issue offered; retention is strictly better — nothing is lost, so there is
+ *  nothing to ask about, and it matches the `draftStore` contract the file and artifact viewers
+ *  already take from their own hosts. The retention is deliberately layered ON TOP of the failed-read
+ *  guard above, not instead of it: a cached draft is restored only once a read has SUCCEEDED, because
+ *  a doc that could not be read is not safe to edit no matter what text we still hold for it.
+ *
+ *  Exported for its own test: the draft's survive-a-remount lifecycle is the whole fix, and
+ *  this textarea (unlike the Monaco-backed viewers) renders under jsdom, so the behaviour can
+ *  be asserted directly rather than at a prop seam.
+ */
+export function StudioDocEditor({ which, onSaved, drafts }: {
+  which: 'preferences' | 'projects' | 'history'
+  onSaved: () => void
+  /** Host-owned per-doc draft cache: this component is unmounted on every selection change, so a
+   *  cache it owned itself would die with it. Written through on each edit, dropped on save. */
+  drafts: Map<string, string>
+}) {
   const [content, setContent] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -870,18 +907,34 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
   const [err, setErr] = useState('')
   const [loadErr, setLoadErr] = useState('')
   const [reloads, setReloads] = useState(0)
+  // The disk read still happens on every mount — the baseline must be CURRENT, or a Save would
+  // silently overwrite a change made elsewhere while this doc was not on screen. Only the draft
+  // comes from the cache, so a restored edit is still measured against fresh content and stays
+  // marked dirty. `drafts` is the host's `useRef` Map, so its identity is stable and naming it
+  // here does not re-fire the read.
   useEffect(() => {
     let alive = true
     setContent(null)
     setLoadErr('')
+    const cached = drafts.get(which)
     api.memoryDoc(which)
-      .then((c) => { if (alive) { setContent(c); setDraft(c) } })
+      .then((c) => { if (alive) { setContent(c); setDraft(cached ?? c) } })
       // `content` deliberately stays null — see the docstring. An empty string here is
-      // the data-loss path, not a tidier default.
+      // the data-loss path, not a tidier default, and that holds with a cached draft in
+      // hand: the cache entry survives in the host's Map and is restored by the retry,
+      // rather than being typed over a document nobody managed to read.
       .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not load this document') })
     return () => { alive = false }
-  }, [which, reloads])
+  }, [which, reloads, drafts])
   const dirty = content !== null && draft !== content
+  useUnsavedGuard(dirty)
+  const edit = (next: string) => {
+    setDraft(next)
+    // Write through on every keystroke, so the cache is correct even if the unmount is the very
+    // next thing that happens. Matching the loaded content is not dirty, so it holds no entry.
+    if (content !== null && next === content) drafts.delete(which)
+    else drafts.set(which, next)
+  }
   const save = async () => {
     setBusy(true)
     setErr('')
@@ -892,7 +945,9 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
     // appear. Success has an explicit signal; failure had none, so the two states were told apart
     // only by the ABSENCE of something. `AddLessonForm`, in this same file, already reports a failed
     // save inline beside its button — this adopts that form rather than inventing a toast.
-    try { await api.saveMemoryDoc(which, draft); setContent(draft); setSaved(true); window.setTimeout(() => setSaved(false), 1800); onSaved() }
+    // The cache entry goes only on SUCCESS: a refused save leaves the draft — and its cache
+    // entry — intact, so the text still survives the next selection change.
+    try { await api.saveMemoryDoc(which, draft); setContent(draft); drafts.delete(which); setSaved(true); window.setTimeout(() => setSaved(false), 1800); onSaved() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
@@ -905,7 +960,11 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
   if (content === null) return <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low"><Loader2 size={14} className="animate-spin" /> Loading…</div>
   return (
     <div className="flex flex-col gap-2">
-      <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={16} spellCheck={false}
+      {/* Named: this had no aria-label, no id/label pairing and no aria-labelledby, so a screen
+          reader announced only "edit text, multi-line" — on the one control that rewrites what
+          every agent prompt carries. Every other editor input in this file names itself. */}
+      <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={16} spellCheck={false}
+        aria-label={`${STUDIO_DOCS.find((d) => d.which === which)?.label ?? which} memory`}
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
@@ -1064,11 +1123,18 @@ function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
 function InspectTab() {
   const [q, setQ] = useState('')
   const [result, setResult] = useState<{ semantic: string; episodic: string } | null>(null)
+  // Same disclosure as the Recall tab: the preview runs the same hybrid scorer, so a
+  // preview that hides its degradation misreports what a real turn would be given.
+  const [ranking, setRanking] = useState<RecallRanking | null>(null)
   const [busy, setBusy] = useState(false)
   const run = async () => {
     setBusy(true)
-    try { const p = await api.memoryContextPreview(q); setResult({ semantic: p.semantic_context, episodic: p.episodic_context }) }
-    catch { setResult({ semantic: '', episodic: '' }) }
+    try {
+      const p = await api.memoryContextPreview(q)
+      setResult({ semantic: p.semantic_context, episodic: p.episodic_context })
+      setRanking(p.ranking)
+    }
+    catch { setResult({ semantic: '', episodic: '' }); setRanking(null) }
     setBusy(false)
   }
   return (
@@ -1081,6 +1147,7 @@ function InspectTab() {
         </div>
         <Button size="sm" onClick={run} loading={busy}>Preview</Button>
       </div>
+      {ranking && <RankingNote ranking={ranking} className="mb-2" />}
       {result && (
         <div className="flex flex-col gap-3">
           <InspectBlock title="Semantic context" body={result.semantic} />
@@ -1103,6 +1170,30 @@ function InspectBlock({ title, body }: { title: string; body: string }) {
   )
 }
 
+// ── How this recall ranked (the ONE frontend renderer of that disclosure) ─────
+/** The server-composed "how did this actually rank" sentence — see
+ *  `personalclaw/memory_ranking.py`, which owns the wording for every surface.
+ *
+ *  This component only picks the TONE from `degraded` and renders `summary` verbatim.
+ *  It never composes its own phrasing: three surfaces (this Recall tab, Inspect, and
+ *  the entity-graph section) render the same object, and the reason issue 521 existed
+ *  at all is that each surface used to be free to describe recall in its own words —
+ *  or, in the Recall tab's case, in none. `MemoryPanel.rankingDisclosure.test.tsx`
+ *  keeps that rail. */
+function RankingNote({ ranking, className = '' }: { ranking: RecallRanking; className?: string }) {
+  const Icon = ranking.degraded ? AlertTriangle : Sparkles
+  return (
+    <p
+      data-type="body-s"
+      data-testid="recall-ranking"
+      className={`flex items-start gap-1.5 ${ranking.degraded ? 'text-warn' : 'text-on-surface-low'} ${className}`}
+    >
+      <Icon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{ranking.summary}</span>
+    </p>
+  )
+}
+
 // ── Recall (deep query-scored recall) ────────────────────────────────────────
 /** "Ask my memory" — a query-scored deep recall over the whole store. Unlike
  *  Inspect (which previews the turn-injection context), this runs the ranked
@@ -1110,12 +1201,16 @@ function InspectBlock({ title, body }: { title: string; body: string }) {
 function RecallTab() {
   const [q, setQ] = useState('')
   const [result, setResult] = useState<string | null>(null)
+  // The recall's OWN ranking, not the panel's guess at it. Kept beside `result` and set
+  // from the same response so the note can never describe a different recall than the
+  // one on screen. `null` = no recall has run yet, or one ran under a memory-read block.
+  const [ranking, setRanking] = useState<RecallRanking | null>(null)
   const [busy, setBusy] = useState(false)
   const run = async () => {
     if (!q.trim()) return
     setBusy(true)
-    try { const r = await api.memoryRecall(q.trim()); setResult(r.result) }
-    catch { setResult('') }
+    try { const r = await api.memoryRecall(q.trim()); setResult(r.result); setRanking(r.ranking) }
+    catch { setResult(''); setRanking(null) }
     setBusy(false)
   }
   return (
@@ -1129,6 +1224,7 @@ function RecallTab() {
         <Button size="sm" onClick={run} loading={busy} disabled={busy || !q.trim()}
           disabledReason={!q.trim() ? 'Type a question first' : undefined}>Recall</Button>
       </div>
+      {ranking && <RankingNote ranking={ranking} className="mb-2" />}
       {result !== null && (result
         ? <pre data-type="caption" className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface whitespace-pre-wrap">{result}</pre>
         : <p data-type="caption" className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low italic">Nothing recalled for that query.</p>)}
@@ -1375,8 +1471,13 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
   if (error) return <Section title="Entity graph"><LoadError what="entity graph" error={error} onRetry={reload} /></Section>
   if (data === undefined) return <ListSkeleton rows={3} what="entity graph" />
   if (!data.enabled) {
+    // The consequence line is the SERVER's sentence (`data.ranking.summary`), not a local
+    // string. It used to be hand-written here — and it was the only surface in the product
+    // that said what a degraded recall costs, which is exactly why the Recall tab could go
+    // on rendering identically in both states (issue 521).
     return (
-      <Section title="Entity graph" hint="Off — memory recall falls back to search alone.">
+      <Section title="Entity graph" hint="Off — see what that costs recall below.">
+        <RankingNote ranking={data.ranking} className="mb-2" />
         <p data-type="body-s" className="text-on-surface-low">
           Turn on <span className="text-on-surface-var">Entity graph</span> in Settings to link
           memories to the people, projects and tools they mention.
@@ -1397,6 +1498,11 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
         <Button size="sm" variant="ghost" onClick={exportGraph} loading={busy === 'export'} loadingLabel="Rendering…"><Download size={14} /> Export as HTML
         </Button>
       </div>
+      {/* Graph ON is not the same as recall being whole: with no embedding model bound the
+          vector arm is still missing, and Health was the one place that never said so. Only
+          rendered when something IS degraded — a healthy store needs no notice here, the
+          Recall and Inspect tabs already report their own runs. */}
+      {data.ranking.degraded && <RankingNote ranking={data.ranking} className="mt-2" />}
       <p data-type="caption" className="mt-2 text-on-surface-low">
         {summary.entities ?? 0} entit{(summary.entities ?? 0) === 1 ? 'y' : 'ies'} · {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
         {'. '}

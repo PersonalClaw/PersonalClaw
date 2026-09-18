@@ -1,0 +1,27 @@
+# Where PersonalClaw declares its OWN licence.
+#
+# RET-5. README.md and SECURITY.md carry a dated commitment that this project is MIT, has no
+# CLA, sends no telemetry, and never relicenses an already-published release. This file is
+# the structural half of the first part of that promise: an exact mirror of every place in
+# the tree that states a licence identifier about THIS project, each with a judgment saying
+# what the declaration is for and who reads it.
+#
+# `tests/test_licence_governance.py` enforces the mirror in both directions — a new
+# declaration site reds, and a stale entry reds — so the table cannot quietly accumulate or
+# quietly shrink. Every identifier here must be `MIT`.
+#
+# Format: <path> — <judgment>
+#
+# NOT here, by rule rather than by omission: `package-lock.json` and the other lockfiles.
+# They record OTHER projects' licences (MPL-2.0 appears there today), so a non-MIT
+# identifier in a lockfile is correct and says nothing about this project's terms.
+
+LICENSE — the licence itself. The only artifact that grants anyone anything; its grant text is sha256-pinned by the rail so a rewrite that keeps the "MIT License" title still reds.
+pyproject.toml — the wheel's declared licence, in both `license` and the trove classifier. This is what PyPI shows and what every `pip install personalclaw` records in its dist-info, so it is the copy the largest number of users actually see.
+packages/personalclaw-client-py/pyproject.toml — the `personalclaw-client` wheel's declared licence, in both `license` and the trove classifier. A SECOND separately published distribution, so it has its own dist-info and its own PyPI page; a licence change here would land on installers who never installed the main package. Found by the sweep, not by hand — it was missed by a manual census of "the pyproject" written the same day.
+README.md — the shields.io badge in the header. The first licence statement a visitor reads, and the one a screenshot of the repo carries.
+desktop/package.json — the Electron app's manifest licence. Read by electron-builder and embedded in the packaged desktop artifact's metadata, so it travels to users who never see the repo.
+scratch/app-template/LICENSE — the licence copied into every app scaffolded from the template. Not this project's grant, but it is the licence the template PROPAGATES to third-party app authors, so a change here changes what new apps ship under.
+scratch/registry/fixtures/apps/clean-app/LICENSE — an app-registry validation fixture. Listed because the registry's own licence checks read it, so a change would silently move what the validator treats as an acceptable app licence.
+scratch/registry/fixtures/apps/warning-app/LICENSE — an app-registry validation fixture for the `warning` scan verdict. Same reason as clean-app: the validator's expectations are calibrated against these bytes.
+scratch/registry/fixtures/apps/dangerous-app/LICENSE — an app-registry validation fixture for the `dangerous` scan verdict. Same reason: it pins that a dangerous app is judged dangerous on its CODE, not on its licence.

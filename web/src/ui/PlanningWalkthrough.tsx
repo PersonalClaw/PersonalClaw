@@ -180,16 +180,74 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
 
   // Stall detection: a planner pass that errors/times out leaves the step running
   // (or no session) with no new activity — track quiet time + offer Retry after a
-  // threshold so it's never a forever-spinner. Any session change or new WS line
-  // counts as progress and resets the clock.
-  const [quietMs, setQuietMs] = useState(0)
-  const lastProgress = useRef(Date.now())
+  // threshold so it's never a forever-spinner. A real session change or a live WS
+  // beat counts as progress and resets the clock; merely LOADING the page does not.
+  // 🔴 THE CLOCK IS SERVER-SOURCED, AND DERIVED RATHER THAN STORED. It used to be
+  // `useRef(Date.now())` — seeded at MOUNT — so `quietMs` measured "how long since this page
+  // loaded", not "how long since the session progressed". A planner dead for hours restarted its
+  // 3-minute countdown on every reload and NEVER offered Retry, while three spinners claimed work
+  // was in flight (issue 488 — measured against a live gateway, not inferred).
+  //
+  // Quiet time is now `now - max(serverProgress, localProgress)`:
+  //   * `serverProgress` is `session.updated_at`, stamped by every mutator in
+  //     `planning/session.py` (epoch SECONDS, hence ×1000). It is the only thing that survives a
+  //     reload. `created_at` is the fallback for a session written before that field existed.
+  //   * `localProgress` is set ONLY when something really changed while mounted (a step
+  //     transition on an already-loaded session, or a WS beat) — never by the page load itself.
+  //
+  // `max` is load-bearing in BOTH directions: a live WS line must beat a stale server stamp, and
+  // the server stamp must win on load even though it is OLDER than mount time. An earlier draft
+  // adopted the server value only when it was NEWER than what it held, which silently reproduced
+  // the original bug. Drive this surface in a browser when changing it: the jsdom suite went green
+  // over that draft, because a polling assertion can catch a transient frame the user never sees.
+  const serverProgressMs = (session?.updated_at || session?.created_at || 0) * 1000
+  const [localProgressMs, setLocalProgressMs] = useState(0)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  // The ONE case where mount time is the honest clock rather than the defect: there is no
+  // session at all (or one so corrupt it carries no stamp), so nothing has progressed and there
+  // is nothing server-side to measure from. "How long have we been waiting since we opened" is
+  // then the only true statement available, and it keeps the no-session Retry reachable — the
+  // `steps.length === 0` branch below exists precisely for a start that never produced a session,
+  // and without this floor `max(0, 0)` would leave it spinning forever with no escape.
+  const mountedAtMs = useRef(Date.now())
   const sessionSig = JSON.stringify(session?.steps?.map((s) => [s.id, s.status, !!s.artifact?.markdown]) ?? [])
-  useEffect(() => { lastProgress.current = Date.now(); setQuietMs(0) }, [sessionSig, lines.length, ticker, heartbeat])
+  // 🪤 The trap that makes a server-sourced clock hard: it is not enough to skip the effect's
+  // FIRST run. That run happens while `session` is still null — the poll has not landed yet — so
+  // the poll's ARRIVAL looks like a change (`sessionSig` goes from "[]" to the real steps) and the
+  // effect stamps NOW. In a browser the poll lands within a second of mount, so a 5.6h-dead
+  // session measured ~0ms of quiet and the Retry still never appeared: the original bug walking
+  // back in through a different door. Measured that way against a live gateway — a jsdom test can
+  // pass on the transient frame between the poll resolving and this effect running, so the browser
+  // is the only place the difference shows.
+  //
+  // Only a change observed AFTER a session is in hand is progress. `seenSig` is therefore seeded
+  // on the session's arrival and compared from then on; a `steps: []` session that later gains
+  // steps (the design pass landing) still registers, because arrival recorded "[]" first.
+  const seenSig = useRef<string | null>(null)
   useEffect(() => {
-    const iv = setInterval(() => setQuietMs(Date.now() - lastProgress.current), 5000)
+    if (!session) return
+    const prev = seenSig.current
+    seenSig.current = sessionSig
+    if (prev !== null && prev !== sessionSig) setLocalProgressMs(Date.now())
+  }, [session, sessionSig])
+  // Live planner chatter is unambiguously progress: ANY frame on the plan session's WS proves the
+  // planner is alive, including the silent `chat_status` beats that emit no tool call or prose.
+  // Kept separate from the session signature above because the two answer different questions —
+  // one is "the server says the plan moved", the other is "the planner is talking right now" — and
+  // conflating them is what let a mere page-load masquerade as activity.
+  const wsBeat = `${lines.length}|${ticker}|${heartbeat}`
+  const seenBeat = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = seenBeat.current
+    seenBeat.current = wsBeat
+    if (prev !== null) setLocalProgressMs(Date.now())
+  }, [wsBeat])
+  useEffect(() => {
+    const iv = setInterval(() => setNowMs(Date.now()), 5000)
     return () => clearInterval(iv)
   }, [])
+  const lastProgressMs = Math.max(serverProgressMs || mountedAtMs.current, localProgressMs)
+  const quietMs = nowMs - lastProgressMs
   // Offer Retry only after a LONG quiet stretch. A planner legitimately investigating
   // a brownfield repo can be quiet for a while — especially a native agent that may
   // not stream tool events, or one deep in a single long operation — so a tight
@@ -332,7 +390,13 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                     <motion.li key={s.id} variants={listItemEnter} data-type="body-s" className="flex items-center gap-2">
                       {s.status === 'approved' ? <Check size={14} className="shrink-0 text-ok" />
                         : s.status === 'awaiting_review' ? <CircleDot size={14} className="shrink-0 text-primary" />
-                        : s.status === 'running' ? <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
+                        // A RUNNING step spins only while the planner is actually alive. `running`
+                        // is the persisted status of a step whose pass DIED, so on a stalled
+                        // session this glyph kept animating next to a header that already said
+                        // "Planning paused" and a gate already offering Retry — one live spinner
+                        // still claiming in-flight work (issue 488). Same treatment the header
+                        // above already gives itself when stalled: still, dimmed, no motion.
+                        : s.status === 'running' ? <Loader2 size={13} className={stalled ? 'shrink-0 text-on-surface-low' : 'shrink-0 animate-spin text-primary'} />
                         : <span className="ml-0.5 mr-0.5 h-2.5 w-2.5 shrink-0 rounded-full border border-outline-variant" />}
                       <span className={s.status === 'approved' ? 'text-on-surface-low line-through' : 'text-on-surface'}>{i + 1}. {s.title}</span>
                       <span data-type="caption" className="text-on-surface-low">{s.kind.replace(/_/g, ' ')}</span>

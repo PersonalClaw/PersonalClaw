@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { prefersReducedMotion } from '../design/motion'
 import { runtime } from '../design/runtime'
 import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
@@ -114,6 +115,16 @@ export function DotGlow({
   // re-keys the render effect below (tear down + rebuild the loop cleanly).
   const { selectValue } = useAppearance()
   const bgStyle = (BG_STYLE_TOKEN ? selectValue(BG_STYLE_TOKEN) : 'waves') as BgStyle
+  // Reduced motion through `design/motion`'s ONE accessor, read in RENDER rather than
+  // inside the effect. Two reasons, and the second is the reason it moved:
+  //   • it re-keys the effect exactly like `bgStyle` does (tear down + rebuild the loop),
+  //     so a mid-session OS change stops the loop instead of leaving it running forever;
+  //   • it can be stated on the element, which is what lets the family's rail assert the
+  //     decision from the DOM instead of counting frames through a canvas stub.
+  // Still CALL-TIME, not a cached hook: `DotGlow.reducedMotion.test.tsx` swaps the
+  // `matchMedia` stub between its two describes and depends on the second one seeing the
+  // new answer, which framer's module-cached `useReducedMotion` would not give it.
+  const reduce = prefersReducedMotion()
   const ref = useRef<HTMLCanvasElement>(null)
   const bloomRef = useRef<HTMLDivElement>(null)
   const bloom2Ref = useRef<HTMLDivElement>(null)  // bloom for the split-off traveling light
@@ -133,7 +144,6 @@ export function DotGlow({
     const cv = canvas
     const g = ctx
 
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     // Backdrop mode → what the loop does:
     //   drawDots — render the dot lattice ('waves' + 'still').
     //   animate  — keep a live rAF loop ('waves' + 'glow', unless reduced-motion).
@@ -391,10 +401,14 @@ export function DotGlow({
     raf = requestAnimationFrame(frame)
 
     return () => { cancelAnimationFrame(raf); ro.disconnect() }
-  }, [composerRef, bgStyle])
+  }, [composerRef, bgStyle, reduce])
 
   return (
-    <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`} aria-hidden>
+    <div
+      className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`}
+      aria-hidden
+      data-dot-glow={reduce ? 'instant' : 'animated'}
+    >
       {/* soft light bloom hugging the composer rect — positioned live each frame
           by the canvas loop (in perfect sync with the composer). */}
       <div

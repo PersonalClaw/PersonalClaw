@@ -27,9 +27,6 @@ class GeneralKind(LoopKindStrategy):
         # budget like an open-ended goal but with no domain-specific phasing.
         return {"verify_command": ""}
 
-    def phase_key(self, phase: dict) -> str:
-        return str(phase.get("title", "")).strip()
-
     def validate_config(self, config: dict) -> tuple[list[str], list[str]]:
         """Screen the optional verify_command — the supervisor RUNS it every cycle
         (the declared ``verify_command`` signal), so a destructive one must be rejected

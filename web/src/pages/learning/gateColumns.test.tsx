@@ -200,7 +200,7 @@ describe('LearningPage RENDERS the columns (the call site)', () => {
     control.unmount()
 
     learningProposals.mockResolvedValue(inboxOf([row({ gate: gated() })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/0\.900 → 0\.400/)).toBeTruthy()
     // A measured drop earns a chip — the one gate outcome that changes the decision.
@@ -211,7 +211,7 @@ describe('LearningPage RENDERS the columns (the call site)', () => {
 
   it('paints "ungated" and NO chip for a proposal no gate ran on', async () => {
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/ungated/)).toBeTruthy()
     // The absence must not be dressed as a warning: doing that trains reviewers to ignore the chip
@@ -222,7 +222,7 @@ describe('LearningPage RENDERS the columns (the call site)', () => {
 
   it('leaves Accept enabled on an ungated proposal — the gate never blocks', async () => {
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     await screen.findByText(/ungated/)
     const accept = screen.getByRole('button', { name: /Accept/ })
@@ -234,7 +234,7 @@ describe('LearningPage RENDERS the columns (the call site)', () => {
     // The user may know something the twelve scenarios do not. The columns inform the decision;
     // they do not take it.
     learningProposals.mockResolvedValue(inboxOf([row({ gate: gated() })]))
-    render(<LearningPage />)
+    render(<LearningPage navigate={() => {}} />)
 
     await screen.findByText(/score drop/)
     const accept = screen.getByRole('button', { name: /Accept/ })

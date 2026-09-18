@@ -346,6 +346,72 @@ def test_the_cli_still_writes_a_key_the_allowlist_does_not_declare(cfg_file):
     assert json.loads(cfg_file.read_text(encoding="utf-8"))["observe_max_messages"] == 207
 
 
+def test_the_cli_preserves_top_level_keys_to_dict_does_not_model(cfg_file):
+    """#951: one `config set agent.log_level DEBUG` deleted 10 provider instances.
+
+    `config set` served the whole file out of `AppConfig.to_dict()`, a fixed literal of the
+    40-odd sections the loader models. `providers` is not one of them — it is read DIRECTLY
+    off the raw dict (`validation._DIRECT_READ_TOP_KEYS`) while being the canonical store for
+    provider instances and, for `openai_compatible`, their only copy of an entered API key.
+    So the round-trip did not empty `providers`, it OMITTED it, and the command printed ✅.
+
+    Asserted on all four blocks rather than on `providers` alone: `use_cases`, `slack` and
+    `meta` are dropped by the same mechanism, so a fix that special-cased the one name in the
+    title would still destroy the other three. `AppConfig.save()` has preserved exactly this
+    set since its own silent-swallow fix; the CLI never called it.
+    """
+    doc = {
+        "providers": [
+            {"id": "openrouter", "type": "openai_compatible", "api_key": "test-placeholder"},
+            {"id": "ollama-homelab", "type": "openai_compatible"},
+        ],
+        "use_cases": {"chat": "openrouter"},
+        "slack": {"channel": "C0PLACEHOLDER"},
+        "meta": {"lastTouchedVersion": "0.1.3"},
+        "agent": {"log_level": "WARNING"},
+    }
+    cfg_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+    _config_set("agent.log_level", "DEBUG")
+
+    after = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert after["agent"]["log_level"] == "DEBUG", "the write the operator ASKED for did not land"
+    assert after.get("providers") == doc["providers"], "provider instances and stored API keys"
+    assert after.get("use_cases") == doc["use_cases"], "use_cases destroyed"
+    assert after.get("slack") == doc["slack"], "slack destroyed"
+    assert after.get("meta") == doc["meta"], "meta destroyed"
+
+
+@pytest.mark.parametrize("corrupt", ["{not json", "[1, 2, 3]"])
+def test_the_cli_refuses_to_write_a_config_it_could_not_read(cfg_file, corrupt):
+    """A FAILED read is exactly when you cannot know what you are about to overwrite.
+
+    Merging a single key into the existing document only preserves `providers` if the existing
+    document was actually read. On a config caught mid-flush by a concurrent writer, or held
+    by a permission blip, a best-effort read that fell through to the write would serialise a
+    base WITHOUT those blocks and delete them again — the same swallow `AppConfig.save()`
+    already refuses. Absent is safe to write over; unreadable is not.
+    """
+    cfg_file.write_text(corrupt, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _config_set("agent.log_level", "DEBUG")
+    assert exc.value.code == 1
+    assert cfg_file.read_text(encoding="utf-8") == corrupt, "it wrote over a file it could not read"
+
+
+def test_an_empty_config_is_absent_not_unreadable(cfg_file):
+    """Vacuity floor for the refusal above: it must reject UNKNOWN content, not any content.
+
+    Zero bytes hold no `providers` block, so no write can destroy one — and refusing here
+    would be a dead end rather than a protection, leaving a config truncated by a crashed
+    write or a bare `touch` permanently unwritable from the CLI. Without this test the
+    refusal could be "any file that is not a full config", which would pass the test above.
+    """
+    cfg_file.write_text("   \n", encoding="utf-8")
+    _config_set("agent.log_level", "DEBUG")
+    assert json.loads(cfg_file.read_text(encoding="utf-8"))["agent"]["log_level"] == "DEBUG"
+
+
 # ── The registry is the single source ─────────────────────────────────────
 
 

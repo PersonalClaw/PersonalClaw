@@ -368,6 +368,15 @@ export const WS_PATH = '/api/ws'
  * shell that gets `undefined` can say "this endpoint is misconfigured" on that row. Coercing it
  * would produce a socket that dials somewhere unintended, which is strictly worse than a refusal.
  *
+ * 🪤 A SUBPATH `base_url` IS ALSO A BROKEN ROW, and it used to be the one that failed SILENTLY
+ * (RUA-7). The gateway serves its socket at the ORIGIN ROOT: there is no base-path mode, and the
+ * PWA manifest scope and service-worker scope are among seven root-origin assumptions that depend
+ * on it. `https://h/claw` nonetheless parsed fine, so this took `.host` and DISCARDED `/claw`,
+ * returning `wss://h/api/ws` — a URL for a DIFFERENT origin path than the owner configured, which
+ * then surfaced as a generic handshake failure with nothing pointing at the real cause. It now
+ * refuses, joining the other broken-row cases rather than being the exception that guesses. A
+ * trailing slash (`https://h/`) is the root, not a subpath, and still resolves.
+ *
  * The URL carries no credential: the device session rides as the session cookie, which is why
  * the companion guide forbids the `?token=` query parameter (it IP-binds and a phone changes IP).
  */
@@ -385,6 +394,9 @@ export function endpointSocketUrl(baseUrl: string, path: string = WS_PATH): stri
   const proto = url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : ''
   if (!proto) return undefined
   if (!url.host) return undefined
+  // The gateway is origin-rooted, so a base_url carrying a path is a broken row — refuse it rather
+  // than drop the path. `''` and `'/'` are both the root (a query-only URL parses as `'/'`).
+  if (url.pathname !== '' && url.pathname !== '/') return undefined
   const suffix = path.startsWith('/') ? path : `/${path}`
   return `${proto}//${url.host}${suffix}`
 }

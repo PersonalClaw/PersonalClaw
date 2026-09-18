@@ -9,6 +9,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A scanned PDF stops ingesting EMPTY: `ocr` is a new provider type, and a PDF with no text layer is rasterized and read.**
+- **A clean run down one branch of an either/or no longer reports as `partial`.**
+- **A relevance reranker arm for knowledge retrieval, OFF by default.**
 - **`personalclaw footprint` reports where your disk went, and the gateway now actually gives it back.**
 - **A chat session now has a durable index: `GET /api/chat/sessions/{session}/map`.**
 - **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
@@ -19,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **⚠️ PERSONALCLAW NOW TRACKS RELEASES, NOT `main` — AND THE UPDATE IT APPLIES IS THE ONE YOU CHOSE.**
 - **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
 - **A release candidate no longer moves `:latest`, a `-beta` tag is no longer published as a stable release, and the moving `:X.Y` / `:beta` image tags the updater pulls now actually exist.**
 - **A container install's update commands now carry the image tag your `updates` channel/pin resolves to, not a bare `latest`.**
@@ -34,12 +38,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **`personalclaw config set` no longer deletes every configured model provider.**
+- **The health strip no longer goes coral just because you set a login password.**
+- **Settings → Agent defaults no longer shows a "Sandbox" switch that makes no sandbox decision.**
+- **A loop's first cycle is credited again: a fast first cycle no longer leaves its SDLC stage un-advanced.**
+- **One unreachable git source no longer makes the Store take two minutes to open, or re-pay that cost on every load.**
+- **A parallel loop phase no longer loses a task's worktree to a race inside `git worktree add`.**
+- **Trigger "Silent" is a switch again, not a one-way latch you can turn on and never off.**
 - **A read-only session GET no longer WRITES a session workspace for any id the caller invents.**
 - **A brand-new conversation's title, pin, colour, folder, tags and `never_archive` now survive a restart instead of being accepted `200 {"ok": true}` and lost.**
 - **An ABSENT field on a session-metadata PATCH is no longer read as a request to CLEAR it.**
 - **`{"confirm": "false"}` no longer reads as a YES on a destructive door — one strict predicate replaced two incompatible ones across 24 gates (issue 3000).**
 - **`security.egress` no longer accepts a host entry the matcher can never match, so a denylist that reads as blocking a domain family can no longer block nothing (issue 2956).**
 - **`GET /api/security/audit?token=…` no longer 400s as an unknown filter, so a query-token client can read the audit trail at all (issue 2927).**
+- **`doctor` now names the one bypass-behind-a-proxy combination that silently hands the internet a token-free dashboard.**
 - **The forwarded-header contract is true: `trusted_proxies` and `docs/guides/remote-access.md` now name the header the code actually reads.**
 - **An app that declares `permissions.api: ["/api/ws"]` no longer gets an owner shell with it (#2964).**
 - **A 56 KB `.docx` no longer costs 153 seconds of gateway CPU, and the office parsers finally inherit the zip-bomb posture the rest of the codebase has shipped for years (#2747).**
@@ -99,6 +111,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Resetting a Repeatable task list now actually returns it to a not-yet-run state.**
 - **The tool inspector no longer walks a user into a dead end on a disabled tool: Try it kept offering the full Run → Confirm flow and only failed after arguments were filled in, via the server's 403 refusal.**
 - **Artifact tags are now editable where they display: the details rail's static pills become the house chip editor (add on Enter, named remove buttons), giving `PATCH /api/artifacts/{slug}`'s long-accepted `tags` field its first UI writer — previously whatever an agent set was what you had, while the sibling `collection` field got an editor and the list endpoint's tag filter stayed load-bearing for loop cockpits.**
+- **Reordering an action plan no longer deletes the completed steps: a locked row is deliberately rendered outside the reorder group so it cannot be dragged, which means Motion's `onReorder` can only describe the DRAGGABLE rows — and the write-back treated that partial array as the whole list, so one drag destroyed every ticked step (six of ten on a half-finished plan) and Save persisted it, under a tooltip promising "A completed step keeps its place".**
+- **Picking a personality now actually changes the assistant's voice: the chat send path attaches the active personality's persona theme, wiring the frontend half of a persona-injection path whose backend was fully built but read a field no client ever sent.**
+- **An unsaved edit to a markdown memory doc (Preferences / Projects / History) now survives clicking another Studio item.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

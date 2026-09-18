@@ -38,10 +38,6 @@ class GoalKind(LoopKindStrategy):
             "verify_command": "",
         }
 
-    def phase_key(self, phase: dict) -> str:
-        # Goal sub-goals are keyed by title (no formal stage id).
-        return str(phase.get("title", "")).strip()
-
     def _active_phase_index(self, loop: Loop) -> int:
         """Index of the execution_plan phase the UPCOMING cycle belongs to (cycle-count
         based): walk each phase's cumulative min_cycles window; -1 with no plan.

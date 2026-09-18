@@ -107,3 +107,40 @@ describe('the Store source list labels shipped defaults', () => {
     expect(rowFor(BUNDLED).querySelector('[aria-label="Remove source"]')).toBeTruthy()
   })
 })
+
+// ── #408: the source that failed has to be NAMED, on its own row ──
+//
+// One unreachable source used to make the Store spin for ~2 minutes with no error and
+// nothing identifying the culprit, so the natural read was "the Store is broken" rather
+// than "remove that one". The backend now reports `unavailableSources`; this is the half
+// that makes it visible. Driven per row, because a banner that says "1 source unavailable"
+// without saying WHICH is the same dead end in a shorter sentence.
+describe('the Store source list names a source it could not read', () => {
+  it('badges only the unreachable source, and says it will be retried', async () => {
+    render(<SourcesPanel catalog={{ ...catalog, unavailableSources: [{ source: USER_ADDED, reason: 'unreachable' }] }}
+      reloadCatalog={() => {}} onInstalled={() => {}} />)
+    await waitFor(() => expect(screen.getByText(USER_ADDED)).toBeTruthy())
+    const badge = rowFor(USER_ADDED).querySelector('[data-testid="store-source-unavailable"]')
+    expect(badge).toBeTruthy()
+    expect(badge!.textContent).toContain('Unavailable')
+    // A backoff, not a death sentence — the tooltip must not read as "this source is dead".
+    expect(badge!.getAttribute('title')).toContain('retried')
+    // …and the badge is not painted on every row.
+    expect(rowFor(BUNDLED).querySelector('[data-testid="store-source-unavailable"]')).toBeNull()
+  })
+
+  it('distinguishes a source cut off by the scan budget from one that failed', async () => {
+    render(<SourcesPanel catalog={{ ...catalog, unavailableSources: [{ source: REGISTRY, reason: 'budget' }] }}
+      reloadCatalog={() => {}} onInstalled={() => {}} />)
+    await waitFor(() => expect(screen.getByText(REGISTRY)).toBeTruthy())
+    const badge = rowFor(REGISTRY).querySelector('[data-testid="store-source-unavailable"]')
+    expect(badge!.textContent).toContain('Skipped')
+    expect(badge!.getAttribute('title')).toContain('ran out of time')
+  })
+
+  it('badges nothing when every source answered', async () => {
+    render(<SourcesPanel catalog={catalog} reloadCatalog={() => {}} onInstalled={() => {}} />)
+    await waitFor(() => expect(screen.getByText(USER_ADDED)).toBeTruthy())
+    expect(screen.queryByTestId('store-source-unavailable')).toBeNull()
+  })
+})

@@ -97,8 +97,6 @@ export function AgentDefaultsPanel() {
         <RowGroup>
           <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
-          <EnumRow label="Sandbox" hint="Sandbox mode for the ACP provider." cfg={cfg} field="sandbox" patch={patch}
-            options={[{ key: 'auto', label: 'Auto' }, { key: 'off', label: 'Off' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
             hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
         </RowGroup>

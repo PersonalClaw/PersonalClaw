@@ -276,6 +276,50 @@ def auth_is_off(auth_cfg: AuthConfig | None = None) -> bool:
     return cfg.mode == AuthMode.NONE
 
 
+def local_network_bypass_enabled() -> bool:
+    """Return ``True`` when the opt-in local-network token bypass is armed.
+
+    The MIRROR of the ``token_auth`` middleware's second short-circuit: with
+    ``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` any request whose *resolved* client
+    address is private (``is_private_network(_resolved_client_ip(request))``,
+    ``dashboard/token_auth.py``) skips token validation entirely. The middleware
+    owns that decision; this predicate only reports whether it is armed.
+
+    It exists so that no diagnostic re-derives the rule from the raw env var.
+    ``cli_doctor.py:344-349`` asks for exactly that ("mirror the middleware,
+    don't infer from the bind alone", #2860), and a health row that re-spells the
+    variable name is a copy that can drift from the behaviour it describes.
+    Callers asking "is a token required here" want :func:`loopback_requires_token`;
+    callers asking "is the bypass armed" — the reachability probe's RUA-5 row —
+    want this.
+    """
+    return os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1"
+
+
+def declared_proxy_front() -> tuple[list[str], bool]:
+    """The operator's declaration that a reverse proxy sits in front of this instance.
+
+    ``(trusted_proxies, public_url_declared)``, read through ``dashboard/exposure`` —
+    the single module that owns the exposure signal, including ``public_url``'s
+    deliberate fallback to the ``external_access`` field. Both degrade to ``[]``/``""``
+    on an unreadable config, which is also what the middleware's trust rule does with
+    one, so "no declaration" here describes what actually happens.
+
+    It lives beside :func:`local_network_bypass_enabled` rather than being imported
+    directly by its caller because the caller is ``resilience/doctor``, and the
+    ``structural-import-direction`` ratchet forbids core importing the HTTP surface
+    while exempting ``dashboard`` from importing itself. Routing through this module —
+    the ONE ``dashboard`` import ``doctor`` is grandfathered to hold, and already its
+    mirror for the middleware's short-circuits — keeps the RUA-5 row on the owning
+    module without adding a second core→dashboard edge.
+
+    Reads config from disk: call it off the event loop.
+    """
+    from personalclaw.dashboard.exposure import public_url, trusted_proxies
+
+    return trusted_proxies(), bool(public_url())
+
+
 def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
     """Return ``True`` when a request from loopback still needs a token.
 
@@ -283,7 +327,8 @@ def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
     the three cases the ``token_auth`` middleware short-circuits on: auth is
     genuinely off (``AuthMode.NONE`` / ``PERSONALCLAW_DEV_NO_AUTH=1`` — both via
     :func:`auth_is_off`) or the opt-in local-network bypass
-    (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1``). Under the default ``local_token``
+    (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` — via
+    :func:`local_network_bypass_enabled`). Under the default ``local_token``
     mode a token IS required even on loopback — the middleware returns
     ``403 {"error": "Token required"}`` for a tokenless loopback request. This is
     the predicate ``doctor`` must consult before claiming "no token required": a
@@ -291,7 +336,7 @@ def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
     """
     if auth_is_off(auth_cfg):
         return False
-    if os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1":
+    if local_network_bypass_enabled():
         return False
     return True
 

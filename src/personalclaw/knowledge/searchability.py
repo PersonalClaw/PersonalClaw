@@ -102,7 +102,8 @@ REASON_DETAIL: dict[str, str] = {
     NO_EXTRACTABLE_TEXT: (
         "no text could be extracted from this document (a scan or image-only PDF), so "
         "only its filename and shape were stored — searching its visible words cannot "
-        "find it. Bind an OCR/vision model and re-ingest it, or add a text version."
+        "find it. Install an OCR app or bind a vision model, then re-ingest it; or add a "
+        "text version."
     ),
     NO_EMBEDDING_PROVIDER: (
         "no embedding provider is bound, so this item has no vector and no chunks — "

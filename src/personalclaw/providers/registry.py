@@ -761,6 +761,40 @@ class SandboxTypeHandler(_TypeHandler):
             unregister_provider(name)
 
 
+class OcrTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'ocr'`` extensions (KNOWLEDGE-OCR-INGESTION KOCR-2).
+
+    Builds an ``OcrProvider`` via the manifest factory and registers it in the ``ocr``
+    registry so the ingestion graph's engine-backed OCR node can resolve an engine with NO
+    model bound. Enabling an OCR app registers it; disabling it unregisters — so a user with
+    no OCR app sees exactly the pre-seam behaviour (the node finds no runnable backend and is
+    skipped). There is no in-core builtin: core ships no engine. Lands in the same commit as
+    the ``ocr`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.ocr.registry import register_provider
+
+        register_provider(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.ocr.registry import unregister_provider
+
+        # Name computed without a getattr default so ``ext`` is not dereferenced when the
+        # instance already carries one (ext may be absent in tests) — mirrors SandboxTypeHandler.
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_provider(name)
+
+
 class PromptTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'prompt'`` extensions.
 
@@ -1117,6 +1151,7 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler("action", ActionTypeHandler())
         _registry.register_type_handler("duty_gate", DutyGateTypeHandler())
         _registry.register_type_handler("prompt", PromptTypeHandler())
+        _registry.register_type_handler("ocr", OcrTypeHandler())
         # Enable/disable + Settings seams only — each names where the entity
         # actually lives. See EntitySeamHandler: registering an instance here
         # would create a second source of truth nothing reads (the Bedrock trap).
