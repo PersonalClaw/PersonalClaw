@@ -103,9 +103,22 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
           </p>
         )}
 
-        {data.enabled && (
-          <div className="mt-m border-t border-outline-variant/30 pt-m">
-            <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">What each surface starts with</div>
+        {/* Shown whether or not the feature is on (issue 573). Hiding it while disabled left
+            the only place these defaults are visible unreachable until you flipped the flag —
+            so the one question a reader brings here, "would turning this on change anything?",
+            could not be answered without turning it on. The HEADING carries the tense, and the
+            line below states plainly that nothing is filtered yet; the defaults themselves are
+            configuration and read the same either way. */}
+        <div className="mt-m border-t border-outline-variant/30 pt-m">
+            <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">
+              {data.enabled ? 'What each surface starts with' : 'What each surface would start with'}
+            </div>
+            {!data.enabled && (
+              <p className="mb-s text-on-surface-low" data-type="caption">
+                Groups are off, so every surface currently starts with every group. Turning them on
+                would apply the defaults below.
+              </p>
+            )}
             <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {Object.entries(data.surfaceDefaults).map(([surface, names]) => {
                 const all = names.length === 0
@@ -139,8 +152,7 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
               config. A surface listed as “every group” behaves exactly as it did before
               groups existed.
             </p>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   )

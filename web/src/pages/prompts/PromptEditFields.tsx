@@ -3,7 +3,7 @@ import { Plus, Wand2, Puzzle } from 'lucide-react'
 import type { PromptVariable, PromptVarType } from '../../lib/api'
 import { AddItemButton } from '../../ui/AddItemButton'
 import { ChipInput } from '../../ui/forms'
-import { detectPlaceholders, detectIncludes } from './promptMeta'
+import { detectVariables, detectIncludes } from './promptMeta'
 import type { PromptDraft } from './PromptForm'
 import { PromptPreviewPane } from './PromptPreviewPane'
 import { SyntaxReference } from './SyntaxReference'
@@ -33,12 +33,12 @@ export function PromptEditFields({ draft, onChange, Section }: {
 
   const undeclared = useMemo(() => {
     const declared = new Set(draft.variables.map((v) => v.name))
-    return detectPlaceholders(draft.content).filter((n) => !declared.has(n))
+    return detectVariables(draft.content).filter((v) => !declared.has(v.name))
   }, [draft.content, draft.variables])
   const includes = useMemo(() => detectIncludes(draft.content), [draft.content])
 
-  const addVar = (name = '') => set('variables', [...draft.variables, { name, type: 'text', description: '', required: false }])
-  const addVars = (names: string[]) => set('variables', [...draft.variables, ...names.map((name) => ({ name, type: 'text' as PromptVarType, description: '', required: false }))])
+  const addVar = (v: Partial<PromptVariable> = {}) => set('variables', [...draft.variables, { name: '', type: 'text' as PromptVarType, description: '', required: false, ...v }])
+  const addVars = (vars: PromptVariable[]) => set('variables', [...draft.variables, ...vars.map((v) => ({ description: '', required: false, ...v }))])
   const updateVar = (i: number, patch: Partial<PromptVariable>) => set('variables', draft.variables.map((v, idx) => idx === i ? { ...v, ...patch } : v))
   const removeVar = (i: number) => set('variables', draft.variables.filter((_, idx) => idx !== i))
 
@@ -96,9 +96,10 @@ export function PromptEditFields({ draft, onChange, Section }: {
           <div className="mt-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
             <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var mb-1.5"><Wand2 size={13} className="text-primary" /> Placeholders not yet declared:</div>
             <div className="flex flex-wrap gap-1.5">
-              {undeclared.map((n) => (
-                <button key={n} type="button" onClick={() => addVar(n)} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface hover:bg-surface-highest transition-colors">
-                  <Plus size={12} /> <span className="font-mono">{n}</span>
+              {undeclared.map((v) => (
+                <button key={v.name} type="button" onClick={() => addVar(v)} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface hover:bg-surface-highest transition-colors">
+                  <Plus size={12} /> <span className="font-mono">{v.name}</span>
+                  {v.type !== 'text' && <span className="text-on-surface-low">· {v.type}</span>}
                 </button>
               ))}
               {undeclared.length > 1 && <TextLink onClick={() => addVars(undeclared)} size="xs" className="rounded-pill px-2 h-7">Add all</TextLink>}

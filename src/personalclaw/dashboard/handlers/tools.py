@@ -602,10 +602,17 @@ async def api_tool_groups(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("Failed to enumerate platform tools for groups", exc_info=True)
 
+    # The CONFIGURED defaults, not the runtime answer (issue 573). `resolve_default_groups`
+    # short-circuits to `None` while the feature flag is off, and `or set()` then flattened
+    # that into `[]` — which this response documents as "every group". So with groups off
+    # (the shipped default) the API asserted that no surface has a default, while three of
+    # them ship one. `enabled` below is what says whether this map is in effect; the map
+    # itself has to stay readable, because "would anything change if I turned this on?" is
+    # the whole question a reader brings here.
     surfaces = {
         key: sorted(value)
         for key, value in (
-            (surface, groups_mod.resolve_default_groups(surface) or set())
+            (surface, groups_mod.configured_default_groups(surface) or set())
             for surface in ("chat", "background", "loops", "orchestration")
         )
     }
@@ -627,8 +634,10 @@ async def api_tool_groups(request: web.Request) -> web.Response:
         {
             "enabled": groups_mod.groups_enabled(),
             "groups": out,
-            # Per surface: the groups that start ACTIVE. An empty list means "every
-            # group" (no per-surface default configured — today's chat behavior).
+            # Per surface: the groups CONFIGURED to start active. An empty list means "every
+            # group" (no per-surface default configured — chat's deliberate case). Reported
+            # whether or not `enabled` is true: with the feature off nothing is filtered, and
+            # `enabled` is the field that says so.
             "surfaceDefaults": surfaces,
         }
     )

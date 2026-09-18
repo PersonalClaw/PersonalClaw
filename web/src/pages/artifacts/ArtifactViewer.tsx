@@ -11,6 +11,7 @@ import { notify } from '../../app/appSdk'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
+import { ChipInput } from '../../ui/forms'
 import { downloadText, safeFilename } from '../../lib/download'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
 import { ContentSurface } from '../../ui/content/ContentSurface'
@@ -209,6 +210,19 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       await api.updateArtifact(slug, { event_type: 'reverted', from_version: selVersion })
       await reload(); onChanged()
     } catch (e) { notify(`Could not revert: ${(e as Error).message}`, 'error') }
+    finally { setBusy(false) }
+  }
+  // Tags (#669): the PATCH accepted `tags` all along — this is its first UI writer.
+  // Pessimistic, like every other write here: persist first, repaint from reload,
+  // so a refused write never leaves an optimistic value on screen. The busy guard
+  // also serializes rapid chip edits, which are computed from the rendered values.
+  const saveTags = async (next: string[]) => {
+    if (!art || busy) return
+    setBusy(true)
+    try {
+      await api.updateArtifact(slug, { tags: next })
+      await reload({ keepVersion: true, quiet: true }); onChanged()
+    } catch (e) { notify(`Could not update tags: ${(e as Error).message}`, 'error') }
     finally { setBusy(false) }
   }
   const del = async () => {
@@ -440,9 +454,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 
             <div>
               <Label icon={Tag}>Tags</Label>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {art.tags.length ? art.tags.map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]">{t}</span>)
-                  : <span className="text-on-surface-low text-[0.75rem]">None</span>}
+              {/* First UI writer for a field the PATCH accepted all along. Pessimistic like
+                  every write in this file: persist, then repaint from the reload — so a
+                  refused write leaves the stored tags on screen, never the optimistic next. */}
+              <div className="mt-1.5">
+                <ChipInput values={art.tags} onChange={(next) => void saveTags(next)}
+                  placeholder="Add a tag, Enter" ariaLabel="Add a tag" />
               </div>
             </div>
 

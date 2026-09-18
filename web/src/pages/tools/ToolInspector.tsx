@@ -22,6 +22,7 @@ export function ToolInspector({ tool, serverStatus }: { tool: ToolItem; serverSt
         <span data-type="body-s" className="rounded-pill px-m h-7 inline-flex items-center bg-surface-high text-on-surface-var">{tool.provider}</span>
         <RiskPill risk={tool.risk_level} />
         {tool.requires_approval && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}><ShieldAlert size={13} /> needs approval</span>}
+        {tool.disabled && <span data-type="body-s" className="rounded-pill px-m h-7 inline-flex items-center bg-surface-high text-on-surface-low" title="Disabled in the tools list — the agent doesn't see it and Try it can't run it">Disabled</span>}
         {serverStatus && <span data-type="body-s" className="inline-flex items-center gap-1.5" style={{ color: serverStatus.state === 'ready' ? 'var(--color-ok)' : 'var(--color-danger)' }}><span className="size-1.5 rounded-pill" style={{ background: 'currentColor' }} /> {serverStatus.state}</span>}
       </div>
 
@@ -96,7 +97,15 @@ function RunPanel({ tool }: { tool: ToolItem }) {
           )}
           {formErr && <FieldError>{formErr}</FieldError>}
 
-          {!confirming ? (
+          {tool.disabled ? (
+            // The invoke endpoint refuses a disabled tool (403 tool_disabled), so
+            // offering Run → Confirm here only led to a dead end after the user
+            // filled in arguments. The form above stays — it documents the
+            // tool's parameters — but the action says why it can't fire.
+            <p data-type="body-s" className="flex items-center gap-1.5 text-on-surface-low">
+              <ShieldAlert size={14} /> Disabled — turn it on in the tools list to run it.
+            </p>
+          ) : !confirming ? (
             <Button size="sm" onClick={() => setConfirming(true)} disabled={running} disabledReason={BUSY_REASON}><Play size={15} /> Run tool</Button>
           ) : (
             <div className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>

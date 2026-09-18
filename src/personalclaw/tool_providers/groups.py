@@ -317,15 +317,19 @@ def groups_enabled() -> bool:
         return False
 
 
-def resolve_default_groups(surface: str) -> set[str] | None:
-    """The groups that start active for ``surface``, or ``None`` for "all active".
+def configured_default_groups(surface: str) -> set[str] | None:
+    """The groups CONFIGURED to start active for ``surface``, or ``None`` for "every group".
 
-    ``None`` is the fail-open answer and the answer for every surface without a
-    configured default (notably interactive chat) — the runtime then skips group
-    filtering entirely, so the tool block is byte-identical to having no groups.
+    Answers *what is configured*, deliberately **independent of** ``groups_enabled()`` —
+    which is the question a reader has to answer in order to decide whether turning the
+    feature on would change anything (issue 573). ``resolve_default_groups`` is the RUNTIME
+    answer and layers the fail-open flag check on top of this.
+
+    Two facts, two functions, one implementation. They used to be one function, and the
+    flag check sat AHEAD of the lookup — so with groups off (the shipped default) every
+    surface reported ``None``, and ``/api/tools/groups`` published that as "every surface
+    starts with every group" while three surfaces had built-in defaults all along.
     """
-    if not groups_enabled():
-        return None
     defaults: dict[str, list[str]] = dict(DEFAULT_GROUP_DEFAULTS)
     try:
         from personalclaw.config.loader import AppConfig
@@ -341,3 +345,19 @@ def resolve_default_groups(surface: str) -> set[str] | None:
         return None
     # core is always on, so it's implied even if a config entry forgets it.
     return {CORE_GROUP, *wanted}
+
+
+def resolve_default_groups(surface: str) -> set[str] | None:
+    """The groups that start active for ``surface`` RIGHT NOW, or ``None`` for "all active".
+
+    ``None`` is the fail-open answer and the answer for every surface without a
+    configured default (notably interactive chat) — the runtime then skips group
+    filtering entirely, so the tool block is byte-identical to having no groups.
+
+    The runtime seam (``agents/native/runtime.py`` assigns this straight to
+    ``_active_groups``), so the flag check belongs here and only here: with groups off,
+    nothing is filtered no matter what is configured.
+    """
+    if not groups_enabled():
+        return None
+    return configured_default_groups(surface)

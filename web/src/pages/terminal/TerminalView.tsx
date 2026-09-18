@@ -94,6 +94,19 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let attempts = 0
 
+    // expose send() so chat's "run in terminal" can target this session. Bind the id
+    // ONCE here (not via sessionIdRef.current in cleanup): a Restart mutates the ref to
+    // the new id BEFORE this effect's cleanup runs, so reading the ref in cleanup would
+    // unregister the NEW id (never registered) and leak the OLD one in the bridge
+    // forever. Capturing the bound id makes register/unregister symmetric per effect run.
+    // Declared before connect() because the 'exited' handler unregisters it.
+    const boundSession = sessionIdRef.current
+    registerTerminal(boundSession, (text: string) => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) { ws.send(new TextEncoder().encode(text)); return true }
+      return false
+    })
+
     const connect = () => {
       if (disposed) return
       const sid = sessionIdRef.current
@@ -112,7 +125,13 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
           // JSON control frame.
           try {
             const m = JSON.parse(e.data)
-            if (m.type === 'exited') { setExitCode(typeof m.code === 'number' ? m.code : null); setStatus('exited'); onExited() }
+            // 'exited' is the one terminal state with NO reconnect (onclose below keeps
+            // the registration on purpose — a dropped socket over a live PTY re-binds).
+            // A dead pane's sender must leave the bridge NOW: left registered it kept
+            // hasActiveTerminal() true, so a queued "Run in terminal" command was
+            // claimed by the flush and burned against a pane already showing
+            // "Process exited" (issue 598). Restart re-registers via [restartKey].
+            if (m.type === 'exited') { setExitCode(typeof m.code === 'number' ? m.code : null); setStatus('exited'); unregisterTerminal(boundSession); onExited() }
             else if (m.type === 'error') setStatus('error')
           } catch { /* pong / noise */ }
           return
@@ -144,18 +163,6 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
     })
     ro.observe(host)
-
-    // expose send() so chat's "run in terminal" can target this session. Bind the id
-    // ONCE here (not via sessionIdRef.current in cleanup): a Restart mutates the ref to
-    // the new id BEFORE this effect's cleanup runs, so reading the ref in cleanup would
-    // unregister the NEW id (never registered) and leak the OLD one in the bridge
-    // forever. Capturing the bound id makes register/unregister symmetric per effect run.
-    const boundSession = sessionIdRef.current
-    registerTerminal(boundSession, (text: string) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) { ws.send(new TextEncoder().encode(text)); return true }
-      return false
-    })
 
     return () => {
       disposed = true
