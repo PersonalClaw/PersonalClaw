@@ -52,6 +52,11 @@ const fixtureTurns: ChatTurn[] = [
 // user, assistant, tool, error — four marks over two turns.
 const marks = () => sessionMapMarks(fixtureTurns)
 
+/** The rail's SSM-5/SSM-7 wiring, inert for these SSM-6 pointer cases: no turn nodes means the
+ *  observer reports nothing on screen, which `currentMarkRange` answers with the newest turn — the
+ *  unscrolled rest state these assertions were written against. */
+const railProps = { turnNodes: new Map<number, Element>(), scrollRef: { current: null }, onJumpTo: () => {} }
+
 const ticks = (c: HTMLElement) => [...c.querySelectorAll('[data-session-mark]')] as HTMLElement[]
 const card = () => document.querySelector('[data-session-map-card]') as HTMLElement | null
 const classes = (el: HTMLElement) => el.className.split(/\s+/).filter(Boolean)
@@ -205,7 +210,7 @@ describe('the card renders the four things KiroCrew’s does not (§A.3)', () =>
 describe('the rail opens the card on HOVER and not on FOCUS', () => {
   it('a mark is a real, named, focusable control — one tab stop for the whole rail', () => {
     const m = marks()
-    const { container } = render(<SessionMapRail marks={m} />)
+    const { container } = render(<SessionMapRail marks={m} {...railProps} />)
     const t = ticks(container)
     expect(t).toHaveLength(m.length)
     for (const el of t) expect(el.tagName).toBe('BUTTON')
@@ -218,7 +223,7 @@ describe('the rail opens the card on HOVER and not on FOCUS', () => {
   })
 
   it('hover opens a Popover card, absent before and gone after', async () => {
-    const { container } = render(<SessionMapRail marks={marks()} />)
+    const { container } = render(<SessionMapRail marks={marks()} {...railProps} />)
     const tick = ticks(container)[2]                       // the tool mark
     expect(card(), 'the card must not be mounted at rest').toBeNull()
 
@@ -235,7 +240,7 @@ describe('the rail opens the card on HOVER and not on FOCUS', () => {
   })
 
   it('each tick opens its OWN card', async () => {
-    const { container } = render(<SessionMapRail marks={marks()} />)
+    const { container } = render(<SessionMapRail marks={marks()} {...railProps} />)
     const t = ticks(container)
     expect((await hover(t[0])).textContent).toContain('Build finished in 4.1s')
     fireEvent.mouseOut(t[0], { relatedTarget: document.body })
@@ -244,7 +249,7 @@ describe('the rail opens the card on HOVER and not on FOCUS', () => {
   })
 
   it('🔑 FOCUS ALONE DOES NOT OPEN IT — Tab-through must not strobe a card per tick', async () => {
-    const { container } = render(<SessionMapRail marks={marks()} />)
+    const { container } = render(<SessionMapRail marks={marks()} {...railProps} />)
     const tick = ticks(container).find((el) => el.tabIndex === 0)!
     act(() => tick.focus())
     // The focus target is REAL — this clause is worthless if nothing can be focused.
@@ -260,7 +265,7 @@ describe('the rail opens the card on HOVER and not on FOCUS', () => {
   })
 
   it('the pointer can cross the gap onto the card without dismissing it', async () => {
-    const { container } = render(<SessionMapRail marks={marks()} />)
+    const { container } = render(<SessionMapRail marks={marks()} {...railProps} />)
     const tick = ticks(container)[2]
     const open = await hover(tick)
     // Leaving the 4px tick arms the close; arriving on the card cancels it (the §A.3 bridge).

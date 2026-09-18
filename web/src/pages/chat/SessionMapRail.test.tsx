@@ -45,12 +45,14 @@ const fixtureSubagents: SubagentCard[] = [
   { id: 's-1', task: 'Investigate the flaky snapshot test', agent: 'general-purpose', done: true },
 ]
 
+const railProps = { turnNodes: new Map<number, Element>(), scrollRef: { current: null }, onJumpTo: () => {} }
+
 const railMarks = (c: HTMLElement) => c.querySelectorAll('[data-session-mark]')
 const track = (c: HTMLElement) => c.querySelector('[data-session-map-track]')
 
 describe('SessionMapRail — marks + track (SSM-4)', () => {
   it('renders a <nav aria-label="Session map"> landmark', () => {
-    const { getByRole } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} />)
+    const { getByRole } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} {...railProps} />)
     expect(getByRole('navigation', { name: 'Session map' })).toBeInTheDocument()
   })
 
@@ -58,19 +60,19 @@ describe('SessionMapRail — marks + track (SSM-4)', () => {
     const marks = sessionMapMarks(fixtureTurns, fixtureSubagents)
     // Ties to SSM-1's own count — user + assistant + (2 tool + approval + error + activity) + subagent.
     expect(marks).toHaveLength(8)
-    const { container } = render(<SessionMapRail marks={marks} />)
+    const { container } = render(<SessionMapRail marks={marks} {...railProps} />)
     expect(railMarks(container)).toHaveLength(marks.length)
   })
 
   it('paints the track in the --color-rail chrome tone', () => {
-    const { container } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} />)
+    const { container } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} {...railProps} />)
     const t = track(container) as HTMLElement | null
     expect(t).not.toBeNull()
     expect(t!.style.background).toContain('var(--color-rail)')
   })
 
   it('paints marks with ONLY the --color-primary / --color-on-surface-low vocabulary, both present', () => {
-    const { container } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} />)
+    const { container } = render(<SessionMapRail marks={sessionMapMarks(fixtureTurns, fixtureSubagents)} {...railProps} />)
     const bgs = [...railMarks(container)].map((m) => (m as HTMLElement).style.background)
     // No third tone and no raw value — every mark is exactly one of the two tokens.
     for (const bg of bgs) {
@@ -83,7 +85,7 @@ describe('SessionMapRail — marks + track (SSM-4)', () => {
 
   it('lights the current region (the newest turn + its sub-events) coral, history neutral', () => {
     const marks = sessionMapMarks(fixtureTurns, fixtureSubagents)
-    const { container } = render(<SessionMapRail marks={marks} />)
+    const { container } = render(<SessionMapRail marks={marks} {...railProps} />)
     const nodes = [...railMarks(container)] as HTMLElement[]
     // The assistant turn is the newest (visibleIndex 1); the user turn (0) is history.
     marks.forEach((mark, i) => {
@@ -98,13 +100,13 @@ describe('SessionMapRail — marks + track (SSM-4)', () => {
     // 1 mark → null: a one-mark map indexes nothing.
     const one = sessionMapMarks([{ role: 'user', ts: USER_TS, visibleIndex: 0, segments: [{ kind: 'text', text: 'hi' }] }])
     expect(one).toHaveLength(1)
-    const { container: c1, queryByRole: q1 } = render(<SessionMapRail marks={one} />)
+    const { container: c1, queryByRole: q1 } = render(<SessionMapRail marks={one} {...railProps} />)
     expect(q1('navigation')).toBeNull()
     expect(railMarks(c1)).toHaveLength(0)
     // Exactly 2 marks → rendered: the threshold renders AT two, it does not require three.
     const two = sessionMapMarks(fixtureTurns).slice(0, 2)
     expect(two).toHaveLength(2)
-    const { queryByRole: q2, container: c2 } = render(<SessionMapRail marks={two} />)
+    const { queryByRole: q2, container: c2 } = render(<SessionMapRail marks={two} {...railProps} />)
     expect(q2('navigation', { name: 'Session map' })).not.toBeNull()
     expect(railMarks(c2)).toHaveLength(2)
   })
