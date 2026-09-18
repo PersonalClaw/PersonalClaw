@@ -1212,8 +1212,28 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return _deny("JSON body must be an object", "non-dict body")
 
-    path_key = body.get("path", "")
+    # `path` is the field SELECTOR, not a value, so a missing or unusable one is a malformed
+    # REQUEST — a different failure from "that field exists but is not editable", and it needs
+    # its own arm. Falling through to the allowlist check produced `field not editable: ` with
+    # a blank field name, which reads as a truncated string and made a forgotten `path`
+    # indistinguishable from a genuine unknown-field rejection (#2926). A non-string `path` was
+    # worse than illegible: `dict.get(["a"])` raises on an unhashable key, so the request-shape
+    # boundary caught the TypeError and answered a generic `bad_request` that named nothing.
+    path_key = body.get("path")
     value = body.get("value")
+    if path_key is None:
+        return _deny(
+            "missing required 'path' (the config field to edit, e.g. agent.yolo)", "missing path"
+        )
+    if not isinstance(path_key, str):
+        return _deny(
+            "'path' must be a string naming the config field to edit",
+            f"non-string path ({type(path_key).__name__})",
+        )
+    if not path_key.strip():
+        return _deny(
+            "'path' is empty — name the config field to edit, e.g. agent.yolo", "empty path"
+        )
     spec = _EDITABLE_CONFIG.get(path_key)
     if not spec:
         return _deny(f"field not editable: {path_key}", f"{path_key}={value}")
