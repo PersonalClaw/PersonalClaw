@@ -573,6 +573,16 @@ jobs:
       - name: offline scripted chat turn (web/e2e/chat.spec.ts)
         working-directory: web
         run: npx playwright test e2e/chat.spec.ts --project=chromium
+      # SSM-11/SSM-10's clauses — the rail renders in-session, stays fixed while the transcript
+      # scrolls, a mark jump scrolls it, and the coarse-pointer form collapses to one control. All
+      # four are LAYOUT or NAVIGATION properties of a ~4k-line `ChatPage` that jsdom cannot mount
+      # and could not measure if it did, so the honest home is this job and not vitest. It belongs
+      # in THIS job rather than its own because it needs exactly the harness the steps above
+      # already stand up (isolated gateway + auth handshake + previewed SPA) and nothing more, and
+      # it asserts no screenshot, so it is platform-neutral on a Linux runner.
+      - name: Session Map in the transcript (web/e2e/sessionMap.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/sessionMap.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7

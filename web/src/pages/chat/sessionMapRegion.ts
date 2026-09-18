@@ -10,8 +10,9 @@ import type { SessionMark } from './sessionMap'
  *
  *  Two pieces, deliberately split so the arithmetic is testable without a DOM:
  *   · `useVisibleTurns` — an `IntersectionObserver` over `ChatPage`'s `turnNodes` registry
- *     (`ChatPage.tsx:600`, populated at `:2974`), rooted on the transcript scroll container
- *     (`ChatPage.tsx:575`). It answers ONE question: which turn coordinates are on screen.
+ *     (keyed through `sessionMap.ts`'s `markCoordOf`, the same rule the marks use), rooted on
+ *     the transcript scroll container (`ChatPage`'s `scrollRef`). It answers ONE question:
+ *     which turn coordinates are on screen.
  *   · `currentMarkRange` — pure: which MARKS belong to those coordinates.
  */
 

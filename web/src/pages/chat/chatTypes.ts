@@ -252,6 +252,29 @@ export interface ChatTurn {
   visibleIndex?: number
 }
 
+/** THE UI COORDINATE of a turn — what identifies a turn to everything that scrolls to one:
+ *  `ChatPage`'s `turnNodes` DOM registry, every `SessionMark.visibleIndex` (SSM-1), and the
+ *  Activity → Index jump anchors.
+ *
+ *  🔑 IT IS A CONTRACT BETWEEN MODULES, WHICH IS WHY IT IS A FUNCTION AND NOT AN INLINE `?? i`.
+ *  The Session Map rail owns no scroll machinery: it hands a mark's coordinate to `onJumpTo` and
+ *  reads the page's node registry AT THAT COORDINATE. So the registry and the marks must be
+ *  keyed by the same rule, and a rule written twice in two files is a rule that drifts — which
+ *  is precisely what it did: registered under the array position, a mark jump on any tool-using
+ *  transcript resolved an EARLIER turn's node, because `hydrateTurns` collapses re-injections and
+ *  merges consecutive assistant messages so array position runs behind `visibleIndex`.
+ *
+ *  🪤 AND IT IS NOT `branchIndexOf`. That answers the OTHER question about a turn — "which
+ *  backend message does it BRANCH at" — and it is deliberately not reused here: its walk-back
+ *  derivation counts turns that have emitted TEXT, so a streaming assistant turn's value changes
+ *  mid-answer. A DOM registry keyed on it would strand the node it registered under the previous
+ *  value. This rule is stable for the life of a turn, which is what a registry needs. Two
+ *  questions, two rules, both right — do not collapse them.
+ */
+export function markCoordOf(turn: Pick<ChatTurn, 'visibleIndex'>, arrayIndex: number): number {
+  return turn.visibleIndex ?? arrayIndex
+}
+
 /** Convenience: a user turn from plain text. `optimized` records the optimized
  *  variant sent to the model when the original was rewritten before sending. */
 export const userTurn = (text: string, ts?: string, pastes?: ChatTurn['pastes'], files?: string[], optimized?: string): ChatTurn => ({ role: 'user', segments: [{ kind: 'text', text }], ts, pastes, files: files?.length ? files : undefined, optimized: optimized || undefined })
@@ -280,7 +303,11 @@ export interface SubagentCard {
 }
 
 // ── activity-panel derivation (Index / Files / Links) — all client-side from turns ──
-export interface IndexEntry { turnIndex: number; label: string }
+/** An Activity → Index row. `visibleIndex`, not an array position: the page's turn-node
+ *  registry is keyed by the Session Map's coordinate (`markCoordOf`), so a jump anchor has to
+ *  speak the same coordinate the rail and the drawer do — one scroll handler, one coordinate,
+ *  no per-consumer translation to keep in step. */
+export interface IndexEntry { visibleIndex: number; label: string }
 export interface FileEntry { path: string; name: string }
 export interface LinkEntry { url: string; label: string }
 export interface ChatActivity { index: IndexEntry[]; files: FileEntry[]; links: LinkEntry[] }
@@ -314,7 +341,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
       // keep the FULL single-line text (CSS truncates visually) — don't slice the
       // string, or markdown rendering of the label could cut mid-syntax (`**bo`).
       const txt = turnText(t).replace(/\s+/g, ' ').trim()
-      if (txt) index.push({ turnIndex: i, label: txt })
+      if (txt) index.push({ visibleIndex: markCoordOf(t, i), label: txt })
       return
     }
     for (const seg of t.segments) {

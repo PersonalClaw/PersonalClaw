@@ -223,3 +223,60 @@ export async function expectRouteScreenshot(page: Page, name: string): Promise<v
     mask: [],
   })
 }
+
+/** Drive ONE real scripted chat turn and return with the transcript settled.
+ *
+ *  Shared because two specs need a STARTED session rather than the empty `#/chat` route:
+ *  `sessionMap.spec.ts` (the map only exists in-session) and `a11y.spec.ts`'s mobile case. The
+ *  recipe is `chat.spec.ts`'s, which owns the reasoning for each step — the CodeMirror composer,
+ *  the aria-disabled send control, and "the turn ENDED" being two independent readings. Kept to
+ *  the preconditions those specs need: this helper does not re-assert chat.spec.ts's clause.
+ *
+ *  `turns` sends the same prompt N times. The script fixture's `on_exhausted: repeat_last` means
+ *  every turn gets the same reply, which is what makes a transcript long enough to SCROLL. */
+export async function driveScriptedTurns(page: Page, prompt: string, turns = 1): Promise<void> {
+  const composer = page.getByRole('textbox', { name: 'Message input' })
+  await expect(composer).toBeVisible({ timeout: 15_000 })
+  for (let n = 0; n < turns; n++) {
+    await composer.click()
+    await composer.pressSequentially(`${prompt} (${n + 1})`, { delay: 3 })
+    const send = page.getByRole('button', { name: 'Send message', exact: true })
+    await expect(
+      send,
+      'the composer refused the draft — send stayed aria-disabled, so no turn was ever started',
+    ).not.toHaveAttribute('aria-disabled', 'true')
+    await send.click()
+    // The turn must END before the next one is typed, or the composer is mid-stream and the
+    // second prompt lands in a disabled box. Two independent readings, same as chat.spec.ts.
+    await expect(
+      page.getByRole('button', { name: 'Stop', exact: true }),
+      `turn ${n + 1} never finished streaming — the composer is still showing Stop`,
+    ).toHaveCount(0, { timeout: 90_000 })
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible({ timeout: 30_000 })
+  }
+  await expect(
+    page.getByRole('button', { name: 'Regenerate', exact: true }),
+    'the newest assistant turn has no action row — the transcript still considers the turn in flight',
+  ).toBeVisible({ timeout: 30_000 })
+  await settleEntranceAnimations(page)
+}
+
+/** The Session Map's one named control (§A.8) — reachable directly or from the header's
+ *  overflow `…` menu, which is the only two places `ui/HeaderActions` can put a control.
+ *
+ *  Resolved through a helper rather than a bare `getByRole` because "reachable" is the clause
+ *  SSM-10 asserts at a mobile viewport, and at 390px the header cluster sheds controls into the
+ *  menu. A test that only looked in the row would report "mobile lost its session nav" for a
+ *  control that is one tap away — and one that only looked in the menu would miss it on desktop.
+ *  Returns the located control, or `null` when it is genuinely in neither place. */
+export async function openHeaderOverflowIfNeeded(page: Page, name: string): Promise<boolean> {
+  const direct = page.getByRole('button', { name, exact: true })
+  if (await direct.count()) return true
+  // `ui/HeaderActions` names its overflow trigger "More actions" and renders each shed control
+  // as a `ui/Popover` `MenuRow` — a plain <button>, so the same locator finds it either way.
+  const more = page.getByRole('button', { name: 'More actions', exact: true }).first()
+  if (!(await more.count())) return false
+  await more.click()
+  await direct.first().waitFor({ state: 'visible', timeout: 4_000 }).catch(() => { /* reported by the caller's assertion */ })
+  return (await direct.count()) > 0
+}

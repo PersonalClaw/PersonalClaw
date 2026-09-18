@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { SessionMark } from './sessionMap'
+import { SESSION_MAP_MIN_MARKS } from './sessionMap'
 import { Popover } from '../../ui/Popover'
 import { SessionMapCard, sessionMapCardContent, sessionMapMarkName } from './SessionMapCard'
 import { currentMarkRange, useVisibleTurns } from './sessionMapRegion'
@@ -46,7 +47,7 @@ import { physics } from '../../design/motion'
  *  The rail is ONE tab stop with a roving `tabIndex` (§A.6). The slot starts on the current region
  *  and the arrow keys move it; `Home`/`End` go to the ends and `PageUp`/`PageDown` step by
  *  `PAGE_STEP`. `Enter`/`Space` call `onJumpTo(mark.visibleIndex)` — `ChatPage`'s existing
- *  `jumpToTurn` (`ChatPage.tsx:2219`), verbatim reuse, no new scroll machinery.
+ *  `jumpToTurn`, verbatim reuse, no new scroll machinery.
  *
  *  🔑 REVEAL: A CURSOR KEY OPENS THE CARD, PASSIVE FOCUS DOES NOT. A sighted keyboard user
  *  arrowing down a rail of 4px ticks with no card is navigating blind — the card is the answer to
@@ -120,20 +121,22 @@ const HALO_SCALE = 3
 export interface SessionMapRailProps {
   /** The ordered marks from `sessionMapMarks` (SSM-1). The rail renders one tick per mark. */
   marks: SessionMark[]
-  /** `ChatPage`'s live turn-node registry (`ChatPage.tsx:600`), keyed by the same `visibleIndex`
-   *  a mark carries. Read only to observe which turns are on screen (SSM-5). */
+  /** `ChatPage`'s live `turnNodes` registry, keyed by the same coordinate a mark carries —
+   *  the page keys it through `markCoordOf`, which is `sessionMap.ts`'s exported rule precisely
+   *  so the two cannot drift. Read only to observe which turns are on screen (SSM-5). */
   turnNodes: ReadonlyMap<number, Element>
-  /** The transcript scroll container (`ChatPage.tsx:575`) — the observer root (SSM-5). */
+  /** The transcript scroll container (`ChatPage`'s `scrollRef`) — the observer root (SSM-5). */
   scrollRef: { current: Element | null }
-  /** `ChatPage`'s `jumpToTurn` (`ChatPage.tsx:2219`). The rail hands it a mark's `visibleIndex`
-   *  and owns no scroll machinery of its own (SSM-7). */
+  /** `ChatPage`'s `jumpToTurn`. The rail hands it a mark's `visibleIndex` and owns no scroll
+   *  machinery of its own (SSM-7). */
   onJumpTo: (visibleIndex: number) => void
 }
 
 export function SessionMapRail(props: SessionMapRailProps) {
   // Self-suppression (§A.1): a map of fewer than two marks indexes nothing worth a rail. Guarded
-  // out here rather than inside the body so the early return sits before any hook.
-  if (props.marks.length < 2) return null
+  // out here rather than inside the body so the early return sits before any hook. The threshold
+  // lives on the contract (`sessionMap.ts`) because SSM-10's drawer applies the same one.
+  if (props.marks.length < SESSION_MAP_MIN_MARKS) return null
   return <SessionMapRailBody {...props} />
 }
 

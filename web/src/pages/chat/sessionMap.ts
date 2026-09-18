@@ -10,7 +10,7 @@
  *  `SubagentCard[]` (the parallel `subagent_spawn/tool/done` stream).
  */
 import type { ChatTurn, Segment, SubagentCard } from './chatTypes'
-import { turnText } from './chatTypes'
+import { turnText, markCoordOf } from './chatTypes'
 import { previewText } from '../../lib/previewText'
 
 /** The CLOSED mark vocabulary (§A.2). A mark is EITHER a turn (`user` / `assistant`) or a
@@ -50,6 +50,12 @@ export interface SessionMark {
 }
 
 const PREVIEW_CAP = 140
+
+/** SELF-SUPPRESSION THRESHOLD (§A.1) — a map of fewer than two marks indexes nothing worth
+ *  navigating, so the map does not render at all. Defined here, with the contract, because BOTH
+ *  forms apply it: the rail (SSM-4) renders nothing, and the coarse-pointer drawer (SSM-10)
+ *  explains itself instead of showing a blank panel. Two forms, one threshold, one definition. */
+export const SESSION_MAP_MIN_MARKS = 2
 
 /** Compact one-line preview for a tool / approval mark: the STABLE tool name plus its
  *  refined one-liner (the command / file+range, else the raw input), markdown-stripped. */
@@ -94,7 +100,7 @@ export function sessionMapMarks(turns: ChatTurn[], subagents: SubagentCard[] = [
   const push = (m: Omit<SessionMark, 'markIndex'>) => { marks.push({ markIndex: marks.length, ...m }) }
 
   turns.forEach((turn, i) => {
-    const visibleIndex = turn.visibleIndex ?? i
+    const visibleIndex = markCoordOf(turn, i)
     const ts = turn.ts ?? ''
     push({ kind: turn.role, role: turn.role, visibleIndex, ts, preview: previewText(turnText(turn), PREVIEW_CAP) })
     for (const seg of turn.segments) {
@@ -105,7 +111,7 @@ export function sessionMapMarks(turns: ChatTurn[], subagents: SubagentCard[] = [
 
   if (subagents.length) {
     const last = turns[turns.length - 1]
-    const visibleIndex = last?.visibleIndex ?? (turns.length ? turns.length - 1 : 0)
+    const visibleIndex = last ? markCoordOf(last, turns.length - 1) : 0
     const ts = last?.ts ?? ''
     for (const s of subagents) {
       push({ kind: 'subagent', role: 'assistant', visibleIndex, ts, preview: previewText(s.task || s.agent || 'subagent', PREVIEW_CAP) })
