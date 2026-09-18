@@ -28,6 +28,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
@@ -654,7 +655,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 ops,
                 supervisor=_supervisor(),
                 expect_version=int(expect) if isinstance(expect, (int, float)) else None,
-                confirm_cascade=bool(args.get("confirm_cascade")),
+                confirm_cascade=confirm_granted(args, "confirm_cascade"),
             )
         )
 

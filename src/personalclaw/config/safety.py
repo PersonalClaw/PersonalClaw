@@ -35,8 +35,9 @@ class EgressConfig:
         default_factory=list,
         metadata=_meta(
             "Allowed Egress Hosts",
-            "Hosts (bare domain covers subdomains) permitted to be reached even if "
-            "they resolve to a private/LAN address. For homelab webhooks/services on "
+            "Hosts (bare domain covers subdomains, no wildcards) permitted to be "
+            "reached even if they resolve to a private/LAN address. For homelab "
+            "webhooks/services on "
             "your own network. Applies to all egress surfaces. On the EXCLUSIVE "
             "surfaces this list is the only reach there is, not a waiver on top of "
             "the public internet: automated fetches (the net-fetch action) and "
@@ -48,8 +49,10 @@ class EgressConfig:
         default_factory=list,
         metadata=_meta(
             "Denied Egress Hosts",
-            "Hosts (bare domain covers subdomains) the agent must never reach, even "
-            "if public. A deny always overrides an allow.",
+            "Hosts (bare domain covers subdomains, no wildcards) the agent must never "
+            "reach, even if public. A deny always overrides an allow. A `*` entry is "
+            "refused: it would match nothing, so it would read as a block and block "
+            "nothing.",
         ),
     )
     allow_private: bool = field(

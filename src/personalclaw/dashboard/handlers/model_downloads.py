@@ -18,6 +18,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ async def api_model_download_cleanup(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not (isinstance(body, dict) and body.get("confirm") is True):
+    if not confirm_granted(body):
         return web.json_response({"error": "confirm:true required"}, status=400)
 
     from personalclaw.local_models import layouts

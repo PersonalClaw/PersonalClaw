@@ -543,6 +543,66 @@ async def test_malformed_request_is_refused_not_ignored(query, code):
     assert "events" not in body, "a refused request must not also return data"
 
 
+# ── The reserved auth param is not a filter (issue 2927) ─────────────────────
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["token=TOK", "token=TOK&outcome=denied&limit=5", "outcome=denied&token=TOK"],
+)
+@pytest.mark.asyncio
+async def test_the_query_token_auth_param_is_not_an_unknown_filter(query):
+    """`?token=` is the gateway's query-token credential. The auth middleware reads it and
+    deliberately does NOT strip it, so it reaches every handler — and this was the one route
+    that diffed the WHOLE query string against a filter allowlist. The result was a catch-22
+    no client could get out of: without the token, auth answered 403; with it, this handler
+    answered 400 `unknown_filter`. There was no way for a query-token client to read the audit
+    trail at all, including a deep-link to the audit URL with the startup token before the
+    cookie is set.
+    """
+    _write(3, outcome="denied")
+    async with _client() as client:
+        status, body = await _get(client, f"/api/security/audit?{query}")
+    assert status == 200, body
+    assert "events" in body
+
+
+@pytest.mark.asyncio
+async def test_the_token_param_never_reaches_the_sel_query_as_a_filter():
+    """Subtracted, NOT added to the filter allowlist. `token` is a credential, and a credential
+    that leaked into the SEL query would be matched against a record field — which is both a
+    silently-empty page and a credential in a query path."""
+    from personalclaw.dashboard.handlers import security_audit as H
+    from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
+
+    assert "token" in RESERVED_QUERY_PARAMS
+    assert "token" not in H._QUERY_PARAMS
+    assert "token" not in H._FILTER_PARAMS
+
+    _write(4, outcome="denied")
+    async with _client() as client:
+        _, with_token = await _get(client, "/api/security/audit?token=TOK&outcome=denied")
+        _, without = await _get(client, "/api/security/audit?outcome=denied")
+    assert with_token["count"] == without["count"] == 4, (with_token, without)
+
+
+@pytest.mark.asyncio
+async def test_a_typod_filter_is_still_refused_alongside_the_token():
+    """The fail-closed check must survive the exemption — subtracting one reserved credential
+    must not become "ignore anything unrecognised", which is the behaviour the check exists to
+    prevent."""
+    _write(3)
+    async with _client() as client:
+        status, body = await _get(client, "/api/security/audit?token=TOK&caler=cron")
+    assert status == 400, body
+    assert body["error"]["code"] == "unknown_filter"
+    assert "caler" in body["error"]["message"]
+    assert "token" not in body["error"]["message"], (
+        "the refusal must not name the credential — it is not the caller's mistake, and echoing "
+        "the param name next to a value is how a token ends up in a log"
+    )
+
+
 # ── Isolation ────────────────────────────────────────────────────────────────
 
 

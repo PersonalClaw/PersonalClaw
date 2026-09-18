@@ -39,6 +39,17 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+#: A `security.egress` host entry the matcher can actually match: DNS labels, or an IPv4
+#: literal (the documented homelab-webhook case — `net.guard` compares `urlparse().hostname`,
+#: so a literal address is a legitimate entry). Applied AFTER lowercase/strip/trailing-dot
+#: normalisation. Underscores are allowed inside a label because internal/homelab names use
+#: them. An IPv6 literal cannot appear here and never could: `":" in h` rejects it at the
+#: write boundary, and `hostname` yields the un-bracketed `::1`, which no bare-domain rule
+#: matches — so this closes no door that was ever open. See issue 2956.
+_EGRESS_HOST_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?)*$"
+)
+
 __all__ = ["ConfigValueError", "coerce_edit_value"]
 
 
@@ -162,12 +173,48 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
                 raise ConfigValueError(f"{key} must have at most 100 items", f"{path_key}.{key}")
             # A host entry is a bare domain/hostname — reject anything with a scheme,
             # path, or whitespace (a URL in the allow-list would be a footgun).
+            #
+            # It must ALSO be an entry the matcher can actually match (issue 2956). The
+            # negative checks below let `*`, `*.example.com`, `""` and `"."` through with
+            # 200 OK, and `net.guard.host_matches` implements exactly one rule — "a bare
+            # domain covers its subdomains" — plus `if not p: continue`. So every one of
+            # those entries was INERT: `deny_hosts: ["*.example.com"]` blocked nothing
+            # (the bare form blocks both `example.com` and `api.example.com`), and
+            # `allow_hosts: ["*"]` on an EXCLUSIVE tier refused everything while the
+            # refusal counted the dead entry as `1 host(s) allowed`. This module's own
+            # docstring names that failure: a write silently doing something other than
+            # what was asked is worse than a refusal, because nothing will ever look wrong.
+            #
+            # Refused, NOT normalised. `*.example.com` -> `example.com` would be a silent
+            # WIDENING on an allow-list (the bare rule also matches `example.com` itself,
+            # which a glob does not), and supporting the glob in the matcher would mint a
+            # second spelling for a policy that already has one — differing in precisely
+            # the apex-domain case a user cares about. One dialect, and a refusal that
+            # names the form that works.
+            checked: list[str] = []
             for h in hosts:
                 if "/" in h or ":" in h or " " in h or len(h) > 253:
                     raise ConfigValueError(
                         f"invalid host {h!r} (bare domain/hostname only)", f"{path_key}.{key}"
                     )
-            clean[key] = hosts
+                # Normalise to what the matcher compares against, so the value the UI
+                # echoes and `config.json` stores IS the value enforced.
+                norm = h.strip().lower().rstrip(".")
+                if "*" in h:
+                    raise ConfigValueError(
+                        f"invalid host {h!r}: wildcards are not matched — a bare domain "
+                        f"already covers its subdomains, so write "
+                        f"{(norm.lstrip('*.') or 'example.com')!r}",
+                        f"{path_key}.{key}",
+                    )
+                if not _EGRESS_HOST_RE.match(norm):
+                    raise ConfigValueError(
+                        f"invalid host {h!r}: no host can ever match it "
+                        f"(bare domain, hostname or IPv4 literal only)",
+                        f"{path_key}.{key}",
+                    )
+                checked.append(norm)
+            clean[key] = checked
         ap = value.get("allow_private", False)
         if not isinstance(ap, bool):
             raise ConfigValueError("allow_private must be a boolean", f"{path_key}.allow_private")

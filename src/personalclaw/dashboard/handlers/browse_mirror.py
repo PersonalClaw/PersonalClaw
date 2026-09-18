@@ -17,6 +17,7 @@ from aiohttp import web
 
 from personalclaw.browse.mirror import broadcast_kill
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 
 
 async def api_browse_status(request: web.Request) -> web.Response:
@@ -70,7 +71,7 @@ async def api_browse_kill_release(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    if not (isinstance(body, dict) and body.get("confirm") is True):
+    if not confirm_granted(body):
         return json_error(
             "confirmation_required", message='release requires {"confirm": true}', status=400
         )

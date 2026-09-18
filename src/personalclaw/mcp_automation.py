@@ -23,6 +23,8 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.safety_flags import confirm_granted
+
 logger = logging.getLogger(__name__)
 
 
@@ -370,13 +372,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         result = T.history(store, trigger_id=str(args.get("id") or ""), n=int(args.get("n") or 10))
     elif name == "automation_delete":
         result = T.delete(
-            store, trigger_id=str(args.get("id") or ""), confirm=bool(args.get("confirm"))
+            store, trigger_id=str(args.get("id") or ""), confirm=confirm_granted(args)
         )
     elif name == "automation_delete_all":
         # `created_by` is NOT taken from the args. The scope is the caller's identity, and an agent
         # able to pass `created_by="user"` could mass-delete the automations the human built — which
         # is precisely the access control the retired `schedule_remove_all` enforced.
-        result = T.delete_all(store, created_by="agent", confirm=bool(args.get("confirm")))
+        result = T.delete_all(store, created_by="agent", confirm=confirm_granted(args))
     else:
         return f"Error: unknown automation tool {name!r}."
 

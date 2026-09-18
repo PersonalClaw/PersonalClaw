@@ -35,6 +35,7 @@ from personalclaw.config.credential_migration import (
     verify_credential_migration,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.safety_flags import confirm_granted
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def _confirmed(request: web.Request) -> bool:
         body = await request.json()
     except Exception:
         return False
-    return isinstance(body, dict) and body.get("confirm") is True
+    return confirm_granted(body)
 
 
 def _payload() -> dict:
