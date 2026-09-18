@@ -1035,6 +1035,34 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         )
         state = TriggerState.ACTIVE.value
 
+    # 🔴 `delivery` IS A VOCABULARY, and `or "none"` was hiding that (#450). The old read was
+    # `str(data.get("delivery", "none") or "none")`, which mapped a falsy `""` onto `"none"` — the
+    # SILENT value. Both handler write paths minted `""` for "not silent, no channel", so a user who
+    # turned Silent OFF got a row that loaded back as silent, and `PUT {"silent": false}` re-minted
+    # the same `""`: a switch you could turn on and never off. The coercion is what made a bad write
+    # an invisible one, so it is gone, and the value is now VALIDATED instead — `"emial"` used to
+    # parse through with zero issues and reach `deliver`, which mutes only `"none"`, so a typo
+    # stored a route nothing honoured and nothing reported.
+    #
+    # Absent / `None` / a non-string still take the declared default, exactly as `failure_delivery`
+    # distinguishes them (WF2AUT-15): those mean "nothing was said", where `""` means a writer said
+    # blank. An unreadable value falls back to `"inbox"` and NOT to the dataclass default, because
+    # the default is silence and `delivery.is_muted` states the rule this obeys — "an empty
+    # destination is NOT muted … defaulting that to silence would let a bug turn into missing
+    # alerts". A route we cannot read is a bug; it must not quietly become a mute.
+    from personalclaw.triggers.delivery import is_valid_route
+
+    delivery = data["delivery"] if isinstance(data.get("delivery"), str) else Trigger.delivery
+    if not is_valid_route(delivery):
+        issues.append(
+            Issue(
+                path="delivery",
+                message=f"unknown delivery route {delivery!r}",
+                closest=_closest(delivery, ("", "inbox", "none")),
+            )
+        )
+        delivery = "inbox"
+
     fatal = any(i.severity == "error" for i in issues)
     trigger = Trigger(
         id=str(data.get("id", "") or ""),
@@ -1068,7 +1096,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         overlap=overlap,
         session=str(data.get("session", "fresh") or "fresh"),
         model_tier=str(data.get("model_tier", "background") or "background"),
-        delivery=str(data.get("delivery", "none") or "none"),
+        delivery=delivery,
         # 🔴 AN EXPLICIT `""` SURVIVES (WF2AUT-15), unlike its `delivery`/`session` neighbours.
         # `delivery.route_for` documents a third state — *"falls back to `delivery` when
         # `failure_delivery` is empty"* — and the old `or "inbox"` made that branch UNREACHABLE for
