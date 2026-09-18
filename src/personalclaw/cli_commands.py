@@ -544,6 +544,9 @@ def _security(args: argparse.Namespace) -> None:
             print(f"  {ts}  [{src}] {etype}: {op} → {outcome}  (caller: {caller})")
             if e.get("error"):
                 print(f"    error: {e['error'][:120]}")
+            reason = (e.get("metadata") or {}).get("reason")
+            if reason:
+                print(f"    reason: {str(reason)[:120]}")
             if e.get("downstream_service"):
                 print(f"    downstream: {e['downstream_service']}")
     elif action == "verify":

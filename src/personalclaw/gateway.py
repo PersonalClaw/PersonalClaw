@@ -550,7 +550,11 @@ class GatewayOrchestrator:
                 # fall back to the heuristic -- if the explicit resolver
                 # can't find the parent, guessing would widen trust scope.
 
-                def _sel_log(**kw: str) -> None:
+                def _sel_log(**kw: Any) -> None:
+                    # `Any`, not `str`: every call site here only ever passes the string
+                    # fields, but `log_api_access` also accepts a `metadata: dict | None`
+                    # keyword (#2948) and mypy checks a `**kwargs` forward against every
+                    # parameter of the callee, not just the ones actually supplied.
                     try:
                         from personalclaw.sel import sel
 
