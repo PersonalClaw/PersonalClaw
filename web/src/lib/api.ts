@@ -3950,6 +3950,10 @@ export interface PendingApproval {
   id: string; source: string; tool: string
   tool_input?: unknown; tool_purpose?: string
   session: string; ts: number
+  // The backend's command-screening verdict (`task_modes.read_only_command`), #2821.
+  // `null` when this call runs no shell — the tri-state matters, so decode it with
+  // `readOnlyCommandOf` rather than testing truthiness.
+  is_read_only?: boolean | null
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has (MC-5 §C3).

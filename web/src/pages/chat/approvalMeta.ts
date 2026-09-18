@@ -38,16 +38,28 @@
  *  writes/network/shell positively and can still leave everything unknown
  *  (→ `undefined`).
  *
- *  ── Why `readOnlyCommand` has no caller yet ──────────────────────────────────
- *  C2 names "command-screening classification" as a third input. That classification
- *  exists — `is_read_only_bash()` (`src/personalclaw/task_modes.py:88`) is run per
- *  approval at `src/personalclaw/dashboard/chat_runner.py:2593` and stored as
- *  `perm_meta["is_read_only"]` — but it is NOT on the `approval` WS payload and is
- *  read by nothing, backend or frontend. So the parameter is declared here with the
- *  exact shape that classification produces and NO caller supplies it today; wiring
- *  the pass-through is OU-8/OU-9's scope. It is not re-implemented client-side: this
- *  module never inspects a command string, because deciding whether a command is
- *  read-only IS security logic and it already has an owner.
+ *  ── Where `readOnlyCommand` comes from (#2821) ───────────────────────────────
+ *  C2 names "command-screening classification" as a third input, and for a while it
+ *  had no supplier: `is_read_only_bash()` ran per approval and was stored in
+ *  `perm_meta["is_read_only"]`, but reached no wire and no reader, so the
+ *  `readOnlyCommand === true` branch below was unreachable in production.
+ *
+ *  It is now supplied by `task_modes.read_only_command()` — ONE backend owner, so the
+ *  two surfaces that ask a human for permission cannot answer differently — and
+ *  arrives on all three paths: the chat `approval` WS event, `GET /api/approvals`, and
+ *  the persisted `perm_meta` a reloaded transcript rehydrates.
+ *
+ *  Two wire spellings exist and `readOnlyCommandOf` is the ONE decoder for both. The
+ *  live paths carry a real JSON boolean (or `null`). The history path carries the
+ *  legacy `"1"`/`""` strings, because that value is already written into every session
+ *  transcript's `cls` column and old transcripts must keep rehydrating. Note `""` is
+ *  falsy but not `=== false`, so passing it through raw would land in the "unknown"
+ *  branch and silently lose the negative verdict — which is exactly the bug shape this
+ *  decoder exists to prevent.
+ *
+ *  It is still not re-implemented client-side: this module never inspects a command
+ *  string, because deciding whether a command is read-only IS security logic and it
+ *  already has an owner.
  */
 
 import type { ApprovalSegment } from './chatTypes'
@@ -72,9 +84,29 @@ export interface BlastRadiusInput {
   /** The EFFECTIVE per-invocation risk the backend already resolved. ABSENT on the
    *  approvals-queue/companion path — see the module header. */
   risk?: ApprovalRisk
-  /** The existing command-screening verdict (`is_read_only_bash`) when a caller has
-   *  it. No caller supplies it yet — see the module header. */
+  /** The backend's command-screening verdict (`task_modes.read_only_command`), when
+   *  this call is a shell call. Absent when it is not one — see the module header.
+   *  Decode a raw wire value with `readOnlyCommandOf`, never by casting. */
   readOnlyCommand?: boolean
+}
+
+/** The ONE decoder for the wire's command-screening verdict. Tri-state in, tri-state out.
+ *
+ *  `true`/`"1"` → screened, read-only · `false`/`""` → screened, NOT read-only ·
+ *  anything else (`null`, `undefined`, an unknown string) → not screened.
+ *
+ *  Every parse site funnels through here so the two wire spellings cannot produce two
+ *  different answers. The `""` case is the one worth naming: it is falsy but not
+ *  `=== false`, so a raw pass-through would read as "unknown" and quietly drop a
+ *  negative verdict, turning a mutating command back into an unscreened one.
+ *
+ *  Unknown values collapse to `undefined` rather than `false`: absence must never
+ *  become a positive claim in either direction, which is the honesty contract the whole
+ *  module is built on. */
+export function readOnlyCommandOf(raw: unknown): boolean | undefined {
+  if (raw === true || raw === '1') return true
+  if (raw === false || raw === '') return false
+  return undefined
 }
 
 /** Does a risk level positively establish that the call is a read?

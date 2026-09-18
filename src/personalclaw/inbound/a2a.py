@@ -434,12 +434,32 @@ def _skill_of(name: str, definition: dict[str, Any], metadata: dict[str, Any]) -
     }
 
 
-def _card_base_url() -> str:
-    """The URL this card advertises. The operator's declared ``public_url`` or loopback.
+def _card_base_url() -> tuple[str, str]:
+    """``(url, problem)`` — the URL this card advertises, or why it cannot be stated.
 
     Never derived from the request's ``Host`` header: a card is a document other agents
     persist, and letting a caller's own header decide what URL it records is how a
     forwarded request mints a card pointing somewhere the operator never declared.
+
+    Two sources, in this order, and **no guess** (#2620):
+
+    1. the operator's declared ``external_access.public_url``. Behind a tunnel this is
+       the only address a peer can actually reach, so it outranks the local socket.
+    2. the port this gateway ACTUALLY bound, through ``gateway_base`` — the single owner
+       #2539 established. Not a fourth way to learn the port.
+
+    then refuse. This used to fall back to a hard-coded ``127.0.0.1:10000``, which with
+    the default (empty) ``public_url`` was the DEFAULT path: a gateway bound anywhere
+    else published a card naming whatever occupied 10000, i.e. on a multi-instance host a
+    DIFFERENT instance with its own home, config and state. A peer that honours the card
+    then sends this instance's work somewhere else. That is #2539's cross-instance
+    misdirection arriving through a published document instead of a child process — worse
+    in one respect, because a card is handed to a third party, so the wrong address
+    propagates off this machine.
+
+    Refusing is the fail-closed reading of ARCC SAX-04 Outcome 5, which names *"failing
+    open for security-critical operations"* as a pitfall: advertising a guessed address to
+    a peer is failing open. A card that cannot state a true address is not published.
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -447,15 +467,34 @@ def _card_base_url() -> str:
         declared = str(AppConfig.load().external_access.public_url or "").strip()
     except Exception:  # noqa: BLE001
         declared = ""
-    return f"{declared.rstrip('/')}/a2a" if declared else "http://127.0.0.1:10000/a2a"
+    if declared:
+        return f"{declared.rstrip('/')}/a2a", ""
+
+    from personalclaw import gateway_base
+
+    try:
+        port = gateway_base.resolve_port()
+    except Exception:  # noqa: BLE001 — any resolution failure is the same refusal
+        logger.warning("a2a: cannot resolve this instance's address for the card", exc_info=True)
+        return "", (
+            "this instance cannot state the address a peer should use, so no agent card "
+            "is published. Declare external_access.public_url (the address peers reach "
+            "this instance on), or start the gateway so it publishes its bound port."
+        )
+    return f"http://127.0.0.1:{port}/a2a", ""
 
 
-def build_card(skills: list[dict[str, Any]]) -> dict[str, Any]:
+def build_card(skills: list[dict[str, Any]], *, base_url: str) -> dict[str, Any]:
     """The agent card around ``skills``. Every :data:`CARD_REQUIRED_KEYS` entry present.
 
     Kept separate from the handler so the shape is testable without a request, and so an
     empty card is provably the SAME document with a shorter ``skills`` list rather than a
     different, degraded one.
+
+    *base_url* is passed in rather than resolved here (#2620): resolving it can FAIL, and
+    a failure has to become a 503 from the handler. A builder that resolved its own
+    address would have to either raise from inside a document constructor or invent a
+    placeholder — and a placeholder address on a card is the whole defect.
     """
     from personalclaw import __version__
 
@@ -467,7 +506,7 @@ def build_card(skills: list[dict[str, Any]]) -> dict[str, Any]:
             "explicitly published; nothing else on this instance is reachable here."
         ),
         "version": str(__version__),
-        "url": _card_base_url(),
+        "url": base_url,
         "preferredTransport": "HTTP+JSON",
         "capabilities": {
             "streaming": True,
@@ -498,7 +537,18 @@ async def handle_agent_card(request: web.Request) -> web.Response:
             refused=problem,
             client_id=client_id,
         )
-    card = build_card(skills)
+    # #2620: a card whose `url` cannot be stated truthfully is not published. Checked
+    # after the catalog so the two refusals stay distinguishable to an operator reading
+    # a log — they need different fixes.
+    base_url, url_problem = _card_base_url()
+    if url_problem:
+        return _refuse(
+            json_error("a2a_origin_unresolved", message=url_problem, status=503, headers=_NO_STORE),
+            route=ROUTE_CARD,
+            refused=url_problem,
+            client_id=client_id,
+        )
+    card = build_card(skills, base_url=base_url)
     body = json.dumps(card)
     audit(
         SURFACE,

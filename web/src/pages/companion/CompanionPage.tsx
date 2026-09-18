@@ -7,6 +7,7 @@ import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps 
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
+import { deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -355,15 +356,33 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
   )
 }
 
-/** Where the request came from and how long it has been waiting — the context that turns a
- *  tool name into a decision. `session` is empty for gateway-originated approvals (a cron
- *  fire, a channel message, a subagent), so the row is omitted rather than shown blank. */
+/** Where the request came from, how long it has been waiting, and what the call can touch
+ *  — the context that turns a tool name into a decision. `session` is empty for
+ *  gateway-originated approvals (a cron fire, a channel message, a subagent), so the row
+ *  is omitted rather than shown blank.
+ *
+ *  The blast-radius facets come from `deriveBlastRadius` — the SAME derivation and the
+ *  same words the chat card uses (#2821). The two surfaces that ask a human for
+ *  permission share `ui/ApprovalPrompt` precisely so they cannot drift, and a facet shown
+ *  on one and missing on the other was that drift. Rendered here only because the backend
+ *  now supplies the screening verdict on this path too; before that, this surface had
+ *  strictly less to say and inventing it client-side would have meant a second classifier.
+ *
+ *  Facets render as their own row rather than as chips: this list is `roomy` density on a
+ *  phone, where a dl row reads better than a wrapped chip strip. The words are shared; the
+ *  presentation is per-surface, exactly as the toast already does it. */
 function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   const rows: [string, string][] = []
   if (ap.session) rows.push(['Session', ap.session])
   if (ap.source) rows.push(['Requested by', ap.source])
   const waited = waitedFor(ap.ts)
   if (waited) rows.push(['Waiting', waited])
+  // `establishedFacets` returns ONLY what is positively established, so an empty list
+  // means "nothing could be established" and must not render as a reassurance.
+  const facets = establishedFacets(
+    deriveBlastRadius({ tool: ap.tool, readOnlyCommand: readOnlyCommandOf(ap.is_read_only) }),
+  )
+  if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])
   if (!rows.length) return null
   return (
     <dl className="mt-s flex flex-col gap-xs">
