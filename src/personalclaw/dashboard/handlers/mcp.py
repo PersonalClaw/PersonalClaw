@@ -13,6 +13,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -987,8 +988,20 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             outcome="completed" if removed else "not_found",
             resources=name,
         )
-        status = 200 if removed else 404
-        return web.json_response({"ok": removed, "name": name, "removed": removed}, status=status)
+        if removed:
+            return web.json_response({"ok": True, "name": name, "removed": True}, status=200)
+        # The 404 body must carry an `error` key like every other refusal on this handler
+        # (the 409 branch above already does) — otherwise the frontend funnel has nothing
+        # to show and the toast reads the bare "HTTP 404" (#2942). `ok`/`name`/`removed`
+        # stay at the top level so an existing reader of those keys is unaffected.
+        return json_error(
+            "not_found",
+            message=f"No MCP server named '{name}' was found to remove.",
+            status=404,
+            ok=False,
+            name=name,
+            removed=False,
+        )
 
     # PUT — register or update
     try:
