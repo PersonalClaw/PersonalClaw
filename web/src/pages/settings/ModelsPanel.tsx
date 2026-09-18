@@ -23,6 +23,7 @@ import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
+import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { DisclosureCard } from '../../ui/DisclosureCard'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -641,12 +642,12 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
 
       {useCase === 'embedding' && reindex && (
         <div data-type="caption" className="rounded-md px-3 py-2"
-          style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
+          style={{ background: reindex.status === 'error' ? ERROR_SURFACE_PAINT.background : 'var(--color-surface-high)' }}>
           {/* "Re-index not started" is only true when the POST itself failed — that path sets
               `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
               speaks for itself rather than carrying a prefix that contradicts it. */}
           {reindex.status === 'error' ? (
-            <span style={{ color: 'var(--color-danger)' }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
+            <span style={{ color: ERROR_SURFACE_PAINT.color }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
           ) : reindex.status === 'done' ? (
             <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
           ) : (

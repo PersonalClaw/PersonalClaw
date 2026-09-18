@@ -4,6 +4,7 @@ import { api, type BrowseStatus, type BrowseExpiredSite, type BrowseStepFrame } 
 import { useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { useVisiblePoll } from '../../../lib/useVisiblePoll'
 import { reportingWrite } from '../../../app/reportingWrite'
+import { ERROR_SURFACE_PAINT } from '../../../design/errorTreatments'
 import { Button } from '../../../ui/Button'
 import { StatusPill } from '../../../ui/StatusPill'
 import { SlotEmptyState, WidgetRow } from './kit'
@@ -157,7 +158,7 @@ export function BrowseMirror() {
           key={e.site}
           role="alert"
           className="flex items-start gap-s rounded-lg px-m py-s"
-          style={{ background: 'var(--color-error-container)', color: 'var(--color-on-error-container)' }}
+          style={ERROR_SURFACE_PAINT}
         >
           <ShieldAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
           <p data-type="body-m" className="min-w-0 flex-1">
