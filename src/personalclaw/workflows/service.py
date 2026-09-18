@@ -1119,11 +1119,30 @@ def preview_edit(run_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
-    """Record a STICKY cancel intent.
+    """Record a STICKY cancel intent — and, for a PRELAUNCH run, finalize it here.
 
-    Written to disk rather than applied in memory, so a cancel issued while the gateway is
-    down is still honoured on restart. The controller (or the watchdog) writes the terminal
-    status — a handler must never do it (WF2-R10).
+    The intent is written to disk rather than applied in memory, so a cancel issued while
+    the gateway is down is still honoured on restart. For a run that has LAUNCHED, the
+    controller (or the watchdog) writes the terminal status — a handler must never do it
+    (WF2-R10).
+
+    🔴 A PRELAUNCH run is the exception, and it has to be, because nothing else would ever
+    write its terminal status. It has no controller to see the intent, and the watchdog's
+    ``_honor_cancel`` only sees ``store.active_runs()`` — RUNNING / PAUSED / NEEDS_INPUT,
+    never DRAFT. So this returned ``200 {"cancel_requested": true}``, the status stayed
+    ``draft`` forever, and ``DELETE /api/workflows/runs/{run_id}`` then refused with
+    ``WF_RUN_NOT_TERMINAL`` naming *this* call as the remedy: an acknowledged write that
+    was never performed, and
+    a 409 pointing at a dead end. Every draft run ever created was permanently
+    undeletable, so the leak accumulated.
+
+    Writing the terminal status here does NOT weaken WF2-R10; it is the same reasoning
+    ``overlap.drain`` already relies on when it FAILs an unlaunchable queued run —
+    *"writing a terminal status outside a tick loop is safe for exactly the reason the
+    watchdog's orphan reaper is safe — a DRAFT run has no controller"*. The cancel intent
+    is written FIRST and cleared only after the terminal save, so a crash between the two
+    leaves the sticky intent on disk rather than a half-cancelled row. A queued start
+    drops out of ``overlap.queued_runs`` on its own once the status is no longer DRAFT.
     """
     run = store.get(run_id)
     if run is None:
@@ -1134,6 +1153,13 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     controller = _live(run_id, supervisor)
     if controller is not None:
         controller.request_cancel()
+        return _ok(run_id=run_id, cancel_requested=True)
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        run.status = RunStatus.CANCELLED
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        store.clear_cancel(run_id)
+        return _ok(run_id=run_id, cancel_requested=True, status=run.status.value)
     return _ok(run_id=run_id, cancel_requested=True)
 
 
@@ -1165,9 +1191,17 @@ async def delete_run(
     if run is None:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status not in TERMINAL_RUN_STATUSES:
+        # The remedy has to be one the caller can actually complete. "cancel it before
+        # deleting" is true for a PRELAUNCH run only because `cancel_run` now finalizes
+        # one in-band; for a LAUNCHED run the cancel is an intent its controller applies on
+        # its next step, so the honest instruction is cancel AND wait. Saying only "cancel
+        # it" sent a user round a loop that could not close (a draft's cancel changed
+        # nothing at all, so the same 409 came back forever).
         return _service_failure(
             "WF_RUN_NOT_TERMINAL",
-            f"run is {run.status.value}; cancel it before deleting",
+            f"run is {run.status.value}; cancel it, then delete once it reports a terminal "
+            "status (cancelling a launched run is a request its controller applies on its "
+            "next step, so this can take a moment)",
             status=run.status.value,
         )
     # A controller for a terminal run is finished but may still be registered; dropping it
