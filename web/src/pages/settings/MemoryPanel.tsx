@@ -245,6 +245,39 @@ export function lessonPreview(l: Lesson): string {
   return `${kind} · ${l.standing === 'injected' ? 'in prompts' : 'held below the gate'} · ${pct} confidence`
 }
 
+/** The Studio explorer's TWO filter dimensions, resolved once (issue #520).
+ *
+ *  🔴 The chip counts and the list used to be derived from DIFFERENT inputs: `shown` filtered by the
+ *  search box and the kind chip, `counts` by neither. So typing anything made every chip disagree
+ *  with the list right beside it — and at zero matches the chips still read the whole library
+ *  (`All 238 · Facts 138 · … Lessons 12 · Documents 3` over "No matching memories"), so `Lessons 12`
+ *  invited a click that could only land on an empty pane.
+ *
+ *  One needle filter, read by both. The counts answer "where do my search hits live", which is what
+ *  makes a chip worth clicking, so the SEARCH is in their scope and the KIND deliberately is not —
+ *  a chip that counted its own filter would report its own total on every other chip. Same discipline
+ *  as Inbox's `filterCount`, whose comment states the rule in as many words.
+ *
+ *  Pure and exported so the agreement between the two is a test rather than a comment.
+ */
+export function studioScope(
+  items: StudioItem[],
+  q: string,
+  kindFilter: StudioKind | 'all',
+): { counts: Record<string, number>; shown: StudioItem[] } {
+  const needle = q.trim().toLowerCase()
+  const searched = needle
+    ? items.filter((it) =>
+      it.title.toLowerCase().includes(needle) || it.preview.toLowerCase().includes(needle))
+    : items
+  const counts: Record<string, number> = {
+    all: searched.length, fact: 0, episodic: 0, lesson: 0, doc: 0, entity: 0, slot: 0,
+  }
+  for (const it of searched) counts[it.kind] += 1
+  const shown = kindFilter === 'all' ? searched : searched.filter((it) => it.kind === kindFilter)
+  return { counts, shown }
+}
+
 function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
   const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
   const [q, setQ] = useState('')
@@ -326,11 +359,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // One failed reader is enough: the explorer is ONE list over all six kinds, so a partial
   // load is a list that is quietly missing a kind — which reads exactly like an empty one.
   const loadError = factsErr ?? epiErr ?? lessonsErr ?? entitiesErr ?? slotsErr ?? null
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: items.length, fact: 0, episodic: 0, lesson: 0, doc: 0, entity: 0, slot: 0 }
-    for (const it of items) c[it.kind]++
-    return c
-  }, [items])
+  const { counts, shown } = useMemo(() => studioScope(items, q, kindFilter), [items, q, kindFilter])
 
   // The entity topology, narrowed to the {label,group}/{from,to} shape the canvas renders.
   // `group` carries the Louvain community, so colouring by group IS colouring by community —
@@ -363,11 +392,6 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
     return [{ value: '', label: 'Any provenance' }, ...[...seen].sort().map((p) => ({ value: p, label: p }))]
   }, [entityGraph])
 
-  const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return items.filter((it) => (kindFilter === 'all' || it.kind === kindFilter)
-      && (!needle || it.title.toLowerCase().includes(needle) || it.preview.toLowerCase().includes(needle)))
-  }, [items, kindFilter, q])
 
   const selected = useMemo(() => items.find((it) => it.uid === selUid) ?? null, [items, selUid])
   const focusRef = selected?.ref ?? null

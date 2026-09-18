@@ -311,12 +311,27 @@ async def test_ids_and_timestamps_stay_server_owned_on_both_write_paths(tmp_path
         assert created["id"] != "t-forged"
         assert not created["created_at"].startswith("1999")
 
+        # A `provider` the registry does not recognize is now REFUSED rather than ignored
+        # (#2983). Same reasoning as the `author` rule this file is about: silently dropping
+        # it answered 200 for a write scoped to a provider that does not exist, so the
+        # response described a scope it had not applied. The provenance guarantee is
+        # unchanged and stronger — nothing was written at all.
         r = await client.put(
             f"/api/tasks/{created['id']}",
             json={"id": "t-forged", "created_at": "1999-01-01T00:00:00Z", "provider": "evil"},
         )
+        assert r.status == 400
+        assert _stored(tmp_path, created["id"])["id"] == created["id"]
+
+        # The vacuity floor for the refusal above: an accepted write still cannot forge the
+        # three server-owned fields, which is what this test exists to pin.
+        r = await client.put(
+            f"/api/tasks/{created['id']}",
+            json={"id": "t-forged", "created_at": "1999-01-01T00:00:00Z", "title": "renamed"},
+        )
         assert r.status == 200
         stored = _stored(tmp_path, created["id"])
+        assert stored["title"] == "renamed"
         assert stored["id"] == created["id"]
         assert stored["created_at"] == created["created_at"]
         assert stored["provider"] == "native"

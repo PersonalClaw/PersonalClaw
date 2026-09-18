@@ -71,6 +71,7 @@ from personalclaw.dashboard import session_store as ss
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard import ws as ws_mod
 from personalclaw.dashboard.origin import build_allowed_origins
+from personalclaw.dashboard.state import DashboardState
 
 PORT = 10000
 COOKIE = f"pc_token_{PORT}"
@@ -255,9 +256,12 @@ def _app() -> tuple[web.Application, list[dict[str, str]]]:
         middlewares=[_record, token_auth.token_auth_middleware(port=PORT, local_only=False)]
     )
     app["allowed_origins"] = build_allowed_origins(PORT, False)
-    state = mock.MagicMock()
+    # A REAL DashboardState, because the `sessions` frame these tests read as proof of live
+    # gateway traffic is produced by its own gated send path (issue 2963 moved the on-connect
+    # push off a bare `ws.send_json`). A MagicMock answers that call with a non-awaitable and
+    # the socket goes silent — a test double that quietly deletes the traffic under test.
+    state = DashboardState(sessions=mock.MagicMock(count=0), start_time=0.0)
     state._sessions = {}
-    state.is_yolo_active.return_value = False
     app["state"] = state
     app.router.add_get("/api/ws", ws_mod.api_ws)
     return app, seen

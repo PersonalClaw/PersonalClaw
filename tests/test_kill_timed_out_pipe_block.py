@@ -23,6 +23,16 @@ Two independent things are pinned here:
 The census rail below is likewise bidirectional: the leaf spawns must NOT acquire the
 flag, so a future blanket sweep reds this file. Signalling a group you do not lead takes
 the gateway down with the child, which is worse than signalling one pid.
+
+Beyond those per-file rails there is a TREE-WIDE one —
+:func:`test_every_timed_out_async_spawn_is_reaped_by_the_one_owner`. Its census is
+DERIVED by AST walk over every async spawn site in ``src/personalclaw``, keyed by
+``file::qualname::variable``, and it requires each one's ``TimeoutError`` path to reach
+:func:`~personalclaw.cancellation.kill_timed_out`. Anything that does not must be named
+in an allowlist with a reason, so a spawn site cannot be quietly added without a
+teardown. That keying matters: the earlier rails are per-FILE, and file-level credit
+over-counts safety — ``dashboard/handlers/files.py`` contains a reaper *and* two spawns
+that leaked anyway. A per-site key cannot make that mistake.
 """
 
 from __future__ import annotations
@@ -32,11 +42,14 @@ import asyncio
 import contextlib
 import os
 import signal
+import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from personalclaw.config import AppConfig
 from personalclaw.loop import gates
 
 # The grandchild outlives the bound by a wide margin so a slow CI host cannot flip the
@@ -401,3 +414,505 @@ def test_the_spawn_matcher_sees_the_flag_both_ways():
     spawns = _spawns_by_target(src, "create_subprocess_exec")
     assert "start_new_session" in spawns["a"]
     assert "start_new_session" not in spawns["b"]
+
+
+# ── the tree-wide rail (DERIVED: every async spawn's timeout path reaches the owner) ──
+
+_ASYNC_SPAWNS = {
+    "create_subprocess_exec",
+    "create_subprocess_shell",
+    "create_subprocess_limited",
+}
+
+#: Async spawn sites whose timeout path does NOT route through the owner, each with the
+#: reason it is still outstanding. Keyed ``file::qualname::variable`` — per SITE, not per
+#: file, because a file that contains a reaper can still contain an unguarded spawn.
+#:
+#: This allowlist is the whole control: a new spawn site is `owner` or it is listed here
+#: with a reason, and a stale entry reds just as loudly as a missing one.
+_NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
+    # ── operator-driven native pickers: pid-killed AND reaped, no fork ──
+    # `screencapture` and the osascript file picker are single processes that do not fork,
+    # so the direct-child kill already reaches everything. What they still lack is the
+    # BOUND on the drain, which is why they are listed rather than called correct.
+    "dashboard/handlers/files.py::api_screenshot::proc": "leaf picker: killed+reaped, no bound",
+    "dashboard/handlers/files.py::api_upload::proc": "leaf picker: killed+reaped, no bound",
+    # ── censused leaf git plumbing in updates.py ──
+    # Deliberately pid-killed, and pinned that way BOTH ways by
+    # `test_updates_timeout_handlers_match_the_census_exactly` above: these four never
+    # fork, so a group signal would only widen the blast radius. Routing them through the
+    # owner would red that rail, so the two rails are kept consistent here on purpose.
+    "dashboard/handlers/updates.py::_do_update_check::local": "censused leaf (git rev-parse)",
+    "dashboard/handlers/updates.py::_do_update_check::remote": "censused leaf (git rev-parse @{u})",
+    "dashboard/handlers/updates.py::_do_update_check::show": "censused leaf (git show)",
+    "dashboard/handlers/updates.py::_do_update_check::diff": "censused leaf (git diff)",
+    # ── still outstanding: pid-killed and reaped, so no hang; the grandchild leaks ──
+    "dashboard/handlers/_shared.py::_list_marketplace_skills::proc": (
+        "outstanding: `personalclaw skills list` pid-killed, unbounded drain"
+    ),
+    "dashboard/handlers/mcp.py::api_mcp_remove::proc": (
+        "outstanding: `personalclaw skills mcp uninstall` pid-killed, unbounded drain"
+    ),
+    "workflows/review_service.py::_git::proc": (
+        "outstanding: run-workspace `git diff` pid-killed; forks under fsmonitor/LFS"
+    ),
+    "mcp_discovery.py::probe_server::proc": (
+        "outstanding: two of its four deadlines tear down, one does not; the stdio "
+        "lifecycle also tears down in a `finally`, so this needs its own read"
+    ),
+    # ── still outstanding: NO teardown at all, but every one is a leaf tmux client ──
+    # `tmux -L personalclaw <verb>` against our OWN server. A hung client is a leaked
+    # client, not a leaked tree, and `new_session` has 30 dependent test files — a
+    # separable change, deliberately not swept in with this one.
+    "tmux_substrate.py::new_session::proc": "outstanding: leaf tmux client, no teardown",
+    "tmux_substrate.py::has_session::proc": "outstanding: leaf tmux client, no teardown",
+    "tmux_substrate.py::list_sessions::proc": "outstanding: leaf tmux client, no teardown",
+    "tmux_substrate.py::kill_session::proc": "outstanding: leaf tmux client, no teardown",
+    "dashboard/handlers/terminal.py::_kill_tmux_session::proc": (
+        "outstanding: leaf tmux client, no teardown"
+    ),
+    "dashboard/handlers/terminal.py::_list_tmux_sessions::proc": (
+        "outstanding: leaf tmux client, no teardown"
+    ),
+}
+
+#: Async spawn sites with NO ``TimeoutError`` handler in their function at all. Listed so
+#: the distinction is a decision rather than an omission: a site here has no deadline to
+#: leak on, or its teardown lives in a different lifecycle.
+_NO_TIMEOUT_PATH: dict[str, str] = {
+    "sandbox.py::create_subprocess_limited::<unassigned>": "the ceiling helper — caller waits",
+    "sandbox_providers/none.py::_NoneHandle.exec::<unassigned>": "provider handle — caller waits",
+    "sandbox_providers/docker.py::_DockerHandle.exec::<unassigned>": "provider — caller waits",
+    "sandbox_providers/lima.py::_LimaHandle.exec::<unassigned>": "provider — caller waits",
+    "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::proc": "ffmpeg: awaited with no deadline",
+    "transcribe.py::_transcribe_segmented::proc": "ffmpeg: awaited with no deadline",
+    "transcribe.py::_transcribe_segmented_detailed::proc": "ffmpeg: awaited with no deadline",
+    "dashboard/handlers/terminal.py::api_terminal_ws::proc": (
+        "long-lived interactive PTY — torn down by `_kill_pty_session` on close, not by a "
+        "per-command deadline"
+    ),
+}
+
+
+def _iter_functions(tree: ast.AST):
+    """Yield ``(qualname, node)`` for every function in *tree*."""
+    out: list[tuple[str, ast.AST]] = []
+
+    class V(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.stack: list[str] = []
+
+        def _fn(self, n):
+            self.stack.append(n.name)
+            out.append((".".join(self.stack), n))
+            self.generic_visit(n)
+            self.stack.pop()
+
+        visit_FunctionDef = _fn
+        visit_AsyncFunctionDef = _fn
+
+        def visit_ClassDef(self, n):
+            self.stack.append(n.name)
+            self.generic_visit(n)
+            self.stack.pop()
+
+    V().visit(tree)
+    return out
+
+
+def _callee(node: ast.Call) -> str:
+    f = node.func
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    if isinstance(f, ast.Name):
+        return f.id
+    return ""
+
+
+def _async_spawn_vars(fn: ast.AST) -> set[str]:
+    """Names assigned from an async spawn in *fn*; ``<unassigned>`` for a bare call."""
+    named: set[str] = set()
+    assigned: set[int] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            v = node.value
+            if isinstance(v, ast.Await):
+                v = v.value
+            if (
+                isinstance(v, ast.Call)
+                and _callee(v) in _ASYNC_SPAWNS
+                and isinstance(node.targets[0], ast.Name)
+            ):
+                named.add(node.targets[0].id)
+                assigned.add(id(v))
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and _callee(node) in _ASYNC_SPAWNS:
+            if id(node) not in assigned:
+                named.add("<unassigned>")
+    return named
+
+
+def _timeout_handlers(fn: ast.AST) -> list[ast.ExceptHandler]:
+    return [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.ExceptHandler)
+        and n.type is not None
+        and "TimeoutError" in ast.dump(n.type)
+    ]
+
+
+def _reaped_by_owner(fn: ast.AST) -> set[str]:
+    """Variables handed to the OWNER inside a ``TimeoutError`` handler of *fn*."""
+    reaped: set[str] = set()
+    for handler in _timeout_handlers(fn):
+        for inner in ast.walk(handler):
+            if not isinstance(inner, ast.Call):
+                continue
+            if _callee(inner) not in {"kill_timed_out", "terminate_and_reap"}:
+                continue
+            if inner.args and isinstance(inner.args[0], ast.Name):
+                reaped.add(inner.args[0].id)
+    return reaped
+
+
+def _src_files() -> list[Path]:
+    return sorted(_SRC.rglob("*.py"))
+
+
+def _async_spawn_census() -> tuple[dict[str, bool], dict[str, str]]:
+    """``key -> routed?`` for spawns on a timeout path, plus ``key -> reason-less`` for
+    spawns with no timeout path at all."""
+    routed: dict[str, bool] = {}
+    no_path: dict[str, str] = {}
+    for path in _src_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):  # pragma: no cover
+            continue
+        rel = path.relative_to(_SRC).as_posix()
+        for qual, fn in _iter_functions(tree):
+            spawn_vars = _async_spawn_vars(fn)
+            if not spawn_vars:
+                continue
+            handlers = _timeout_handlers(fn)
+            owned = _reaped_by_owner(fn)
+            for var in sorted(spawn_vars):
+                key = f"{rel}::{qual}::{var}"
+                if not handlers:
+                    no_path[key] = ""
+                else:
+                    routed[key] = var in owned
+    return routed, no_path
+
+
+def test_every_timed_out_async_spawn_is_reaped_by_the_one_owner():
+    """DERIVED, per SITE: a timed-out async child reaches ``kill_timed_out``, or is named.
+
+    ``asyncio``'s ``Process.wait()`` resolving on pipe disconnect is what makes this the
+    async spawn's problem specifically: the sync ``subprocess.run(timeout=…)`` path reaps
+    its own direct child inside CPython, so it can only leak a grandchild — it cannot
+    hang. Every async site therefore either routes to the owner or says why not.
+    """
+    routed, no_path = _async_spawn_census()
+
+    unrouted = sorted(k for k, ok in routed.items() if not ok)
+    unexplained = [k for k in unrouted if k not in _NOT_ROUTED_TO_THE_OWNER]
+    assert not unexplained, (
+        "async spawn site(s) whose TimeoutError path does not reach "
+        "cancellation.kill_timed_out. A timed-out child must be killed AND reaped, with "
+        "its group when it can fork. Route it through the owner, or add it to "
+        "_NOT_ROUTED_TO_THE_OWNER with the reason:\n" + "\n".join(f"  {k}" for k in unexplained)
+    )
+
+    # Bidirectional: an entry that is now routed (or gone) must be dropped, so the
+    # allowlist cannot quietly outlive the defect it describes.
+    stale = sorted(k for k in _NOT_ROUTED_TO_THE_OWNER if k not in routed or routed.get(k) is True)
+    assert not stale, (
+        "stale _NOT_ROUTED_TO_THE_OWNER entr(y/ies) — the site now routes through the "
+        "owner, or no longer exists. Remove it:\n" + "\n".join(f"  {k}" for k in stale)
+    )
+
+    missing_no_path = sorted(k for k in no_path if k not in _NO_TIMEOUT_PATH)
+    assert not missing_no_path, (
+        "async spawn site(s) with NO TimeoutError handler at all. Either they have no "
+        "deadline to leak on (record that in _NO_TIMEOUT_PATH) or a deadline was added "
+        "without a teardown:\n" + "\n".join(f"  {k}" for k in missing_no_path)
+    )
+    stale_no_path = sorted(k for k in _NO_TIMEOUT_PATH if k not in no_path)
+    assert not stale_no_path, (
+        "stale _NO_TIMEOUT_PATH entr(y/ies) — the site grew a timeout handler, or is "
+        "gone:\n" + "\n".join(f"  {k}" for k in stale_no_path)
+    )
+
+
+#: The ONE place a timeout path may signal a process group by hand. Everything else routes
+#: through ``cancellation._signal_child``, which is the only code that checks group
+#: LEADERSHIP first — a bare ``killpg`` on a child that does not lead its own group
+#: signals the gateway itself.
+_HAND_ROLLED_GROUP_KILL_ON_A_TIMEOUT: dict[str, str] = {
+    "dashboard/handlers/terminal.py::_kill_session": (
+        "outstanding: re-implements terminate_and_reap (SIGTERM → 5s → SIGKILL) for the "
+        "interactive PTY, and its final `sess.proc.wait()` is UNBOUNDED. `_signal_session` "
+        "is also used off the timeout path (explicit close), so collapsing it into the "
+        "owner is a session-lifecycle change, not this one."
+    ),
+}
+
+
+def test_the_owner_is_the_only_hand_rolled_group_kill_on_a_timeout_path():
+    """No new ``os.killpg`` inside a ``TimeoutError`` handler.
+
+    Three copies of the group-kill-then-drain pair existed: ``artifacts/build.py``'s
+    ``_kill_tree``, ``action_providers/bash_provider.py``'s inline ``os.killpg``, and
+    ``dashboard/handlers/terminal.py``'s ``_signal_session``. The first two are collapsed
+    into the owner; the third is named above. This test exists so the answer to "the
+    owner does not quite fit my site" is never a fourth copy.
+    """
+    found: dict[str, str] = {}
+    for path in _src_files():
+        rel = path.relative_to(_SRC).as_posix()
+        if rel == "cancellation.py":  # the owner itself
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):  # pragma: no cover
+            continue
+        for qual, fn in _iter_functions(tree):
+            for handler in _timeout_handlers(fn):
+                # Direct `os.killpg`, or a call to a local helper that wraps one.
+                for inner in ast.walk(handler):
+                    if isinstance(inner, ast.Call) and _callee(inner) in {
+                        "killpg",
+                        "_signal_session",
+                        "_kill_tree",
+                    }:
+                        found[f"{rel}::{qual}"] = _callee(inner)
+
+    unexplained = sorted(set(found) - set(_HAND_ROLLED_GROUP_KILL_ON_A_TIMEOUT))
+    assert not unexplained, (
+        "a timeout path signals a process group by hand instead of through "
+        "cancellation.kill_timed_out:\n"
+        + "\n".join(f"  {k}  (calls {found[k]})" for k in unexplained)
+        + "\nkill_timed_out already checks group leadership and bounds the reap. Route "
+        "through it rather than adding another copy."
+    )
+    stale = sorted(set(_HAND_ROLLED_GROUP_KILL_ON_A_TIMEOUT) - set(found))
+    assert not stale, (
+        "stale _HAND_ROLLED_GROUP_KILL_ON_A_TIMEOUT entr(y/ies) — collapsed already, so "
+        "remove it:\n" + "\n".join(f"  {k}" for k in stale)
+    )
+
+
+def test_the_tree_wide_matchers_are_not_vacuous():
+    """VACUITY: each matcher labels both shapes, and differently."""
+    routed_src = (
+        "import asyncio\n"
+        "from personalclaw.cancellation import kill_timed_out\n"
+        "async def f():\n"
+        "    proc = await asyncio.create_subprocess_exec('x')\n"
+        "    try:\n"
+        "        await asyncio.wait_for(proc.communicate(), timeout=1)\n"
+        "    except asyncio.TimeoutError:\n"
+        "        await kill_timed_out(proc)\n"
+    )
+    leaky_src = routed_src.replace("await kill_timed_out(proc)", "proc.kill()")
+    for src, expect in ((routed_src, True), (leaky_src, False)):
+        fn = _iter_functions(ast.parse(src))[0][1]
+        assert _async_spawn_vars(fn) == {"proc"}
+        assert _timeout_handlers(fn), "the TimeoutError handler matcher missed a handler"
+        assert (
+            "proc" in _reaped_by_owner(fn)
+        ) is expect, "the owner matcher cannot tell a routed timeout path from a leaking one"
+
+    # A spawn with no timeout handler must be reported as such, not as "routed".
+    no_handler = _iter_functions(
+        ast.parse(
+            "import asyncio\n"
+            "async def g():\n"
+            "    proc = await asyncio.create_subprocess_exec('x')\n"
+            "    await proc.wait()\n"
+        )
+    )[0][1]
+    assert _async_spawn_vars(no_handler) == {"proc"}
+    assert _timeout_handlers(no_handler) == []
+
+    # An unassigned spawn is still censused (it cannot be reaped by name at all).
+    bare = _iter_functions(
+        ast.parse("import asyncio\nasync def h():\n    await asyncio.create_subprocess_exec('x')\n")
+    )[0][1]
+    assert _async_spawn_vars(bare) == {"<unassigned>"}
+
+    # A kill OUTSIDE a timeout handler is a different concern and must not be collected.
+    off_path = _iter_functions(ast.parse("def k(proc):\n    proc.kill()\n"))[0][1]
+    assert _timeout_handlers(off_path) == []
+
+
+# ── the gateway's auto-update: the site the orphan leak was measured on ──
+
+
+@pytest.mark.asyncio
+async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, tmp_path):
+    """A timed-out ``pip install -e .`` in the auto-update leaves NO live child behind.
+
+    The defect this pins: ``gateway._auto_apply_update`` is the twin of
+    ``dashboard/handlers/updates.py::api_update_apply``, and the reaping fix landed only
+    on the twin. Its `pip install` had a ``wait_for`` and no ``TimeoutError`` handler, so
+    a timeout unwound to the function's outer ``except Exception`` and the child was never
+    signalled — **2 live processes per timed-out install** (the ``pip`` child and its
+    forked build backend), still running after the call returned and the loop closed,
+    accumulating once per auto-update poll.
+
+    The site set here is smaller than when this class was first measured: the git stages
+    moved into ``self_update``'s synchronous helpers, which run under
+    ``subprocess.run(timeout=…)`` and so reap their own direct child inside CPython. The
+    install is the one async spawn left in this function, and the one that can fork.
+
+    The deadline is INJECTED (``_AUTOUPDATE_PIP_TIMEOUT``), never slept on.
+    """
+    from personalclaw import gateway as gw
+    from personalclaw import self_update
+
+    pids = tmp_path / "pids"
+    proj = tmp_path / "proj"
+    proj.mkdir()
+
+    # The stub stands in for `sys.executable -m pip install`: it FORKS a long-lived
+    # grandchild that inherits pip's stdout/stderr pipes, which is what a real pip does
+    # with a PEP 517 build backend. Both pids are recorded, so liveness is asserted by PID
+    # rather than by scraping a command line.
+    #
+    # /bin/sleep, not a copy of it: macOS SIGKILLs a copy of a signed system binary, so a
+    # copied sleeper would vanish on its own and this test would pass for the wrong reason.
+    stub = tmp_path / "pip-stub.sh"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "child $$" >> "{pids}"\n'
+        f"/bin/sleep {GRANDCHILD_SECS} &\n"
+        f'echo "grandchild $!" >> "{pids}"\n'
+        "wait\n"
+    )
+    stub.chmod(0o755)
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(proj))
+    monkeypatch.setattr(gw.sys, "executable", str(stub))
+    monkeypatch.setattr(gw, "_AUTOUPDATE_PIP_TIMEOUT", 1.0)
+
+    # Drive the nightly branch straight to the install: every git stage before it is a
+    # `self_update` thread helper, stubbed to succeed so the deadline under test is the
+    # only thing this exercises.
+    ok = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(self_update, "git_tracked_changes", lambda _proj: [])
+    monkeypatch.setattr(self_update, "resolve_default_branch", lambda _proj: "main")
+    monkeypatch.setattr(self_update, "git_fetch", lambda _proj, _branch: ok)
+    monkeypatch.setattr(self_update, "git_is_up_to_date", lambda _proj, _branch: False)
+    monkeypatch.setattr(self_update, "git_fast_forward", lambda _proj, _branch: ok)
+    monkeypatch.setattr(self_update, "package_root", lambda _proj: proj)
+    monkeypatch.setattr(
+        AppConfig,
+        "load",
+        classmethod(
+            lambda cls: SimpleNamespace(updates=SimpleNamespace(channel="nightly", pin=""))
+        ),
+    )
+
+    orch = gw.GatewayOrchestrator.__new__(gw.GatewayOrchestrator)
+    orch.dashboard_state = None
+    orch.sessions = None
+
+    started = time.monotonic()
+    await orch._auto_apply_update()
+    elapsed = time.monotonic() - started
+
+    recorded = [ln.split() for ln in pids.read_text().split("\n") if ln.strip()]
+    roles = {role for role, _ in recorded}
+    assert roles == {"child", "grandchild"}, (
+        f"the pip stub did not fork as expected (recorded {recorded!r}) — this test would "
+        "prove nothing about a grandchild that never existed"
+    )
+
+    # Half one: the deadline actually bound. It must not have waited the grandchild out.
+    assert elapsed < BOUND_SECS, (
+        f"the 1s install deadline took {elapsed:.2f}s to return — the post-kill reap "
+        "waited for the grandchild's inherited pipe instead of the child's exit"
+    )
+
+    # Half two, and the one that was failing: nothing is left running. Poll, because
+    # SIGKILL delivery is not instant.
+    for role, pid in recorded:
+        pid = int(pid)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:  # pragma: no cover — the leak this test exists to catch
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+            raise AssertionError(
+                f"the auto-update's timed-out `pip install` left its {role} (pid {pid}) "
+                "running after the call returned. A timed-out child must be killed AND "
+                "reaped, with its group — see cancellation.kill_timed_out."
+            )
+
+
+@pytest.mark.asyncio
+async def test_control_the_gateway_shape_before_the_fix_leaks_the_pair(tmp_path):
+    """VACUITY for the test above: the shape it replaced must FAIL the same check.
+
+    The pre-fix ``gateway._auto_apply_update`` had no ``TimeoutError`` arm at all — the
+    timeout unwound to the function's outer ``except Exception`` and nothing was
+    signalled. Reproduced here so the assertion above cannot be one a broken path also
+    passes: BOTH processes must still be alive, which is what the fixed path denies.
+
+    ``start_new_session=True`` here even though the pre-fix gateway spawn lacked it. That
+    isolates the variable to the missing TEARDOWN, and — the load-bearing reason — it is
+    what makes this test's own cleanup safe: ``os.getpgid`` of a child that does NOT lead
+    its own group returns the TEST RUNNER's group, so a ``killpg`` on it would take the
+    pytest worker down with the child. That is the same hazard
+    ``cancellation._is_group_leader`` exists to prevent, and a test is not exempt from it.
+    """
+    pids = tmp_path / "pids"
+    script = tmp_path / "forks.sh"
+    script.write_text(
+        f'#!/bin/sh\necho "child $$" >> "{pids}"\n'
+        f'/bin/sleep {GRANDCHILD_SECS} &\necho "grandchild $!" >> "{pids}"\nwait\n'
+    )
+    script.chmod(0o755)
+
+    proc = await asyncio.create_subprocess_exec(
+        str(script),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    pgid = os.getpgid(proc.pid)
+    assert pgid == proc.pid, "the control must lead its own group for its cleanup to be safe"
+    try:
+        with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+            await asyncio.wait_for(proc.communicate(), timeout=1)
+        # ...and then NO teardown whatsoever: the pre-fix arm did not exist.
+        await asyncio.sleep(0.3)
+
+        recorded = [ln.split() for ln in pids.read_text().split("\n") if ln.strip()]
+        assert {r for r, _ in recorded} == {"child", "grandchild"}
+        alive = []
+        for role, pid in recorded:
+            try:
+                os.kill(int(pid), 0)
+                alive.append(role)
+            except ProcessLookupError:  # pragma: no cover
+                pass
+        assert sorted(alive) == ["child", "grandchild"], (
+            f"the control leaked only {alive} of the expected pair, so it no longer "
+            "demonstrates the leak and the sibling test above proves nothing. "
+            "Re-derive the stub."
+        )
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+        with contextlib.suppress(Exception):
+            await proc.wait()

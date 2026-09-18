@@ -432,7 +432,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                   <div
                     key={n.instance_path}
                     className="group flex items-center gap-m rounded-lg px-s py-xs hover:bg-surface-high"
-                    style={{ paddingLeft: `calc(var(--space-s) + ${depth} * 1rem)` }}
+                    style={{ paddingLeft: `calc(var(--spacing-s) + ${depth} * 1rem)` }}
                   >
                     {/* The disclosure control, only where it earns its place: a container with one
                         child costs a click and saves a row. */}

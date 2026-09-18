@@ -411,6 +411,399 @@ async def api_local_model_search(request: web.Request) -> web.Response:
     )
 
 
+def _mask(text: str) -> str:
+    """Redact any secret-shaped run out of a message before it leaves the server.
+
+    The health/selftest bodies echo provider messages and exception strings, which could in
+    principle carry a token; the SEL redactor is the ONE definition of "safe to surface", so
+    a masked message can never leak an HF token through an error string (Success Criterion 4).
+    """
+    try:
+        from personalclaw.security import redact
+
+        return redact(text or "")
+    except Exception:  # noqa: BLE001 — redaction must never itself break a health/selftest reply
+        return text or ""
+
+
+def _sel_caller(request: web.Request) -> str:
+    """A caller identity for the token set/clear SEL event (the session key, else a default)."""
+    return request.headers.get("X-Session-Key") or "dashboard:hf-token"
+
+
+# ── HF token cascade (LMMV §5) — status + set/clear, values never leave unmasked ──────
+
+
+async def api_hf_token_status(request: web.Request) -> web.Response:
+    """GET /api/models/hf-token/status — per-source ``{present, valid, username, masked, active}``.
+
+    The three cascade sources (credential store → env → ``huggingface-cli`` file), each with a
+    live-but-cached whoami verdict. The token VALUE never leaves the server — only the
+    :func:`mask_token` preview (Success Criterion 4)."""
+    from dataclasses import asdict
+
+    from personalclaw.local_models import hf_token
+
+    sources = await hf_token.token_status()
+    return web.json_response({"sources": [asdict(s) for s in sources]})
+
+
+async def api_hf_token_set(request: web.Request) -> web.Response:
+    """PUT /api/models/hf-token — write the token to SOURCE 1 (the credential store).
+
+    Body ``{token}``. The value goes to the credential store (never ``config.json``); the set
+    is SEL-audited by name, never by value. Returns the refreshed per-source status."""
+    from dataclasses import asdict
+
+    from personalclaw.local_models import hf_token
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    token = str(body.get("token", "")) if isinstance(body, dict) else ""
+    if not token.strip():
+        return web.json_response({"error": "token is required"}, status=400)
+    try:
+        hf_token.set_token(token, caller=_sel_caller(request))
+    except ValueError as exc:
+        # Authored ValueError words survive; an unexpected class becomes generic copy — never
+        # raw exception text on the wire (the shared failure-copy rail).
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+    sources = await hf_token.token_status()
+    return web.json_response({"sources": [asdict(s) for s in sources]})
+
+
+async def api_hf_token_clear(request: web.Request) -> web.Response:
+    """DELETE /api/models/hf-token — clear the managed token (SOURCE 1). SEL-audited by name."""
+    from dataclasses import asdict
+
+    from personalclaw.local_models import hf_token
+
+    existed = hf_token.clear_token(caller=_sel_caller(request))
+    sources = await hf_token.token_status()
+    return web.json_response({"cleared": existed, "sources": [asdict(s) for s in sources]})
+
+
+# ── Per-provider health + real-inference selftest (LMMV §6) ───────────────────────────
+
+
+async def api_local_model_health(request: web.Request) -> web.Response:
+    """GET /api/models/local/{provider}/health — NEVER 500s (LMMV §6).
+
+    Uses the ABC ``availability_detail()`` (which itself never raises), so the reply is a typed
+    body — ``{provider, ok, message, latency_ms}`` — even when the provider is unavailable. The
+    message is masked, so a token can never ride out in it."""
+    import time
+
+    from personalclaw.local_models.registry import get_provider
+
+    provider_name = request.match_info["provider"]
+    provider = get_provider(provider_name)
+    if provider is None:
+        return web.json_response(
+            {
+                "provider": provider_name,
+                "ok": False,
+                "message": "unknown provider",
+                "latency_ms": 0,
+            },
+            status=404,
+        )
+    t0 = time.monotonic()
+    try:
+        detail = getattr(provider, "availability_detail", None)
+        if callable(detail):
+            ok, message = await detail()
+        else:
+            # A duck-typed local provider (registered by capability, not subclass) may not carry
+            # the ABC method — fall back to the bare availability bool so health still answers.
+            ok = bool(await provider.is_available())
+            message = "ready" if ok else "not available on this machine"
+    except Exception as exc:  # noqa: BLE001 — defense in depth; availability_detail never raises
+        # This branch only fires if a provider's availability_detail ITSELF raises (an internal
+        # crash) — authored copy, not raw exception text on the wire (the failure-copy rail).
+        ok, message = False, relayed_failure_copy(exc)
+    return web.json_response(
+        {
+            "provider": provider_name,
+            "ok": bool(ok),
+            "message": _mask(str(message))[:300],
+            "latency_ms": round((time.monotonic() - t0) * 1000),
+        }
+    )
+
+
+def _selftest_timeout_s() -> float:
+    """The per-capability selftest timeout from ``local_models.selftest_timeout_s`` (→ default)."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return float(AppConfig.load().local_models.selftest_timeout_s)
+    except Exception:  # noqa: BLE001 — config unreadable → a sane default, never a crash
+        return 90.0
+
+
+def _selftest_fixture_wav(path: str) -> None:
+    """A deterministic ~0.5 s 16 kHz mono sine WAV — the bundled selftest fixture.
+
+    Generated with the stdlib rather than committed as a binary (same choice as the doctor
+    clone probe's ``_write_reference_clip``): the inference providers validate a real, decodable
+    clip on disk, and generating one keeps the wheel free of audio blobs."""
+    import math
+    import struct
+    import wave
+
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        frames = bytearray()
+        for i in range(8000):
+            frames += struct.pack("<h", int(12000 * math.sin(2 * math.pi * 220 * i / 16000)))
+        w.writeframes(bytes(frames))
+
+
+def _ms(t0: float) -> int:
+    import time
+
+    return round((time.monotonic() - t0) * 1000)
+
+
+async def _timed(coro, timeout: float) -> tuple[str, object, int]:
+    """Await ``coro`` under a hard timeout. ``(outcome, value_or_exc, duration_ms)`` where
+    outcome ∈ ``ok`` / ``timeout`` / ``error`` — never raises, so one capability's failure is
+    isolated to its own row."""
+    import asyncio
+    import time
+
+    t0 = time.monotonic()
+    try:
+        value = await asyncio.wait_for(coro, timeout=timeout)
+        return ("ok", value, _ms(t0))
+    except asyncio.TimeoutError:
+        return ("timeout", None, _ms(t0))
+    except Exception as exc:  # noqa: BLE001 — a broken runtime contract fails HERE, typed
+        return ("error", exc, _ms(t0))
+
+
+def _error_result(exc: object, ms: int) -> dict:
+    """A failed-capability row carrying a TYPED reason. A provider that set ``typed_reason``
+    (a sidecar crash) surfaces it verbatim; otherwise the exception class becomes the reason,
+    so a pyannote-4-style ``AttributeError`` reads as ``selftest_error:AttributeError`` — a
+    contract break failing on the API surface, not on file presence (Success Criterion 5)."""
+    typed = getattr(exc, "typed_reason", "")
+    reason = str(typed) or f"selftest_error:{type(exc).__name__}"
+    # A selftest is an explicit user-clicked DIAGNOSTIC — the exact inference error IS the
+    # thing the user asked to see (SC5: a contract break must fail visibly, not read as file
+    # presence), so the masked exception text is surfaced deliberately here, unlike the
+    # connectivity-toast surfaces the failure-copy rail guards. `_mask` keeps a token out of it.
+    detail = _mask(str(exc))[:200] or type(exc).__name__
+    return {"ok": False, "duration_ms": ms, "detail": detail, "reason": reason}
+
+
+def _timeout_result(ms: int, what: str) -> dict:
+    return {"ok": False, "duration_ms": ms, "detail": f"{what} timed out", "reason": "timeout"}
+
+
+async def _selftest_stt(provider, model: str, timeout: float) -> dict:
+    import os
+    import tempfile
+
+    fd, wav = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-")
+    os.close(fd)
+    try:
+        _selftest_fixture_wav(wav)
+        outcome, value, ms = await _timed(provider.transcribe(wav, model=model), timeout)
+    finally:
+        try:
+            os.unlink(wav)
+        except OSError:
+            pass
+    if outcome == "timeout":
+        return _timeout_result(ms, "transcription")
+    if outcome == "error":
+        return _error_result(value, ms)
+    ok = value is not None
+    return {
+        "ok": ok,
+        "duration_ms": ms,
+        "detail": "transcribed the fixture" if ok else "transcribe returned nothing",
+        "reason": "" if ok else "stt_returned_nothing",
+    }
+
+
+async def _selftest_tts(provider, model: str, timeout: float) -> dict:
+    import os
+    import tempfile
+
+    # Hand the provider a caller-owned path and clean it up in `finally` regardless of outcome
+    # — a timeout cancels the coroutine mid-write, so an ok-only unlink (or output_path="")
+    # orphans whatever the provider already wrote. Matches _selftest_stt/_selftest_diarization.
+    fd, out = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-tts-")
+    os.close(fd)
+    outcome, value, ms = "error", None, 0
+    try:
+        outcome, value, ms = await _timed(
+            provider.synthesize("Selftest.", voice=model, output_path=out), timeout
+        )
+    finally:
+        # Unlink the path we handed over AND any different path the provider chose to return.
+        for path in {out, value if isinstance(value, str) else ""}:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+    if outcome == "timeout":
+        return _timeout_result(ms, "synthesis")
+    if outcome == "error":
+        return _error_result(value, ms)
+    ok = bool(value)
+    return {
+        "ok": ok,
+        "duration_ms": ms,
+        "detail": "synthesis returned audio" if ok else "synthesize returned nothing",
+        "reason": "" if ok else "tts_returned_nothing",
+    }
+
+
+async def _selftest_embedding(provider, model: str, timeout: float) -> dict:
+    outcome, value, ms = await _timed(
+        provider.embed("The quick brown fox jumps over the lazy dog.", model=model), timeout
+    )
+    if outcome == "timeout":
+        return _timeout_result(ms, "embedding")
+    if outcome == "error":
+        return _error_result(value, ms)
+    dims = len(value) if isinstance(value, (list, tuple)) else 0
+    ok = dims > 0
+    return {
+        "ok": ok,
+        "duration_ms": ms,
+        "detail": f"{dims} dims" if ok else "embed returned no vector",
+        "reason": "" if ok else "embedding_returned_nothing",
+    }
+
+
+async def _selftest_diarization(provider, model: str, timeout: float) -> dict:
+    import os
+    import tempfile
+
+    fd, wav = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-")
+    os.close(fd)
+    try:
+        _selftest_fixture_wav(wav)
+        outcome, value, ms = await _timed(provider.diarize(wav, model=model), timeout)
+    finally:
+        try:
+            os.unlink(wav)
+        except OSError:
+            pass
+    if outcome == "timeout":
+        return _timeout_result(ms, "diarization")
+    if outcome == "error":
+        # THE Success-Criterion-5 case: a pyannote-4 itertracks/DiarizeOutput break raises here
+        # and is reported as a typed reason, instead of the model passing because its file exists.
+        return _error_result(value, ms)
+    ok = value is not None
+    turns = len(value) if isinstance(value, (list, tuple)) else 0
+    return {
+        "ok": ok,
+        "duration_ms": ms,
+        "detail": f"ran the pipeline ({turns} turn(s))" if ok else "diarize returned nothing",
+        "reason": "" if ok else "diarization_returned_nothing",
+    }
+
+
+#: capability → (inference method name on the provider object, runner). A capability is tested
+#: only when the provider OBJECT implements the method — so the answer is always for THIS
+#: provider, never whatever happens to be bound (the provider-blind bug the
+#: /api/model-providers selftest has). A capability that routes through a model-provider binding
+#: (ollama chat) has no direct method here and is reported as not-directly-testable.
+_SELFTEST_RUNNERS: dict[str, tuple[str, object]] = {
+    "stt": ("transcribe", _selftest_stt),
+    "tts": ("synthesize", _selftest_tts),
+    "embedding": ("embed", _selftest_embedding),
+    "diarization": ("diarize", _selftest_diarization),
+}
+
+
+async def _dispatch_selftest(provider, caps: list, model: str, timeout: float) -> dict[str, dict]:
+    """Run a real inference for each capability the provider OBJECT can serve directly.
+
+    Pure (no lock, no HTTP) so the dispatch + typed-reason logic is unit-testable on a fake
+    provider. A capability whose method the object does not implement is skipped."""
+    out: dict[str, dict] = {}
+    for cap in caps:
+        spec = _SELFTEST_RUNNERS.get(cap)
+        if spec is None:
+            continue
+        method_name, runner = spec
+        if not callable(getattr(provider, method_name, None)):
+            continue
+        out[cap] = await runner(provider, model, timeout)  # type: ignore[operator]
+    return out
+
+
+async def api_local_model_selftest(request: web.Request) -> web.Response:
+    """POST /api/models/local/{provider}/selftest — a real per-capability inference (LMMV §6).
+
+    Body ``{model?}``. Runs a tiny REAL inference for each capability the named provider serves
+    directly (stt→transcribe, tts→synthesize, embedding→embed, diarization→diarize) using a
+    generated fixture, so a broken runtime contract fails HERE on the API surface with a TYPED
+    reason (Success Criterion 5), not merely on file presence.
+
+    User-click only — it can page a model into RAM, so it is never fired by a background job —
+    and serialized behind a ``single_flight`` lock so two clicks don't run two inferences at
+    once. Each capability is hard-timeout-bounded by ``local_models.selftest_timeout_s``.
+
+    A provider whose capabilities route through a model-provider binding rather than a local
+    inference method (ollama chat) exposes no directly-testable method here; that is reported
+    honestly rather than false-greened, and such a provider is tested via
+    ``POST /api/model-providers/{name}/selftest``."""
+    from personalclaw.concurrency import single_flight
+    from personalclaw.local_models.registry import capabilities_for, get_provider
+
+    provider_name = request.match_info["provider"]
+    provider = get_provider(provider_name)
+    if provider is None:
+        return web.json_response({"error": f"Unknown provider {provider_name!r}"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    model = str(body.get("model", "")) if isinstance(body, dict) else ""
+    caps = capabilities_for(provider_name)
+    timeout = _selftest_timeout_s()
+
+    with single_flight(f"local-model-selftest:{provider_name}") as acquired:
+        if not acquired:
+            return web.json_response(
+                {
+                    "error": "a selftest for this provider is already running",
+                    "reason": "selftest_running",
+                },
+                status=409,
+            )
+        capabilities = await _dispatch_selftest(provider, caps, model, timeout)
+
+    if not capabilities:
+        return web.json_response(
+            {
+                "provider": provider_name,
+                "capabilities": {},
+                "detail": (
+                    "no directly-testable capability — this provider serves its capabilities "
+                    "through a model-provider binding; test it via "
+                    "POST /api/model-providers/{name}/selftest"
+                ),
+            }
+        )
+    return web.json_response({"provider": provider_name, "capabilities": capabilities})
+
+
 def register_model_download_routes(app: web.Application) -> None:
     """Register /api/models/downloads/* routes."""
     app.router.add_get("/api/models/downloads", api_model_downloads_list)
@@ -431,6 +824,15 @@ def register_model_download_routes(app: web.Application) -> None:
     # Residency / memory pressure (LMMV §7).
     app.router.add_get("/api/models/loaded", api_models_loaded)
     app.router.add_post("/api/models/unload", api_models_unload)
-    # Generic per-provider local-model management (replaces the per-kind routes).
+    # HF token cascade (LMMV §5): read status + set/clear source 1 (the credential store).
+    # Literal `hf-token` prefix — never shadowed by the `local/{provider}` routes below.
+    app.router.add_get("/api/models/hf-token/status", api_hf_token_status)
+    app.router.add_put("/api/models/hf-token", api_hf_token_set)
+    app.router.add_delete("/api/models/hf-token", api_hf_token_clear)
+    # Generic per-provider local-model management (replaces the per-kind routes). The literal
+    # `health`/`selftest` segments (LMMV §6) are registered BEFORE the `{model}` delete so the
+    # literal path wins over the param one.
     app.router.add_get("/api/models/local/{provider}/search", api_local_model_search)
+    app.router.add_get("/api/models/local/{provider}/health", api_local_model_health)
+    app.router.add_post("/api/models/local/{provider}/selftest", api_local_model_selftest)
     app.router.add_delete("/api/models/local/{provider}/{model}", api_local_model_delete)

@@ -66,7 +66,8 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   // Multi-tab open files.
   const fileTabs = useFileTabs()
-  const viewerRefs = useRef(new Map<string, FileViewerHandle>())
+  // One viewer is mounted at a time (the active tab), so one ref — not a per-path map.
+  const viewerRef = useRef<FileViewerHandle>(null)
   // The host-owned draft cache FileViewer documents (issue 2279): without one, any
   // remount of a keyed viewer — a rename re-points the tab to a new path, which is a
   // new key — discarded an unsaved edit silently. Lifecycle matches the Code cockpit:
@@ -162,7 +163,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       const k = e.key.toLowerCase()
-      if (k === 's' && fileTabs.activePath) { e.preventDefault(); viewerRefs.current.get(fileTabs.activePath)?.save() }
+      if (k === 's' && fileTabs.activePath) { e.preventDefault(); viewerRef.current?.save() }
       else if (k === 'f') { e.preventDefault(); searchRef.current?.focus() }
     }
     window.addEventListener('keydown', onKey)
@@ -333,19 +334,26 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                   })}
                 </div>
               )}
+              {/* ONLY the active tab's viewer is mounted — the same shape the Code cockpit
+                  already used, and the fix for issue 515. Mounting every open tab and hiding the
+                  inactive ones with `display:none` meant every tab kept its `useFileWatch`
+                  EventSource open on /api/file-watch, whose handler is an infinite poll: 6 tabs
+                  reached the browser's 6-per-ORIGIN connection cap and every fetch in the WHOLE
+                  dashboard hung forever, silently (the status poll was one of the hung requests,
+                  so the header still read "Gateway connected"). Tabs persist to localStorage, so
+                  a reload re-opened the streams and landed re-wedged.
+                  An unmounted tab loses nothing: `draftStore` (below) carries its unsaved edit
+                  and the concurrent-edit flag across the remount — that store exists for exactly
+                  this lifecycle, and the cockpit has relied on it since issue 2279. */}
               <div className="relative min-h-0 flex-1">
-                {fileTabs.tabs.length === 0 ? (
+                {!fileTabs.active ? (
                   <EmptyState icon={FilesIcon} title="No file open" hint="Pick a file from the explorer to view or edit it. Type in the search box to grep contents (⌘F)." />
                 ) : (
-                  fileTabs.tabs.map((t) => (
-                    <div key={t.path} className="absolute inset-0" style={{ display: t.path === fileTabs.activePath ? 'block' : 'none' }}>
-                      <FileViewer ref={(h) => { if (h) viewerRefs.current.set(t.path, h); else viewerRefs.current.delete(t.path) }}
-                        entry={{ name: t.name, path: t.path, is_dir: false }} onSaved={refresh} onSaveAsArtifact={saveAsArtifact}
-                        onDirtyChange={(d) => fileTabs.markDirty(t.path, d)} onMissing={(p) => { draftStore.delete(p); fileTabs.closeNow(p) }}
-                        draftStore={draftStore}
-                        commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${t.name}` }) : undefined} />
-                    </div>
-                  ))
+                  <FileViewer key={fileTabs.active.path} ref={viewerRef}
+                    entry={{ name: fileTabs.active.name, path: fileTabs.active.path, is_dir: false }} onSaved={refresh} onSaveAsArtifact={saveAsArtifact}
+                    onDirtyChange={(d) => fileTabs.markDirty(fileTabs.activePath, d)} onMissing={(p) => { draftStore.delete(p); fileTabs.closeNow(p) }}
+                    draftStore={draftStore}
+                    commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${fileTabs.active.name}` }) : undefined} />
                 )}
               </div>
             </div>

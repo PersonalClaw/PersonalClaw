@@ -88,18 +88,22 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
 
     # request["app"] is set by the token middleware when the handshake carried an
-    # app-scoped token (?app_token=…). Scope this connection so broadcast_ws filters
+    # app-scoped token (?app_token=…). Scope this connection so every send path filters
     # its events to the app's declared permissions.events (untrusted-app sandbox P1).
     state.register_ws(ws, app=request.get("app", ""))
 
-    # Push current sessions immediately so sidebar populates without waiting
+    # Push current sessions immediately so sidebar populates without waiting.
+    # Through `send_ws_event`, NOT `ws.send_json`: this frame carries the session keys,
+    # titles and the yolo flag, and as a direct write it was the first frame of every
+    # connection — including an app-scoped one that declared no `sessions` event
+    # (issue 2963). The owner's envelope is unchanged.
     try:
         sessions_data = [s.to_dict() for s in state._sessions.values()]
-        await ws.send_json(
-            {"type": "sessions", "data": sessions_data, "yolo": state.is_yolo_active()}
+        await state.send_ws_event(
+            ws, "sessions", sessions_data, extra={"yolo": state.is_yolo_active()}
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — a snapshot that won't serialize must not kill the socket
+        logger.debug("ws: initial sessions push failed", exc_info=True)
 
     try:
         async for msg in ws:
@@ -108,14 +112,18 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
                     data = json.loads(msg.data)
                     msg_type = data.get("type", "")
                     if msg_type == "subscribe_logs":
-                        state.subscribe_logs(ws)
-                        # Replay log ring buffer
-                        for entry in list(_log_ring):
-                            try:
-                                parsed = json.loads(entry)
-                                await ws.send_json({"type": "log", "data": parsed})
-                            except Exception:
-                                pass
+                        # A socket that may not receive `log` is not subscribed and gets
+                        # no replay: the ring is up to 1000 records of the owner's whole
+                        # backend log, and it used to be written here directly, so an
+                        # app-scoped socket that declared no `log` event received all of
+                        # it plus every record after (issue 2963).
+                        if state.subscribe_logs(ws):
+                            for entry in list(_log_ring):
+                                try:
+                                    parsed = json.loads(entry)
+                                except Exception:
+                                    continue
+                                await state.send_ws_event(ws, "log", parsed)
                     elif msg_type == "unsubscribe_logs":
                         state.unsubscribe_logs(ws)
                     elif msg_type == "subscribe_subagents":
@@ -128,47 +136,44 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
                                 t, _ = redact_credentials(t)
                                 return t
 
+                            # Both replays go through `send_ws_event`, so a socket that
+                            # declared neither event gets neither frame — these carry
+                            # subagent tasks, prompts and streaming text, and as direct
+                            # writes they reached any app-scoped socket that asked
+                            # (issue 2963).
                             for a in state.subagents.running:
-                                try:
-                                    session = a.parent_session_key.removeprefix("dashboard:")
-                                    await ws.send_json(
-                                        {
-                                            "type": "subagent_snapshot",
-                                            "data": {
-                                                "id": a.id,
-                                                "session": session,
-                                                "task": _r(a.task),
-                                                "agent": _r(a.agent),
-                                                "streaming": _r(a.streaming_text),
-                                                "last_tool": _r(a.last_tool),
-                                                "started": a.started,
-                                            },
-                                        }
-                                    )
-                                except Exception:
-                                    pass
+                                session = a.parent_session_key.removeprefix("dashboard:")
+                                await state.send_ws_event(
+                                    ws,
+                                    "subagent_snapshot",
+                                    {
+                                        "id": a.id,
+                                        "session": session,
+                                        "task": _r(a.task),
+                                        "agent": _r(a.agent),
+                                        "streaming": _r(a.streaming_text),
+                                        "last_tool": _r(a.last_tool),
+                                        "started": a.started,
+                                    },
+                                )
                             # Send done events for completed subagents so
                             # reconnecting clients can transition stale cards.
                             for a in state.subagents.all_agents:
                                 if not a.done:
                                     continue
                                 session = a.parent_session_key.removeprefix("dashboard:")
-                                try:
-                                    await ws.send_json(
-                                        {
-                                            "type": "subagent_done",
-                                            "data": {
-                                                "id": a.id,
-                                                "session": session,
-                                                "elapsed": a.elapsed,
-                                                "error": _r(a.error) if a.error else None,
-                                                "task": _r(a.task),
-                                                "agent": _r(a.agent),
-                                            },
-                                        }
-                                    )
-                                except Exception:
-                                    pass
+                                await state.send_ws_event(
+                                    ws,
+                                    "subagent_done",
+                                    {
+                                        "id": a.id,
+                                        "session": session,
+                                        "elapsed": a.elapsed,
+                                        "error": _r(a.error) if a.error else None,
+                                        "task": _r(a.task),
+                                        "agent": _r(a.agent),
+                                    },
+                                )
                     elif msg_type == "unsubscribe_subagents":
                         state.unsubscribe_subagents(ws)
                 except Exception:

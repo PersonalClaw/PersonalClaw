@@ -1043,8 +1043,20 @@
     "type": "int"
   },
   {
+    "default": 90,
+    "path": "local_models.selftest_timeout_s",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 3,
     "path": "local_models.sidecar_restart_max",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 600,
+    "path": "local_models.whoami_ttl_s",
     "sensitive": false,
     "type": "int"
   },

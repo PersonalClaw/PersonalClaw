@@ -461,7 +461,14 @@ class TaskComment:
 # chosen project; ``Repeatable`` hosts resettable lists. "Built-in" is the wire
 # and UI vocabulary too (``is_builtin``, the Built-in badge) — there is no
 # single-"default" pointer among projects, so nothing here is named default.
-BUILTIN_PROJECTS = ("Personal", "Repeatable")
+#: The catch-all project for work created without a chosen one.
+PERSONAL_PROJECT = "Personal"
+#: The project whose task lists can be RESET and run again. Its name is its functional key
+#: (task routing resolves ``repeatable`` to it, ``ensure_defaults`` re-seeds it by name, and
+#: the reset gate matches it), which is exactly why ``update_project`` refuses to rename a
+#: built-in. Named once so a third copy of the literal cannot drift from the other two.
+REPEATABLE_PROJECT = "Repeatable"
+BUILTIN_PROJECTS = (PERSONAL_PROJECT, REPEATABLE_PROJECT)
 
 
 # ── The ONE coercion table for a task field ──────────────────────────────────
@@ -712,6 +719,86 @@ def coerce_task_field(name: str, value: Any, *, strict: bool = True) -> Any:
     if coercer is None:
         raise ValueError(f"unknown task field {name!r}")
     return coercer(value, strict=strict)
+
+
+# ── What a RESET clears, as a table ──────────────────────────────────────────
+#
+# A Repeatable list is reset to be run AGAIN, so every field that records what happened on the
+# LAST run has to go, and every field that records what the task IS has to stay. That sounds
+# obvious and was got wrong exactly the way an ad-hoc mutation gets things wrong: the handler
+# cleared three fields, its docstring enumerated those same three, and `action_plan` — whose
+# items each carry their own `completed` flag — was in neither. So a weekly checklist came back
+# with every step ticked and struck through (#389), and the user either unticked them by hand or
+# worked from a plan claiming it was already done.
+#
+# The cure is the shape this module already uses for coercion: a TABLE, exhaustive over `Task`'s
+# fields, with a test that reds when a field is added to `Task` and given no verdict here. A
+# per-run field that nobody remembered is then a failing test rather than the next silent
+# omission.
+#
+# CLEARED — this run's progress:
+_RESET_CLEARED: dict[str, Any] = {
+    "status": "open",
+    "execution_notes": [],
+    #: What established completion. Carrying it into a fresh run is the same lie as a ticked
+    #: step, one level up: "a done task with no evidence is a claim", and evidence from a run
+    #: that already finished is not evidence about this one.
+    "evidence": [],
+    #: Per-attempt records of the run that just ended.
+    "attempts": [],
+    #: "What the node is doing right now" — nothing, until it runs again.
+    "preview": "",
+    #: Status went back to `open`, so a leftover blocked kind renders a blocked badge on a task
+    #: nothing is blocking. A fresh run re-derives both from its real dependencies.
+    "blocked_kind": "",
+    "blocked_reason_kind": "",
+}
+
+# PRESERVED — what the task IS, or what outlives a run. The reason matters: this is the half a
+# future field is most likely to belong to, and the half that is wrong to widen carelessly.
+_RESET_PRESERVED: dict[str, str] = {
+    "id": "identity",
+    "title": "the definition of the work",
+    "description": "the definition of the work",
+    "provider": "identity",
+    "project": "structural placement",
+    "task_list_id": "structural placement",
+    "dependencies": "the plan's shape, not this run's progress",
+    "author": "who created it — unchanged by a re-run",
+    "origin_harness": "which harness minted the record — origin attribution, not run progress",
+    "assignee": "who should do it — a repeated chore keeps its owner",
+    "priority": "the definition of the work",
+    "labels": "the definition of the work",
+    "due": "a reset must not invent a new date; the owner sets it",
+    "order": "board placement the user arranged",
+    "notes": "knowledge that outlives one run (the issue grants this explicitly)",
+    "research_notes": "knowledge that outlives one run",
+    "agent_instructions_template": "how to do it",
+    "done_criterion": "what completion MEANS — copied from the node at materialization",
+    "workflow_binding": "the engine owns this projection; severing it is not reset's call",
+    "created_at": "identity",
+    "updated_at": "the store stamps it on write",
+    "url": "identity",
+    # exit_criteria and action_plan are rewritten item-wise below, not replaced wholesale:
+    # their CONTENT is the definition of the work and only their per-item flags are progress.
+    "exit_criteria": "content preserved; per-item met/status cleared",
+    "action_plan": "content preserved; per-item completed cleared",
+}
+
+
+def task_reset_payload(task: "Task") -> dict[str, Any]:
+    """The fields to write to return ``task`` to its not-yet-run state.
+
+    One authority for both the handler and its tests, so "what reset means" is stated once and
+    verified once. Item-wise for the two planning lists: the steps and criteria themselves are
+    the work, only their flags are progress.
+    """
+    payload = dict(_RESET_CLEARED)
+    payload["exit_criteria"] = [
+        {**c, "status": "incomplete", "met": False} for c in task.exit_criteria
+    ]
+    payload["action_plan"] = [{**a, "completed": False} for a in task.action_plan]
+    return payload
 
 
 @dataclass

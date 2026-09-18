@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from personalclaw.cli_commands import _cron
+from personalclaw.cli_commands import _cron, _security
 from personalclaw.cli_doctor import _doctor
 
 
@@ -1337,3 +1337,44 @@ class TestConfigDirOverride:
     # _setup_slack_tokens out of core into the slack-channel app's cli_setup.py
     # (behind the cli.setup manifest seam). The config-dir/.env write path is now
     # exercised app-side and by tests/test_app_cli.py's setup-runner tests.
+
+
+class TestSecurityEventsRenderer:
+    """#2948: ``personalclaw security events`` must not print an ``error:`` line
+    for a successful outcome whose allow reason lives in ``metadata.reason``."""
+
+    def test_prints_reason_not_error_for_a_success_row(self, tmp_path, monkeypatch, capsys):
+        from personalclaw.sel import SecurityEventLog
+
+        log = SecurityEventLog(base_dir=tmp_path)
+        log.log_api_access(
+            caller="local-net:127.0.0.1",
+            operation="dashboard.token_auth",
+            outcome="ok",
+            metadata={"reason": "local-network bypass"},
+        )
+        monkeypatch.setattr("personalclaw.cli_commands.sel", lambda: log)
+
+        _security(argparse.Namespace(sec_action="events", limit=20))
+
+        out = capsys.readouterr().out
+        assert "error:" not in out
+        assert "reason: local-network bypass" in out
+
+    def test_still_prints_error_for_a_genuine_failure(self, tmp_path, monkeypatch, capsys):
+        from personalclaw.sel import SecurityEventLog
+
+        log = SecurityEventLog(base_dir=tmp_path)
+        log.log_api_access(
+            caller="127.0.0.1",
+            operation="dashboard.token_auth",
+            outcome="denied",
+            error="wrong secret",
+        )
+        monkeypatch.setattr("personalclaw.cli_commands.sel", lambda: log)
+
+        _security(argparse.Namespace(sec_action="events", limit=20))
+
+        out = capsys.readouterr().out
+        assert "error: wrong secret" in out
+        assert "reason:" not in out

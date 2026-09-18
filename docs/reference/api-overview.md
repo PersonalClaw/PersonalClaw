@@ -151,7 +151,6 @@ per-route contract.
 | `GET /api/memory/events` · `POST .../events/{event_id}/undo` | Memory-write audit trail + undo. |
 | `GET /api/memory/stats` · `.../lint` · `.../observability` · `.../graph` · `.../context-preview` · `.../daily-digests` | Store stats, lint findings, recall observability, graph, context preview, digests. |
 | `POST /api/memory/consolidate` · `.../promote` · `.../migrate` · `.../import` | Force consolidation; promote episodic→semantic; migrate legacy; import JSON. |
-| `GET /api/memory/embedding-status` · `.../embedding-models` · `POST .../enable-embeddings` · `.../disable-embeddings` · `.../activate-model` · `.../delete-model` | Memory embedding management. |
 | `GET /api/memory/vault` · `POST .../vault/sync` | Obsidian-style vault status; force re-sync. |
 
 ## Tasks, projects & workflows

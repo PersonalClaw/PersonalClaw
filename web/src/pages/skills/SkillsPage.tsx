@@ -74,8 +74,26 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   // on mobile (matching the resolved header doctrine) rather than clipping "Installed"
   // into the action cluster on a narrow header. The active segment stays highlighted.
   const isMobile = useIsMobile()
+  // 🔑 `collapse="menu"` because WITHOUT IT THE STRIP IS CRUSHED, and `Segmented`'s own comment already
+  // said so: "Tabs are `shrink-0`. `size-8` / `px-m` set a tab's size but NOT its floor, so in a
+  // constrained slot the flex parent squeezed them … Overflow is the job of `collapse` ('scroll' /
+  // 'menu'), not of silently crushing every target: a strip that cannot fit should scroll or fold."
+  // This call site never passed the prop, so it kept crushing.
+  //
+  // Measured on this header (seeded `demo-home`), strip box vs its two 32px tabs:
+  //
+  //     1440px   strip 197×40   both tabs reachable          ← fits
+  //      390px   strip  41×40   "Browse" reachable 16×16     ← already under the 24px floor
+  //      320px   strip   8×40   "Browse" reachable  1×1      ← effectively gone
+  //
+  // The tabs are `shrink-0` and the strip's wrapper is `min-w-0`, so the strip absorbs the whole
+  // squeeze while its children keep their size and overflow it. `menu` is the designed last rung of
+  // the ladder (labelled → icon-only → folded pill) and `CollapsedSegmented`'s own docstring is
+  // written for exactly this case: a phone header's ~42px control rail, where the labelled pill's
+  // ~119px "still overflowed … and rendered as a clipped '☰ Li…'" but the icon-only pill fits.
   return (
     <Segmented ariaLabel="Skills view" value={mode} onChange={(m) => onChange(m as Mode)} iconOnly={isMobile}
+      collapse="menu"
       options={[{ key: 'installed', label: 'Installed', icon: Sparkles }, { key: 'browse', label: 'Browse', icon: Store }]} />
   )
 }
@@ -237,7 +255,15 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: marketplaces = [] } = useQuery<SkillMarketplace[]>(
     'skills:marketplaces',
-    () => api.skillMarketplaces().then((m) => m.filter((x) => x.name !== 'installed' && x.name !== 'native')).catch(() => []),
+    // 🔴 `!== 'native'` was here too, and `/api/skills/marketplaces` returns exactly
+    // {installed, native} on a stock install — so this narrowed to `[]`, the `<select>` below
+    // emitted zero `<option>`s, and the only scope left was the "All marketplaces" default. Paired
+    // with a server-side fan-out that dropped every installed hit, Browse had no reachable scope
+    // that returned anything and every query rendered "No results — try a different search term or
+    // marketplace" over a dropdown offering no other marketplace (#301). `installed` stays out on
+    // its own terms: it mirrors the user's skills dir, so scoping to it would search the Installed
+    // tab from the Browse tab.
+    () => api.skillMarketplaces().then((m) => m.filter((x) => x.name !== 'installed')).catch(() => []),
     { persist: true },
   )
   const [marketplace, setMarketplace] = useQueryParam(query, setQuery, 'mkt', '') // '' = all
@@ -307,7 +333,10 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
       }
       panel={open && (
         <SidePanel key={open.id} fillHeight storeKey="skill-panel-w" icon={<Download size={18} className="text-warn" />} title={open.name || open.id} onClose={() => setOpenId("")}>
-          <MarketplaceDetail result={open} installed={installedIds.has(open.id)} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />
+          {/* Installed-ness comes from the SERVER's annotation, OR from what this session just
+              installed. Reading only the session set claimed "not installed" about every already-present
+              skill on first paint, which is most of them on a stock install. */}
+          <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />
         </SidePanel>
       )}
     >
@@ -326,7 +355,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
           : (
             <div className="flex flex-col gap-s">
               {results.map((r, i) => {
-                const installed = installedIds.has(r.id)
+                const installed = installedIds.has(r.id) || !!r.installed
                 // Right-click / long-press → open the marketplace result (install itself
                 // lives inside the detail panel, not this row), mirroring the click handler.
                 const menuItems: ContextMenuItem[] = [

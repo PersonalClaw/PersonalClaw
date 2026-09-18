@@ -456,18 +456,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/mcp/toggle` — enable or disable an MCP server globally.
 - `POST /api/mcp/toggle-all` — enable or disable all MCP servers.
 - `POST /api/mcp/toggle-tool` — enable or disable a specific tool in an MCP server.
-- `POST /api/memory/activate-model` — switch the active embedding model.
 - `GET /api/memory/approval-rules` — the triage approval rules, with provenance.
 - `POST /api/memory/approval-rules` — teach one approve/deny rule.
 - `DELETE /api/memory/approval-rules/{key}` — revoke one rule.
 - `POST /api/memory/consolidate` — trigger immediate consolidation for testing.
 - `GET /api/memory/context-preview` — preview what gets injected into prompts.
 - `GET /api/memory/daily-digests` — the per-day rollup nodes (mem-tree),
-- `POST /api/memory/delete-model` — delete a downloaded embedding model.
-- `POST /api/memory/disable-embeddings` — clear the active embedding selection.
-- `GET /api/memory/embedding-models` — list local embedding models + download status.
-- `GET /api/memory/embedding-status` — embedding system status + setup progress.
-- `POST /api/memory/enable-embeddings` — build the FAISS vector store for the active native model.
 - `GET /api/memory/entities` — the entity set with inbound-link counts.
 - `POST /api/memory/entities` — declare an entity, then re-link the store.
 - `GET /api/memory/entities/proposals` — the accept queue (§7.1).
@@ -533,8 +527,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
 - `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
+- `DELETE /api/models/hf-token` — clear the managed token (SOURCE 1). SEL-audited by name.
+- `PUT /api/models/hf-token` — write the token to SOURCE 1 (the credential store).
+- `GET /api/models/hf-token/status` — per-source ``{present, valid, username, masked, active}``.
 - `GET /api/models/loaded` — every resident model + the memory-pressure snapshot.
+- `GET /api/models/local/{provider}/health` — NEVER 500s (LMMV §6).
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
+- `POST /api/models/local/{provider}/selftest` — a real per-capability inference (LMMV §6).
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).
@@ -706,7 +705,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/task-lists/{list_id}` — _(no summary)_
 - `GET /api/task-lists/{list_id}` — _(no summary)_
 - `PUT /api/task-lists/{list_id}` — _(no summary)_
-- `POST /api/task-lists/{list_id}/reset` — reset a Repeatable-project list: all
+- `POST /api/task-lists/{list_id}/reset` — reset a Repeatable-project list so it can be run
 - `GET /api/tasks` — _(no summary)_
 - `POST /api/tasks` — _(no summary)_
 - `POST /api/tasks/bulk` — validate-all-then-apply bulk create/update/delete.

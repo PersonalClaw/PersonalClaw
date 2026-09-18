@@ -590,13 +590,35 @@ def _update_pip() -> None:
 def _update_container() -> None:
     """A container image cannot be updated in place — print the two commands.
 
+    Rides the ``updates`` channel/pin (RUM-7): the printed
+    ``docker compose pull``+``up -d`` carry the resolved image tag —
+    ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``, a pin -> the
+    exact ``:X.Y.Z``. A pin naming no release REFUSES (mirrors ``_update_pip``'s
+    pin-miss) rather than pulling ``latest`` behind the user's back.
+
     Exit code is 0 (see `_update`): the install is healthy and correctly
     configured, and the command did the only thing it can do here — say exactly
     how to become current.
     """
+    import asyncio
+
+    cfg = AppConfig.load()
+    pin = cfg.updates.pin
+    try:
+        image_tag = asyncio.run(self_update.resolve_image_tag(cfg.updates.channel, pin))
+    except Exception:
+        logging.getLogger(__name__).debug("resolve_image_tag failed", exc_info=True)
+        image_tag = ""
+
+    if pin and not image_tag:
+        # A pin naming no release must NEVER silently pull the latest image.
+        print("\n⚠️  No release matches the pinned version (offline?).")
+        print(f"   Nothing to pull for pin {pin!r} — check `updates.pin` or retry online.")
+        return
+
     print("  📦 This is a container install — the image is replaced, not patched.")
     print("  Run these on the host:\n")
-    for cmd in self_update.container_instructions():
+    for cmd in self_update.container_instructions(image_tag):
         print(f"      {cmd}")
     print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
     print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")

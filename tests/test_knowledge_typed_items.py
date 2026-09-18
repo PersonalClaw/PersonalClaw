@@ -1253,10 +1253,38 @@ class TestItemGraphShape:
         resp = _run(H.get_item_graph(_req(store, "GET", match_info={"id": nid})))
         body = json.loads(resp.body)
         types = [n["node_type"] for n in body["nodes"]]
-        assert types == ["passthrough", "insights", "entities", "intents", "embed"]
+        assert types == ["passthrough", "insights", "entities", "intents", "embed", "dedup"]
         # Linear chain through the terminal stages.
         assert {"from": "passthrough", "to": "insights"} in body["edges"]
         assert {"from": "intents", "to": "embed"} in body["edges"]
+        assert {"from": "embed", "to": "dedup"} in body["edges"]
+
+    def test_shape_exposes_every_stage_the_runner_actually_runs(self, store):
+        """THE ONE-OWNER RAIL (#481). This endpoint used to keep its OWN hand-copied tuple of
+        terminal stages, and it drifted: it omitted ``dedup``, so the runner emitted a
+        per-node SSE phase for a stage the shape said did not exist. The mini-DAG iterates
+        ``graph.nodes``, so that phase was unrenderable — and the persisted phase map had no
+        key for it either. The list now lives in the runner (which executes it) and is
+        imported here, so the set that RUNS and the set that is REPORTED are one object.
+
+        This reds if a stage is added to TERMINAL_STAGES without the shape surfacing it.
+        """
+        from personalclaw.dashboard.handlers import knowledge as H
+        from personalclaw.knowledge.pipeline.runner import (
+            MODEL_BACKED_TERMINAL_STAGES,
+            TERMINAL_STAGES,
+        )
+
+        nid = store.create_typed_item(item_type="note", title="N", content="x")
+        body = json.loads(_run(H.get_item_graph(_req(store, "GET", match_info={"id": nid}))).body)
+        by_type = {n["node_type"]: n for n in body["nodes"]}
+        missing = [s for s in TERMINAL_STAGES if s not in by_type]
+        assert not missing, f"terminal stages the shape never surfaces: {missing}"
+        # …and each is flagged terminal, with model_backed derived from the same one owner
+        # rather than a second hand-list (embed/dedup are not model-gated).
+        for s in TERMINAL_STAGES:
+            assert by_type[s]["terminal"] is True
+            assert by_type[s]["model_backed"] is (s in MODEL_BACKED_TERMINAL_STAGES)
 
     def test_image_graph_has_parallel_nodes_and_terminals(self, store):
         from personalclaw.dashboard.handlers import knowledge as H
@@ -1265,7 +1293,8 @@ class TestItemGraphShape:
         resp = _run(H.get_item_graph(_req(store, "GET", match_info={"id": iid})))
         types = {n["node_type"] for n in json.loads(resp.body)["nodes"]}
         assert {"exif", "ocr", "vision", "consolidate"} <= types  # graph nodes
-        assert {"insights", "entities", "intents", "embed"} <= types  # terminals appended
+        # terminals appended (dedup included — it runs on every ingest)
+        assert {"insights", "entities", "intents", "embed", "dedup"} <= types
 
     def test_video_graph_edges_deduped(self, store):
         """The video DAG routes video_classify→vision via two conditions (visual,

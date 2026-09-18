@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **`personalclaw footprint` reports where your disk went, and the gateway now actually gives it back.**
 - **A chat session now has a durable index: `GET /api/chat/sessions/{session}/map`.**
 - **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
 - `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn.
@@ -19,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 - **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
+- **A container install's update commands now carry the image tag your `updates` channel/pin resolves to, not a bare `latest`.**
 - **A pip / pipx / uv wheel install now upgrades to the release your `updates` channel/pin selects, not a blind `releases/latest`.**
 - **Unattended auto-update is now OPT-IN and STAGED, and the always-on `auto_update` bool is retired.**
 - **The in-app updater no longer tracks raw `main` — a git checkout rides release TAGS by channel, and the destructive `git reset --hard origin/main` is gone from every unattended and dashboard apply path.**
@@ -31,7 +33,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **An app-scoped WebSocket no longer receives events its manifest never declared.**
+- **Workflow tools now pass through the shared MCP boundary: their 19 argument schemas are actually enforced (they were defined but never consulted), calls are SEL-logged, and a compiled batch leaf can no longer call workflow_start past the orchestration denial.**
+- **A subprocess whose deadline expires is now killed AND reaped, with its process group, at twelve more spawn sites.**
+- **A `PERSONALCLAW_AUTH_MODE` the runtime cannot honor is now NAMED at startup and by `doctor`, instead of being downgraded in silence.**
+- **The task API's doors now validate what they accept, so a wrong-but-plausible request is refused instead of answered with a quietly wrong result.**
+- **Discover's engagement probes now measure the user, not the system: four of the ten auto-hide checks counted machine-produced signals, so tips vanished before they could teach — the automation tip was unreachable on every install (boot registers the notification-digest trigger before the first interaction), the skills tip hid after one plain chat message (passive turn-time injection of bundled skills), the inbox tip hid on the first system-generated proposal (presence, not interaction, on a surface built to receive system items), and the memory tip hid on auto-consolidation rows a user never reviewed.**
 - **Content-hashed `/assets/*` Vite bundles no longer defeat the browser cache.**
+- **An ingest that leaves nothing you can find no longer reports success.**
 - **`personalclaw --help` no longer prints argparse's internal `==SUPPRESS==` sentinel, and the internal command it was meant to hide is now genuinely hidden.**
 - **Accepting a learning proposal installs it, or says it cannot.**
 - **Creating a loop on a fresh install with no model bound now says so, instead of silently building a bare-defaults plan.**
@@ -58,6 +67,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent write now validates the SHAPE of every field before storing it.**
 - **An OpenAI-compatible provider now discovers the models its endpoint actually lists, and says why when it cannot.**
 - **Knowledge search no longer hands back the whole library for a term the library happens to talk about — and no longer collapses to a single result when one title happens to match.**
+- **Removed**
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -73,6 +83,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Acking one notification can no longer permanently delete up to 200 older ones.**
 - **A retired built-in app no longer lingers as an undeletable broken card.**
 - **An upgraded home no longer ends up with two of a system-owned scheduled job.**
+- **Resetting a Repeatable task list now actually returns it to a not-yet-run state.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

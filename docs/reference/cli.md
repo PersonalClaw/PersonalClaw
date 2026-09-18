@@ -310,6 +310,25 @@ Security audit and deny list.
 | `personalclaw backup export [OUT_DIR] [--incremental]` | Export state as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly and syncs without re-uploading unchanged data). Defaults to `<home>/shards`. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A backup nobody has verified is a hope, not a backup. |
 
+## Disk footprint
+
+| Command | What it does |
+|---|---|
+| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the bytes actually freed. |
+
+Each run records one sample, so **a rate appears from the second run onward** — a
+single reading cannot tell "not growing" from "measured once", and the report says
+`not yet measurable` rather than printing a fabricated `0 B/day`.
+
+You do not have to run this for the space to come back. The gateway's durability loop
+prunes runs past `workflows.retention_per_def` and reclaims the freed pages **daily**,
+independently of `durability.auto_backup` — turning off scheduled backups does not stop
+reclaiming disk. `--reclaim` is for wanting the space now rather than at the next
+cadence; it shares a lock with the scheduled pass, so the two cannot collide.
+
+Deleting rows from a SQLite store does **not** shrink the file on its own — the pages
+are marked free and reused later. That is why pruning and reclaiming are one job.
+
 ## Inbound surfaces
 
 PersonalClaw can expose a **read-only MCP endpoint** at `POST /mcp` so a local MCP

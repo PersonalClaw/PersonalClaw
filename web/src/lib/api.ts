@@ -1918,7 +1918,10 @@ export interface LearningSummary {
 export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
-export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number }
+/** `installed` is the server's answer to "is this already in my skills dir" — an ANNOTATION on a
+ *  row the search still returns. The fan-out used to withhold installed rows instead, which emptied
+ *  the store for every query a stock install can make (#301). */
+export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number; installed?: boolean }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
 /** `tier` is the PROVENANCE of the provider behind this tool — the same
  *  `supply_chain.TrustTier` string the install dialog discloses ("Unsigned — community
@@ -3260,6 +3263,28 @@ export interface ComputerUseLiveView {
   snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
 }
 
+// ── The browse mirror (BROWSE-AUTOMATION §(b)/(c)) ───────────────────────────
+// The read model the live BrowseMirror panel polls: the kill-switch state and the sites whose
+// saved session has EXPIRED. One GET so the kill button and the persistent auth banner cannot show
+// a stale pair (see dashboard/handlers/browse_mirror.py:api_browse_status). Values never carry a
+// credential — `expired` is site slugs + a key-PRESENCE boolean, never the profile-encryption key.
+export interface BrowseKillState { active: boolean; reason: string; started_at: string }
+export interface BrowseExpiredSite {
+  site: string
+  /** True when the site's profile-encryption key is in the credential store, so the panel can say
+   *  re-auth will REUSE the existing profile rather than establish a new one. */
+  key_present: boolean
+}
+export interface BrowseStatus { kill: BrowseKillState; expired: BrowseExpiredSite[] }
+// One live browse step, off the `browse_step` WS frame (browse/mirror.py:WS_BROWSE_STEP). This is a
+// genuine PAYLOAD, not a refetch signal: the step stream has one producer and no GET slice to read
+// it back from, so the panel reads the frame's fields directly. `screenshot` is a filesystem PATH
+// under the run workspace — rendered as a `[SCREENSHOT: path]` reference, never fetched as bytes
+// (the screenshot-as-path discipline; the `url` is already credential-screened by the loop).
+export interface BrowseStepFrame {
+  run_id: string; step_n: number; url: string; action: string; screenshot: string; note: string
+}
+
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
@@ -3308,7 +3333,7 @@ export interface ProjectImportResult {
   project_id?: string; written?: string[]; error?: string
 }
 // Update + changelog.
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; release_notes?: string }
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string }
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -4060,6 +4085,10 @@ export interface AvailableModel {
   matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
   runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
   io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+  // Gated pre-warn (LMMV §5): only present on a GATED row, computed server-side from the HF
+  // token cascade. `false` = no valid token is configured, so the UI warns BEFORE Download;
+  // absent = the cascade could not answer (a network blip) and the UI simply does not pre-warn.
+  token_ready?: boolean
   // ── Will it run HERE? ───────────────────────────────────────────────────────────────────
   // Only rows from a LOCAL provider carry these; a hosted/remote row carries none of them.
   // So an ABSENT `fit` is not the same as `fit: 'unknown'`: absent means "this is not a
@@ -4113,6 +4142,23 @@ export interface ProviderModels {
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
+// One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
+// only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
+export interface HfTokenSource {
+  source: 'credential_store' | 'env' | 'hf_cli_file'
+  present: boolean; valid: boolean; username: string; masked: string; active: boolean
+}
+export interface HfTokenStatus { sources: HfTokenSource[]; cleared?: boolean }
+// A local provider's health (LMMV §6). The endpoint never 500s: an unavailable/raising
+// provider still returns a typed body. `message` is server-masked.
+export interface LocalModelHealth { provider: string; ok: boolean; message: string; latency_ms: number }
+// One capability's real-inference selftest result (LMMV §6). `reason` is a TYPED machine
+// string ('timeout', 'diarization_returned_nothing', 'selftest_error:AttributeError', …) so a
+// broken runtime contract reads as a specific failure, not a bare red.
+export interface SelftestCapability { ok: boolean; duration_ms: number; detail: string; reason?: string }
+export interface LocalModelSelftest {
+  provider: string; capabilities: Record<string, SelftestCapability>; detail?: string
+}
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
 // A background local-model download job — the ONE canonical wire shape
@@ -5270,6 +5316,14 @@ export const api = {
   incidentOn: (reason: string) =>
     post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
+
+  // ── Browse mirror + kill switch ──
+  // The mirror's read model (kill state + expired sites) and the one-click stop. `browseKill` needs
+  // no confirm — a safety stop is one click by design; `browseKillRelease` (the undo) is confirm-
+  // gated like incidentResume so a stray request cannot silently re-enable a stop a human chose.
+  browseStatus: () => get<BrowseStatus>('/api/browse/status'),
+  browseKill: (reason = '') => post<{ kill: BrowseKillState }>('/api/browse/kill', { reason }),
+  browseKillRelease: () => post<{ kill: BrowseKillState }>('/api/browse/kill/release', { confirm: true }),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; callers?: CallerHealth[]; generated_from: number }>(
       '/api/models/health',
@@ -5675,6 +5729,23 @@ export const api = {
     post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
+  // HF token cascade (LMMV §5). Status is per-source, masked (the value never crosses the
+  // wire); set writes SOURCE 1 (the credential store) and clear removes it — both SEL-audited
+  // server-side. Set/clear return the refreshed status so the UI repaints from one source.
+  hfTokenStatus: () => get<HfTokenStatus>('/api/models/hf-token/status'),
+  setHfToken: (token: string) => put<HfTokenStatus>('/api/models/hf-token', { token }),
+  // DELETE that returns the refreshed status body (the shared `del` is void-only), so the UI
+  // repaints from the response instead of a second round-trip.
+  clearHfToken: () =>
+    fetch('/api/models/hf-token', { method: 'DELETE', headers: { ...SK } }).then(j<HfTokenStatus>),
+  // Per-provider health + real-inference selftest (LMMV §6). Health never 500s. Selftest runs
+  // a real inference per capability (user-click only) and returns typed reasons; a 409 means a
+  // selftest for this provider is already running.
+  localModelHealth: (provider: string) =>
+    get<LocalModelHealth>(`/api/models/local/${encodeURIComponent(provider)}/health`),
+  localModelSelftest: (provider: string, model?: string) =>
+    post<LocalModelSelftest>(
+      `/api/models/local/${encodeURIComponent(provider)}/selftest`, model ? { model } : {}),
   // What is occupying RAM right now (LMMV §7) — resident models with attribution, each
   // provider's readiness, and the system pressure snapshot. One fetch backs both the
   // Settings section and the dashboard's "On this machine" band.

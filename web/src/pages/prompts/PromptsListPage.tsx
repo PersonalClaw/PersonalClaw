@@ -42,17 +42,31 @@ const SOURCES = [
 // have no `kind`; everything else is shared).
 type Row = PromptItem & PromptSnippet
 
-function applyView(rows: Row[], q: string, sort: SortKey, source: string): Row[] {
+/** The list's search + source-filter + sort, as one pure function.
+ *
+ *  Exported for its test: it is the ONLY filter/sort path this page has (the memo below is its
+ *  sole caller), so asserting it directly asserts the real production function rather than a
+ *  copy of its logic. */
+export function applyView(rows: Row[], q: string, sort: SortKey, source: string): Row[] {
   const n = q.trim().toLowerCase()
   let out = n
     ? rows.filter((r) => `${r.name} ${r.title ?? ''} ${r.description ?? ''} ${(r.tags ?? []).join(' ')}`.toLowerCase().includes(n))
     : rows.slice()
-  if (source !== 'all') out = out.filter((r) => (r.source || 'user') === source)
+  // 🔴 `sourceLabel`, not the raw `source` field (#299). A shipped prompt is seeded to disk as an
+  // EDITABLE native prompt and the provider stamps every on-disk record `source = 'user'` — that
+  // stamp is load-bearing, because `isReadOnly` is `source !== 'user'` and changing it would flip
+  // all 86 shipped records to read-only. So provenance lives in the tags, `sourceLabel` already
+  // resolves it for the badge, and the filter must ask the SAME question the badge answers.
+  // Measured before this: 42 prompts + 44 snippets all reported `source: 'user'`, so the "Bundled"
+  // option filtered to nothing while every row's badge read "bundled".
+  if (source !== 'all') out = out.filter((r) => sourceLabel(r.source, r.tags) === source)
   const byName = (a: Row, b: Row) => (a.title || a.name).localeCompare(b.title || b.name)
   out.sort((a, b) => {
     switch (sort) {
       case 'updated': return (b.updated_at ?? 0) - (a.updated_at ?? 0) || byName(a, b)
-      case 'source': return (a.source || 'user').localeCompare(b.source || 'user') || byName(a, b)
+      // Same resolution as the filter and the badge: sorting on the raw field put every shipped
+      // record in one indistinguishable 'user' block, which is the same defect one surface over.
+      case 'source': return sourceLabel(a.source, a.tags).localeCompare(sourceLabel(b.source, b.tags)) || byName(a, b)
       case 'vars': return (b.variables?.length ?? 0) - (a.variables?.length ?? 0) || byName(a, b)
       default: return byName(a, b)
     }

@@ -148,15 +148,24 @@ upgrade.
 ## Updates
 
 Container installs update by pulling the new image and recreating — there is no
-in-place self-update (the app's Updates panel shows exactly these commands for a
-container install):
+in-place self-update. The app's Updates panel (and `personalclaw update`) show
+exactly the commands for the image tag your `updates` channel/pin resolves to,
+carried on `PERSONALCLAW_IMAGE_TAG`:
+
+- **stable** (default) → the moving minor `:X.Y` (e.g. `:0.2`) — stays on the
+  0.2.x line;
+- **beta** → `:beta` — the newest prerelease line;
+- a **pin** (`updates.pin=0.2.1`) → that exact immutable `:0.2.1`. A pin that
+  matches no published release is refused rather than silently pulling `latest`.
 
 ```bash
-# pin the new release first if you don't track `latest`
-#   PERSONALCLAW_IMAGE_TAG=vX.Y.Z   (in .env)
-docker compose -f deploy/compose/compose.yaml pull
-docker compose -f deploy/compose/compose.yaml up -d
+# the tag is prefixed on BOTH commands so the recreate matches the pull:
+PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml pull
+PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml up -d
 ```
+
+You can still pin the tag yourself in `.env` (`PERSONALCLAW_IMAGE_TAG=vX.Y.Z`) and
+run the bare `docker compose … pull` / `up -d`.
 
 State in `personalclaw_home` carries across the recreation. Snapshot before
 upgrading (see [Backups](#backups)); read the

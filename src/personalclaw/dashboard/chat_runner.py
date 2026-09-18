@@ -4104,7 +4104,7 @@ async def run_chat(
                 session._acp_pipe_death_retries += 1
                 session.queue_insert(0, message)
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — retrying...")
-            elif session._acp_pipe_death_retries >= 3:
+            elif _prompt_depth == 0 and session._acp_pipe_death_retries >= 3:
                 _emit_error(f"Session stuck{_rc_suffix} — please start a new chat.")
             else:
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — please retry.")
@@ -4379,12 +4379,13 @@ async def run_chat(
                 redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
                 "msg msg-a",
             )
-        session._acp_pipe_death_retries += 1
-        if _prompt_depth == 0 and session._acp_pipe_death_retries <= 3:
-            session.queue_insert(0, message)
-            session.append("error", "⟳ Connection lost — retrying...", "msg msg-err")
-        elif session._acp_pipe_death_retries > 3:
-            session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+        if _prompt_depth == 0:
+            session._acp_pipe_death_retries += 1
+            if session._acp_pipe_death_retries <= 3:
+                session.queue_insert(0, message)
+                session.append("error", "⟳ Connection lost — retrying...", "msg msg-err")
+            else:
+                session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
         else:
             session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
     except PromptBusyExhaustedError:
@@ -4400,11 +4401,14 @@ async def run_chat(
                 redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
                 "msg msg-a",
             )
-        session._prompt_busy_retries += 1
-        if _prompt_depth == 0 and session._prompt_busy_retries <= 3:
-            session.queue_insert(0, message)
-        elif session._prompt_busy_retries > 3:
-            session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+        if _prompt_depth == 0:
+            session._prompt_busy_retries += 1
+            if session._prompt_busy_retries <= 3:
+                session.queue_insert(0, message)
+            else:
+                session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+        else:
+            session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
     except AcpError as exc:
         logger.warning("ACP error in session %s: %s", session.key, exc)
         _msg = str(exc)
@@ -4417,11 +4421,12 @@ async def run_chat(
         _retry_eligible = (
             "already in progress" in _msg or "process exited" in _msg or "not running" in _msg
         )
-        if _retry_eligible and _prompt_depth == 0:
+        if _retry_eligible:
             logger.info(
-                "ACP transient (%s) in session %s — resetting session and re-queuing",
+                "ACP transient (%s) in session %s — resetting session%s",
                 _msg[:80],
                 session.key,
+                " and re-queuing" if _prompt_depth == 0 else "",
             )
             needs_session_reset = True  # checked in finally block
             if assistant_text:
@@ -4429,11 +4434,16 @@ async def run_chat(
                 _safe, _ = redact_credentials(_safe)
                 session.messages = [m for m in session.messages if m.get("role") != "chunk"]
                 session.append("assistant", _safe, "msg msg-a")
-            session._prompt_busy_retries += 1
-            if session._prompt_busy_retries <= 3:
-                session.queue_insert(0, message)
+            if _prompt_depth == 0:
+                session._prompt_busy_retries += 1
+                if session._prompt_busy_retries <= 3:
+                    session.queue_insert(0, message)
+                else:
+                    session.append(
+                        "error", "Session stuck — please start a new chat.", "msg msg-err"
+                    )
             else:
-                session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
+                session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
         else:
             if assistant_text:
                 _safe, _ = redact_exfiltration_urls(assistant_text)

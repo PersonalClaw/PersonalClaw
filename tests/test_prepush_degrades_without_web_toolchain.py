@@ -100,7 +100,7 @@ class Sandbox:
         ``merge-base(HEAD, origin/main)..HEAD`` — which contains the ``web/`` file, so
         ``needs_gate=1`` and the render-smoke half is owed.
         """
-        return f"refs/heads/feature {self.head} refs/heads/feature {ZERO}\n"
+        return f"refs/heads/main {self.head} refs/heads/main {ZERO}\n"
 
 
 @pytest.fixture

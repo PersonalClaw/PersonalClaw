@@ -190,7 +190,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
                           // the only channel).
                           textDecoration: cell.state === 'skipped' ? 'line-through' : undefined,
                           border:
-                            cell.count === 0 ? '1px solid var(--color-outline-var)' : '1px solid transparent',
+                            cell.count === 0 ? '1px solid var(--color-outline-variant)' : '1px solid transparent',
                         }}
                       >
                         {cell.count > 0 ? cell.count : ''}

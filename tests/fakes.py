@@ -57,3 +57,23 @@ def ensure_fake_model_type(registry: ProviderRegistry) -> None:
     """
     if FAKE_MODEL_TYPE not in registry._factories:  # noqa: SLF001 (test helper)
         registry.register_type(FAKE_MODEL_CAPABILITY, _factory)
+
+
+class BoundEmbedder:
+    """An embedding provider that is bound and actually yields a vector.
+
+    Lives here, shared, rather than being re-stubbed per test file. RET-2 made an ingest
+    that wrote no vector and no chunk persist ``processing_status='unsearchable'`` instead
+    of ``done`` (``knowledge.searchability.verdict_for_ingest``), so every runner test
+    whose subject is something ELSE — the graph, slicing, URL routing, the ingest queue, an
+    event emit site — has to say out loud that its embedding provider IS bound, or it
+    asserts the terminal status of a condition it never meant to create. Four hand-rolled
+    copies of this stub would be four chances to drift from what that verdict counts as a
+    bound embedder.
+    """
+
+    def is_available(self) -> bool:
+        return True
+
+    def embed_for_item(self, title: str, summary: str, content: str | None = None) -> list[float]:
+        return [0.5, 0.25, 0.125, 0.0625]

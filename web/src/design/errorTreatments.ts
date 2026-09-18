@@ -26,6 +26,29 @@
  * is the colour that renders.
  */
 
+/** The BASE paint every failure surface wears when no personality treatment is
+ *  active — i.e. on every standard scheme, which is the overwhelmingly common case.
+ *
+ *  Single-sourced here because it was previously hand-written at each site and the
+ *  copies had diverged into two different things: `InlineError` (the canonical
+ *  failure band) and `ModelsPanel`'s reindex strip painted this danger wash, while
+ *  `IncidentBanner` and `BrowseMirror`'s auth-expired alert reached for
+ *  `--color-error-container` / `--color-on-error-container` — tokens that are
+ *  DEFINED NOWHERE. An unresolvable `var()` with no fallback is invalid at
+ *  computed-value time, so those two surfaces rendered `background-color:
+ *  rgba(0,0,0,0)` over the canvas with plain body ink: the app's loudest alert had
+ *  no alert affordance at all. Measured in a real browser, not inferred.
+ *
+ *  `--color-danger` is the one semantic token for "this failed", and the 10% wash
+ *  keeps the band readable in both modes (the same pairing `InlineError` has
+ *  shipped and `dimmedInkContrast`/`statusChipContrast` already hold to AA). A
+ *  treatment's `paint` still spreads AFTER this, so a personality skin overrides it
+ *  exactly as before. */
+export const ERROR_SURFACE_PAINT: { background: string; color: string } = {
+  background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)',
+  color: 'var(--color-danger)',
+}
+
 /** The closed set of treatment ids. Adding a member is the deliberate act; the
  *  registry below and the AA sweep both fail on a member without an entry. */
 export type ErrorTreatmentId = 'terminal-frame' | 'arcade-panel'

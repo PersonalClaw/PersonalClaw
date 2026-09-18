@@ -8,7 +8,7 @@ import re
 import time
 import traceback
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -919,9 +919,9 @@ class DashboardState:
         self._ws_clients: list[web.WebSocketResponse] = []
         # Per-connection app identity for untrusted-app scoping (sandbox P1): a WS
         # opened by an app's SDK (owner cookie + ?app_token=) records the app name
-        # here; broadcast_ws then delivers only the events the app's manifest
-        # declares (permissions.events). An owner/dashboard connection is absent from
-        # this map and receives the full event stream.
+        # here; every send path then delivers only the events the app's manifest
+        # declares (permissions.events), via `_ws_may_receive`. An owner/dashboard
+        # connection is absent from this map and receives the full event stream.
         self._ws_app: dict[web.WebSocketResponse, str] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
@@ -929,7 +929,7 @@ class DashboardState:
         # broadcast_ws is invoked from BOTH the loop (chat runner) and off-loop
         # threads (MCP tool subprocess callbacks, subagent/cron announce paths);
         # off-loop callers can't asyncio.ensure_future, which silently dropped the
-        # frame. We schedule sends onto this captured loop instead (see _send_ws_all).
+        # frame. We schedule sends onto this captured loop instead (see _dispatch_ws).
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         # Pending tool approvals: id → asyncio.Future[bool]
         self._pending_approvals: dict[str, dict] = {}
@@ -2148,11 +2148,12 @@ class DashboardState:
         # headless recording sees every broadcast. No-op unless PERSONALCLAW_TRACE_DIR set.
         if _trace.is_recording():
             _trace.record("ws", str(note.get("_type", "notification")), "note", note)
-        # Translate the internal `_type` into the WS envelope, then hand it to the ONE
-        # gated producer. This used to end in `self._send_ws_all(ws_msg)`, which writes to
-        # every socket directly — so every always-on frame reached app-scoped sockets
-        # whatever their manifest declared, while `broadcast_ws` right below it enforced
-        # exactly that. Two producers, one gate.
+        # Translate the internal `_type` into the WS envelope, then hand it to the gated
+        # producer. This used to end in a raw fan-out helper that wrote to every socket
+        # directly — so every always-on frame reached app-scoped sockets whatever their
+        # manifest declared, while `broadcast_ws` right below it enforced exactly that.
+        # That helper is gone (see `_dispatch_ws`): a producer cannot write without
+        # naming an event type, and naming one means passing the gate.
         if not self._ws_clients:
             return
         msg_type = note.get("_type") or NOTE_TYPE_NOTIFICATION
@@ -2203,19 +2204,34 @@ class DashboardState:
             return
         self.broadcast_ws(msg_type, data, extra=extra)
 
-    def _send_ws_all(self, msg: str) -> None:
-        """Send a pre-serialized JSON string to all WS clients.
+    def _dispatch_ws(
+        self, sockets: Iterable[web.WebSocketResponse], event_type: str, msg: str
+    ) -> None:
+        """Fan a pre-serialized envelope out to ``sockets`` — THE WS write path.
 
-        Safe to call from ANY thread. On the gateway loop each send is scheduled
-        with ensure_future; off-loop (MCP tool subprocess callbacks, subagent/cron
-        announce paths) it's submitted to the captured gateway loop via
-        run_coroutine_threadsafe. The old code called ensure_future directly, which
-        raised off-loop → the send coroutine was dropped unawaited (a RuntimeWarning
-        + a silently-lost frame, e.g. subagent lifecycle cards not updating live)."""
+        Every gateway→client frame goes through here or through its awaited
+        single-socket twin :meth:`send_ws_event`, and both open with
+        :meth:`_ws_may_receive`. That is the entire point of the shape: this used to be
+        ``_send_ws_all``, a raw "write to every registered client" helper with no
+        permission check in it, and each producer that reached for a raw write — the
+        always-on note translator, then the log-subscriber set and the subagent-
+        subscriber set — became another place the app-event gate was simply absent
+        (issue 2963: an app that declared one private event received the full backend
+        log stream and the on-connect session list). There is no ungated primitive left
+        to reach for, so a new producer cannot forget the gate; it has to pass an event
+        type to get a frame on the wire.
+
+        Safe to call from ANY thread: each send is scheduled by
+        :meth:`_schedule_ws_send` (ensure_future on the gateway loop,
+        run_coroutine_threadsafe off it), which the ring log handler and the
+        subagent/cron threads depend on. Closed or unwritable sockets are reaped in the
+        same call."""
         dead: list[web.WebSocketResponse] = []
-        for ws in list(self._ws_clients):
+        for ws in list(sockets):
             if ws.closed:
                 dead.append(ws)
+                continue
+            if not self._ws_may_receive(ws, event_type):
                 continue
             try:
                 if not self._schedule_ws_send(ws.send_str(msg), ws):
@@ -2224,6 +2240,50 @@ class DashboardState:
                 dead.append(ws)
         for ws in dead:
             self._remove_ws(ws)
+
+    async def send_ws_event(
+        self,
+        ws: web.WebSocketResponse,
+        event_type: str,
+        data: object,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Send ONE event to ONE socket, through the same gate as :meth:`_dispatch_ws`.
+
+        The connect-time replays — the ``sessions`` push, the log ring, the subagent
+        snapshot — run on that socket's own handler task and await their writes so a
+        thousand-entry replay applies backpressure instead of scheduling a thousand
+        tasks. Awaiting is the ONLY thing that differs from the fan-out path; the
+        permission check is the same call. Each of those three replays used to call
+        ``ws.send_json`` itself, which is how an app-scoped socket received the session
+        list and the whole log ring it never declared (issue 2963)."""
+        if not self._ws_may_receive(ws, event_type):
+            return
+        envelope: dict[str, Any] = {"type": event_type, "data": data}
+        if extra:
+            # Envelope keys only — `type`/`data` stay owned by this method so a caller
+            # cannot rename the event out from under the permission check.
+            envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
+        try:
+            await ws.send_str(json.dumps(envelope))
+        except Exception as exc:
+            logger.debug("WS send failed (client gone?): %s", exc)
+            self._remove_ws(ws)
+
+    def _ws_may_receive(self, ws: web.WebSocketResponse, event_type: str) -> bool:
+        """THE app-event gate: may THIS socket receive ``event_type``?
+
+        An owner/dashboard socket — no app identity in ``_ws_app`` — receives
+        everything, exactly as before. An app-scoped socket (sandbox P1) receives an
+        event ONLY if the app's manifest declares it in ``permissions.events``: deny by
+        default, including when the manifest cannot be read at all. Server-side
+        enforcement, because the SDK's client-side filter is advisory and the Store
+        shows that declared list as the install-consent surface."""
+        app = self._ws_app.get(ws, "")
+        if not app:
+            return True
+        return self._app_may_see_event(app, event_type)
 
     def _schedule_ws_send(  # type: ignore[no-untyped-def]
         self, coro, ws: "web.WebSocketResponse | None" = None
@@ -2287,10 +2347,11 @@ class DashboardState:
 
         ``extra`` merges additional TOP-LEVEL envelope keys, which exists so the
         dashboard-state translator (`_broadcast`) can route through this filter instead of
-        writing to the sockets itself. It had its own `_send_ws_all` call, so every
+        writing to the sockets itself. It had its own raw fan-out call, so every
         always-on frame — sessions, titles, refresh hints, chat messages, notifications —
-        reached app-scoped sockets regardless of what the app declared. One producer, one
-        gate; a second write path is a second place for the gate to be missing from."""
+        reached app-scoped sockets regardless of what the app declared. One gate for
+        every producer; a second write path is a second place for it to be missing
+        from."""
         if not self._ws_clients:
             return
         envelope: dict[str, Any] = {"type": msg_type, "data": data}
@@ -2298,26 +2359,7 @@ class DashboardState:
             # Envelope keys only — `type`/`data` stay owned by this method so a caller
             # cannot rename the event out from under the permission check.
             envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
-        msg = json.dumps(envelope)
-        # Fast path: no app-scoped connections → everyone gets everything.
-        if not self._ws_app:
-            self._send_ws_all(msg)
-            return
-        dead: list[web.WebSocketResponse] = []
-        for ws in list(self._ws_clients):
-            if ws.closed:
-                dead.append(ws)
-                continue
-            app = self._ws_app.get(ws, "")
-            if app and not self._app_may_see_event(app, msg_type):
-                continue
-            try:
-                if not self._schedule_ws_send(ws.send_str(msg), ws):
-                    dead.append(ws)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self._remove_ws(ws)
+        self._dispatch_ws(self._ws_clients, msg_type, json.dumps(envelope))
 
     def _app_may_see_event(self, app: str, event_type: str) -> bool:
         """Whether an app-scoped WS may receive ``event_type`` per its manifest."""
@@ -2360,16 +2402,33 @@ class DashboardState:
         self._ws_log_subscribers.discard(ws)
         self._ws_subagent_subscribers.discard(ws)
 
-    def subscribe_logs(self, ws: web.WebSocketResponse) -> None:
-        """Subscribe a WS client to log events."""
+    def subscribe_logs(self, ws: web.WebSocketResponse) -> bool:
+        """Subscribe a WS client to ``log`` events; False if it may not receive them.
+
+        An app-scoped socket that did not declare ``log`` is not added at all. The send
+        gate would drop every frame anyway, so this is not the authorization — it keeps
+        the server from formatting, and re-refusing, one frame per log record for a
+        subscriber that can never be delivered to. The caller uses the answer to skip
+        the ring replay for the same reason."""
+        if not self._ws_may_receive(ws, "log"):
+            return False
         self._ws_log_subscribers.add(ws)
+        return True
 
     def unsubscribe_logs(self, ws: web.WebSocketResponse) -> None:
         """Unsubscribe a WS client from log events."""
         self._ws_log_subscribers.discard(ws)
 
-    def subscribe_subagents(self, ws: web.WebSocketResponse) -> None:
+    def subscribe_subagents(self, ws: web.WebSocketResponse) -> bool:
+        """Subscribe a WS client to the subagent chunk stream; False if not permitted.
+
+        ``subagent_chunk`` is the only event this set delivers (the snapshot/done replay
+        is sent per-socket), so it is the one type the subscription can be judged on —
+        and, as with :meth:`subscribe_logs`, the send gate remains the authority."""
+        if not self._ws_may_receive(ws, "subagent_chunk"):
+            return False
         self._ws_subagent_subscribers.add(ws)
+        return True
 
     def unsubscribe_subagents(self, ws: web.WebSocketResponse) -> None:
         self._ws_subagent_subscribers.discard(ws)
@@ -2377,23 +2436,26 @@ class DashboardState:
     def broadcast_ws_subagent_subscribers(self, msg_type: str, data: object) -> None:
         """Send to subagent-subscribed clients only (for heavy chunk data).
 
-        Thread-safe like _send_ws_all: subagent chunk events originate off the
-        gateway loop, so each send is scheduled onto the captured loop when needed."""
+        Thread-safe: subagent chunk events originate off the gateway loop, so each send
+        is scheduled onto the captured loop when needed."""
         if not self._ws_subagent_subscribers:
             return
-        msg = json.dumps({"type": msg_type, "data": data})
-        dead: list[web.WebSocketResponse] = []
-        for ws in list(self._ws_subagent_subscribers):
-            if ws.closed:
-                dead.append(ws)
-                continue
-            try:
-                if not self._schedule_ws_send(ws.send_str(msg), ws):
-                    dead.append(ws)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self._remove_ws(ws)
+        self._dispatch_ws(
+            self._ws_subagent_subscribers, msg_type, json.dumps({"type": msg_type, "data": data})
+        )
+
+    def broadcast_ws_log_subscribers(self, data: object) -> None:
+        """Send one ``log`` frame to the log-subscribed sockets.
+
+        The ring log handler's producer. It used to walk ``_ws_log_subscribers`` and
+        write to each socket itself, so nothing on that path ever consulted the app's
+        declared events and an app-scoped subscriber got the owner's whole log stream
+        (issue 2963). Callable from any thread, like the subagent fan-out."""
+        if not self._ws_log_subscribers:
+            return
+        self._dispatch_ws(
+            self._ws_log_subscribers, "log", json.dumps({"type": "log", "data": data})
+        )
 
     async def close_all_ws(self) -> None:
         """Close all WebSocket connections (called on shutdown)."""

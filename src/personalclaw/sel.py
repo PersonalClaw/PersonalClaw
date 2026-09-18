@@ -426,8 +426,18 @@ class SecurityEventLog:
         source: str = "dashboard",
         resources: str = "",
         error: str = "",
+        metadata: dict | None = None,
     ) -> None:
-        """Convenience: log a dashboard/API access event."""
+        """Convenience: log a dashboard/API access event.
+
+        ``error`` is for why an access FAILED; it has no meaning on a successful
+        outcome and a reader (``personalclaw security events``) treats any non-empty
+        value as evidence something went wrong. A caller that wants to record WHY a
+        successful access was allowed (e.g. "local-network bypass") belongs in
+        ``metadata`` instead — the same field :meth:`log_tool_invocation` callers
+        already use for this (see ``subagent.py``'s ``metadata={"reason": ...}``
+        convention) — never in ``error``.
+        """
         self.log(
             SecurityEvent(
                 event_id=uuid.uuid4().hex[:16],
@@ -440,6 +450,7 @@ class SecurityEventLog:
                 outcome=outcome,
                 resources=resources[:_MAX_ARG_LEN] if resources else "",
                 error=error[:_MAX_ARG_LEN] if error else "",
+                metadata=metadata or {},
             )
         )
 

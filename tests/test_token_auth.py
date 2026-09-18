@@ -895,3 +895,74 @@ async def test_app_token_for_other_user_is_ignored() -> None:
     assert resp.status == 200
     assert req.read_store.get("user") == "alice"
     assert req.read_store.get("app", "") == ""  # foreign app token ignored
+
+
+# -- #2948: an allow REASON on a successful auth must not land in SEL's `error` field --
+
+
+def _bypass_capturing_request(**kw):
+    """Like ``_capturing_request`` but also backs ``__getitem__``.
+
+    The local-network-bypass branch does ``request["user"] = request.get("user")
+    or f"local-net:{ip}"`` and then immediately reads back ``request["user"]`` (item
+    syntax, not ``.get()``) to pass to ``_log_auth``. ``_capturing_request`` only
+    backs ``.get()``/``__setitem__``, so a plain ``MagicMock``'s default
+    ``__getitem__`` would hand ``_log_auth`` an unrelated ``MagicMock`` — which
+    silently fails the SEL write with "not JSON serializable" and would let this
+    regression test's assertions read a stale event from a different writer
+    instead of the bypass path's own record.
+    """
+    req = _make_request(**kw)
+    store: dict = {}
+    # `__setitem__`/`__getitem__` are magic methods: MagicMock self-injects when they are
+    # reassigned this way, so the lambda needs the `_self` placeholder. `.get` is a plain
+    # attribute — no dunder dispatch, so no self-injection, and a leading `_self` there
+    # would eat the real `k` argument.
+    req.__setitem__ = lambda _self, k, v: store.__setitem__(k, v)
+    req.__getitem__ = lambda _self, k: store[k]
+    req.get = lambda k, default=None: store.get(k, default)
+    return req
+
+
+@pytest.mark.asyncio
+async def test_local_network_bypass_records_reason_not_error(monkeypatch) -> None:
+    """A local-network-bypass auth is a success — ``personalclaw security events``
+    must not print an ``error:`` line under its ``-> ok`` row. The allow reason
+    still needs to be visible, just under ``metadata.reason``, not ``error``."""
+    from personalclaw.sel import sel
+
+    monkeypatch.setenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", "1")
+    mw = token_auth_middleware()
+    req = _bypass_capturing_request(path="/api/spawn", remote="192.168.1.5")
+
+    resp = await mw(req, _ok_handler)
+
+    assert resp.status == 200
+    event = sel().recent(limit=1)[0]
+    assert event["outcome"] == "ok"
+    assert event["error"] == ""
+    assert event["metadata"] == {"reason": "local-network bypass"}
+
+
+@pytest.mark.asyncio
+async def test_internal_path_cookie_auth_no_secret_header_records_reason_not_error() -> None:
+    """The no-secret-header cookie-auth branch on an internal path is also a
+    success path that used to stuff its allow reason into ``error`` (#2948)."""
+    from personalclaw.sel import sel
+
+    token = generate_token("browseruser", ttl_seconds=300)
+    bind_token_ip(token, "127.0.0.1")
+    mark_consumed(token)
+    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret="s")
+    req = _make_request(path="/api/spawn", cookies={"pc_token_10000": token})
+
+    resp = await mw(req, _ok_handler)
+
+    assert resp.status == 200
+    events = sel().recent(limit=10)
+    internal_auth_events = [e for e in events if e["operation"] == "internal_auth"]
+    assert internal_auth_events, "expected an internal_auth SEL row"
+    granted = internal_auth_events[0]
+    assert granted["outcome"] == "granted"
+    assert granted["error"] == ""
+    assert granted["metadata"] == {"reason": "cookie auth (no secret header)"}

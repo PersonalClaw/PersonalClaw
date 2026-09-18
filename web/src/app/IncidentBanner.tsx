@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { notify } from './appSdk'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { Button } from '../ui/Button'
-import { treatmentPaint } from '../design/errorTreatments'
+import { ERROR_SURFACE_PAINT, treatmentPaint } from '../design/errorTreatments'
 import { useErrorTreatment } from './personality'
 
 /** A persistent banner shown on every page while incident mode is active
@@ -58,8 +58,7 @@ export function IncidentBanner() {
       // banner arrived later and never opted in. Same expression as TopBar's, fallback
       // included, so a corner that has not measured yet still clears.
       style={{
-        background: 'var(--color-error-container)',
-        color: 'var(--color-on-error-container)',
+        ...ERROR_SURFACE_PAINT,
         paddingRight: 'calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px))',
         ...paint,
       }}>

@@ -93,6 +93,8 @@ def test_save_load_roundtrip_local_models(cfg_file):
     cfg.local_models.sidecar_restart_max = 5
     cfg.local_models.memory_reserve_gb = 6.5
     cfg.local_models.hide_unrunnable_models = False
+    cfg.local_models.whoami_ttl_s = 1200
+    cfg.local_models.selftest_timeout_s = 45
     cfg.save()
 
     raw = json.loads(cfg_file.read_text(encoding="utf-8"))
@@ -101,6 +103,8 @@ def test_save_load_roundtrip_local_models(cfg_file):
         "sidecar_restart_max": 5,
         "memory_reserve_gb": 6.5,
         "hide_unrunnable_models": False,
+        "whoami_ttl_s": 1200,
+        "selftest_timeout_s": 45,
     }
 
     loaded = AppConfig.load()
@@ -108,6 +112,8 @@ def test_save_load_roundtrip_local_models(cfg_file):
     assert loaded.local_models.sidecar_restart_max == 5
     assert loaded.local_models.memory_reserve_gb == 6.5
     assert loaded.local_models.hide_unrunnable_models is False
+    assert loaded.local_models.whoami_ttl_s == 1200
+    assert loaded.local_models.selftest_timeout_s == 45
 
 
 def test_local_models_fields_in_editable_allowlist():
@@ -126,6 +132,12 @@ def test_local_models_fields_in_editable_allowlist():
         "max": 64.0,
     }
     assert _EDITABLE_CONFIG["local_models.hide_unrunnable_models"] == {"type": "bool"}
+    assert _EDITABLE_CONFIG["local_models.whoami_ttl_s"] == {"type": "int", "min": 0, "max": 86400}
+    assert _EDITABLE_CONFIG["local_models.selftest_timeout_s"] == {
+        "type": "int",
+        "min": 5,
+        "max": 600,
+    }
 
 
 def test_the_fit_reserve_defaults_to_three_gb_and_the_filter_defaults_on():

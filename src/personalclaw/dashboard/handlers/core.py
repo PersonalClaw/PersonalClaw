@@ -359,7 +359,11 @@ async def api_security_stats(_request: web.Request) -> web.Response:
 
     denied = len(denied_command_patterns())
 
-    schemas = sum(1 for name in dir(_validation_mod) if name.endswith("_SCHEMA") and name.isupper())
+    # Tools, not constants: the panel's hint says "Tools with enforced argument
+    # validation", so the number must come from the enforcement maps themselves
+    # (issue 592 — the old dir() sweep over *_SCHEMA names both undercounted the
+    # gated set and read as a coverage figure it wasn't).
+    schemas = len(_validation_mod.validated_tool_names())
 
     # 5 output paths where redaction is applied (architectural constant from
     # security-deep-dive.md): dashboard streaming mid-flush, dashboard streaming
@@ -1151,6 +1155,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # than the one the user typed. Neither knob blocks a download or a load.
     "local_models.memory_reserve_gb": {"type": "float", "min": 0.0, "max": 64.0},
     "local_models.hide_unrunnable_models": {"type": "bool"},
+    # The HF-token whoami cache TTL (0 = re-check every read) and the per-capability
+    # selftest timeout. Both bounded to the same windows the loader clamps to, so a UI edit is
+    # rejected rather than silently clamped and can never mean a different number than typed.
+    "local_models.whoami_ttl_s": {"type": "int", "min": 0, "max": 86400},
+    "local_models.selftest_timeout_s": {"type": "int", "min": 5, "max": 600},
     # Watched sources — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.

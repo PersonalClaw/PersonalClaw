@@ -805,12 +805,6 @@ async def start_dashboard(
     app.router.add_get("/api/memory/events", handlers.api_memory_events)
     app.router.add_post("/api/memory/events/{event_id}/undo", handlers.api_memory_event_undo)
     app.router.add_get("/api/memory/lint", handlers.api_memory_lint)
-    app.router.add_get("/api/memory/embedding-status", handlers.api_memory_embedding_status)
-    app.router.add_post("/api/memory/enable-embeddings", handlers.api_memory_enable_embeddings)
-    app.router.add_post("/api/memory/disable-embeddings", handlers.api_memory_disable_embeddings)
-    app.router.add_get("/api/memory/embedding-models", handlers.api_memory_embedding_models)
-    app.router.add_post("/api/memory/delete-model", handlers.api_memory_delete_model)
-    app.router.add_post("/api/memory/activate-model", handlers.api_memory_activate_model)
     app.router.add_get("/api/memory/episodic/search", handlers.api_memory_episodic_search)
     app.router.add_get("/api/memory/recall", handlers.api_memory_recall)
     app.router.add_get("/api/memory/episodic", handlers.api_memory_episodic_list)
@@ -2085,6 +2079,16 @@ async def start_dashboard(
         # event filter can scope the request. Skipping this here silently DISABLED
         # the entire app permission sandbox in none-mode (an app-scoped request
         # reached ANY /api path). The app token only NARROWS the dev owner's reach.
+        # Session identity must survive none-mode too, for the same reason the app claim
+        # must: token_auth normally records WHICH session authorized the request, and
+        # `_paired_device` / the `/api/ws` origin-less upgrade read nothing else. Skipping
+        # it here silently disabled EVERY paired-device distinction in none-mode — pairing
+        # succeeded and `POST /api/browse/connector` then refused that device's own cookie
+        # as unpaired. Only a token that fully validates names a session.
+        if not request.get("session_nonce"):
+            from personalclaw.dashboard.token_auth import presented_session_nonce
+
+            request["session_nonce"] = presented_session_nonce(request, port)
         if not request.get("app"):
             from personalclaw.dashboard.token_auth import validate_token_with_app
 

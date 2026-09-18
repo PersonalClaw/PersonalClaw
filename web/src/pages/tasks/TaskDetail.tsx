@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { rowSubject } from '../../lib/rowSubject'
 import { FieldError } from '../../ui/forms'
+import { InlineError } from '../../ui/InlineError'
+import { readableErrText } from '../../lib/errText'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
@@ -66,15 +68,22 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     // silently unblocks whatever was waiting on it. `dependents` is the same set the Blocks section
     // shows, so the sentence can only appear when it is true.
     //
-    // Deliberately says NOTHING about this task's comments. They live in a separate
-    // `_comments_<id>.json` that `delete_task` does not unlink — filed as a backend defect rather than
-    // described here, because copy must not claim a cleanup that does not happen.
+    // 🔑 AND IT NOW CLAIMS THE COMMENTS, because the backend now takes them. `delete_task` used to
+    // unlink only `<id>.json` and leave `_comments_<id>.json` orphaned on disk (#554); it unlinks the
+    // sidecar too, so the thread is user-authored content this dialog is about to destroy — exactly
+    // the shape the knowledge dialog already counts for its highlights. COUNTED, not asserted in the
+    // abstract, so the sentence can only appear when there is something to lose: `comment_count` is
+    // the same derived field the row badge shows, stamped by the provider on read.
     const unblocks = dependents.length > 0
       ? ` ${dependents.length} task${dependents.length === 1 ? '' : 's'} waiting on it ${dependents.length === 1 ? 'becomes' : 'become'} unblocked.`
       : ''
+    const comments = task.comment_count ?? 0
+    const withComments = comments > 0
+      ? ` Its ${comments} comment${comments === 1 ? '' : 's'} ${comments === 1 ? 'goes' : 'go'} with it.`
+      : ''
     if (!(await confirm({
       title: `Delete "${task.title}"?`,
-      body: `This cannot be undone.${unblocks}`,
+      body: `This cannot be undone.${unblocks}${withComments}`,
       danger: true,
       confirmLabel: 'Delete',
     }))) return
@@ -354,8 +363,16 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
   const [comments, setComments] = useState<TaskComment[] | null>(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  // 🔴 A failed READ used to be folded into `setComments([])`, so an unreachable gateway or a 500
+  // rendered as "this task has no comments" — a thread the user had written into looked empty, and
+  // nothing on screen said otherwise. The send path already reports through `reportingWrite`; this
+  // is the same honesty for the read, through the shared list primitive so it also offers a retry.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
 
-  const load = () => api.taskComments(taskId, provider).then(setComments).catch(() => setComments([]))
+  const load = () =>
+    api.taskComments(taskId, provider)
+      .then((c) => { setComments(c); setLoadErr(null) })
+      .catch((e) => { setLoadErr(e); setComments(null) })
   useEffect(() => { load() }, [taskId])
 
   async function send() {
@@ -386,6 +403,14 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
   return (
     <SectionLabel label={`Comments${comments?.length ? ` · ${comments.length}` : ''}`}>
       <div className="flex flex-col gap-s">
+        {/* `InlineError`, not `LoadError`: this is a section inside a side panel, and the centred
+            empty-state treatment is wrong at that scale — but the retry it offers is the thing the
+            reader needs, which is exactly the case InlineError's `onRetry` documents. */}
+        {!!loadErr && (
+          <InlineError icon onRetry={load}>
+            Couldn't load the comments: {readableErrText(loadErr) || 'the server didn’t respond.'}
+          </InlineError>
+        )}
         {comments?.map((c) => (
           <div key={c.id} className="group flex gap-s">
             <CornerDownRight size={14} className="text-on-surface-low shrink-0 mt-1" />

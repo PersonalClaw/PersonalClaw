@@ -37,6 +37,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsAvailable: () => Promise.resolve([]),
       modelsActive: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      hfTokenStatus: () => Promise.resolve({ sources: [] }),
       judgeBench: () => Promise.reject(new actual.ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent')),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
     },

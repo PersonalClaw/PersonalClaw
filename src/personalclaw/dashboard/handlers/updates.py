@@ -97,6 +97,11 @@ async def api_update_check(request: web.Request) -> web.Response:
     # legacy `auto_update` bool. The panel renders it as the Auto-update control.
     merged["auto"] = cfg.updates.auto
     merged["channel"] = cfg.updates.channel
+    # `pin` + the container `image_tag` (from build_update_status) let the panel render
+    # the exact channel/pin-resolved container commands, and distinguish a pin-miss
+    # (empty `image_tag`/`instructions` with a non-empty `pin`) from a transient
+    # status failure — so it never silently falls back to a bare `latest`.
+    merged["pin"] = cfg.updates.pin
     merged["version"] = _local_version
     return web.json_response(merged)
 
@@ -438,6 +443,9 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 "kind": kind,
                 "apply_method": status.get("apply_method", ""),
                 "instructions": status.get("instructions", []),
+                # The channel/pin-resolved container image tag; "" for desktop
+                # or a container pin-miss (empty `instructions` say the same thing).
+                "image_tag": status.get("image_tag", ""),
                 # The desktop wording says what the shell ACTUALLY does today. It shipped
                 # claiming "the app updates itself", which described the electron-updater
                 # half — still unbuilt: `desktop/package.json` carries no
@@ -897,14 +905,6 @@ _log_ring_handler_installed = False
 _log_ring_handler: "_RingLogHandler | None" = None
 
 
-async def _safe_ws_send(ws: web.WebSocketResponse, msg: str, state: DashboardState) -> None:
-    """Send to WS, removing dead subscribers on failure."""
-    try:
-        await ws.send_str(msg)
-    except Exception:
-        state._ws_log_subscribers.discard(ws)
-
-
 class _RingLogHandler(logging.Handler):
     """Always-on handler that keeps the last N log entries in a ring buffer.
 
@@ -920,34 +920,23 @@ class _RingLogHandler(logging.Handler):
         self._ring = ring
         self._max = max_size
         self._state: DashboardState | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     def set_state(self, state: DashboardState) -> None:
         """Attach DashboardState for WS log broadcasting."""
         self._state = state
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = _redact_log_text(self.format(record))
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._ring.append(data)
-            # Push to WS log subscribers (thread-safe via call_soon_threadsafe)
-            if self._state and self._loop and self._state._ws_log_subscribers:
-                ws_msg = json.dumps(
-                    {"type": "log", "data": {"level": record.levelname, "msg": msg}}
-                )
-                for ws in list(self._state._ws_log_subscribers):
-                    try:
-                        self._loop.call_soon_threadsafe(
-                            self._loop.create_task,
-                            _safe_ws_send(ws, ws_msg, self._state),
-                        )
-                    except RuntimeError:
-                        pass
+            # Push to WS log subscribers through the state's ONE gated fan-out, which is
+            # thread-safe and consults each socket's app permissions. This handler used
+            # to walk `state._ws_log_subscribers` and write to every socket itself, so an
+            # app-scoped socket that declared no `log` event still received the owner's
+            # entire backend log stream (issue 2963).
+            if self._state is not None:
+                self._state.broadcast_ws_log_subscribers({"level": record.levelname, "msg": msg})
         except Exception:
             pass
 

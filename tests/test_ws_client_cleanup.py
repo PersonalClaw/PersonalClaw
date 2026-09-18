@@ -30,7 +30,7 @@ def state(monkeypatch, tmp_path):
 
 
 class TestWsDeadClientCleanup:
-    """Scenarios for _send_ws_all dead client detection."""
+    """Scenarios for dead-client detection in the WS fan-out."""
 
     def test_closed_client_removed_from_all_lists(self, state: DashboardState) -> None:
         """A closed WS should be removed from _ws_clients, log subs, and subagent subs."""
@@ -191,14 +191,16 @@ class TestWsNormalUserExperience:
         assert ws not in state._ws_clients
 
     def test_notification_push_with_mixed_clients(self, state: DashboardState) -> None:
-        """push_notification → _send_ws_all path works with mixed alive/dead."""
+        """The notification fan-out works with mixed alive/dead clients."""
         alive = MagicMock(closed=False, send_str=AsyncMock())
         dead = MagicMock(closed=True, send_str=AsyncMock())
         state.register_ws(alive)
         state.register_ws(dead)
 
-        # Simulate push_notification which calls _send_ws_all internally
-        state._send_ws_all(json.dumps({"type": "notification", "data": {"text": "hi"}}))
+        # The path push_notification takes. It used to end in `_send_ws_all`, a raw
+        # fan-out with no app-permission check; that helper is gone, and the one
+        # remaining fan-out takes the event type precisely so it can be gated.
+        state.broadcast_ws("notification", {"text": "hi"})
 
         alive.send_str.assert_called_once()
         dead.send_str.assert_not_called()

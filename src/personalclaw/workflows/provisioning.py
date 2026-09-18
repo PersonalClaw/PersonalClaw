@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.workflows import worktrees
 from personalclaw.workflows.workspace import (
     Mode,
@@ -419,6 +420,10 @@ async def run_step(
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
     try:
+        # start_new_session: a setup/teardown step is workflow-authored text, and the
+        # steps that actually blow a deadline are the forking ones (`npm ci`, `pip
+        # install`, `make`). Only a GROUP signal reaches what they forked. Same reasoning
+        # and same shape as `effects.run_teardown`. See kill_timed_out.
         proc = await create_subprocess_limited(
             *argv,
             profile=PROFILE_TOOL,
@@ -426,11 +431,15 @@ async def run_step(
             env=spawn_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            proc.kill()
+            # kill_timed_out, not a bare `proc.kill()` — which returned without reaping
+            # and reached only the direct child, leaving the step's own build tree
+            # running. The owner signals the group and reaps under a bound.
+            await kill_timed_out(proc)
             return False, f"timed out after {timeout}s"
     except FileNotFoundError:
         return False, f"command not found: {argv[0]}"

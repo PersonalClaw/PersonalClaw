@@ -225,12 +225,19 @@ def _engaged_loops(_state: Any) -> bool:
 
 
 def _engaged_automation(state: Any) -> bool:
-    """Whether the user has any automation at all — clock, file watch, event, the lot.
+    """Whether the USER has any automation — clock, file watch, event, the lot.
 
     🔴 Read the unified store (S111). This asked `state.crons`, which describes only the legacy
     `crons.json` — a file nothing has written since S108. Measured: a home with a store trigger read
     as NOT engaged with automation, so the legibility surface told a user with live automations that
     they had none.
+
+    🔴 Exclude `created_by="system"` rows. The gateway registers the notification-digest
+    trigger at every boot, so counting every row made this true before the user's first
+    interaction — the automation tip was unreachable on 100% of installs. Agent-created
+    triggers still count: an agent writes one inside a user conversation, which is the
+    user automating. Event triggers carry no creator field because nothing system-writes
+    them; they count as-is.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.event_triggers import EventTriggerStore
@@ -239,7 +246,8 @@ def _engaged_automation(state: Any) -> bool:
     if EventTriggerStore(config_dir() / "event_triggers.json").load():
         return True
     try:
-        return bool(TriggerStore(base_dir=config_dir()).load())
+        rows = TriggerStore(base_dir=config_dir()).load()
+        return any(lt.trigger.created_by != "system" for lt in rows)
     except Exception:  # noqa: BLE001 - a legibility probe must never raise
         return False
 
@@ -262,11 +270,24 @@ def _engaged_projects(_state: Any) -> bool:
 
 
 def _engaged_inbox(_state: Any) -> bool:
-    from personalclaw.inbox import InboxStore
+    """Whether the user has ACTED on the Inbox, not whether the system filled it.
+
+    The Inbox exists to receive system-generated items (proposals, digests,
+    needs-input), so "the store is non-empty" is a near-tautology on any instance
+    that has run for a while — it hid the tip the moment the system produced its
+    first item. Engagement is a user gesture: an item moved off PENDING (seen /
+    dismissed / handled / sent), or favorited. FILTERED is excluded — the
+    verification pass writes it with no user involved.
+    """
+    from personalclaw.inbox import InboxStore, ItemStatus
 
     store = InboxStore()
     store.load()
-    return bool(store.items)
+    system_states = (ItemStatus.PENDING.value, ItemStatus.FILTERED.value)
+    return any(
+        i.status not in system_states or getattr(i, "favorited", False)
+        for i in store.items.values()
+    )
 
 
 def _engaged_knowledge(state: Any) -> bool:
@@ -283,13 +304,29 @@ def _engaged_memory(state: Any) -> bool:
     if not vs:
         return False
     stats = vs.memory_stats()
-    return (stats.get("semantic_active", 0) + stats.get("episodic_active", 0)) > 0
+    # Auto-consolidation machine-writes rows constantly, so active counts said
+    # "engaged" on a home whose Memory panel was never opened. The tip's verb is
+    # "review and curate": count rows the human explicitly wrote or tombstoned
+    # (source='user_explicit' — the memory editor's documented stamp).
+    return stats.get("user_curated", 0) > 0
 
 
 def _engaged_skills(_state: Any) -> bool:
-    from personalclaw.skills.usage import SkillUsageStore
+    """Whether a skill exists beyond the bundled baseline — the tip's verb is "teach".
 
-    return bool(SkillUsageStore().all_usage())
+    The usage store this read counted PASSIVE turn-time injection: the surfacer
+    auto-picks bundled skills for ordinary messages, so one plain chat message hid
+    "Teach it a reusable skill" on a home where the user taught nothing. Mirror
+    `_engaged_apps` instead: engaged means a skill the install didn't ship —
+    authored, learned, or imported.
+    """
+    from personalclaw.skills.loader import _BUILTIN_SKILLS_DIR, SkillsLoader
+
+    try:
+        bundled = {p.name for p in _BUILTIN_SKILLS_DIR.iterdir() if p.is_dir()}
+    except OSError:
+        bundled = set()
+    return any(s["key"] not in bundled for s in SkillsLoader().list_skills())
 
 
 def _engaged_apps(_state: Any) -> bool:

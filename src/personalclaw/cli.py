@@ -798,6 +798,31 @@ Examples:
         "shard_dir", nargs="?", default=None, help="Shard directory (default: <home>/shards)"
     )
 
+    # footprint (disk usage + reclaim)
+    footprint_parser = sub.add_parser(
+        "footprint",
+        help="Per-store bytes on disk, how fast they are growing, and how to get them back",
+        epilog="""
+Examples:
+  personalclaw footprint            # per-store bytes + the growth rate
+  personalclaw footprint --json     # the same data, for a script
+  personalclaw footprint --reclaim  # compact every database and report the bytes freed
+
+Every run records one sample, so a rate appears from the SECOND run onward — a single
+reading cannot tell "not growing" from "measured once". The scheduled maintenance tick
+records samples and reclaims daily on its own; --reclaim is for wanting the space now.
+""",
+        formatter_class=_fmt,
+    )
+    footprint_parser.add_argument(
+        "--json", action="store_true", help="Emit the report as JSON instead of a table"
+    )
+    footprint_parser.add_argument(
+        "--reclaim",
+        action="store_true",
+        help="Compact every store (FTS5 merge + VACUUM) and report the bytes actually freed",
+    )
+
     # security
     sec_parser = sub.add_parser("security", help="Security audit and deny list")
 
@@ -1592,6 +1617,10 @@ def main() -> None:
         rc = _backup_cmd(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "footprint":
+        rc = _footprint_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "app":
         rc = _app_cmd(args)
         if rc:
@@ -1652,6 +1681,7 @@ from personalclaw.cli_server import (  # noqa: E402
 from personalclaw.cli_setup import (  # noqa: E402
     _setup,
 )
+from personalclaw.durability.footprint import footprint_cmd as _footprint_cmd  # noqa: E402
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
 from personalclaw.inbound.capture_import import capture_cmd as _capture_cmd  # noqa: E402

@@ -36,6 +36,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from fakes import BoundEmbedder
 
 from personalclaw.apps import app_events, app_manager, manager
 from personalclaw.apps.app_events import (
@@ -386,7 +387,7 @@ async def test_knowledge_ingested_fires_at_its_emit_site(tmp_path, monkeypatch):
         ensure_nodes_registered()
         store = KnowledgeStore(str(tmp_path / "k.db"))
         item_id = store.create_typed_item(item_type="note", title="N", content="the body text")
-        status = await ingest_item(store, item_id)
+        status = await ingest_item(store, item_id, embedder=BoundEmbedder())
         assert status == "done"
 
         msgs = await _inbox(client, "listener")

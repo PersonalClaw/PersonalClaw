@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { AlertTriangle, X } from 'lucide-react'
 import { cx } from './cx'
+import { ERROR_SURFACE_PAINT } from '../design/errorTreatments'
 
 /** The inline, danger-tinted error band shown when an action fails — above
  *  list/detail bodies, inline in the chat transcript, or as a transient banner.
@@ -39,7 +40,7 @@ export function InlineError({ children, onDismiss, icon = false, multiline = fal
   onRetry?: () => void
 }) {
   const cls = cx('flex gap-2 rounded-lg px-3 py-2', multiline ? 'items-start' : 'items-center', className)
-  const style = { background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }
+  const style = ERROR_SURFACE_PAINT
   const body = (
     <>
       {icon && <AlertTriangle size={14} className={cx('shrink-0', multiline && 'mt-0.5')} />}

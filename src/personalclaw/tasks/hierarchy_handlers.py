@@ -669,19 +669,17 @@ async def api_projects_delete(request: web.Request) -> web.Response:
     # provider uses to answer `project=` reads the very lists we're about to unlink. Tasks are
     # project content, not live work needing a teardown handshake (that's loops); a per-task failure
     # is logged but never blocks the delete, matching the loop-teardown sweep above.
+    # The delete loop itself is shared with the task-list door below (`_cascade_delete_tasks`),
+    # so the two cascades are ONE mechanism rather than two that happen to agree; only the
+    # question "which tasks are doomed" differs, and each door answers it from the key it can
+    # still resolve at that moment.
     _proj = _store().get_project(pid)
     if _proj is not None:
         try:
             from personalclaw.tasks import registry as task_registry
 
             doomed, _ = await task_registry.list_all_tasks(project=_proj.name, limit=10_000)
-            for t in doomed:
-                try:
-                    await task_registry.delete_task(t.id)
-                except Exception:
-                    logger.debug(
-                        "delete-project: task %s cascade delete failed", t.id, exc_info=True
-                    )
+            await _cascade_delete_tasks([t.id for t in doomed])
         except Exception:
             logger.debug("delete-project: task cascade sweep failed for %s", pid, exc_info=True)
     try:
@@ -751,25 +749,70 @@ async def api_task_lists_update(request: web.Request) -> web.Response:
 
 
 async def api_task_lists_delete(request: web.Request) -> web.Response:
-    """DELETE /api/task-lists/{list_id}"""
-    if not _store().delete_task_list(request.match_info["list_id"]):
+    """DELETE /api/task-lists/{list_id}
+
+    Cascades the list's TASKS, the way ``api_projects_delete`` above already does and for
+    the identical reason: the task rows live in the native provider keyed by
+    ``task_list_id``, so a bare ``delete_task_list`` left them pointing at a dead list id
+    with their derived ``project`` label blanked — the #457 orphan condition through the
+    sibling door (#2976). The orphan then outlived the project delete too, because that
+    cascade resolves doomed tasks by project NAME and this door had already blanked it.
+
+    Resolved by ``task_list_id`` (the live FK) rather than by label, and BEFORE the list row
+    goes: tasks are project content, not live work needing a teardown handshake (that is
+    loops), so there is no 409/force arm here — a per-task failure is logged and never
+    blocks the delete, matching the project cascade exactly.
+    """
+    list_id = request.match_info["list_id"]
+    doomed = await _tasks_in_list(list_id)
+    if not _store().delete_task_list(list_id):
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "deleted_tasks": await _cascade_delete_tasks(doomed)})
+
+
+async def _tasks_in_list(list_id: str) -> list[str]:
+    """The ids of the tasks a list owns. Never raises: a cascade that cannot enumerate must
+    not block the delete, exactly as the project cascade's sweep does not."""
+    try:
+        from personalclaw.tasks import registry as task_registry
+
+        tasks, _ = await task_registry.list_all_tasks(task_list_id=list_id, limit=10_000)
+        return [t.id for t in tasks]
+    except Exception:
+        logger.debug("delete-task-list: task sweep failed for %s", list_id, exc_info=True)
+        return []
+
+
+async def _cascade_delete_tasks(task_ids: list[str]) -> int:
+    """Delete each task, counting what went. Per-task failures are logged, never fatal."""
+    from personalclaw.tasks import registry as task_registry
+
+    gone = 0
+    for tid in task_ids:
+        try:
+            if await task_registry.delete_task(tid):
+                gone += 1
+        except Exception:
+            logger.debug("delete-task-list: task %s cascade delete failed", tid, exc_info=True)
+    return gone
 
 
 async def api_task_lists_reset(request: web.Request) -> web.Response:
-    """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list: all
-    its tasks → open, exit criteria → incomplete, execution notes cleared. Only
-    allowed for lists under the Repeatable project and only when all tasks done.
+    """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list so it can be run
+    AGAIN: every task returns to its not-yet-run state. Which fields that clears, and which are
+    deliberately preserved, is stated once in `task_reset_payload` — enumerating them here is
+    what let the list drift from the code (the docstring named three fields, the handler wrote
+    those same three, and `action_plan`'s per-step flags were in neither). Only allowed for
+    lists under the Repeatable project, and only when every task is terminal.
 
-    ``confirm: true`` is required. The two existing guards here are about whether the reset is
+    ``confirm: true`` is required. The two other guards here are about whether the reset is
     LEGAL (a Repeatable list, all tasks terminal), not about whether it was INTENDED, and this
     is the only path that empties ``execution_notes`` — the record of what was actually done on
     each task. Clearing that is unrecoverable and has no undo, so intent has to be stated. It is
     the same bar ``merge_items`` sets in the knowledge handlers for the same reason.
     """
     from personalclaw.tasks import registry
-    from personalclaw.tasks.models import TaskStatus
+    from personalclaw.tasks.models import REPEATABLE_PROJECT, TaskStatus, task_reset_payload
 
     try:
         body = await request.json()
@@ -794,7 +837,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     if not tl:
         return web.json_response({"error": "not found"}, status=404)
     project = store.get_project(tl.project_id)
-    if not project or project.name != "Repeatable":
+    if not project or project.name != REPEATABLE_PROJECT:
         return web.json_response(
             {"error": "only task lists under the Repeatable project can be reset"}, status=400
         )
@@ -806,8 +849,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
         )
     reset_ids = []
     for t in tasks:
-        criteria = [{**c, "status": "incomplete", "met": False} for c in t.exit_criteria]
-        await registry.update_task(t.id, status="open", exit_criteria=criteria, execution_notes=[])
+        await registry.update_task(t.id, **task_reset_payload(t))
         reset_ids.append(t.id)
     return web.json_response({"ok": True, "reset_task_ids": reset_ids})
 

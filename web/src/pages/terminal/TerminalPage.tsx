@@ -108,6 +108,11 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const newSession = useCallback(async (intoSplit = false) => {
     setBusy(true); setError('')
     try {
+      // No cwd on purpose: the server resolves the default (configured terminal cwd → agent
+      // WORKSPACE → $HOME, `handlers/terminal.py:default_terminal_cwd`), which is what makes the
+      // empty state's "run shell commands in your workspace" true. Passing one here would only
+      // duplicate that chain in the client — and get it wrong for the drawer and the CLI, which is
+      // how every UI session ended up in $HOME (#544).
       const r = await api.createTerminal(undefined, sandbox === 'none' ? undefined : sandbox)
       setTabs((t) => {
         const tab: TermTab = { id: r.session_id, label: `Session ${t.length + 1}`, cwd: r.cwd, shell: r.shell, sandbox: r.sandbox || undefined }
