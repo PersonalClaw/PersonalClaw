@@ -470,9 +470,11 @@ def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased)
     _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "my own frontend change", cwd=rebased.root)
     head = _git("rev-parse", "HEAD", cwd=rebased.root)
 
-    result = _run(
-        f"refs/heads/feature {head} refs/heads/feature {rebased.old_tip}\n", cwd=rebased.root
-    )
+    # Driven with a RELEASE ref on purpose. Since the 2026-09-18 owner ruling a topic branch
+    # never reaches the render-smoke chain at all, so a topic ref here would make this test
+    # pass for the wrong reason — the skip would be the ref rule rather than the scoping this
+    # test exists to measure. `main` is where the chain is still reachable.
+    result = _run(f"refs/heads/main {head} refs/heads/main {rebased.old_tip}\n", cwd=rebased.root)
     assert GATING in result.stdout, (
         "the gate skipped the frontend chain for a branch that changes a `web/` file — "
         f"the scoping is now too narrow: stdout={result.stdout!r} stderr={result.stderr!r}"

@@ -46,6 +46,10 @@ ZERO=0000000000000000000000000000000000000000
 
 needs_gate=0
 needs_lint=0
+# Is any outgoing ref RELEASE-relevant (`main`, a release branch, or a tag)? Those keep the
+# full local render-smoke chain; ordinary topic branches let CI be the gate. Ruling recorded
+# above the gate block below.
+release_ref=0
 if [ -t 0 ]; then
   # Manual invocation from a terminal (no ref ranges on stdin) — run the full
   # gate unconditionally rather than blocking on read. Nothing named a ref here,
@@ -53,10 +57,16 @@ if [ -t 0 ]; then
   # a manual run is a check of this tree, which is exactly what it claims to be.
   needs_gate=1
   needs_lint=1
+  # A manual run is someone deliberately asking for the real gate, so it counts as
+  # release-grade and is never downgraded to "CI will catch it".
+  release_ref=1
 fi
 head_commit=$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)
 while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
   [ "$local_sha" = "$ZERO" ] && continue  # branch deletion — nothing outgoing
+  case "$local_ref" in
+    refs/heads/main|refs/heads/release/*|refs/tags/*) release_ref=1 ;;
+  esac
   # Refuse to gate a tree that is not the thing being pushed. Peel to a commit so
   # an annotated tag compares as the commit it points at, and fall back to the raw
   # SHA (which cannot equal HEAD) so an unpeelable ref is refused, not crashed on.
@@ -157,6 +167,31 @@ fi
 # degradation only.
 if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
   echo "pre-push: frontend changes outgoing but web toolchain (npm/node) not found — skipping render-smoke locally (CI enforces it)."
+  exit 0
+fi
+
+# Owner ruling 2026-09-18: on a TOPIC branch, CI is the render-smoke gate. This chain stays
+# mandatory for `main`, `release/*` and tags.
+#
+# The chain costs ~20 minutes (the `npm ci` note at the top), and an autonomous worker's
+# stream watchdog is 600s. Measured consequence: no worker could push a frontend branch at
+# all — 72 of 184 remote branches touch `web/`, and 76 open issues are labelled
+# `area:frontend`, so the single largest category of work could only be pushed by hand. A
+# gate that cannot be satisfied is not protection; it is a queue that quietly stops moving.
+#
+# This does NOT weaken what ships, on exactly the reasoning the npm-absent branch above
+# already relies on: CI runs this same chain with npm/node present and still enforces it in
+# full on every pull request, and `main` is protected, so a frontend regression cannot reach
+# a release without passing it. What moves is only WHERE the first failure is observed —
+# minutes later in CI instead of before the push leaves the machine. The v0.1.0
+# blank-dashboard release this rail was built for shipped from a RELEASE ref, and release
+# refs are exactly what still run it here.
+#
+# Deliberately keyed on the outgoing REF, not on a flag or an env var: a bypass an agent can
+# set is a bypass that gets set. Reverting is one line — drop this `release_ref` test.
+if [ "$release_ref" -eq 0 ]; then
+  echo "pre-push: frontend changes outgoing on a topic branch — CI is the render-smoke gate"
+  echo "          (owner ruling 2026-09-18; main/release/tags still run it locally)."
   exit 0
 fi
 

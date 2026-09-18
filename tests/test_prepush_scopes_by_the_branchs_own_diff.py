@@ -203,7 +203,7 @@ def _run(
 
 def _push_line(sandbox: Rebased) -> str:
     """The ref line git writes for a force-push of the rebased branch."""
-    return f"refs/heads/feature {sandbox.rebased} refs/heads/feature {sandbox.original}\n"
+    return f"refs/heads/main {sandbox.rebased} refs/heads/main {sandbox.original}\n"
 
 
 def test_the_shipped_script_still_scopes_by_the_merge_base():
@@ -225,7 +225,7 @@ def test_the_stub_bin_is_what_the_script_resolves(rebased: Rebased):
     timeouts.
     """
     _git("update-ref", "-d", "refs/remotes/origin/main", cwd=rebased.root)
-    result = _run(f"refs/heads/feature {rebased.rebased} refs/heads/feature {ZERO}\n", rebased)
+    result = _run(f"refs/heads/main {rebased.rebased} refs/heads/main {ZERO}\n", rebased)
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     reached = rebased.reached()
     assert "npm" in reached, f"the frontend half did not reach npm: reached={reached}"
@@ -276,7 +276,7 @@ def test_the_skip_is_attributable_to_the_merge_base_range(rebased: Rebased):
 def test_a_branch_whose_own_diff_touches_the_frontend_still_gates(rebased: Rebased):
     """No under-run: the narrow range must still see the branch's OWN web change."""
     tip = _commit(rebased.root, "my own web change", {"web/mine.ts": "export const mine = 1;\n"})
-    line = f"refs/heads/feature {tip} refs/heads/feature {rebased.original}\n"
+    line = f"refs/heads/main {tip} refs/heads/main {rebased.original}\n"
     _run(line, rebased)
     assert "npm" in rebased.reached(), (
         "a branch that changes web/ itself skipped the render-smoke chain — the scoping "
@@ -287,7 +287,7 @@ def test_a_branch_whose_own_diff_touches_the_frontend_still_gates(rebased: Rebas
 def test_a_branch_whose_own_diff_touches_python_still_lints(rebased: Rebased):
     """No under-run for the other half: the branch's own Python change is still seen."""
     tip = _commit(rebased.root, "my own python change", {"src/personalclaw/mine.py": "MINE = 1\n"})
-    line = f"refs/heads/feature {tip} refs/heads/feature {rebased.original}\n"
+    line = f"refs/heads/main {tip} refs/heads/main {rebased.original}\n"
     _run(line, rebased)
     reached = rebased.reached()
     assert "black" in reached, (
@@ -308,7 +308,7 @@ def test_a_first_push_without_origin_main_still_gates_unconditionally(rebased: R
     that as "nothing to do".
     """
     _git("update-ref", "-d", "refs/remotes/origin/main", cwd=rebased.root)
-    line = f"refs/heads/feature {rebased.rebased} refs/heads/feature {ZERO}\n"
+    line = f"refs/heads/main {rebased.rebased} refs/heads/main {ZERO}\n"
     _run(line, rebased)
     reached = rebased.reached()
     assert "npm" in reached and "black" in reached, (
