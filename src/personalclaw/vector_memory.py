@@ -26,6 +26,7 @@ from snowballstemmer import stemmer as _snowball_stemmer
 
 from personalclaw import memory_holder, memory_slots
 from personalclaw.config import loader as config_loader
+from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
 from personalclaw.sqlite_compat import sqlite3
@@ -658,19 +659,6 @@ def _owner_rank_bonus(contributor: object, owner: str) -> float:
         return _OWNER_RANK_BONUS  # uniform ⇒ no ordering change
     who = str(contributor or "").strip()
     return _OWNER_RANK_BONUS if (not who or who == owner) else 0.0
-
-
-def _contributor_label(contributor: object, owner: str) -> str:
-    """`" (from <handle>)"` for another contributor's record, else `""`.
-
-    Only FOREIGN records are labeled. Labeling the owner's own memories would put
-    "(from keyur-golani)" on every line of a single-user install — noise that makes the
-    one case the label exists for harder to spot, not easier.
-    """
-    who = str(contributor or "").strip()
-    if not who or not owner or who == owner:
-        return ""
-    return f" (from {who})"
 
 
 def _linkable_text(value: object) -> str:

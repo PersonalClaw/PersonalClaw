@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 from personalclaw import shutdown_event
 from personalclaw import trace_recorder as _trace
 from personalclaw.guardrails.audit import caller_scope
+from personalclaw.identity import contributor_label, current_username
 from personalclaw.inbox import (
     SOURCE_DECLARABLE_KINDS,
     Classification,
@@ -136,12 +137,29 @@ def _resolve_source_kind(declared: str, source_name: str) -> str:
     return ItemKind.MESSAGE.value
 
 
-def _fence_message(item: InboxItem) -> str:
+def fence_message_for_prompt(item: InboxItem, owner: str | None = None) -> str:
     """Render an item's external text (body + thread context) as ONE fenced block.
 
     Everything the sender controlled is inside a single ``<untrusted_content>`` fence
     so the model can't be steered by injected instructions. Thread context is
-    included oldest-first with attributions the model can quote."""
+    included oldest-first with attributions the model can quote.
+
+    **TSE2-3 — a foreign-attributed item is also LABELLED.** In a shared inbox the fence
+    alone is not enough: it says "this span is data", but every item is data, so a
+    teammate's item and the owner's own fence identically and the model cannot tell which
+    one carries the owner's intent. So an item attributed to somebody else additionally
+    carries ``identity.contributor_label()`` — the one ``" (from <handle>)"`` form shared
+    with semantic memory, not a second convention — and the fence declares the attributed
+    owner in its ``source_id`` provenance attribute. The owner's own items are unlabelled,
+    for the reason ``contributor_label`` documents: labelling every row hides the one case
+    the label exists for.
+
+    *owner* defaults to the live attribution username, so the two service call sites need
+    no argument; tests pass it explicitly.
+    """
+    if owner is None:
+        owner = current_username()
+    label = contributor_label(item.owner_username, owner)
     parts: list[str] = []
     for turn in (item.thread_context or [])[-_MAX_THREAD_TURNS:]:
         who = str(turn.get("sender") or turn.get("sender_name") or "someone")
@@ -149,8 +167,16 @@ def _fence_message(item: InboxItem) -> str:
         if txt.strip():
             parts.append(f"{who}: {txt}")
     body = (item.message or "")[:_MAX_MESSAGE_CHARS]
-    parts.append(f"{item.sender_name or 'sender'}: {body}")
-    return fence_untrusted("\n".join(parts), source="inbox-message")
+    parts.append(f"{item.sender_name or 'sender'}{label}: {body}")
+    return fence_untrusted(
+        "\n".join(parts),
+        source="inbox-message",
+        # Only for a FOREIGN item: the attributed owner is the provenance fact that changes
+        # how the span should be read. Omitted for the owner's own items so the attribute's
+        # presence is itself the signal, and so a solo install's prompts are byte-identical
+        # to what they were before attribution existed.
+        source_id=(item.owner_username or "") if label else "",
+    )
 
 
 class InboxService:
@@ -470,7 +496,7 @@ class InboxService:
                 {
                     "channel": item.channel_name or item.channel,
                     "sender": item.sender_name or "unknown",
-                    "message": _fence_message(item),
+                    "message": fence_message_for_prompt(item),
                 },
             )
             or ""
@@ -520,7 +546,7 @@ class InboxService:
                     "user_name": self._user_name,
                     "channel": item.channel_name or item.channel,
                     "sender": item.sender_name or "unknown",
-                    "message": _fence_message(item),
+                    "message": fence_message_for_prompt(item),
                     "style": style,
                 },
             )

@@ -14,6 +14,7 @@ from personalclaw.inbox import (
     InboxStore,
     ItemKind,
     ItemStatus,
+    owner_view,
     redact_item,
     validate_updatable_fields,
 )
@@ -208,16 +209,103 @@ def _filter_by_kind(items: list, raw: str | None) -> list:
     return [i for i in items if (i.item_kind or ItemKind.MESSAGE.value) in wanted]
 
 
+def _current_owner() -> str:
+    """The local owner's attribution handle, or ``""``. Never raises (TSE2-3).
+
+    Mirrors ``workflows/handlers.py:_owner_username`` — one shipped primitive
+    (``identity.current_username``), read per request rather than cached, so a rename in
+    Settings takes effect without a restart.
+    """
+    try:
+        from personalclaw.identity import current_username
+
+        return current_username()
+    except Exception:  # noqa: BLE001 — a scoping read must never fail the listing
+        logger.debug("inbox: owner username unreadable", exc_info=True)
+        return ""
+
+
+def _filter_by_owner(items: list, raw: str | None) -> list:
+    """Items EXACTLY attributed to *raw* — the shared view's per-owner filter (TSE2-3).
+
+    Uses :meth:`InboxItem.authored_by`, not ``belongs_to``: an unattributed item reads as
+    the local owner's for counting purposes, but it must not appear under a named owner's
+    chip, or every legacy row would show up under whoever you filtered by. An unknown owner
+    filters to nothing, matching ``_filter_by_kind``'s posture — silently returning
+    everything would read as "the filter doesn't work".
+    """
+    if not raw or not raw.strip():
+        return items
+    return [i for i in items if i.authored_by(raw)]
+
+
 async def api_inbox_list(request: web.Request) -> web.Response:
     """GET /api/inbox — list all inbox items (recency, optionally engagement-weighted).
 
     ``?kind=needs_input,proposal`` narrows to those item kinds.
+
+    **Every owner's items, by default (TSE2-3).** A shared inbox that hid foreign rows
+    would silently orphan every surface that deep-links to one, so the listing is the
+    complete view and only the COUNTERS are owner-scoped. Two narrowing params:
+
+    * ``?mine=1`` — only what counts as the local owner's (``belongs_to``: unattributed
+      included). The same predicate the "my items" counter uses.
+    * ``?owner=<handle>`` — only what is exactly attributed to that handle
+      (``authored_by``: unattributed excluded). The shared view's per-owner filter.
+
+    They are separate params because they are separate questions, and ``owner`` wins when
+    both arrive — an explicit handle is more specific than "mine".
     """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     items = _rank_items(state, list(inbox.items.values()))
     items = _filter_by_kind(items, request.query.get("kind"))
+    owner_param = request.query.get("owner")
+    if owner_param:
+        items = _filter_by_owner(items, owner_param)
+    elif request.query.get("mine") in ("1", "true"):
+        items = list(owner_view(items, _current_owner()))
     return web.json_response([_redact_item(i.to_dict()) for i in items])
+
+
+async def api_inbox_owners(request: web.Request) -> web.Response:
+    """GET /api/inbox/owners — owners present in the store, with counts, for the filter chips.
+
+    Driven by what is actually in the store rather than by a list of known users — the same
+    reasoning as ``/api/inbox/kinds``: a chip for an owner with nothing behind it is a dead
+    control. ``open`` counts PENDING+SEEN, matching the kind chips.
+
+    Unattributed items are reported under the empty handle ``""`` rather than folded into the
+    owner's row. Folding them in would make this census disagree with the ``?owner=`` filter
+    it drives (which excludes them), and the disagreement would look like a broken chip.
+    ``mine`` is the owner-scoped count — ``belongs_to``, so it DOES include the unattributed
+    ones — and is what the "my items" counter shows.
+    """
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    me = _current_owner()
+    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
+    counts: dict[str, dict[str, int]] = {}
+    for item in inbox.items.values():
+        entry = counts.setdefault(item.owner_username or "", {"total": 0, "open": 0})
+        entry["total"] += 1
+        if item.status in open_states:
+            entry["open"] += 1
+    return web.json_response(
+        {
+            "owner": me,
+            "mine": len(owner_view(inbox.items.values(), me)),
+            "owners": [
+                {
+                    "username": handle,
+                    "total": v["total"],
+                    "open": v["open"],
+                    "is_me": bool(handle) and bool(me) and handle == me,
+                }
+                for handle, v in sorted(counts.items())
+            ],
+        }
+    )
 
 
 async def api_inbox_pending(request: web.Request) -> web.Response:
@@ -647,6 +735,7 @@ async def api_inbox_status(request: web.Request) -> web.Response:
     sec = cfg.inbox
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
+    owner = _current_owner()
 
     svc = getattr(state, "_inbox_svc", None)
     health = (
@@ -696,6 +785,15 @@ async def api_inbox_status(request: web.Request) -> web.Response:
             "style_rules": sec.style_rules,
             "pending_count": len(inbox.pending()),
             "total_count": len(inbox.items),
+            # TSE2-3 — the owner-scoped halves, alongside (never instead of) the shared
+            # totals above. Two counts because they answer two questions: "how much is in
+            # this shared inbox" and "how much of it is MINE". Collapsing them into one
+            # number would mean a shared inbox either under-reports its contents or
+            # over-reports the owner's queue. `owner_view` is the same predicate `?mine=1`
+            # filters by, so the badge and the filter can never disagree.
+            "owner": owner,
+            "my_pending_count": len(owner_view(inbox.pending(), owner)),
+            "my_total_count": len(owner_view(inbox.items.values(), owner)),
             "health": health,
         }
     )
