@@ -1770,7 +1770,7 @@ async def _record_manual_run(
             summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
 
         run_id = f"manual-{int(finished * 1000)}"
-        # The same store the autonomous recorder appends to; `_append_sync` credential-redacts
+        # The same store the autonomous recorder appends to; `append_sync` credential-redacts
         # summary/trace/error on write, so no redaction is owed here.
         await _runs_store().append(
             ScheduleRun(

@@ -24,6 +24,12 @@ trigger.
 **Expiry is read-time, not swept.** A claim carries `max_duration_secs`; a reader treats an older
 claim as absent rather than requiring a janitor to have run. A crashed run must not hold its trigger
 hostage until some cleanup pass notices — the same fail-open direction `pool`'s leases take.
+
+**A claim also names its OWNER** (`owner_pid` — WF2AUT-16). Read-time expiry bounds a crashed run at
+one hour and the reaper bounds it at thirty minutes, but both are DEADLINES: until one elapses the
+run reads as in flight, so the first answer a user gets after a restart is "still running" about a
+process that no longer exists. The owning pid turns that into an OBSERVATION — see `orphaned_ids`,
+and the boot pass in `reaper.terminalize_orphans` that consumes it.
 """
 
 from __future__ import annotations
@@ -76,6 +82,7 @@ def read_claim(
     try:
         claimed_at = float(raw.get("claimed_at") or 0.0)
         max_secs = float(raw.get("max_duration_secs") or CLAIM_MAX_DURATION_SECS)
+        owner_pid = int(raw.get("owner_pid") or 0)
     except (TypeError, ValueError):
         return None
     if claimed_at <= 0 or now - claimed_at >= max_secs:
@@ -85,6 +92,11 @@ def read_claim(
         holder=str(raw.get("holder") or ""),
         claimed_at=claimed_at,
         max_duration_secs=max_secs,
+        # 🪤 PASSED EXPLICITLY, including the 0 for a record that carries no owner. `Claim.owner_pid`
+        # has a `default_factory=os.getpid`, so omitting it here would stamp the READER's pid — and
+        # every claim on the machine would then read as owned by a live process, which is precisely
+        # the always-true liveness check `orphaned_ids` exists to avoid.
+        owner_pid=owner_pid,
     )
 
 
@@ -105,6 +117,11 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
         "max_duration_secs": float(
             getattr(claim, "max_duration_secs", CLAIM_MAX_DURATION_SECS) or CLAIM_MAX_DURATION_SECS
         ),
+        # The OWNING process (WF2AUT-16), read from the claim rather than from `os.getpid()` here:
+        # this function is the persister, and the grantor is the owner. Taking the pid at write time
+        # would be right today by coincidence and wrong the first time a claim is written by
+        # anything other than the process that runs the fire.
+        "owner_pid": int(getattr(claim, "owner_pid", 0) or 0),
     }
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload), encoding="utf-8")
@@ -166,6 +183,45 @@ def running_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> list
         if trigger_id and is_running(trigger_id, now=now, base_dir=base_dir):
             out.append(trigger_id)
     return out
+
+
+def orphaned_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> list[tuple[str, int]]:
+    """Live claims whose OWNING PROCESS is provably gone, as `(trigger_id, owner_pid)`.
+
+    🔴 WHY THIS EXISTS (WF2AUT-16). A claim answered "since when" and never "by whom", so the only
+    thing that could terminalize a run a crash orphaned was `reaper.overdue` — a 1800s DEADLINE, not
+    an observation. For that whole window the run read as in-flight on every surface, which is the
+    defect `guardrails/self_destruct.py` states in its own words: *"the ScheduleRunStore row never
+    reaches a terminal state and the fire reads afterwards as a HUNG run rather than as a
+    self-inflicted stop. The user is left debugging a phantom."* A gateway restart is the common
+    case, and after one the owner is always gone — so the answer is available immediately.
+
+    🪤 **PROVABLY gone, never merely unknown.** A claim with no `owner_pid` (`0`) is NOT reported
+    here. That distinction is the whole of this function's correctness: "terminalize every claim
+    whose owner I cannot confirm" is trivially easy to write, would free the claim of a run that is
+    still executing, and would record that run as interrupted while it works — strictly worse than
+    the deadline it replaces. This org has shipped that shape once already (a liveness check that
+    measured the pid of the short-lived CLI writer, and so was always true).
+
+    PID REUSE fails safe in the same direction: if the OS recycled a dead owner's pid, the claim
+    reads as live and falls through to the reaper deadline — today's behaviour, not a new hole.
+
+    A pure read, like `overdue`, so the boot pass and a test can ask without causing an effect;
+    sorted for a stable, reproducible sweep order.
+    """
+    from personalclaw.gateway_base import pid_is_alive
+
+    now = now or time.time()
+    out: list[tuple[str, int]] = []
+    for trigger_id in running_ids(now=now, base_dir=base_dir):
+        claim = read_claim(trigger_id, now=now, base_dir=base_dir)
+        if claim is None:
+            continue
+        pid = int(getattr(claim, "owner_pid", 0) or 0)
+        if pid <= 0 or pid_is_alive(pid):
+            continue
+        out.append((trigger_id, pid))
+    return sorted(out)
 
 
 # ── named resource slots (§3.5 / AUTO-R9 — S135) ──

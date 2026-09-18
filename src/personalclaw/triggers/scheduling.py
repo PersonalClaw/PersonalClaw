@@ -32,7 +32,8 @@ caller, and keeping the decisions separable is what makes them testable without 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -231,12 +232,25 @@ class Claim:
     permanently wedge the trigger,
     because the next pass sees an expired claim and may take it. That complements the reaper rather
     than replacing it — the reaper kills the orphan, this releases the schedule.
+
+    🔴 `owner_pid` is WHICH PROCESS is running this (WF2AUT-16). Without it a claim answers "since
+    when" and never "by whom", so the only way to tell a live run from one a crash orphaned was to
+    wait out a 1800s deadline — and for that whole window the run read as HUNG. `self_destruct.py`
+    named the cost in its own words: *"the user is left debugging a phantom."*
+
+    Stamped by a `default_factory`, so the pid belongs to the process that GRANTED the claim, which
+    is the process that executes the fire: both grant sites (`service.tick` and
+    `knowledge_report_provider._hold_claim`) run inside the gateway that will do the work. A
+    caller cannot forget to set it, and a reader rebuilding a claim from disk MUST pass the stored
+    value explicitly — see `claims.read_claim`, where letting this default fire would stamp the
+    reader's own pid and make every claim on the machine read as alive.
     """
 
     trigger_id: str
     holder: str
     claimed_at: float
     max_duration_secs: float = CLAIM_MAX_DURATION_SECS
+    owner_pid: int = field(default_factory=os.getpid)
 
     def expired(self, now: float) -> bool:
         return now >= self.claimed_at + max(1.0, self.max_duration_secs)
@@ -248,6 +262,7 @@ class Claim:
             "claimed_at": self.claimed_at,
             "max_duration_secs": self.max_duration_secs,
             "expires_at": self.claimed_at + self.max_duration_secs,
+            "owner_pid": self.owner_pid,
         }
 
 

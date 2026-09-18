@@ -23,7 +23,7 @@ both are
 readable by anything that reads the home. **Redacting only on read is a read-path control over a
 storage-path leak** — and the criterion says "ledger", not "ledger responses".
 
-Fixed at `_append_sync`, the single funnel every run record passes through, so a future caller
+Fixed at `append_sync`, the single funnel every run record passes through, so a future caller
 cannot
 forget it. The per-call-site alternative is exactly how the injection-screen and
 capability-fence gaps
@@ -163,7 +163,7 @@ def test_the_redaction_is_at_the_SINGLE_write_point():
 
     from personalclaw.schedule_history import ScheduleRunStore as Store
 
-    src = inspect.getsource(Store._append_sync)
+    src = inspect.getsource(Store.append_sync)
     assert "_redact_stored(run.summary)" in src
     assert "_redact_stored(run.trace)" in src
     assert "_redact_stored(run.error)" in src

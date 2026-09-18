@@ -84,8 +84,18 @@ def _runtime_path() -> Path:
     return config_dir() / RUNTIME_FILE
 
 
-def _pid_is_alive(pid: int) -> bool:
-    """Whether *pid* still exists. A record from a crashed gateway must not be trusted."""
+def pid_is_alive(pid: int) -> bool:
+    """Whether *pid* still exists. A record from a crashed gateway must not be trusted.
+
+    PUBLIC because it is the project's one owner-liveness predicate, and a second copy is how two
+    surfaces start disagreeing about whether a process is gone. `triggers.claims.orphaned_ids`
+    (WF2AUT-16's boot pass) asks exactly this question about the process that granted a claim.
+
+    A non-positive pid is "we cannot tell", and it answers False — NOT alive — because the two
+    callers want opposite fallbacks and each states its own: the runtime record refuses to trust a
+    pid-less row, and the claim pass never terminalizes on an unknown owner (it checks for an owner
+    before asking this). Neither reads a bare False as "provably dead".
+    """
     if pid <= 0:
         return False
     try:
@@ -162,7 +172,7 @@ def live_port() -> int | None:
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
         logger.debug("ignoring malformed %s", RUNTIME_FILE)
         return None
-    if port <= 0 or not _pid_is_alive(pid):
+    if port <= 0 or not pid_is_alive(pid):
         return None
     return port
 
