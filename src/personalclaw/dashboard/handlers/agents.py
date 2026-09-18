@@ -1177,7 +1177,25 @@ async def api_agent_metadata_delete(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     from personalclaw.agent_metadata import delete  # noqa: F811
 
-    delete(name)
+    existed = delete(name)
+    if not existed:
+        # A name that was never stored must not read as a successful delete (#2936):
+        # `delete()` already returns the bool the handler needs, so branch on it rather
+        # than discarding it. Also stop writing a false "ok" entry to the tamper-evident
+        # SEL audit log for a delete that deleted nothing — `not_found` is the registered
+        # outcome word for exactly this (sel.py's `failed` family).
+        try:
+            _sel().log_api_access(
+                caller=caller,
+                operation="agent_metadata.delete",
+                outcome="not_found",
+                resources=name,
+            )
+        except Exception:
+            logger.warning("SEL logging failed", exc_info=True)
+        return json_error(
+            "not_found", message="No agent metadata is stored under that name.", status=404
+        )
     _regen_orchestrator()
     try:
         _sel().log_api_access(
