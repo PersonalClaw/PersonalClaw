@@ -398,12 +398,11 @@ function ModelTestButton({ provider, model }: { provider: string; model: string 
   const caps = result ? Object.entries(result.capabilities) : []
   return (
     <div className="flex flex-col gap-1 px-3 pb-2">
-      <button type="button" onClick={run} disabled={busy}
-        data-type="caption"
-        className="inline-flex w-fit items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low transition-colors hover:bg-surface-highest disabled:opacity-60"
+      <Button variant="secondary" size="xs" className="w-fit" onClick={run}
+        loading={busy} loadingLabel="testing…"
         title="Run a real inference to check this model actually works on this machine.">
-        <FlaskConical size={10} /> {busy ? 'testing…' : 'Test'}
-      </button>
+        <FlaskConical size={10} /> Test
+      </Button>
       {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       {health && !health.ok && (
         <span data-type="caption" style={{ color: 'var(--color-warning)' }}>Provider: {health.message}</span>
