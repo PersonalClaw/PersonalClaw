@@ -33,10 +33,9 @@ import time
 import pytest
 
 from personalclaw.triggers import claims, reaper
-from personalclaw.triggers.models import TriggerHealth, Trigger
+from personalclaw.triggers.models import Trigger, TriggerHealth
 from personalclaw.triggers.scheduling import Claim
 from personalclaw.triggers.store import TriggerStore
-
 
 # ── helpers: real processes, real pids ──
 

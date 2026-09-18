@@ -297,7 +297,9 @@ def terminalize_orphans_sync(
         _write_interrupted_row(
             trigger_id, started_at=started, now=now, reason=reason, base_dir=base_dir
         )
-        _audit(trigger_id, tool_name="boot_orphan_terminalize", outcome="interrupted", elapsed=elapsed)
+        _audit(
+            trigger_id, tool_name="boot_orphan_terminalize", outcome="interrupted", elapsed=elapsed
+        )
         records.append(record)
     return records
 

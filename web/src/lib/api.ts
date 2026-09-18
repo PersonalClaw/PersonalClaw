@@ -1125,6 +1125,11 @@ export interface ScheduleJob {
   channel?: string | null; approval_mode?: string | null
   silent?: boolean; strict_schedule?: boolean; timezone?: string | null
   skip_dates?: string[]
+  // Failure routing (WF2AUT-15). `failure_delivery` is `Trigger.failure_delivery` verbatim — '' means
+  // "inherit `delivery`", which is `route_for`'s fall-back branch, so the empty string is a real
+  // value and not an absent one. `failure_dedupe` is the flattened `failure_policy.dedupe_hash`: the
+  // form owns one key of that dict and must not send (and so clobber) `autopause_after` beside it.
+  failure_delivery?: string | null; failure_dedupe?: boolean
   script?: string | null; command?: string | null  // zero-token exec modes
   action?: { provider?: string; config?: Record<string, unknown> }  // canonical {provider, config}
   last_run_ts?: number | null; next_run_ts?: number | null

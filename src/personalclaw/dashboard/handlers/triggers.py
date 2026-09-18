@@ -833,6 +833,8 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     from zoneinfo import available_timezones
 
     from personalclaw.schedule import normalize_action
+    from personalclaw.triggers import delivery as _delivery
+    from personalclaw.triggers.models import Trigger
     from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     name = str(body.get("name", "")).strip()
@@ -853,6 +855,27 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     if timezone_val and timezone_val not in available_timezones():
         return web.json_response(
             {"error": f"invalid timezone: {_redact(timezone_val)!r}"}, status=400
+        )
+
+    # 🔴 FAILURE ROUTING at CREATE too (WF2AUT-15). Read on both paths deliberately: issue 272 was a
+    # field the create path read and the update path did not, so it could be set once and never
+    # changed, and `test_trigger_wire_field_census` now fails on either half being missing.
+    # Validated character-for-character the same way in both, because two endpoints that accept one
+    # field must accept it identically.
+    failure_delivery = body.get("failure_delivery", Trigger.failure_delivery)
+    if not _delivery.is_valid_route(failure_delivery):
+        return json_error(
+            "invalid_request",
+            message=(
+                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
+                "result route"
+            ),
+            status=400,
+        )
+    failure_dedupe = body.get("failure_dedupe", False)
+    if not isinstance(failure_dedupe, bool):
+        return json_error(
+            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
         )
 
     # 🔴 §6's write re-point (S101): the clock spec is built for the STORE, not for `add_job`. The
@@ -929,6 +952,15 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         trigger.delivery = (
             "none" if body.get("silent") else (f"channel:{channel}" if channel else "")
         )
+        # Set here rather than through `tools.create`, for the same reason `delivery` is: the
+        # constructor takes the schedule mechanism and the action, and delivery is what the entity
+        # calls this pair. `failure_policy` is BUILT, not merged, because the row was created one
+        # statement ago and has no other policy key to preserve.
+        trigger.failure_delivery = str(failure_delivery or "").strip()
+        trigger.failure_policy = {
+            **dict(trigger.failure_policy or {}),
+            "dedupe_hash": failure_dedupe,
+        }
         store.upsert(trigger)
         _arm_if_needed(store, raw_id)
         row = store.get(raw_id)
@@ -1137,12 +1169,41 @@ async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.
 async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
     from zoneinfo import available_timezones
 
+    from personalclaw.triggers import delivery as _delivery
     from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     kwargs: dict[str, Any] = {}
-    for key in ("name", "channel", "silent", "strict_schedule"):
+    # 🔴 `failure_delivery`/`failure_dedupe` join this allowlist (WF2AUT-15). The delivery contract
+    # was fully wired on the fire path — `delivery.route_for` picks the route per outcome,
+    # `gateway._dedupe_repeat_failure` gates on `failure_policy.dedupe_hash` — and NEITHER field was
+    # readable or writable from any surface. `test_trigger_wire_field_census` is what keeps them
+    # readable by BOTH this path and `_create_schedule`, which is the omission issue 272 was.
+    for key in (
+        "name",
+        "channel",
+        "silent",
+        "strict_schedule",
+        "failure_delivery",
+        "failure_dedupe",
+    ):
         if key in body:
             kwargs[key] = body[key]
+    if "failure_delivery" in kwargs and not _delivery.is_valid_route(kwargs["failure_delivery"]):
+        return json_error(
+            "invalid_request",
+            message=(
+                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
+                "result route"
+            ),
+            status=400,
+        )
+    if "failure_dedupe" in kwargs and not isinstance(kwargs["failure_dedupe"], bool):
+        # A 400, not a coercion, and for the reason `enabled` gives on the create path: the JSON
+        # string "false" is truthy under `bool()`, so coercing would silently turn dedup ON for a
+        # caller asking to turn it off — inverting the request.
+        return json_error(
+            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
+        )
     if "action" in body and isinstance(body["action"], dict):
         kwargs["action"] = body["action"]  # validated + canonicalized in update_job
     if "channel" in kwargs:
@@ -1220,6 +1281,16 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
             patch["delivery"] = (
                 "none" if silent else (f"channel:{channel_id}" if channel_id else "")
             )
+        if "failure_delivery" in kwargs:
+            patch["failure_delivery"] = str(kwargs["failure_delivery"] or "").strip()
+        if "failure_dedupe" in kwargs:
+            # 🔴 MERGED, never replaced. `failure_policy` also holds `autopause_after`, the §3.7
+            # threshold `autopause.evaluate` reads, and the form owns exactly one of its keys.
+            # Sending `{"dedupe_hash": …}` alone would silently reset a user's tuned failure budget
+            # to the default — the quietly-losable class `_carried` exists for one field up.
+            policy = dict(row.trigger.failure_policy or {})
+            policy["dedupe_hash"] = bool(kwargs["failure_dedupe"])
+            patch["failure_policy"] = policy
 
         result = _tools.update(store, trigger_id=raw, patch=patch)
         if not result.ok:
