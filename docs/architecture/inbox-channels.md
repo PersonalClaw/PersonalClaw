@@ -38,6 +38,60 @@ against core protocols). Paths are relative to
   escalation now applies to loop requests and proposals, not just messages.
   `inbox.evaluate_alert()` reads the `inbox/alert` rule's conditions.
 
+## The shared inbox (multi-owner attribution)
+
+An inbox item carries `owner_username` and `origin_harness` — the **same two fields, same
+names, same defaults** as `WorkflowRun` (`workflows/models.py`), reused rather than
+re-invented. They are stamped at one seam, `InboxStore.add`, from
+`identity.current_username()` and `durability.shards.machine_id`; a value already set is
+preserved (that is how a source hands over a teammate's item) and `load()` never re-stamps,
+so re-reading the store cannot silently re-attribute history.
+
+**Two predicates, because "mine" and "theirs" are different questions.**
+
+| Predicate | Question | Unattributed item |
+|---|---|---|
+| `InboxItem.belongs_to(owner)` | "does this count as MINE?" — the counters and `?mine=1` | counts as the owner's |
+| `InboxItem.authored_by(user)` | "show me only *that* owner's items" — `?owner=` | matches nobody |
+
+Using `belongs_to` for per-owner filtering would put every unattributed row under every
+owner's filter; using `authored_by` for the counter would stop counting the owner's own
+pre-attribution items. `inbox.owner_view()` is the one implementation of the counter scope,
+so the counter and the filter cannot diverge — the F3 failure mode in
+[shared-store-provider-conformance.md](shared-store-provider-conformance.md).
+
+**The listing shows everything; the counters do not.** `GET /api/inbox` returns items from
+every owner (hiding foreign rows would orphan any surface deep-linking to one). Only
+`my_pending_count` / `my_total_count` on `GET /api/inbox/status` are owner-scoped;
+`pending_count` / `total_count` remain the shared totals. `GET /api/inbox/owners` is the
+census that drives the filter chips, built from what is in the store rather than from a
+list of known users, so a chip never appears with nothing behind it.
+
+**Foreign content is fenced AND labelled, never trusted as owner intent.**
+`fence_message_for_prompt` wraps every item's external text in `<untrusted_content>`
+(`security.fence_untrusted`) — that was already true for all items — and now additionally
+carries `identity.contributor_label()`, the one `" (from <handle>)"` form shared with
+semantic memory. Fencing says "this is data"; the label says "and it is not yours". The UI
+mirrors both: a foreign row renders inside a labelled quote block rather than as the owner's
+own text.
+
+**Attribution is not client-writable.** `owner_username` / `origin_harness` are deliberately
+absent from `_UPDATABLE_FIELD_TYPES` (pinned equal to the HTTP allowlist
+`handlers_inbox._UPDATABLE_FIELDS`), so `PUT /api/inbox/{id}` cannot re-attribute a
+teammate's item to the owner and launder foreign content into owner intent.
+
+### Known limitation: the item store is last-writer-wins
+
+`InboxStore.save()` serialises its whole in-memory `items` dict over `inbox.json`. Two
+processes each holding an `InboxStore` will therefore lose the earlier writer's new items:
+whoever saves last wins, and the loss is silent. This is the F4 failure mode
+([shared-store-provider-conformance.md](shared-store-provider-conformance.md) clause 3) —
+declared here rather than papered over, which is what that clause requires of a
+last-writer-wins store. It is not a problem for the shipped single-gateway topology (one
+process owns the store, and `InboxService` bounces mutations onto the loop that owns it),
+and it is exactly what a future multi-writer shared inbox must fix — with a
+sibling-preserving read-modify-write — before it can claim a merge-safe semantic.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

@@ -33,6 +33,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **Swapping to a different embedding model of the SAME dimension no longer leaves semantic search silently scoring the old model's vectors, and the re-index can no longer report success over a half-converted library.**
+- **`deploy/compose/compose.yaml` is finally true to its own header, and the guide no longer describes the failure backwards.**
 - **An app-scoped WebSocket no longer receives events its manifest never declared.**
 - **Workflow tools now pass through the shared MCP boundary: their 19 argument schemas are actually enforced (they were defined but never consulted), calls are SEL-logged, and a compiled batch leaf can no longer call workflow_start past the orchestration denial.**
 - **A subprocess whose deadline expires is now killed AND reaped, with its process group, at twelve more spawn sites.**

@@ -154,9 +154,11 @@ serve:
 ## serve-fresh: build the SPA, then `serve` (use after frontend changes).
 serve-fresh: web-build serve
 
-## serve-web: Vite dev server (HMR) on :3000, proxying /api + /ws to the gateway
-## on DEV_PORT. Run `make serve` in another shell first. Best for frontend
-## iteration; the gateway is the API/backend.
+## serve-web: Vite dev server (HMR) on :3100 -- `server.port` in web/vite.config.ts,
+## deliberately not 3000 so it does not collide with other local dev servers. Proxies
+## /api (the /api/ws socket included) and /apps to the gateway on DEV_PORT. Run
+## `make serve` in another shell first. Best for frontend iteration; the gateway is
+## the API/backend.
 serve-web:
 	cd $(WEB_DIR) && PERSONALCLAW_PORT=$(DEV_PORT) npm run dev
 

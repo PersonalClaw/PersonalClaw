@@ -77,6 +77,31 @@ def suggest_username(display_name: str) -> str:
     return slugify_username(display_name)
 
 
+def contributor_label(contributor: object, owner: str) -> str:
+    """``" (from <handle>)"`` for another contributor's record, else ``""``.
+
+    The ONE provenance label for foreign-attributed content, shared by every surface that
+    shows the owner somebody else's row (semantic memory, the shared inbox). It was born
+    private to ``vector_memory``; TSE2-3 needed the same label on inbox items and a second
+    copy would have been a second convention — the exact thing
+    ``docs/architecture/shared-store-provider-conformance.md`` exists to prevent.
+
+    Only FOREIGN records are labeled. Labeling the owner's own records would put
+    "(from keyur-golani)" on every line of a single-user install — noise that makes the
+    one case the label exists for harder to spot, not easier. An unattributed record
+    (``contributor == ""``) is unlabeled too: that is the shipped ``belongs_to`` bargain —
+    no attribution reads as the local owner's, so there is no foreignness to announce.
+
+    This is a LABEL, not a fence. It says whose text this is; it does not make the text
+    safe to act on. Content crossing into a prompt must additionally go through
+    :func:`personalclaw.security.fence_untrusted` — see that contract's clause 2.
+    """
+    who = str(contributor or "").strip()
+    if not who or not owner or who == owner:
+        return ""
+    return f" (from {who})"
+
+
 def current_username() -> str:
     """The owner's username, or ``""`` when unset.
 

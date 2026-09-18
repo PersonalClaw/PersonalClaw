@@ -3,13 +3,25 @@
 # Pulls pre-built images from the registry. Use it to run a release without
 # checking out the source tree, or to validate a published image.
 #
+# Both invocations work, and the file is self-sufficient in both:
+#
+#   # from a checkout
 #   docker compose -f deploy/compose/compose.yaml up -d
+#
+#   # this file on its own, downloaded into any directory
+#   curl -fsSLO https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/main/deploy/compose/compose.yaml
+#   docker compose -f compose.yaml up -d
+#
+# WHERE `.env` GOES. Both locations are declared and BOTH ARE OPTIONAL (see the
+# `env_file:` blocks below): `./.env` beside this file — the standalone layout —
+# and `../../.env` at the repo root — the from-a-checkout layout. A `.env` is
+# never required; every variable in it is optional.
 #
 # To build locally instead, overlay compose.build.yaml:
 #   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.build.yaml up -d --build
 #
-# Tag selection: set PERSONALCLAW_IMAGE_TAG in your environment (or .env) to
-# pin a specific release. Defaults to "latest".
+# Tag selection: set PERSONALCLAW_IMAGE_TAG in your environment (or in a `.env`
+# beside this file) to pin a specific release. Defaults to "latest".
 services:
   personalclaw-gateway:
     image: ghcr.io/personalclaw/personalclaw-gateway:${PERSONALCLAW_IMAGE_TAG:-latest}
@@ -18,8 +30,17 @@ services:
       - "127.0.0.1:10000:10000"
     volumes:
       - personalclaw_home:/data:z
+    # Long syntax with `required: false`, because per the Compose spec a relative
+    # `env_file` resolves from THIS FILE's parent directory and `required` defaults
+    # to TRUE. A bare `- ../../.env` therefore made a standalone copy of this file
+    # fail HARD ("env file … not found") — it did not "silently not load". Declaring
+    # both candidate locations as optional is what makes the header's "run a release
+    # without checking out the source tree" true.
     env_file:
-      - ../../.env
+      - path: ./.env # standalone: beside this file
+        required: false
+      - path: ../../.env # from a checkout: the repo root (later entry wins)
+        required: false
     environment:
       PERSONALCLAW_HOME: /data
       PERSONALCLAW_PORT: "10000"
@@ -28,10 +49,11 @@ services:
       # NOTE: PERSONALCLAW_BYPASS_LOCAL_NETWORKS is intentionally NOT set here.
       # It comes from `.env` via env_file above. Declaring it in this
       # `environment:` block would override env_file with compose's own
-      # `${VAR:-0}` interpolation — and compose interpolates from this
-      # directory (which has no .env), so it would always resolve to "0" and
-      # silently defeat the value you set in the repo-root .env. Skip token
-      # auth for loopback/RFC1918 clients by setting it to "1" in `.env`.
+      # `${VAR:-0}` interpolation — and interpolation reads a `.env` from the
+      # PROJECT directory only (this file's directory, unless you pass
+      # --project-directory), so a value set in the repo-root `.env` would resolve
+      # to "0" and silently defeat itself. Skip token auth for loopback/RFC1918
+      # clients by setting it to "1" in whichever `.env` you use.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:10000/api/healthz"]
       interval: 30s
@@ -67,8 +89,12 @@ services:
       - with-slack
     volumes:
       - personalclaw_home:/data:z
+    # Same optional-both-locations shape as the gateway above; see the comment there.
     env_file:
-      - ../../.env
+      - path: ./.env
+        required: false
+      - path: ../../.env
+        required: false
     environment:
       PERSONALCLAW_HOME: /data
       PERSONALCLAW_WORKSPACE: /data/workspace

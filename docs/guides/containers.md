@@ -10,12 +10,18 @@ This guide covers a self-hosted Docker Compose deployment: ports, volumes, the
 
 ## Quick start
 
-From a checkout (or after downloading `deploy/compose/compose.yaml` and
-`.env.example`):
+From a checkout:
 
 ```bash
 cp .env.example .env         # fill in provider keys / options (all optional)
 docker compose -f deploy/compose/compose.yaml up -d
+```
+
+Or from `compose.yaml` alone, with no checkout — the file is self-sufficient:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/main/deploy/compose/compose.yaml
+docker compose -f compose.yaml up -d      # a .env beside it is optional
 ```
 
 Two services come up:
@@ -63,9 +69,16 @@ run that unless you mean to wipe state (snapshot first).
 
 ## Environment (`.env`)
 
-Compose reads the repo-root `.env` (via each service's `env_file`). Copy
-`.env.example` and set only what you need — every variable is optional with a
-sensible default. Common ones:
+Each service declares **two** candidate `env_file` locations, both
+`required: false`: `./.env` beside `compose.yaml` (the standalone layout) and
+`../../.env`, the repo root (the from-a-checkout layout). Whichever exists is
+loaded, the repo-root one winning if both do. A relative `env_file` path resolves
+from the compose **file's** directory, never from your shell's cwd — which is why
+the standalone location has to be declared for a downloaded `compose.yaml` to
+work at all.
+
+Copy `.env.example` and set only what you need — every variable is optional with
+a sensible default. Common ones:
 
 | Variable | Default | Notes |
 |---|---|---|

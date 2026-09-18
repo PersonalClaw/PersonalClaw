@@ -399,3 +399,37 @@ describe('the cards are rendered BY their pages', () => {
     expect(code).not.toMatch(/<TriageDigestCard\s*\/>/)
   })
 })
+
+// ── The pending row carries its own accessible name (issue 618) ────────────────────────────────
+//
+// The two lists in this card name themselves; a LIST ITEM is announced by its content, and this
+// row's content is an ordinal span, a verb span and a title in one paragraph followed by a badge, a
+// source and up to two links. Landing on the row read the whole subtree in order, so "which
+// proposal is this" arrived interleaved with "what can I do to it".
+//
+// The pair here is the point: the name must be built from the same fields the row SHOWS, so the two
+// cannot drift — including the missing-field case, where `verbFor('')` prints 'Acted on' and the
+// title falls back to `item <ordinal>`. A name that quietly omitted the verb there would announce
+// the row differently from the row.
+
+describe('a proposal row announces a concise name', () => {
+  it('names the row from the ordinal, verb, title and source it displays', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [PENDING] }))
+    render(<TriageDigestCard />)
+    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Drafted a reply to Review request on #412, inbox' })
+    // The name above could be satisfied by a string that merely looks right, so the text the user
+    // SEES is checked inside the very node just found by that name.
+    expect(row.textContent).toContain('Review request on #412')
+    expect(row.textContent).toContain('Drafted a reply to')
+  })
+
+  it('names the missing-field row the way the row itself renders it', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [{ ...PENDING, action_type: '', title: '', source: '' }] }))
+    render(<TriageDigestCard />)
+    // `verbFor('')` and the `item ${n}` fallback are the paragraph's own output, so an empty proposal
+    // is reachable by name instead of being announced as a bare "Proposal 1:".
+    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Acted on item 1' })
+    expect(row.textContent).toContain('Acted on')
+    expect(row.textContent).toContain('item 1')
+  })
+})

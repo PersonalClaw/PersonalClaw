@@ -12,6 +12,7 @@ import { useArtifactIteration } from './useArtifactIteration'
 import { ArtifactIterationRail } from './ArtifactIterationRail'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
 import { SquareIconButton } from '../SquareIconButton'
+import { cx } from '../cx'
 import { spring } from '../../design/motion'
 import { invalidateKeys } from '../../lib/data'
 
@@ -263,14 +264,22 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       className={expanded
         // `--z-content` IS 50: spelling migration, byte-identical computed value. An expanded widget
         // is a full-bleed content panel, which is the rung tokens.css calls the content ceiling.
-        ? 'fixed inset-4 z-[var(--z-content)] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
+        //
+        // `flex flex-col` is what lets the iframe below size itself from what is LEFT rather than
+        // from a hardcoded guess at the title bar's height. It used to be `calc(100% - 36px)`, and
+        // the bar measures 41px — so the frame ran 5px past the panel and `overflow-hidden` ate the
+        // difference, clipping the bottom of every expanded widget's own content. The rail was worse
+        // off: it started below an already-overflowing frame and was clipped away entirely.
+        ? 'fixed inset-4 z-[var(--z-content)] flex flex-col overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
         // Frameless inline render. Layout is DYNAMIC based on the natural content
         // width vs the host column: ≤ ~70% of host + text column keeps readable
         // measure → float left (prose wraps beside); wider → full-width block.
         : 'group/widget relative my-3'}
       style={!expanded ? computeWidgetLayout(naturalW, hostW) : undefined}>
       {expanded && (
-        <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
+        // `shrink-0`: the bar states its own height (padding + the 28px action buttons) and the
+        // frame beneath it takes the remainder — never the other way round.
+        <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
           <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title}</span>
           {!streaming && <div className="ml-auto flex items-center gap-0.5">{actionCluster}</div>}
         </div>
@@ -282,8 +291,12 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
           <motion.iframe
             key="frame"
             ref={iframeRef} src={blobUrl} sandbox="allow-scripts" title={title}
-            className="w-full border-none bg-transparent"
-            style={{ height: expanded ? 'calc(100% - 36px)' : height }}
+            // Expanded: `flex-1` claims the panel's remaining height and `min-h-0` lets it actually
+            // shrink to that (a flex item's `min-height: auto` floors at its content and is what
+            // makes an iframe overflow its column). Inline `height` stays the frameless path's, where
+            // the value is a MEASURED pixel height synced from the widget's own content.
+            className={cx('w-full border-none bg-transparent', expanded && 'min-h-0 flex-1')}
+            style={expanded ? undefined : { height }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={spring.effects}
