@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, lastRunMeta, isInertOutcome, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, lastRunMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ScheduleForm, toDraft, draftToPayload, type ScheduleDraft } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -292,6 +292,8 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
   const [limit, setLimit] = useState(5)
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [unsupported, setUnsupported] = useState<string | null>(null)
+  // The did/suppressed fold (WF2AUT-10): inert `skipped_*` rows stay hidden until revealed.
+  const [showSuppressed, setShowSuppressed] = useState(false)
   // `schedule:abc` → `abc`; `store:file:notes` → `file:notes`, which IS the run-store key.
   const rawId = triggerId.replace(/^(?:schedule|store|lifecycle|event):/, '')
 
@@ -309,11 +311,20 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
   if (unsupported) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">{unsupported}</div></Section>
   if (runs.length === 0) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">No runs recorded yet.</div></Section>
 
+  // Fold inert `skipped_*` rows out of the default view; reveal on demand (WF2AUT-10).
+  const { did, suppressed } = partitionRunsByFold(runs)
+  const shown = showSuppressed ? runs : did
+
   return (
     <Section label={`History · ${total}`}>
       <div className="flex flex-col gap-1">
-        {runs.map((r, i) => {
-          const id = r.run_id ?? String(i)
+        {shown.length === 0 && (
+          <div className="text-on-surface-low" data-type="body-s">
+            {suppressed.length === 1 ? 'The only run so far was suppressed.' : `All ${suppressed.length} runs in view were suppressed.`}
+          </div>
+        )}
+        {shown.map((r, i) => {
+          const id = r.run_id ?? r.id ?? String(i)
           const sm = statusMeta(r.status)
           const expanded = openRun === id
           return (
@@ -345,6 +356,14 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
           )
         })}
       </div>
+      {suppressed.length > 0 && (
+        <TextLink onClick={() => setShowSuppressed((s) => !s)} size="sm" className="mt-1.5"
+          aria-expanded={showSuppressed}>
+          {showSuppressed
+            ? `Hide ${suppressed.length} suppressed`
+            : `Show ${suppressed.length} suppressed`}
+        </TextLink>
+      )}
       {runs.length < total && (
         <TextLink onClick={() => setLimit((l) => l + 10)} size="sm" className="mt-1.5">Show more ({total - runs.length} more)</TextLink>
       )}
