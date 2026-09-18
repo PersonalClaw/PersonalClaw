@@ -21,6 +21,20 @@ export interface ScheduleDraft {
   // interval
   intervalValue: number
   intervalUnit: string
+  /** The cadence this draft OPENED on, in seconds — `undefined` for a brand-new schedule.
+   *
+   *  🔴 Carried because `secsToInterval`/`intervalToSecs` are not invertible and the edit path
+   *  re-derived `every` unconditionally, so an edit that never touched the cadence still wrote a
+   *  DIFFERENT one (5s → 60s, 3601s → 3600s — #531). Keeping the original lets `draftToPayload`
+   *  answer the only question that matters: did the user actually change this? A round-trip that
+   *  lands on the same displayed `{value, unit}` means no, and then the original seconds are what
+   *  ship — not the lossy re-derivation of them.
+   *
+   *  Deliberately NOT a fix to the two converters. Making them invertible is a larger change and
+   *  would still leave an untouched field being rewritten on every save, which is the actual
+   *  defect and the same one #689 (a rename destroyed the action) and #268 (`approval_mode`
+   *  discarded) were: this form sending something it was not asked to change. */
+  everySecsOriginal?: number
   // cron
   cron: string
   // at (one-shot) — local datetime-local string
@@ -52,6 +66,8 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
   return {
     id: j.id, name: j.name ?? '', message: j.message ?? '',
     kind: deriveKind(j), intervalValue: iv.value, intervalUnit: iv.unit,
+    // Recorded BEFORE the lossy display conversion above is ever sent back (#531).
+    everySecsOriginal: j.every_secs ?? undefined,
     cron: j.cron_expr ?? '0 9 * * *', at: '',
     mode: deriveMode(j), agent: j.agent ?? '', model: j.model ?? '',
     script: j.script ?? '', command: j.command ?? '',
@@ -78,7 +94,23 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
     skip_dates: d.skip_dates,
   }
   if (d.kind === 'cron') body.cron = d.cron.trim()
-  else if (d.kind === 'every') body.every = intervalToSecs(d.intervalValue, d.intervalUnit)
+  // 🔴 The cadence is sent ONLY when the user actually changed it (#531). `secsToInterval` and
+  // `intervalToSecs` clamp in OPPOSITE directions and neither is invertible — `5s` displays as
+  // `1m` and comes back as `60s`; `3601s` displays as `1h` and comes back as `3600s` — so
+  // re-deriving `every` on every save meant a name-only edit silently rewrote the schedule.
+  //
+  // The test is "does the untouched draft still describe the original", not "are the numbers
+  // equal": the form can only express what `secsToInterval` produced, so the honest comparison is
+  // against that same projection. When it matches, the ORIGINAL seconds ship, which preserves a
+  // sub-minute or non-round cadence the form has no way to display. When it differs the user
+  // really did edit the field, and their value ships — clamped, as it must be for a new value.
+  else if (d.kind === 'every') {
+    const orig = d.everySecsOriginal
+    const untouched = orig !== undefined
+      && secsToInterval(orig).value === d.intervalValue
+      && secsToInterval(orig).unit === d.intervalUnit
+    body.every = untouched ? orig : intervalToSecs(d.intervalValue, d.intervalUnit)
+  }
   else if (d.kind === 'at') body.at = d.at  // backend-soon
   if (d.mode !== 'other') body.message = d.message.trim()
   // 🔴 `approval_mode` rides with the AGENT fields, not with the delivery block it is drawn next
