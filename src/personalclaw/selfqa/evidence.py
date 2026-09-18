@@ -21,7 +21,10 @@ availability probe is modelled on the docker/lima sandbox probes
 (:func:`personalclaw.sandbox_providers.docker.docker_available`): a cached result with a short
 TTL, and — deliberately — a ``None`` "never yet checked" sentinel rather than comparing
 ``time.monotonic()`` against ``0.0`` (a real reading of the monotonic clock can be small, so
-``0.0`` is a valid cache time, not an "unset" marker).
+``0.0`` is a valid cache time, not an "unset" marker). The contact sheet's tile grid is
+**measured from the recording** for the same reason the digests are: ffmpeg reads ``tile``'s
+layout as one ``WxH`` image size, so a placeholder dimension is not a filter it will run, and
+a row count assumed rather than derived is a sheet no host can ever produce.
 
 **The completion gate checks KINDS present in the bundle.** :func:`check_required_kinds` is the
 kind-level completion gate the ``selfqa-evidence`` provider runs — the deterministic,
@@ -41,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import shutil
 import subprocess
 import time
@@ -112,9 +116,14 @@ def classify_kind(relpath: str) -> str:
 # can legitimately be a small float, so `0.0` is a valid "checked at t=0" time, not an "unset"
 # marker — the docker probe makes exactly this choice, and the user's rule restates it.
 FFMPEG_BIN = "ffmpeg"
+#: The duration probe. A separate binary from ``ffmpeg`` and deliberately NOT folded into
+#: :func:`ffmpeg_available`: only the contact sheet needs a duration, so requiring ffprobe for
+#: the shared probe would degrade the GIF for a tool it never calls.
+FFPROBE_BIN = "ffprobe"
 _PROBE_TTL_SECS = 30.0
 _probe_cache: tuple[float, bool] | None = None
 _FFMPEG_PROBE_TIMEOUT = 5
+_FFPROBE_TIMEOUT = 15
 
 
 def _ffmpeg_ping() -> bool:
@@ -191,6 +200,14 @@ class Derivation:
 
 _REASON_NO_FFMPEG = "ffmpeg is not available on this host, so it was skipped"
 _REASON_NO_RECORDING = f"no {RECORDING_NAME} to derive from, so it was skipped"
+_REASON_NO_DURATION = (
+    f"the duration of {RECORDING_NAME} could not be probed (no ffprobe, or not a readable "
+    "recording), so the tile grid could not be sized"
+)
+_REASON_EMPTY_SHEET = (
+    "the recording is shorter than one sampling interval, so ffmpeg sampled no frames and "
+    "wrote no sheet"
+)
 _FFMPEG_RUN_TIMEOUT = 120
 
 #: One frame every N seconds tiled into the contact sheet (§3.3: "1 frame/5s").
@@ -223,6 +240,78 @@ def _run_ffmpeg(argv: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
+def probe_duration_secs(path: Path | str) -> float:
+    """Probe a media file's duration in seconds. ``0.0`` means "unknown", never an exception.
+
+    A host-fact read: the argv is fixed and its only variable is a bundle path. Modelled on the
+    knowledge pipeline's duration probe
+    (:meth:`personalclaw.knowledge.pipeline.executor.PipelineExecutor._media_duration`) — an
+    absent ``ffprobe``, an unreadable file, or a container that reports ``N/A`` all return
+    ``0.0`` so the caller degrades typed instead of guessing a grid.
+    """
+    if not shutil.which(FFPROBE_BIN):
+        return 0.0
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, host-fact duration read
+            [
+                FFPROBE_BIN,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_FFPROBE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0.0
+    try:
+        return max(0.0, float((proc.stdout or "").strip()))
+    except ValueError:
+        return 0.0
+
+
+def sampled_frame_count(
+    duration_secs: float,
+    *,
+    interval_secs: int = CONTACT_SHEET_FRAME_INTERVAL_SECS,
+) -> int:
+    """How many frames ``fps=1/interval_secs`` will sample from a recording that long.
+
+    Deliberately rounds **up** while ffmpeg's own ``fps`` filter rounds to **nearest**, so this
+    is an upper bound and never an under-count. That asymmetry is the safety property: the count
+    sizes the tile grid, and a grid too SMALL makes ``-frames:v 1`` emit only the first full tile
+    and silently drop the tail of the recording — which is where a failure usually is. A grid one
+    row too LARGE costs one row of padding, which is visible and harmless. Measured against
+    ffmpeg 9.0.1 at a 5s interval: 12s→2 frames, 21s→4, 60s→12, and ``ceil`` bounds all three.
+
+    A duration of zero or less samples nothing; the caller degrades rather than tiling an
+    empty grid.
+    """
+    if duration_secs <= 0 or interval_secs <= 0:
+        return 0
+    return math.ceil(duration_secs / interval_secs)
+
+
+def contact_sheet_rows(frames: int, *, columns: int = CONTACT_SHEET_COLUMNS) -> int:
+    """Rows needed to tile ``frames`` thumbnails ``columns`` wide. ``0`` frames means ``0`` rows.
+
+    ffmpeg parses ``tile``'s ``layout`` as a single ``WxH`` **image size**, so a literal ``0``
+    for either dimension is not a dimension it accepts — it refuses the whole filter graph with
+    ``Unable to parse "layout" option value "4x0" as image size`` and writes nothing. The rows
+    must therefore be a real derived number, which is what this returns: ``3`` frames fit in one
+    row of four, ``12`` fit in three.
+    """
+    if frames <= 0 or columns <= 0:
+        return 0
+    return math.ceil(frames / columns)
+
+
 def derive_contact_sheet(
     bundle_dir: Path | str,
     *,
@@ -231,8 +320,9 @@ def derive_contact_sheet(
 ) -> Derivation:
     """Derive a contact-sheet PNG from the recording (ffmpeg tile filter, 1 frame / 5s).
 
-    Degrades typed: a missing recording or an absent ffmpeg returns a :class:`Derivation` with a
-    ``degraded_reason`` and produces no file. An ffmpeg failure is degraded the same way, carrying
+    Degrades typed: a missing recording, an absent ffmpeg, an unprobeable duration, or a
+    recording too short to sample a single frame each return a :class:`Derivation` with a
+    ``degraded_reason`` and produce no file. An ffmpeg failure is degraded the same way, carrying
     ffmpeg's own stderr as the reason.
     """
     root = Path(bundle_dir)
@@ -242,10 +332,19 @@ def derive_contact_sheet(
     if not ffmpeg_available():
         return Derivation(kind=KIND_CONTACT_SHEET, degraded_reason=_REASON_NO_FFMPEG)
 
+    # The grid is sized from the recording, so the duration has to be a measurement. Without it
+    # there is no honest row count — and inventing one is what produced a permanently invalid
+    # filter here before.
+    frames = sampled_frame_count(probe_duration_secs(recording))
+    rows = contact_sheet_rows(frames)
+    if rows <= 0:
+        return Derivation(kind=KIND_CONTACT_SHEET, degraded_reason=_REASON_NO_DURATION)
+
     out = root / out_name
-    # `fps=1/N` picks one frame every N seconds; `tile` lays them into a grid. The grid is one
-    # row-per-COLUMNS wide, which keeps a long recording from producing a single unreadable strip.
-    vf = f"fps=1/{CONTACT_SHEET_FRAME_INTERVAL_SECS},tile={CONTACT_SHEET_COLUMNS}x0"
+    # `fps=1/N` picks one frame every N seconds; `tile` lays them into a COLUMNS-wide grid, which
+    # keeps a long recording from producing a single unreadable strip. Both tile dimensions are
+    # real sizes: ffmpeg reads `layout` as one WxH image size and rejects a zero in either.
+    vf = f"fps=1/{CONTACT_SHEET_FRAME_INTERVAL_SECS},tile={CONTACT_SHEET_COLUMNS}x{rows}"
     ok, err = _run_ffmpeg(["-i", str(recording), "-vf", vf, "-frames:v", "1", str(out)])
     if not ok:
         return Derivation(
@@ -256,6 +355,12 @@ def derive_contact_sheet(
                 else "ffmpeg could not build the contact sheet"
             ),
         )
+    # ffmpeg exits 0 having written NOTHING when `fps` sampled no frame at all (a recording
+    # shorter than one interval): rc=0, empty stderr, no file. Claiming `produced` on that would
+    # put a path to a nonexistent file in the manifest, so the write is verified, not assumed.
+    if not out.is_file() or out.stat().st_size == 0:
+        out.unlink(missing_ok=True)
+        return Derivation(kind=KIND_CONTACT_SHEET, degraded_reason=_REASON_EMPTY_SHEET)
     return Derivation(kind=KIND_CONTACT_SHEET, name=out_name, path=str(out), produced=True)
 
 
