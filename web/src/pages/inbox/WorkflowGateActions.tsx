@@ -4,6 +4,20 @@ import { api, type WorkflowContinuation } from '../../lib/api'
 import { WorkflowAsk } from '../workflows/WorkflowAsk'
 import { TextLink } from '../../ui/TextLink'
 
+/** Run statuses a run cannot leave — `workflows/models.TERMINAL_RUN_STATUSES`, whose Python
+ *  definition is `ENDED - RESUMABLE_ENDED` with the resumable set deliberately EMPTY ("a run is
+ *  one attempt, so every way it can stop is a way it stops for good"). Mirrored rather than
+ *  derived because the wire carries a bare string; the rail in `terminalRunHasNoGate.test.tsx`
+ *  compares this set against the Python source so the two cannot drift. */
+const TERMINAL_RUN_STATUSES = new Set(['complete', 'failed', 'cancelled', 'escalated'])
+
+/** How to say each ending in a sentence. `complete` is included for completeness of the map, not
+ *  because a completed run's gate is a common sight — a run that finished having left a gate open
+ *  is exactly as unanswerable as one that failed. */
+const ENDED_VERB: Record<string, string> = {
+  complete: 'finished', failed: 'failed', cancelled: 'was cancelled', escalated: 'was escalated',
+}
+
 /** Answer a workflow's human-input gate from the inbox (WF2-R7).
  *
  *  A `needs_input` row whose only action is "go to the workflow" is a notification with extra
@@ -28,6 +42,11 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
   navigate: (path: string) => void
 }) {
   const [conts, setConts] = useState<WorkflowContinuation[] | null>(null)
+  const [runStatus, setRunStatus] = useState('')
+  // 🪤 A FAILED LOOKUP USED TO READ AS "nothing pending", which then printed "This request was
+  // already answered." for a run nobody could reach. Three different facts (a dead run, an
+  // answered gate, an unreadable one) had one sentence between them; each has its own now.
+  const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -38,10 +57,11 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
       // rows, and showing both asks under each would make it impossible to tell which row
       // you just answered.
       const all = res.continuations ?? []
+      setRunStatus(res.run_status ?? '')
+      setLoadFailed(false)
       setConts(nodeId ? all.filter((c) => c.node_id === nodeId) : all)
     } catch {
-      // A deleted (or unreadable) run reads as "nothing pending" — the row is stale either
-      // way, and the same message covers both.
+      setLoadFailed(true)
       setConts([])
     }
   }, [runId, nodeId])
@@ -72,9 +92,18 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
   }
 
   if (conts.length === 0) {
+    // Three reasons the list is empty, and they are not interchangeable. The run's own status
+    // decides, which is why the route sends it: telling someone their question was "already
+    // answered" when the run died holding it sends them looking for their own answer.
+    const ended = TERMINAL_RUN_STATUSES.has(runStatus)
+    const reason = loadFailed
+      ? "Couldn't check this request."
+      : ended
+        ? `This run ${ENDED_VERB[runStatus] ?? 'ended'}, so the request can no longer be answered.`
+        : 'This request was already answered.'
     return (
       <p data-type="body-s" className="text-on-surface-low">
-        This request was already answered.{' '}
+        {reason}{' '}
         <TextLink onClick={() => navigate(`workflows/${runId}`)}>
           Open the run
         </TextLink>
