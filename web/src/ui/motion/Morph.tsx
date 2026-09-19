@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { motion } from 'framer-motion'
+import { prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
 /** Shared-element morph (§Goal 4 "morph, don't mount"): two boxes in DIFFERENT parts of
@@ -41,7 +42,7 @@ export function Morph({ id, className, style, children }: {
   style?: React.CSSProperties
   children: ReactNode
 }) {
-  const reduce = useReducedMotion()
+  const reduce = prefersReducedMotion()
   // Not `layoutId={reduce ? undefined : id}` on one motion.div: a motion component still
   // installs a projection node and its own style pipeline. The reduced-motion end is a
   // plain div so there is nothing left to animate, and `data-morph` makes which branch

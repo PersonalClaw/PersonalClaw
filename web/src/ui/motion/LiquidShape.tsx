@@ -1,6 +1,6 @@
 import { useEffect, useId } from 'react'
-import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'framer-motion'
-import { expr, exprHeavy } from '../../design/motion'
+import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
+import { expr, exprHeavy, prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
 /** A coral-tinted liquid blob that MORPHS between two shape states (FLUID-MOTION
@@ -153,7 +153,7 @@ export function LiquidShape({
   /** Sizes the blob — it fills its box (e.g. `size-16`, or a sized parent). */
   className?: string
 }) {
-  const reduce = useReducedMotion()
+  const reduce = prefersReducedMotion()
   const heavy = exprHeavy()
   const amp = expr(TUNING.character) * intensity
   const breathe = heavy ? expr(TUNING.breathe) * intensity : 0

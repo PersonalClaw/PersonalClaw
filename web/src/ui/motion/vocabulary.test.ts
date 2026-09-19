@@ -85,16 +85,20 @@ describe('the four primitives own no timing of their own', () => {
     // `duration` are TIMING, and timing is the family's, not the member's. This is the rail
     // that would have caught `Disintegrate`'s raw `[0.4, 0, 0.2, 1]` and `Bud`'s inverted
     // `260 - expr(70, 0.4)` on the day each was written.
-    const AMPLITUDE_ONLY = ['expr', 'exprHeavy']
+    // `prefersReducedMotion` joined this list in atom FM-3 and is NOT a fourth timing escape:
+    // it is the a11y OFF-SWITCH, one module-owned accessor the whole family now shares (see the
+    // self-gate case below). It answers "may I animate at all", never "how long" or "on what
+    // curve", which is the line this rail actually draws.
+    const ALLOWED = ['expr', 'exprHeavy', 'prefersReducedMotion']
     for (const name of MEMBERS) {
       const named = motionImports(source(name))
       if (named === null) continue
       expect(named.sort(), `${name} imports timing from design/motion`)
-        .toEqual(named.filter((n) => AMPLITUDE_ONLY.includes(n)).sort())
+        .toEqual(named.filter((n) => ALLOWED.includes(n)).sort())
     }
     // …and at least one member really does import amplitude, so the loop above is not vacuous
     // by way of nobody importing anything.
-    expect(motionImports(source('Disintegrate.tsx'))).toEqual(['expr', 'exprHeavy'])
+    expect(motionImports(source('Disintegrate.tsx'))).toEqual(['expr', 'exprHeavy', 'prefersReducedMotion'])
   })
 
   it('none writes a stiffness, a raw duration or a raw bezier', () => {
@@ -124,12 +128,28 @@ describe('the four primitives own no timing of their own', () => {
     expect(code(source('Disintegrate.tsx'))).toContain('exprHeavy()')
   })
 
-  it('every member self-gates reduced motion in JS', () => {
+  it('every member self-gates reduced motion in JS, through the ONE accessor', () => {
     // The family's off-switch is one mechanism, not "three self-gate and one delegates to the
-    // root MotionConfig" (which is what `Bud` did before this atom, and why its off-switch was
+    // root MotionConfig" (which is what `Bud` did before atom FM-4, and why its off-switch was
     // the only one you could not assert from the DOM).
+    //
+    // Atom FM-3 made it one ACCESSOR as well as one mechanism. The family had decided the same
+    // question three ways — framer's `useReducedMotion` here, a raw `window.matchMedia` read in
+    // `ui/DotGlow`, and nothing at all in `ui/WavyProgress` — and the choice of survivor was
+    // forced rather than aesthetic: framer caches its probe in a MODULE SINGLETON, so a rail
+    // that measures both regimes in one file (`DotGlow.reducedMotion.test.tsx`) cannot use it.
+    // `design/motion`'s `prefersReducedMotion()` re-reads the query at CALL time.
     for (const name of MEMBERS) {
-      expect(code(source(name)), `${name} does not self-gate`).toContain('useReducedMotion()')
+      expect(code(source(name)), `${name} does not self-gate`).toContain('prefersReducedMotion()')
+    }
+  })
+
+  it('and NO member reaches for framer’s cached probe — the clean break, not a preference', () => {
+    // The divergent path is deleted, not deprecated. Without this the family could drift back one
+    // component at a time, and each drift would still pass the case above.
+    for (const name of MEMBERS) {
+      expect(code(source(name)), `${name} imports framer’s module-cached useReducedMotion`)
+        .not.toMatch(/\buseReducedMotion\b/)
     }
   })
 })
