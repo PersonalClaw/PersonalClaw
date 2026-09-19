@@ -1201,7 +1201,10 @@ export interface ProjectLinkedItem { id: string; name: string; status: string; e
  *  values the backend can send; a view that renders these must handle both explicitly. */
 export type SharingPolicy = 'private' | 'shared'
 /** A knowledge item surfaced in a project's view. `source_project` is "" for the project's
- *  own items and the OWNING project's name for a `shared` item from another container. */
+ *  own items and the OWNING project's name for a `shared` item from another container.
+ *  `contributor` is "" for anything the local owner wrote and a teammate's handle for a
+ *  foreign contribution that came back from a shared store — the backend resolves
+ *  "is this mine?", so the client never compares handles itself. */
 export interface ProjectKnowledgeItem {
   id: string
   title: string
@@ -1212,6 +1215,7 @@ export interface ProjectKnowledgeItem {
   run_id: string
   sharing_policy: SharingPolicy
   source_project: string
+  contributor: string
 }
 // Work board (WORK-CONTAINERS §1/§5.2/§6.1). `WorkRow` mirrors `containers.BoardRow.to_dict()`;
 // `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed
