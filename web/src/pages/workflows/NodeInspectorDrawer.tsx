@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ScanSearch, Link2, Package } from 'lucide-react'
+import { ScanSearch, Link2, Package, ShieldAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
@@ -142,6 +142,10 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
   const promptRef = refOf(data.resolved_prompt)
   const outputRef = refOf(data.output)
   const inputKeys = Object.keys(data.resolved_inputs ?? {})
+  // Finding CLASSES, joined for the note. The backend never sends a matched value here, so this
+  // string is safe to render; naming the classes is what makes the badge actionable ("a phone
+  // number was substituted" is a different problem from "a credential was").
+  const scanSummary = (data.resolved_prompt_scan ?? []).join(', ')
 
   return (
     <>
@@ -162,6 +166,24 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
       </div>
 
       <FieldBlock label="Resolved prompt">
+        {/* The prompt the PROVIDER received (issue 3166). When the outbound scan substituted
+            something, say so HERE rather than leaving the reader to wonder why the text does not
+            match the template: a replay or an eval run against this body is reading the model's
+            real input, and the difference from the template used to be recorded nowhere.
+            The issue number is written without a leading hash on purpose: `design/tokenLint`
+            reads a hash followed by four hex digits as a raw colour, and a JSX comment is not
+            in its comment-line skip (which only sees `//`, `*` and `/*` at line start). */}
+        {data.resolved_prompt_redacted ? (
+          <p
+            data-testid="prompt-redacted-note"
+            data-type="caption"
+            className="flex items-center gap-1.5 text-on-surface-var"
+          >
+            <ShieldAlert size={13} className="shrink-0 text-on-surface-low" />
+            Redacted before sending{scanSummary ? ` — ${scanSummary}` : ''}. This is what the model
+            received; the template text differed.
+          </p>
+        ) : null}
         {promptRef !== null ? (
           <RefChip icon={Link2} label="prompt ref" value={promptRef} />
         ) : (

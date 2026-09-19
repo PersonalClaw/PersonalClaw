@@ -304,8 +304,54 @@ def _pipe_hygiene(value: Any) -> Any:
     return longrun.web_hygiene(value)
 
 
+def _pipe_fenced(
+    value: Any,
+    source: Any = "",
+    source_type: Any = "",
+    source_id: Any = "",
+    transformation_path: Any = "",
+) -> str:
+    """`fenced` — ANY value, wrapped by `security.fence_untrusted`.
+
+    The shape-agnostic sibling of `fenced_sources`. A template that interpolates stored or
+    fetched content into a prompt has exactly one correct way to do it: run it through the
+    platform's fence. `fenced_sources` is that way for a RETRIEVED-KNOWLEDGE list
+    (`{title, content|summary}`), because it also numbers the set `[1]..[n]` and attaches the
+    citation instruction — but a value of any other shape is silently destroyed by it. Measured
+    on `knowledge-persist`'s `conflict_candidates` (`[{"item_id", "statement"}]`):
+    `fenced_sources` emits `[1]` and NOTHING else, because neither `content` nor `summary` is
+    present — so the model loses both the `item_id` it must copy back and the claim it must
+    judge. That is why this pipe exists rather than `fenced_sources` growing a second shape:
+    numbering a list whose identity is an opaque id is the wrong rendering, not a missing key.
+
+    A non-string value is JSON-dumped first (the same `json` pipe the sanitization set already
+    accepts), then fenced whole. JSON escaping is NOT a fence — a dumped `\\n</untrusted_content>`
+    arrives at the model as a real close marker, and `<|im_start|>` survives a dump untouched —
+    so the dump is the serialization and `fence_untrusted` is the control. Fencing the dump ONCE
+    (rather than per item) is deliberate: the fence's contract is a single balanced span, and a
+    per-item fence over an opaque shape would have to invent a per-item rendering.
+
+    `source`/`source_type`/`source_id`/`transformation_path` are forwarded as the fence's
+    provenance attributes; all four are optional literals, e.g. `| fenced('knowledge')`.
+    """
+    from personalclaw.security import fence_untrusted
+
+    text = value if isinstance(value, str) else _pipe_json(value)
+    return fence_untrusted(
+        text,
+        source=str(source or ""),
+        source_type=str(source_type or ""),
+        source_id=str(source_id or ""),
+        transformation_path=str(transformation_path or ""),
+    )
+
+
 def _pipe_fenced_sources(value: Any) -> str:
     """`fenced_sources` — retrieved knowledge, fenced and numbered, with a citation instruction.
+
+    Shape-BOUND: it reads `title` + `content`/`summary`. For any other shape reach for `fenced`,
+    which fences the value whole — see its docstring for what this pipe does to a list whose
+    items carry neither key (it emits the bare numbering and drops the content).
 
     Knowledge items partly derive from web and inbox content, so interpolating them raw into a
     stage prompt bypasses the platform's fencing doctrine: an ingested page that says "ignore
@@ -421,6 +467,7 @@ PIPES: dict[str, Any] = {
     "full": _pipe_full,
     "hygiene": _pipe_hygiene,
     "clamp": _pipe_clamp,
+    "fenced": _pipe_fenced,
     "fenced_sources": _pipe_fenced_sources,
     "source_refs": _pipe_source_refs,
 }

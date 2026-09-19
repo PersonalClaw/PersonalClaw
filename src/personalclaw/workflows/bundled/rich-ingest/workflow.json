@@ -60,7 +60,7 @@
         "label": "Which lenses apply?",
         "config": {
           "model_tier": "fast",
-          "prompt": "Which extraction lenses are worth running on this transcript?\n\n<untrusted_content source=transcript>\n{{inputs.transcript | truncate(4000)}}\n</untrusted_content>\n\nWhen uncertain, INCLUDE a lens: the specialists below do the real filtering, and a lens that finds nothing costs one cheap call while a lens you skipped loses the content entirely.",
+          "prompt": "Which extraction lenses are worth running on this transcript?\n\n{{inputs.transcript | truncate(4000) | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nWhen uncertain, INCLUDE a lens: the specialists below do the real filtering, and a lens that finds nothing costs one cheap call while a lens you skipped loses the content entirely.",
           "schema": {
             "decisions": "boolean",
             "references": "boolean",
@@ -85,7 +85,7 @@
             "config": {
               "model_tier": "fast",
               "allow_failure": true,
-              "prompt": "Extract ONLY this lens from the transcript: Decisions that were MADE — not options discussed. For each: the question, the choice, the rationale, and what was explicitly rejected. A decision without its rationale is a fact that will be re-litigated.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "prompt": "Extract ONLY this lens from the transcript: Decisions that were MADE — not options discussed. For each: the question, the choice, the rationale, and what was explicitly rejected. A decision without its rationale is a fact that will be re-litigated.\n\n{{inputs.transcript | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
               "schema": {
                 "items": [
                   {
@@ -104,7 +104,7 @@
             "config": {
               "model_tier": "fast",
               "allow_failure": true,
-              "prompt": "Extract ONLY this lens from the transcript: Reference material named or shared: documents, links, systems, specs. What it is and why it came up.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "prompt": "Extract ONLY this lens from the transcript: Reference material named or shared: documents, links, systems, specs. What it is and why it came up.\n\n{{inputs.transcript | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
               "schema": {
                 "items": [
                   {
@@ -123,7 +123,7 @@
             "config": {
               "model_tier": "fast",
               "allow_failure": true,
-              "prompt": "Extract ONLY this lens from the transcript: Concrete facts and definitions stated as true: measurements, names, constraints, terminology.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "prompt": "Extract ONLY this lens from the transcript: Concrete facts and definitions stated as true: measurements, names, constraints, terminology.\n\n{{inputs.transcript | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
               "schema": {
                 "items": [
                   {
@@ -142,7 +142,7 @@
             "config": {
               "model_tier": "fast",
               "allow_failure": true,
-              "prompt": "Extract ONLY this lens from the transcript: What this session was ABOUT, in a few sentences. One item, not a list.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "prompt": "Extract ONLY this lens from the transcript: What this session was ABOUT, in a few sentences. One item, not a list.\n\n{{inputs.transcript | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
               "schema": {
                 "items": [
                   {
@@ -161,7 +161,7 @@
             "config": {
               "model_tier": "fast",
               "allow_failure": true,
-              "prompt": "Extract action items someone committed to — with an owner where one was named.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nOnly commitments, not ideas. \"We should probably look at X\" is not an action item; \"I'll send the numbers by Friday\" is.",
+              "prompt": "Extract action items someone committed to — with an owner where one was named.\n\n{{inputs.transcript | fenced('transcript', 'transcript', 'inputs.transcript', 'ingest')}}\n\nOnly commitments, not ideas. \"We should probably look at X\" is not an action item; \"I'll send the numbers by Friday\" is.",
               "schema": {
                 "items": [
                   {

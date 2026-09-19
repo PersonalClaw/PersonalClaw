@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool
 from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
@@ -100,8 +101,23 @@ class NodeResult:
     declined_edges: list[str] = field(default_factory=list)
     #: Populated for wait/gate: when the controller should look at this node again.
     wake_at: float = 0.0
-    #: The fully-resolved prompt, journaled for trajectory replay (§5 ledger).
+    #: The prompt as the PROVIDER received it, journaled for trajectory replay (§5 ledger).
+    #:
+    #: 🔴 Post-scan, not post-binding (#3166). This used to be the text the dispatcher composed,
+    #: while the outbound secret/PII scan substitutes at the model-call seam far below — so a
+    #: replay read a prompt the model never saw and nothing said a substitution happened. It is
+    #: now whatever `guardrails.wire` captured from `ModelCallGuard._prescan`, falling back to the
+    #: composed prompt when no guard was in the path (which also means no substitution happened).
     resolved_prompt: str = ""
+    #: True when the outbound scan SUBSTITUTED something on the way out, so a reader of the stored
+    #: prompt knows it is not verbatim. A bare post-scan body would be indistinguishable from a
+    #: prompt whose author wrote `[REDACTED_EMAIL]` themselves.
+    prompt_redacted: bool = False
+    #: The scan's finding CLASSES (`credential`/`email`/`phone`/`exfil_url`/`injection`) — never a
+    #: matched value, because this reaches a ledger row and the substitution exists precisely so
+    #: the value is not written down. Populated even in `warn` mode, where `prompt_redacted` is
+    #: False: "findings, sent anyway" is a different and important fact from "clean".
+    prompt_scan_categories: tuple[str, ...] = ()
     #: Typed human-input ask, for gates that need an answer.
     ask: dict[str, Any] | None = None
     #: The `publish:` outcome (S47): create / version / noop / error, with its reason. A DECLARED
@@ -202,6 +218,36 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
                 "pipe if the value is genuinely optional"
             ),
         )
+
+
+def journalled_prompt(wire: Any, composed: str) -> dict[str, Any]:
+    """The three `NodeResult` prompt fields, from what the wire recorder captured (#3166).
+
+    Returned as kwargs because every `return NodeResult(...)` on a model-calling path has to carry
+    all three together: a stored body without its `prompt_redacted` flag is the half-fix that
+    leaves a reader unable to tell a substituted prompt from a verbatim one.
+
+    `captured` False means no `ModelCallGuard` was in the path — a test injecting `completion`, or a
+    provider resolved without the wrap. Then the composed prompt IS what went out, because the
+    scan is the only thing that would have changed it, so journaling it is exact rather than lax.
+
+    A BLOCKED call is the one case with no body at all: nothing reached a provider, and the
+    composed prompt is the text that was refused for carrying a credential. Journaling that would
+    persist to disk precisely the secret the block existed to stop — so the body is dropped and the
+    categories carry why. (No path writes it today: the controller only stores a prompt on the
+    SUCCESS branch. This keeps it safe if that ever changes.)
+    """
+    if wire is None or not getattr(wire, "captured", False):
+        return {
+            "resolved_prompt": composed,
+            "prompt_redacted": False,
+            "prompt_scan_categories": (),
+        }
+    return {
+        "resolved_prompt": "" if wire.blocked else wire.text,
+        "prompt_redacted": bool(wire.redacted),
+        "prompt_scan_categories": tuple(wire.categories),
+    }
 
 
 def resolve_use_case(node: Node, tiers: dict[str, str] | None = None) -> str:
@@ -477,22 +523,28 @@ async def dispatch_infer(
         fn = one_shot_completion
 
     want_json = bool(cfg.get("schema")) or str(cfg.get("output", "")) == "json"
-    try:
-        text = await complete_with_compaction(
-            fn,
-            prompt,
-            use_case=use_case,
-            output_type=dict if want_json else None,
-            saves=compaction_saves,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # provider/transport/contract failures
-        return NodeResult(
-            state=InstanceState.FAILED,
-            failure=_classify_exception(exc),
-            resolved_prompt=prompt,
-        )
+    # The wire recorder is bound around the call, never inside it: the guard's `_prescan` runs deep
+    # under `complete_with_compaction` (and the controller runs each node in its own Task, whose
+    # context is a COPY), so the object has to exist out here for the publication to be readable.
+    # It also picks up the compaction ladder for free — a proactively shortened prompt is another
+    # way the journal used to disagree with the wire.
+    with capture_wire_prompt() as wire:
+        try:
+            text = await complete_with_compaction(
+                fn,
+                prompt,
+                use_case=use_case,
+                output_type=dict if want_json else None,
+                saves=compaction_saves,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # provider/transport/contract failures
+            return NodeResult(
+                state=InstanceState.FAILED,
+                failure=_classify_exception(exc),
+                **journalled_prompt(wire, prompt),
+            )
 
     output: Any = text
     if want_json:
@@ -506,14 +558,16 @@ async def dispatch_infer(
                     remediation="add an explicit schema to the prompt, or split into a "
                     "produce-then-extract pair",
                 ),
-                resolved_prompt=prompt,
+                **journalled_prompt(wire, prompt),
             )
         output = parsed
     return NodeResult(
         state=InstanceState.DONE,
         output=output,
-        resolved_prompt=prompt,
+        # Tokens stay estimated from the COMPOSED prompt: the estimate is about what this node
+        # spent, and a redaction changes the text by a few characters, not the work.
         tokens=_estimate_tokens(prompt, text),
+        **journalled_prompt(wire, prompt),
     )
 
 
@@ -1683,48 +1737,54 @@ async def dispatch_gate(
         # before (byte-for-byte), so the completion seam the whole loop library already injects is
         # untouched. A cross_model gate pins the validated different-family model.
         pin = {"model": judge_model} if judge_model else {}
-        for _ in range(samples):
-            try:
-                # Through the compaction ladder (WV-12), same as `infer`. A judge on a
-                # long-horizon loop reads the accumulated evidence, so its instruction is one
-                # of the two prompts that actually grows toward the window. The `model` pin is
-                # forwarded, not bypassed: the ladder must measure against the model that will
-                # RUN — a cross-family judge can have a different window than the worker axis,
-                # and budgeting against the wrong one is how the check silently stops applying.
-                text = await complete_with_compaction(
-                    fn,
-                    instruction,
-                    use_case=use_case,
-                    output_type=None,
-                    saves=compaction_saves,
-                    # Named, not `**pin`: the ladder types `model` as `str`, and the pin dict
-                    # is only ever that one key. Splatting it would erase the type here and
-                    # would hide a future key rename behind a runtime TypeError.
-                    model=str(pin.get("model", "")),
+        # ONE recorder across every sample (#3166): the samples send the SAME instruction, so what
+        # the provider received is one fact, not `samples` of them. `sends` counts the publications
+        # if a reader ever needs to know how many calls it covered. Scoped to the sampling loop
+        # only — the `wire` object stays readable after the `with` exits, which is what lets the
+        # eight returns below share it without indenting all of them.
+        with capture_wire_prompt() as wire:
+            for _ in range(samples):
+                try:
+                    # Through the compaction ladder (WV-12), same as `infer`. A judge on a
+                    # long-horizon loop reads the accumulated evidence, so its instruction is one
+                    # of the two prompts that actually grows toward the window. The `model` pin is
+                    # forwarded, not bypassed: the ladder must measure against the model that will
+                    # RUN — a cross-family judge can have a different window than the worker axis,
+                    # and budgeting against the wrong one is how the check silently stops applying.
+                    text = await complete_with_compaction(
+                        fn,
+                        instruction,
+                        use_case=use_case,
+                        output_type=None,
+                        saves=compaction_saves,
+                        # Named, not `**pin`: the ladder types `model` as `str`, and the pin dict
+                        # is only ever that one key. Splatting it would erase the type here and
+                        # would hide a future key rename behind a runtime TypeError.
+                        model=str(pin.get("model", "")),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    return NodeResult(
+                        state=InstanceState.FAILED,
+                        failure=_classify_exception(exc),
+                        **journalled_prompt(wire, instruction),
+                    )
+                texts.append(str(text))
+                answer = parse_judge_json(text)
+                if answer is None:
+                    # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a
+                    # terminal accept decided from 2 of 3 samples is a quieter version of the
+                    # single-sample bug this session exists to fix.
+                    unparseable = True
+                    break
+                judged.append(
+                    validate_verdict(
+                        answer, hints, fallback_result=fallback_result, evidence_text=rubric_prose
+                    )
                 )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                return NodeResult(
-                    state=InstanceState.FAILED,
-                    failure=_classify_exception(exc),
-                    resolved_prompt=instruction,
-                )
-            texts.append(str(text))
-            answer = parse_judge_json(text)
-            if answer is None:
-                # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a terminal
-                # accept decided from 2 of 3 samples is a quieter version of the single-sample bug
-                # this session exists to fix.
-                unparseable = True
-                break
-            judged.append(
-                validate_verdict(
-                    answer, hints, fallback_result=fallback_result, evidence_text=rubric_prose
-                )
-            )
-        else:
-            unparseable = False
+            else:
+                unparseable = False
         text = texts[-1] if texts else ""
         # 🔴 Tokens are summed over EVERY sample, not just the last. Measured on my own first
         # draft: a `judge_samples: 3` gate reported 22 tokens where it had really spent ~66 —
@@ -1761,8 +1821,8 @@ async def dispatch_gate(
                     remediation="tighten the rubric, or use a ladder gate for a "
                     "deterministic check",
                 ),
-                resolved_prompt=instruction,
                 tokens=sampled_tokens,
+                **journalled_prompt(wire, instruction),
             )
         decision = aggregate_samples(judged, hints)
         state, failure = _judge_gate_outcome(decision, node)
@@ -1814,15 +1874,15 @@ async def dispatch_gate(
                 output=parked,
                 wake_at=now + float(timeout) if timeout > 0 else 0.0,
                 ask=_ask_payload(node, cfg),
-                resolved_prompt=instruction,
                 tokens=sampled_tokens,
+                **journalled_prompt(wire, instruction),
             )
         return NodeResult(
             state=state,
             output=output,
             failure=failure,
-            resolved_prompt=instruction,
             tokens=sampled_tokens,
+            **journalled_prompt(wire, instruction),
         )
 
     # approval / event: park for a human or an external signal. The deadline is

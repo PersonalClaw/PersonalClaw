@@ -1529,6 +1529,13 @@ export interface WorkflowTriageResult {
 export interface NodeInspect {
   run_id: string; node_id: string; instance_path: string; state: string
   resolved_prompt: string | { ref: string }
+  // Whether the outbound secret/PII scan SUBSTITUTED something on the way to the provider (#3166).
+  // `resolved_prompt` is the text the model actually received; without this flag a reader cannot
+  // tell a substituted prompt from one whose author typed `[REDACTED_EMAIL]` themselves.
+  // `resolved_prompt_scan` carries finding CLASSES only (credential/email/phone/exfil_url/
+  // injection) — never a matched value. Optional because a run journaled before #3166 has neither.
+  resolved_prompt_redacted?: boolean
+  resolved_prompt_scan?: string[]
   resolved_inputs: Record<string, unknown>
   output: unknown | { artifact_ref: string }
   attempts: Array<Record<string, unknown>>
