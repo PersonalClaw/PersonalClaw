@@ -197,3 +197,113 @@ test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () =>
     })
   }
 })
+
+// ── Tier 6: THE DESKTOP SESSION MAP RAIL, OPEN (atom SSM-15) ────────────────
+// Tier 5 above scans the map's MOBILE form. Its DESKTOP form — the 4px-tick gutter
+// rail that is the session's ONLY in-session index on a pointer device — was covered
+// by nothing, and the reason is the same shape as the four holes recorded at the top
+// of this file, one axis over: `#/chat` IS in the route sweep, but the sweep visits
+// the EMPTY chat route. With no session, `mapOpen && !isMobile` is false and
+// `SessionMapRail` returns null before its first hook (`SESSION_MAP_MIN_MARKS`), so
+// the rail has never appeared in a single scanned tree.
+//
+// 🔴 AND REACHING THE ROUTE WITH A SESSION WOULD NOT HAVE BEEN ENOUGH, which is the
+// part worth stating: the sweep asserts nothing about the rail being PRESENT. A
+// regression that closed the rail by default, dropped it below its mark threshold, or
+// unmounted it outright would leave every scan GREEN while deleting the surface under
+// test — a clean axe result on an absent surface is byte-identical to a clean one on a
+// healthy surface. So the rail and its marks are asserted FIRST, and only then is a
+// clean result trusted. This is the same "assert it actually opened" floor Tier 3 puts
+// in front of its openers, applied to a surface that opens by default.
+//
+// TWO STATES, ONE NAVIGATION. The revealed preview card is scanned in the same test
+// rather than a second one, because it costs three more scripted turns to reach it
+// otherwise. Each state carries its own presence floor and its own report attachment,
+// so neither can pass on the other's behalf.
+test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN', () => {
+  // EXPLICIT, even though it matches the config default: `useIsMobile`'s breakpoint is
+  // max-width 768, and this whole tier is about the branch taken ABOVE it. Pinning the
+  // width here means a future config change to a narrow default cannot silently turn
+  // this tier into a second copy of Tier 5.
+  test.use({ viewport: { width: 1280, height: 900 } })
+  // Real turns wait on the backend, as Tier 5 does.
+  test.describe.configure({ timeout: 180_000 })
+
+  const RAIL = 'nav[aria-label="Session map"]'
+  const MARK = '[data-session-mark]'
+
+  for (const theme of THEMES) {
+    test(`chat: Session Map rail + preview card [desktop] (${theme})`, async ({ page }, testInfo) => {
+      await seedTheme(page, theme)
+      await gotoRoute(page, 'chat')
+      await driveScriptedTurns(page, 'Index this turn on the session map, please', 3)
+
+      // ── FLOOR 1: the rail is actually here, with marks ──────────────────────
+      // Desktop defaults OPEN (`useQueryParam(…, 'map', isMobile ? '0' : '1')`), so no
+      // control is touched — but "it defaults open" is exactly the claim a regression
+      // would falsify, so it is read rather than assumed.
+      const rail = page.locator(RAIL)
+      await expect(
+        rail,
+        'THE SESSION MAP RAIL IS ABSENT at 1280px in a started session. Either it stopped\n' +
+          'defaulting open, or it unmounted — and without this assertion the axe scan below\n' +
+          'would report a clean surface it never visited. The rail is the session\'s only\n' +
+          'in-session index on a pointer device.',
+      ).toBeVisible({ timeout: 20_000 })
+      const markCount = await page.locator(MARK).count()
+      expect(
+        markCount,
+        'the rail mounted with no marks, so the scan below covers a bare <nav> rather than the\n' +
+          'tick controls this tier exists to measure',
+      ).toBeGreaterThan(1)
+
+      const railResults = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze()
+      const railBlocking = railResults.violations.filter((v) => BLOCKING.has(v.impact ?? ''))
+      await testInfo.attach(`axe-session-map-rail-desktop-${theme}.json`, {
+        body: JSON.stringify(railResults.violations, null, 2),
+        contentType: 'application/json',
+      })
+      expect(
+        railBlocking,
+        `serious/critical a11y violations with the desktop Session Map rail OPEN (${theme}) — a\n` +
+          `state no route scan has ever reached:\n` +
+          railBlocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
+      ).toEqual([])
+
+      // ── FLOOR 2: the preview card, revealed the way a keyboard user reveals it ──
+      // A cursor key opens the card and passive focus does not (the rail's REVEAL
+      // one-shot), so the card cannot be reached by focusing a tick alone. The card is
+      // the only text-bearing surface the rail owns — role label, timestamp, request and
+      // response excerpts — i.e. the one place a contrast rule can bite here at all.
+      await page.locator(`${MARK}[tabindex="0"]`).focus()
+      await page.keyboard.press('ArrowDown')
+      const card = page.locator('[data-session-map-card]')
+      await expect(
+        card,
+        'the keyboard REVEAL did not open a preview card, so the second scan below would re-scan\n' +
+          'the first state and report it as card coverage',
+      ).toBeVisible({ timeout: 10_000 })
+      // The card's own excerpt arrives with `ui/Popover`'s `overlayEnter` spring; mid-flight
+      // opacity is what made the mobile tier read a composited `#85888c` (see Tier 5).
+      await settleEntranceAnimations(page)
+
+      const cardResults = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze()
+      const cardBlocking = cardResults.violations.filter((v) => BLOCKING.has(v.impact ?? ''))
+      await testInfo.attach(`axe-session-map-card-desktop-${theme}.json`, {
+        body: JSON.stringify(cardResults.violations, null, 2),
+        contentType: 'application/json',
+      })
+      expect(
+        cardBlocking,
+        `serious/critical a11y violations on the Session Map preview card (${theme}):\n` +
+          cardBlocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
+      ).toEqual([])
+
+      await expectNoNonAxeA11yDefects(page, `chat Session Map rail + card [desktop] (${theme})`)
+    })
+  }
+})
