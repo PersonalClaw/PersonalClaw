@@ -48,13 +48,13 @@ def _ea_surface_data(section: dict, surface: str) -> dict:
 def _capture_retention(section: dict) -> float:
     """The capture retention window, resolved ONCE from either spelling.
 
-    Two keys can express it today — the nested `capture.retention_days` (the §7.2
-    contract the store and the proxy read) and the legacy flat
-    `capture_retention_days` (what the settings PATCH allowlist and the
-    ExternalAccessPanel control already write). Resolving here and mirroring into both
-    fields is what keeps the shipped operator control from becoming inert against the
-    new pruner. The nested key wins when explicitly present, because that is the
-    spelling the plan specifies and the one a new writer will use.
+    Two keys can express it in `config.json` — the nested `capture.retention_days`
+    (the §7.2 contract the store and the proxy read, and since #2950 the ONLY spelling
+    `_EDITABLE_CONFIG`/the ExternalAccessPanel control write) and the legacy flat
+    `capture_retention_days` (kept as a read-only mirror for older external readers).
+    Resolving here and mirroring into both fields is what keeps the shipped operator
+    control from becoming inert against the new pruner. The nested key wins when
+    explicitly present — which, after #2950, is always the operator-facing write path.
     """
     nested = _ea_surface_data(section, "capture").get("retention_days")
     if nested is not None:
@@ -210,12 +210,11 @@ class ExternalAccessConfig:
         default=30,
         metadata=_meta(
             "Capture retention (days)",
-            "Legacy flat spelling of external_access.capture.retention_days, kept "
-            "because the settings PATCH key and the ExternalAccessPanel control both "
-            "already write it. `load()` resolves ONE value and mirrors it into both, "
-            "so the two can never disagree and the shipped operator control genuinely "
-            "governs pruning. Collapsing to the nested field alone is the clean break "
-            "(see the note in load()).",
+            "Legacy flat spelling of external_access.capture.retention_days. As of "
+            "#2950 this is a READ-ONLY mirror: `_EDITABLE_CONFIG` and the "
+            "ExternalAccessPanel control write the nested spelling only, so this field "
+            "and the nested one can never disagree. Kept on the dataclass (rather than "
+            "removed outright) for any external reader still looking at the flat key.",
         ),
     )
 

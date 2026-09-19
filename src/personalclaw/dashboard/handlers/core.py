@@ -773,12 +773,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "external_access.rate_burst": {"type": "int", "min": 1, "max": 10000},
     "external_access.rate_concurrent": {"type": "int", "min": 1, "max": 256},
     "external_access.auto_disable_after_breaches": {"type": "int", "min": 0, "max": 10000},
-    "external_access.capture_retention_days": {"type": "int", "min": 0, "max": 3650},
     # EXTERNAL-ACCESS §7.2 — the capture surface's two operator knobs. Both are
     # runtime-editable: the pruner reads retention on each curator tick and the
     # streaming client reads the allow-list per forward, so neither needs a restart.
-    # `retention_days` is the nested spelling of `capture_retention_days` above and
-    # `load()` mirrors one resolved value into both, so editing either is coherent.
+    # This is the ONE writable spelling (#2950): `load()` resolves the effective
+    # window from this nested key whenever it is present, and a fresh config.json
+    # always ships it — so the legacy flat `external_access.capture_retention_days`
+    # was dead on arrival as a PATCH target: it wrote the file, `load()` never read
+    # it back, and the panel reported 200 having changed nothing. The flat field
+    # stays on the dataclass as a read-only mirror (older external readers may still
+    # look at it); it is deliberately absent from this allowlist so there is exactly
+    # one name to write.
     "external_access.capture.retention_days": {"type": "int", "min": 0, "max": 3650},
     # Operator-visible by requirement (§7.1): upstream forwarding must be guarded
     # against an explicit host list rather than hand-rolled unguarded egress, which

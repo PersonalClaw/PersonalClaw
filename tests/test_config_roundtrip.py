@@ -429,6 +429,34 @@ def test_every_leaf_field_survives_save_load(cfg_file):
     assert not diffs, "load() drops saved fields:\n" + "\n".join(diffs)
 
 
+def test_a_legal_zero_is_not_lost_to_the_default_or_chain(cfg_file):
+    """#2952: five `_EDITABLE_CONFIG` keys declare `min: 0`, so 0 is a legal PATCH value —
+    but `load()` read each one back with `X or DEFAULT`, and `0 or DEFAULT` is `DEFAULT`
+    because `.get(key, DEFAULT)` already returns the *present* value `0`, which `or` then
+    discards. `0` is the meaningful setting for every one of these (no confidence floor, no
+    tie-break floor, no minimum interval, no brief at all) — a write that reports success
+    and silently stores something else is the one outcome `_EDITABLE_CONFIG`'s own docstring
+    rules out.
+
+    Each assertion here failed on the pre-fix shape: saving 0 and reloading came back as the
+    shipped default (0.7 / 0.6 / 0.62 / 6 / 800 respectively).
+    """
+    cfg = AppConfig()
+    cfg.memory.push_min_confidence = 0.0
+    cfg.evals.judge_agreement_floor = 0.0
+    cfg.workflows.match_threshold = 0.0
+    cfg.knowledge.consolidate_min_hours = 0
+    cfg.knowledge.session_brief_max_tokens = 0
+    cfg.save()
+
+    loaded = AppConfig.load()
+    assert loaded.memory.push_min_confidence == 0.0
+    assert loaded.evals.judge_agreement_floor == 0.0
+    assert loaded.workflows.match_threshold == 0.0
+    assert loaded.knowledge.consolidate_min_hours == 0
+    assert loaded.knowledge.session_brief_max_tokens == 0
+
+
 def test_evals_editable_allowlist_excludes_the_capture_flag():
     """EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset is in the PATCH
     allowlist, but the privacy-sensitive input-capture flag is deliberately NOT

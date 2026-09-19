@@ -3668,7 +3668,7 @@ class AppConfig:
                 # surface; this one doesn't.
                 push_context=bool(memory_data.get("push_context", False)),
                 push_min_confidence=max(
-                    0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
+                    0.0, min(1.0, _safe_float(memory_data.get("push_min_confidence"), 0.7))
                 ),
                 # MEMORY-GRAPH-AND-VAULT §2.4 / §4.2 (MGAV-5). Both opt-in and both read
                 # plainly, NOT through `_guard_flag`: a flag that fails ON would turn on
@@ -3921,7 +3921,7 @@ class AppConfig:
             evals=EvalsConfig(
                 enabled=bool(evals_data.get("enabled", False)),
                 study_default_k=_safe_int(evals_data.get("study_default_k"), 5),
-                judge_agreement_floor=float(evals_data.get("judge_agreement_floor", 0.6) or 0.6),
+                judge_agreement_floor=_safe_float(evals_data.get("judge_agreement_floor"), 0.6),
                 ablation_cadence_days=_safe_int(evals_data.get("ablation_cadence_days"), 30),
                 bakeoff_capture_enabled=bool(evals_data.get("bakeoff_capture_enabled", False)),
                 default_budget_usd=float(evals_data.get("default_budget_usd", 0.0) or 0.0),
@@ -4096,7 +4096,7 @@ class AppConfig:
                     workflows_data.get("model_tier_fast", "background") or "background"
                 ),
                 match_threshold=max(
-                    0.0, min(1.0, float(workflows_data.get("match_threshold", 0.62) or 0.62))
+                    0.0, min(1.0, _safe_float(workflows_data.get("match_threshold"), 0.62))
                 ),
                 surface_mode_default=_surface_mode_default(
                     workflows_data.get("surface_mode_default")
@@ -4183,9 +4183,9 @@ class AppConfig:
                     1, _safe_int(knowledge_data.get("similarity_degree_cap"), 32) or 32
                 ),
                 consolidate_min_cluster=int(knowledge_data.get("consolidate_min_cluster", 5) or 5),
-                consolidate_min_hours=int(knowledge_data.get("consolidate_min_hours", 6) or 6),
-                session_brief_max_tokens=int(
-                    knowledge_data.get("session_brief_max_tokens", 800) or 800
+                consolidate_min_hours=_safe_int(knowledge_data.get("consolidate_min_hours"), 6),
+                session_brief_max_tokens=_safe_int(
+                    knowledge_data.get("session_brief_max_tokens"), 800
                 ),
                 conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
                 auto_ingest_artifacts=bool(knowledge_data.get("auto_ingest_artifacts", True)),
