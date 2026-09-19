@@ -261,10 +261,17 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         # notification, which `knowledge-propose` beside it already does. Its extra powers (the
         # model call, the cron) are governed where they can be evaluated: the write-capable fence
         # in `triggers/screen.py` and `MAX_DIGEST_ITEMS`.
+        # WF2KNO-10's `knowledge-relate` shares this class for the same reason as its
+        # neighbours: what it ultimately does is write to the knowledge store, through a
+        # NARROWER door than the persist provider listed beside it — a closed five-verb
+        # vocabulary, both endpoints required to be real rows, and no free text. It spends no
+        # model call of its own (the judging node upstream already did), so it has no extra
+        # power to govern and a second key would be a second name for one governed behavior.
         providers=(
             "knowledge-persist",
             "knowledge-consolidate",
             "knowledge-propose",
+            "knowledge-relate",
             "knowledge-report",
             "source-digest",
         ),

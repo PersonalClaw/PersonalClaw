@@ -1058,3 +1058,137 @@ class TestContradictionReviewFastTier:
         # case, which is what `one_shot_completion(use_case="background")` binds to a live model.
         # The plan names this exact mechanism for fast-model passes.
         assert resolve_use_case(judge) == "background"
+
+    # ── clause 2: the typed edges the judge names must be PERSISTED ──
+
+    def _relate(self) -> Node:
+        root = Node.from_dict(_pipeline(_raw("contradiction-review"))["root"])
+        for _path, node in walk(root):
+            if (node.config or {}).get("provider") == "knowledge-relate":
+                return node
+        raise AssertionError(
+            "contradiction-review has no node dispatching `knowledge-relate` — the judge's "
+            "typed edges reach nothing, which is WF2KNO-10 clause 2's original failure"
+        )
+
+    def test_the_judge_declares_a_schema_so_its_answer_is_parsed_not_prose(self) -> None:
+        """🔴 The vacuity floor for clause 2, and it is not cosmetic.
+
+        `dispatch_infer` only parses the model's text when `want_json` is true —
+        `bool(cfg.get("schema")) or cfg.get("output") == "json"`. Without one of those, the
+        node's `output` is the raw STRING, and `contradiction.parse_edge_proposals` requires a
+        dict: it would return `[]` on every run forever. The write-back node would be present,
+        registered, dispatched, and would persist nothing — the exact "a right-looking artifact
+        over a path that stores nothing" shape this atom kept producing.
+        """
+        cfg = self._judge().config or {}
+        assert cfg.get("schema") or str(cfg.get("output", "")) == "json", (
+            "the judge declares neither `schema` nor `output: json`, so its output stays a raw "
+            "string and the typed-edge parser reads nothing out of it on every run"
+        )
+        schema = cfg.get("schema") or {}
+        assert "edges" in schema, (
+            "the judge's schema does not promise an `edges` list, but `parse_edge_proposals` "
+            "reads exactly that key — a schema naming a different key mints a second dialect "
+            "for one answer"
+        )
+
+    def test_the_write_back_node_binds_the_judges_output_and_the_persisted_item(self) -> None:
+        """The wire, asserted on both ends. A write-back bound to the judge but not to the
+        item id has no `source` for its edges; bound to the item but not the judge it persists
+        the deterministic tier a second time."""
+        with_cfg = (self._relate().config or {}).get("with") or {}
+        assert with_cfg.get("relations") == "{{nodes.judge_conflicts.output}}", (
+            "the write-back is not bound to the judging node's output — before this atom that "
+            f"output reached only a display string. Got {with_cfg.get('relations')!r}"
+        )
+        assert with_cfg.get("source_item") == "{{nodes.persist.output.item_id}}", (
+            "the write-back has no `source_item` binding, so every edge it proposes starts "
+            f"from nothing. Got {with_cfg.get('source_item')!r}"
+        )
+
+    async def test_a_model_proposed_structural_edge_reaches_item_relations(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """WF2KNO-10 clause 2, end to end through the SHIPPED bindings.
+
+        Runs the real `knowledge-persist` node to create two items, then resolves the shipped
+        write-back node against a judge output shaped exactly as the judge's own schema promises
+        — and reads `item_relations` back out of SQL. The verb asserted is `depends_on`, which
+        the deterministic tier cannot emit at all (`_relation_for` derives its verb from the
+        source-precedence ladder, so it can only ever say `supersedes` or `contradicts`): a row
+        carrying it exists ONLY if a model-proposed edge was persisted.
+
+        The model call itself is not made here — clause 1 is already covered above and a live
+        provider is not available in CI. What is proved is the half that was missing: the
+        judge's answer, in the shape the template asks for, becomes a stored typed relation.
+        """
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.knowledge_persist_provider import (
+            KnowledgePersistActionProvider,
+        )
+        from personalclaw.action_providers.knowledge_relate_provider import (
+            KnowledgeRelateActionProvider,
+        )
+        from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+        from personalclaw.workflows.bindings import BindingContext
+        from personalclaw.workflows.engine import resolve_config
+
+        persist_node = self._persist()
+        persist = KnowledgePersistActionProvider()
+        action_ctx = ActionContext(event="workflow_node", payload={"node_id": "n-1"})
+
+        async def _persist_one(title: str, statement: str) -> dict:
+            cfg, failure = resolve_config(
+                persist_node, BindingContext(inputs={"title": title, "statement": statement})
+            )
+            assert failure is None
+            result = await persist.execute(cfg["with"], action_ctx, timeout=30)
+            assert result.success, result.error
+            return json.loads(result.stdout)
+
+        neighbour = await _persist_one("Deploy pipeline", "The deploy pipeline prefills caches")
+        subject = await _persist_one("Cache warmup", "Cache warmup happens at deploy time")
+
+        # The judge's answer, in the shape its own schema promises — nothing hand-shaped about
+        # the KEYS, which is the point: a test that invented its own shape would pass while the
+        # template asked the model for a different one.
+        judge_output = {
+            "edges": [
+                {
+                    "target": neighbour["item_id"],
+                    "relation": "depends_on",
+                    "confidence": 0.84,
+                    "justification": "warmup is driven by the deploy pipeline",
+                }
+            ]
+        }
+        relate_cfg, failure = resolve_config(
+            self._relate(),
+            BindingContext(node_outputs={"persist": subject, "judge_conflicts": judge_output}),
+        )
+        assert failure is None
+        result = await KnowledgeRelateActionProvider().execute(
+            relate_cfg["with"], action_ctx, timeout=30
+        )
+        assert result.success, result.error
+
+        store = KnowledgeStore(db_path=str(knowledge_db_path()))
+        try:
+            rows = [
+                (r["target_item_id"], r["relation_type"], r["provenance"])
+                for r in store.db.execute(
+                    "SELECT target_item_id, relation_type, provenance FROM item_relations "
+                    "WHERE source_item_id = ?",
+                    (subject["item_id"],),
+                )
+            ]
+        finally:
+            store.close()
+
+        assert (neighbour["item_id"], "depends_on", "inferred") in rows, (
+            "the judge's model-proposed typed edge did not reach `item_relations` — clause 2 "
+            f"is unmet. Rows for the persisted item: {rows}"
+        )

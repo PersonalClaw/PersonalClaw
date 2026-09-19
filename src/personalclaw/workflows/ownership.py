@@ -285,6 +285,11 @@ def inherit_mode(origin_key: str, *, origin_metadata: dict[str, Any] | None = No
 LEARNING_PROVIDERS = frozenset(
     {
         "knowledge-persist",
+        # WF2KNO-10: the second knowledge write path the comment above warns about. It writes
+        # typed relations rather than items, which is still knowledge the store keeps — a
+        # restricted run that skipped the persist node and then wrote edges about what it
+        # was forbidden to persist is exactly the leak this set exists to close.
+        "knowledge-relate",
         "memory-write",
         "memory-persist",
         "lesson-write",
