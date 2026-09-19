@@ -13,7 +13,11 @@ import logging
 from aiohttp import web
 
 from personalclaw.lexicon import get_lexicon_service
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import (
+    RequestValidationError,
+    json_object_body,
+    require_string,
+)
 from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
@@ -58,13 +62,18 @@ async def api_lexicon_terms(request: web.Request) -> web.Response:
 
 async def api_lexicon_add_term(request: web.Request) -> web.Response:
     """POST /api/lexicon/terms {canonical, aliases?} — add a manual term."""
+    # The shared validator decides WHAT is malformed; this door keeps its own envelope for
+    # SAYING so. Every sibling refusal in this module answers the flat `{"error": "<sentence>"}`
+    # (nine of them, and no `json_error` anywhere here), so letting `RequestValidationError`
+    # travel to `request_boundary` would make one field answer a different shape from its
+    # neighbours — two envelopes inside one endpoint. Catching it also means the refusal no
+    # longer depends on that middleware being installed, which is what made a wrong-typed field
+    # a bare 500 in an app that mounts these routes without it.
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    canonical = (body.get("canonical") or "").strip()
-    if not canonical:
-        return web.json_response({"error": "canonical is required"}, status=400)
+        body = await json_object_body(request)
+        canonical = require_string(body, "canonical")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     aliases = body.get("aliases") or []
     if isinstance(aliases, str):
         aliases = [a.strip() for a in aliases.split(",") if a.strip()]

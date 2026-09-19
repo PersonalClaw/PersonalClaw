@@ -240,6 +240,17 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
             dangling = _dangling_parent(item)
             if dangling:
                 errors.append({"index": i, "error": dangling})
+        # The provider rule (#2983) applies to ALL THREE verbs, including DELETE — which is
+        # #2983's headline and the reason this is not scoped to the two write verbs above.
+        # Measured before this line existed: `{"op": "delete", "items": [{"id": t, "provider":
+        # "jira"}]}` answered `200 {"succeeded": 1}` and DESTROYED the native task, while the
+        # single-item `DELETE /api/tasks/{id}?provider=jira` answered 400 and left it alone. A
+        # destructive verb is the worst place to treat an unrecognized scope as "all scopes",
+        # so it is the one that most needs the rule — bulk delete also ignores `provider`
+        # entirely in phase 2, so nothing downstream would have caught the name.
+        unresolvable = _unresolvable_provider(item, op=op)
+        if unresolvable:
+            errors.append({"index": i, "error": unresolvable})
         if op == "create":
             if not isinstance(item, dict) or not str(item.get("title", "")).strip():
                 errors.append({"index": i, "error": "title required"})
@@ -339,6 +350,51 @@ def _dangling_parent(body: object) -> str | None:
     task_list_id = str(body.get("task_list_id") or "").strip()
     if task_list_id and store.get_task_list(task_list_id) is None:
         return f"no task list with id '{task_list_id}'"
+    return None
+
+
+def _unresolvable_provider(body: object, *, op: str) -> str | None:
+    """The reason a bulk item names a ``provider`` this registry cannot resolve (#2983).
+
+    The eight single-item doors resolve ``provider`` inside the registry call and answer
+    :func:`_unknown_provider`. Bulk never resolved it at all: phase 1 validated author,
+    parent, title and id, and phase 2 then *stripped* the key
+    (``{k: v for k, v in item.items() if k != "provider"}``), so a batch naming a provider
+    that does not exist was accepted and written to **native** — the same silent misroute
+    #2983 closed at the single-item doors, still open at the cheapest door for minting many
+    rows. Four merged PRs cite #2983; all four are that eight-door fix, none is this one.
+
+    Applies to all THREE verbs. ``delete`` is #2983's headline and the sharpest case, because
+    bulk delete does not pass ``provider`` to the registry at all: measured, ``{"op":
+    "delete", "items": [{"id": t, "provider": "jira"}]}`` answered ``200 {"succeeded": 1}``
+    and destroyed the NATIVE task, while the single-item ``DELETE
+    /api/tasks/{id}?provider=jira`` answered 400 and left it alone. Treating an unrecognized
+    scope as "every scope" is worst on the verb that cannot be undone.
+
+    Returns the message rather than a response so it joins bulk's validate-all phase beside
+    the parent rule, aborting the WHOLE batch. A bulk endpoint that half-applies is worse
+    than one that refuses: the caller cannot tell which rows landed.
+
+    It resolves through the registry's OWN resolvers rather than re-implementing the
+    membership test, so this verdict cannot drift from the routing phase 2 performs — and so
+    it inherits ``_ensure_native``, without which a first request naming ``native`` on a
+    registry that has not lazily registered it yet would be refused as unknown.
+    """
+    if not isinstance(body, dict) or "provider" not in body:
+        return None
+    name = body.get("provider")
+    if name is not None and not isinstance(name, str):
+        return f"provider must be a string, not {type(name).__name__}"
+    try:
+        # `create` cannot mean "all providers" — falsy is the DEFAULT (native); update and
+        # delete address the holder when unnamed. The same two readings the single-item verbs
+        # take, which is why this defers to their resolvers instead of choosing for them.
+        if op == "create":
+            registry._resolve_one(name)  # noqa: SLF001 — reuse, so the rule cannot diverge
+        else:
+            registry._resolve(name)  # noqa: SLF001 — same
+    except registry.UnknownTaskProvider as exc:
+        return str(exc)
     return None
 
 

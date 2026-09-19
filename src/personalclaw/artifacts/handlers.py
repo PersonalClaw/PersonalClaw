@@ -42,7 +42,12 @@ from personalclaw.artifacts.models import (
 )
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body, require_string, string_field
+from personalclaw.request_validation import (
+    RequestValidationError,
+    json_object_body,
+    require_string,
+    string_field,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -143,9 +148,14 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    name = str(body.get("name", "")).strip()
-    if not name:
-        return web.json_response({"error": "name required"}, status=400)
+    # Shared validator, this door's envelope. This handler's other ten refusals are all flat
+    # (`unknown provider`, `read-only`, `invalid slug`, `slug already exists`, …) and it calls
+    # `json_error` nowhere, so a nested answer for `name` alone would split one endpoint across
+    # two shapes. Only the wrapper is local; the type rule is the shared one.
+    try:
+        name = require_string(body, "name")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     content = str(body.get("content", ""))
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
