@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
+from personalclaw.knowledge import project_scope, sharing
+
 logger = logging.getLogger(__name__)
 
 #: Ceiling on one loop iteration's sleep. Mirrors the trigger scheduler's POLL_CEILING: a
@@ -477,6 +479,23 @@ class SourceEngine:
         """
         if self._merge_cross_source(source, item):
             return 0
+        extra: dict[str, Any] = {"processing_status": "queued"}
+        # TSE2-4 — the shared-store attribution rides back IN. The `provider` column already
+        # says which federated store a row came from, but a shared store has many
+        # contributors, so without these keys a teammate's item could only ever be attributed
+        # to the STORE and would render as the owner's own. An ALLOWLIST of the four keys
+        # (`sharing.inbound_attribution`), never the provider's whole metadata blob: a poll
+        # result must not be able to smuggle arbitrary metadata onto a library row.
+        attribution = sharing.inbound_attribution(item.metadata)
+        if attribution:
+            extra["file_metadata"] = attribution
+        # …and it stays FILED under the container it was written in. `session_brief.load_items`
+        # — the one path by which a knowledge item reaches a run's prompt — reads items by
+        # exactly this tag, so an inbound shared item with no tag would be attributed and
+        # labelled and still never reach the reader the label exists for. Through the SAME
+        # helper the persist path uses, so the writer and the brief cannot drift on the tag's
+        # shape. A `project_id` no local project answers to is a harmless dangling tag.
+        scope_tags = project_scope.scope_tags(attribution.get(project_scope.PROJECT_ID_KEY, ""))
         item_id = self._store.create_typed_item(
             item_type=source.get("item_type") or "bookmark",
             title=item.title or item.url or item.guid,
@@ -485,7 +504,8 @@ class SourceEngine:
             provider=source["provider"],
             source_id=source["id"],
             guid=item.guid,
-            extra={"processing_status": "queued"},
+            tags=scope_tags or None,
+            extra=extra,
         )
         if item_id is None:
             return 0

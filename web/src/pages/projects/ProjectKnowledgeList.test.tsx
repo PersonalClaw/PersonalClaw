@@ -8,12 +8,15 @@ import type { ProjectKnowledgeItem, SharingPolicy } from '../../lib/api'
 //   1. BOTH members render a label — enumerated, not spot-checked, so a member added to
 //      the wire type without a label here fails the test instead of rendering blank;
 //   2. an item the backend surfaced from ANOTHER project says whose it is — a shared item
-//      must never read as something this project produced.
+//      must never read as something this project produced;
+//   3. an item that came BACK from a shared store names its CONTRIBUTOR (TSE2-4), and an
+//      item the owner wrote does not — the backend sends `contributor` only for a foreign
+//      one, so labelling everything would hide the single case the label exists for.
 
 function item(over: Partial<ProjectKnowledgeItem> = {}): ProjectKnowledgeItem {
   return {
     id: 'k1', title: 'Cold start latency', kind: 'fact', summary: '', updated_at: '2026-08-11T00:00:00Z',
-    project_id: 'p-alpha', run_id: 'r-1', sharing_policy: 'private', source_project: '', ...over,
+    project_id: 'p-alpha', run_id: 'r-1', sharing_policy: 'private', source_project: '', contributor: '', ...over,
   }
 }
 
@@ -35,6 +38,18 @@ describe('ProjectKnowledgeList', () => {
     expect(screen.getByTitle('Shared from Beta')).toBeTruthy()
     // The project's OWN item carries no source label — it was not shared in from anywhere.
     expect(screen.queryByTitle('Shared from Mine')).toBeNull()
+  })
+
+  it('names the contributor on a foreign-contributed item and nobody on the owner\'s own', () => {
+    render(<ProjectKnowledgeList items={[
+      item({ id: 'own', title: 'Mine' }),
+      item({ id: 'theirs', title: 'Theirs', sharing_policy: 'shared', contributor: 'teammate' }),
+    ]} />)
+    expect(screen.getByText('from teammate')).toBeTruthy()
+    expect(screen.getByTitle('Contributed by teammate')).toBeTruthy()
+    // The owner's own row carries no contributor chip: the backend resolved "is this mine?"
+    // and sent "", so exactly one row can be labelled.
+    expect(screen.queryAllByText(/^from /)).toHaveLength(1)
   })
 
   it('a policy value the wire invents renders humanized, never as "unmapped:" jargon', () => {

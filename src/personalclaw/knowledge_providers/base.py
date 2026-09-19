@@ -197,6 +197,28 @@ class KnowledgeProvider(ABC):
     ) -> KnowledgeItem | None:
         return None
 
+    async def push(self, item: KnowledgeItem) -> KnowledgeItem | None:
+        """Send an owner-shared item OUT to this provider's corpus (MULTI-TENANCY-ENTITY TSE2-4).
+
+        The OUTBOUND counterpart of :meth:`ingest`, and deliberately its mirror image: ingest
+        takes content the harness received and files it here; push takes an item the harness
+        OWNS and offers it to a shared store. Only an item whose
+        ``sharing_policy`` is ``shared`` is ever offered — the gate lives in
+        :func:`personalclaw.knowledge.sharing.push_shared_item`, not in a provider, so no
+        provider can widen it.
+
+        Returns the provider's OWN record on acceptance (its ``id`` is the remote key), or
+        ``None`` to DECLINE — the same "declined" default as :meth:`ingest`, so a provider
+        that has no outbound side is silent rather than broken, and a caller can tell
+        "nobody took it" from "the team store has it" instead of assuming success.
+
+        The harness is a CLIENT of shared stores, never a server
+        (``docs/architecture/shared-store-provider-conformance.md``): this method hands an
+        item over. It does not permission it, merge it, or promise the remote store will
+        keep it.
+        """
+        return None
+
     async def delete_item(self, item_id: str) -> bool:
         return False
 

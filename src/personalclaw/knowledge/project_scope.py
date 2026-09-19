@@ -108,9 +108,27 @@ def scope_tags(project_id: str) -> list[str]:
     return [tag] if tag else []
 
 
+def as_metadata_dict(metadata: Any) -> dict[str, Any]:
+    """An item's ``file_metadata`` as a dict, whether it arrived as one or as a JSON string.
+
+    Public because :mod:`personalclaw.knowledge.sharing` — the push half — reads the same
+    blob for the same keys, and a second parser would be a second answer to "is this row
+    shared" the moment one of them handled a malformed blob differently.
+    """
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, str) and metadata.strip():
+        try:
+            parsed = json.loads(metadata)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def item_scope(metadata: Any) -> tuple[str, str, SharingPolicy]:
     """``(project_id, run_id, policy)`` read off an item's metadata blob (dict or JSON str)."""
-    meta = _as_dict(metadata)
+    meta = as_metadata_dict(metadata)
     return (
         str(meta.get(PROJECT_ID_KEY, "") or ""),
         str(meta.get(RUN_ID_KEY, "") or ""),
@@ -159,12 +177,20 @@ def project_items(store: Any, *, project_id: str, limit: int = 50) -> list[dict[
     pid = str(project_id or "").strip()
     if not pid:
         return []
+    # Function-local: `sharing` reads THIS module's keys, so importing it at module scope
+    # would close a cycle. Resolved once for the whole listing — `current_username()` reads
+    # config, and this runs per project-page render.
+    from personalclaw.identity import contributor_label, current_username
+    from personalclaw.knowledge import sharing
+
+    reader = current_username()
     rows: dict[str, dict[str, Any]] = {}
     for row in _own_rows(store, pid, limit) + _shared_candidates(store, limit):
-        meta = _as_dict(row.get("file_metadata"))
+        meta = as_metadata_dict(row.get("file_metadata"))
         if not visible_in_project(meta, project_id=pid):
             continue
         owner, run_id, policy = item_scope(meta)
+        who = sharing.contributor_of(meta)
         rows[str(row["id"])] = {
             "id": str(row["id"]),
             "title": str(row.get("title") or ""),
@@ -178,6 +204,12 @@ def project_items(store: Any, *, project_id: str, limit: int = 50) -> list[dict[
             # cross-container hit, so the view can say where a shared item came from
             # instead of implying this project produced it.
             "source_project": "" if owner == pid else _project_name(owner),
+            # "" for anything the local owner wrote, the teammate's handle for a foreign
+            # contribution that came back in from a shared store (TSE2-4). Resolved HERE, the
+            # same call the memory surface makes: "is this mine?" is one question with one
+            # answer, and shipping the owner handle for the client to compare is how two
+            # surfaces end up disagreeing. An unattributed row is the owner's.
+            "contributor": who if contributor_label(who, reader) else "",
         }
     ordered = sorted(rows.values(), key=lambda r: r["updated_at"], reverse=True)
     return ordered[: max(1, limit)]
@@ -239,15 +271,3 @@ def _project_name(project_id: str) -> str:
     except Exception:
         logger.debug("source project name lookup failed for %r", project_id, exc_info=True)
         return ""
-
-
-def _as_dict(metadata: Any) -> dict[str, Any]:
-    if isinstance(metadata, dict):
-        return metadata
-    if isinstance(metadata, str) and metadata.strip():
-        try:
-            parsed = json.loads(metadata)
-        except Exception:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}

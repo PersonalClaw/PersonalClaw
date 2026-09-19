@@ -16,8 +16,12 @@ no way to tell where the context came from.
 run contradict a decision it was never shown. So the budget is enforced by DROPPING WHOLE ITEMS,
 newest and highest-precedence first, and the brief says how many it left out.
 
-**Fenced.** Knowledge items partly derive from web and inbox content, so the brief is untrusted
-data. It is composed as fenced blocks with the same doctrine as `fenced_sources`.
+**Fenced, and attributed.** Knowledge items partly derive from web and inbox content, so the brief
+is untrusted data. It is composed as fenced blocks with the same doctrine as `fenced_sources`. An
+item a TEAMMATE contributed through a shared store (TSE2-4) additionally names them on the fence's
+source label, because a foreign contribution that reads as the owner's own prior conclusion is the
+one thing a brief must never do. Labelled AND fenced: the label says whose text it is, the fence is
+what stops the run acting on it.
 """
 
 from __future__ import annotations
@@ -57,6 +61,10 @@ class BriefItem:
     body: str = ""
     origin: str = "external"
     updated_at: str = ""
+    #: Who contributed the item, when that is somebody other than the owner (TSE2-4). Empty
+    #: for every locally-written item — the shipped `belongs_to` bargain, where no
+    #: attribution reads as the owner's own.
+    contributor: str = ""
 
     @classmethod
     def from_row(cls, row: Any) -> BriefItem:
@@ -79,6 +87,7 @@ class BriefItem:
             body=str(data.get("summary") or data.get("content") or ""),
             origin=str(origin or "external"),
             updated_at=str(data.get("updated_at", "") or ""),
+            contributor=str(meta.get("contributor", "") or "").strip(),
         )
 
     @property
@@ -118,8 +127,13 @@ class SessionBrief:
         """
         if not self.items:
             return ""
+        from personalclaw.identity import current_username
+        from personalclaw.knowledge import sharing
         from personalclaw.security import fence_untrusted
 
+        # Resolved ONCE for the whole brief rather than per item: `current_username()` reads
+        # config, and a ten-item brief on a run's hot path must not read it ten times.
+        owner = current_username()
         header = [
             f"Already known about this project ({len(self.items)} items). "
             "Build on these rather than re-deriving them; cite as [n] when you use one.",
@@ -131,8 +145,18 @@ class SessionBrief:
                 f"({self.dropped} more items did not fit the context budget — "
                 "retrieve explicitly if you need them.)"
             )
+        # The source label carries the CONTRIBUTOR for a foreign-contributed item (TSE2-4) —
+        # one label, `identity.contributor_label`'s shipped form, riding the federated-source
+        # label the fence already had. LABELLED and FENCED, both: the label says whose text
+        # this is, the fence is what stops the model acting on it
+        # (`shared-store-provider-conformance.md` clause 2).
         blocks = [
-            fence_untrusted(f"[{index}] {item.text}", source=f"knowledge:{item.kind}")
+            fence_untrusted(
+                f"[{index}] {item.text}",
+                source=sharing.fence_source(
+                    f"knowledge:{item.kind}", contributor=item.contributor, owner=owner
+                ),
+            )
             for index, item in enumerate(self.items, start=1)
         ]
         return "\n".join(header + blocks)

@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -408,7 +408,11 @@ function sharingPolicyLabel(policy: SharingPolicy): string {
  *
  *  Each row shows its sharing policy, and a row the backend surfaced from ANOTHER project
  *  (only possible when that item is `shared`) says so with the owning project's name — a
- *  shared item must never read as something this project produced. */
+ *  shared item must never read as something this project produced.
+ *
+ *  A row that came BACK from a shared store also names its contributor (TSE2-4): the
+ *  backend sends `contributor` only when the item is somebody else's, so a foreign
+ *  contribution can never read as the owner's own note. */
 export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] }) {
   return (
     <div className="flex flex-col gap-1">
@@ -416,6 +420,11 @@ export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] 
         <div key={k.id} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
           <BookMarked size={13} className="shrink-0 text-on-surface-low" />
           <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{k.title || k.kind || k.id}</span>
+          {k.contributor && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]" title={`Contributed by ${k.contributor}`}>
+              <UserRound size={11} className="shrink-0" />from {k.contributor}
+            </span>
+          )}
           {k.source_project && (
             <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]" title={`Shared from ${k.source_project}`}>
               <Users size={11} className="shrink-0" />{k.source_project}
