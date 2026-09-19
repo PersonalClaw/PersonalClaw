@@ -40,6 +40,7 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
+import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
 import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
@@ -686,6 +687,24 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [findOpen, setFindOpen] = useState(false)
   // Close the find bar when the open session changes (its matches no longer apply).
   useEffect(() => { setFindOpen(false) }, [sessionId])
+  // Deep-link from chat-history search (SM-2): a result opened this session with
+  // `?find=<term>`. `findSeed` is the term to pre-seed the find bar with — captured into
+  // state so it survives clearing the URL param, and keyed onto the FindBar so a fresh
+  // deep-link into an already-open bar re-seeds it. A ⌘F open always clears it first, so
+  // the manual find bar is never the deep-link's leftover term.
+  const [findParam, setFindParam] = useQueryParam(query, setQuery, 'find', '', { replace: true })
+  const [findSeed, setFindSeed] = useState('')
+  // Ordered AFTER the sessionId-reset effect above so, on a cross-session deep-link
+  // (ChatSession remounts under the new session key), the fresh find param OPENS the bar
+  // rather than the reset closing it. Seed + open, then drop `?find` (replace) so a
+  // re-render or Back-nav does not re-fire — after the clear `findParam` is '' and the
+  // guard returns. The bar itself does the scroll-to-first-match from the seed.
+  useEffect(() => {
+    if (!findParam) return
+    setFindSeed(findParam)
+    setFindOpen(true)
+    setFindParam('')
+  }, [findParam]) // eslint-disable-line react-hooks/exhaustive-deps -- setFindParam is per-render; findParam drives it
   // Follow-up chips (CHAT-CRAFT S3): 2-3 suggested next messages pushed over the
   // chat_followups WS after a reply completes. Cleared on any user activity so they
   // never block/shift the composer; reset per session.
@@ -1491,6 +1510,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (!inFind) return
       }
       e.preventDefault()
+      // A manual ⌘F is always an EMPTY bar — clear any leftover deep-link seed so
+      // re-opening after a `?find=` deep-link doesn't resurrect that term.
+      setFindSeed('')
       setFindOpen((o) => !o)
     }
     window.addEventListener('keydown', onKey)
@@ -3167,8 +3189,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                       text is (`findSegments`) and which node to scroll to. Both references are
                       stable, so a composer keystroke does not re-scan the transcript. */}
                   {findOpen && (
-                    <FindBar items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
-                      scrollRef={scrollRef} label="Find in conversation" onClose={() => setFindOpen(false)} />
+                    // key on the seed: a fresh `?find=` deep-link (even into an already-open
+                    // bar) remounts it so it re-seeds + re-scrolls; an empty seed (⌘F) is a
+                    // constant key, so the manual bar is never remounted out from under a typist.
+                    <FindBar key={`find-${findSeed}`} items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
+                      scrollRef={scrollRef} label="Find in conversation" initialQuery={findSeed} onClose={() => setFindOpen(false)} />
                   )}
                 </AnimatePresence>
                 <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
@@ -4340,6 +4365,10 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // The matching passage per key, so a content-only hit can show WHY it matched
   // rather than looking like an unexplained result (the FTS index returns one).
   const [contentSnippets, setContentSnippets] = useState<Map<string, string>>(new Map())
+  // Which path answered the content search — 'index' (FTS5) or 'scan' (the bounded
+  // transcript-scan fallback), the `source` the endpoint reports and the client now
+  // keeps (SM-2). null = no content search has resolved, so the indicator stays hidden.
+  const [contentSource, setContentSource] = useState<string | null>(null)
   // List-view drag-to-folder: the chat key being dragged + the folder group hovered
   // (id, or '' for the ungrouped group → clears the folder). Mirrors the Board's
   // tag drag, reusing setFolder as the drop action.
@@ -4347,17 +4376,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const [overFolder, setOverFolder] = useState<string | null>(null)
   useEffect(() => {
     const query = q.trim()
-    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); return }
+    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); return }
     let alive = true
     const t = window.setTimeout(() => {
-      api.sessionsSearch(query).then((rows) => {
+      api.sessionsSearch(query).then(({ sessions: rows, source }) => {
         if (!alive) return
         const strip = (k: string) => k.replace(/^dashboard[_:]/, '')
         setContentKeys(new Set(rows.map((r) => strip(r.key))))
         setContentSnippets(new Map(
           rows.filter((r) => r.snippet).map((r) => [strip(r.key), r.snippet as string]),
         ))
-      }).catch(() => { if (alive) { setContentKeys(null); setContentSnippets(new Map()) } })
+        setContentSource(source ?? null)
+      }).catch(() => { if (alive) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null) } })
     }, 300)
     return () => { alive = false; clearTimeout(t) }
   }, [q])
@@ -4508,7 +4538,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     // assignment appears as flat "Move to …" items (the primitive is single-level).
     const menuItems: ContextMenuItem[] = [
       { icon: <Eye size={15} />, label: 'Peek', onSelect: () => setPeekKey(s.key) },
-      { icon: <MessageSquare size={15} />, label: 'Open', onSelect: () => navigate(`chat/${s.key}`) },
+      { icon: <MessageSquare size={15} />, label: 'Open', onSelect: () => navigate(chatFindPath(s.key, q)) },
       { icon: <Pin size={15} />, label: s.pinned ? 'Unpin' : 'Pin to top', onSelect: () => togglePin(s.key, !s.pinned) },
       ...(s.folder_id ? [{ icon: <Folder size={15} />, label: 'Remove from folder', onSelect: () => setFolder(s.key, null) }] : []),
       ...folders.filter((f) => f.id !== s.folder_id).map((f) => ({ icon: <Folder size={15} />, label: `Move to ${f.name}`, onSelect: () => setFolder(s.key, f.id) })),
@@ -4690,6 +4720,14 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                   one. */}
               <ResultAnnouncement count={filtered.length} noun="chats"
                 active={!!n || origin !== 'manual'} />
+              {/* How the "things I said" content search was resolved (SM-2): the FTS index,
+                  or the bounded transcript-scan fallback. A quiet legibility caption, not a
+                  control — shown only once a content search has resolved with a known source. */}
+              {searchSourceLabel(contentSource) && (
+                <span data-type="caption" className="mt-1 block text-on-surface-low">
+                  {searchSourceLabel(contentSource)}
+                </span>
+              )}
             </div>
             {/* Active / Archived. Archived chats keep their transcript AND stay
                 searchable — the copy says so, because an "archive" that people read as
@@ -4850,9 +4888,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         {peekKey && (
           <SidePanel key={peekKey} title={peekSession ? sessionTitle(peekSession) : peekKey} icon={<MessageSquare size={18} className="text-primary" />}
             storeKey="chat-peek-w" fillHeight urlKey={{ key: 'peek', setQuery }}
-            onExpand={() => navigate(`chat/${peekKey}`)}
+            onExpand={() => navigate(chatFindPath(peekKey, q))}
             onClose={() => setPeekKey('')}>
-            <SessionPeekBody sessionKey={peekKey} onOpen={() => navigate(`chat/${peekKey}`)} />
+            <SessionPeekBody sessionKey={peekKey} onOpen={() => navigate(chatFindPath(peekKey, q))} />
           </SidePanel>
         )}
       </AnimatePresence>
