@@ -942,6 +942,7 @@ async def start_dashboard(
     app.router.add_get(
         "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
     )
+    app.router.add_delete("/api/memory/entities/{entity_id}", handlers.api_memory_entity_delete)
     app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
     app.router.add_get("/api/memory/volunteer-stats", handlers.api_memory_volunteer_stats)
     # MEMORY-GRAPH-AND-VAULT §7.2 (MGAV-9) — the entity topology behind the graph canvas

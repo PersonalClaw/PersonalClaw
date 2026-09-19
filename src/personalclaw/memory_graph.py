@@ -353,6 +353,22 @@ class MemoryGraph:
 
         Matching is by canonical name (case-insensitive) so re-seeding from the same
         source is idempotent — a rebuild must not fork every entity in two.
+
+        🔑 A TOMBSTONE OUTRANKS AN AUTOMATIC SOURCE. The seeders (``memory_linker``'s facet
+        and knowledge passes, run by ``graph_seed`` behind Health's rebuild) call this with
+        ``source != "user"``, and matching only live rows would let any of them re-create an
+        entity the user had deleted — with a fresh id, so the deletion would look like it had
+        simply not worked. Only an explicit user declaration may bring a deleted name back;
+        an automatic pass gets the tombstoned id and changes nothing. That keeps recovery
+        open (the name goes back to being unknown, so it can be re-PROPOSED and accepted by
+        hand) while never overruling the decision, which is the same promise ``seed_all``
+        already makes for user-edited entities.
+
+        NOTE: it deliberately does not update ``entity_type`` for an existing name — a
+        re-observation from an automatic source must not retype a user's entity. The
+        user-facing consequence (a mistyped entity cannot be corrected by re-declaring it)
+        is answered at the HTTP seam, which refuses the conflicting declaration instead of
+        reporting a success it did not perform.
         """
         if entity_type not in ENTITY_TYPES:
             raise ValueError(f"unknown entity_type {entity_type!r}")
@@ -364,6 +380,14 @@ class MemoryGraph:
             "SELECT id, aliases FROM mem_entities WHERE LOWER(name) = LOWER(?) AND is_deleted = 0",
             (clean_name,),
         ).fetchone()
+        if row is None and source != "user":
+            tomb = self.db.execute(
+                "SELECT id FROM mem_entities WHERE LOWER(name) = LOWER(?) AND is_deleted = 1 "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (clean_name,),
+            ).fetchone()
+            if tomb is not None:
+                return str(tomb["id"])
         if row is not None:
             eid = row["id"]
             if aliases:
@@ -413,6 +437,31 @@ class MemoryGraph:
             )
         return out
 
+    def entity_by_name(self, name: str) -> "Entity | None":
+        """One live entity by canonical name (case-insensitive), or None.
+
+        The lookup ``upsert_entity`` already does internally, exposed because a caller has to
+        be able to ask "does this name exist, and as what?" WITHOUT writing. The HTTP create
+        path needs exactly that to tell a conflicting re-declaration from an idempotent one.
+        """
+        row = self.db.execute(
+            "SELECT * FROM mem_entities WHERE LOWER(name) = LOWER(?) AND is_deleted = 0",
+            ((name or "").strip(),),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            aliases = tuple(json.loads(row["aliases"] or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            aliases = ()
+        return Entity(
+            id=row["id"],
+            name=row["name"],
+            entity_type=row["entity_type"],
+            aliases=aliases,
+            source=row["source"],
+        )
+
     def build_index(self) -> AliasIndex:
         """Compile the current entity set into a matcher."""
         index = AliasIndex()
@@ -421,7 +470,14 @@ class MemoryGraph:
         return index
 
     def delete_entity(self, entity_id: str) -> bool:
-        """Tombstone an entity and drop its links (the links have no meaning without it)."""
+        """Tombstone an entity and drop its links (the links have no meaning without it).
+
+        The blast radius, stated here because the confirm dialog quotes it: the entity stops
+        existing, every link POINTING AT it goes, and the records that carried those links are
+        untouched — deleting "Ana" loses the connections, never the memories. The tombstone is
+        kept rather than the row deleted, so an automatic seeder cannot re-create the name
+        (see :meth:`upsert_entity`).
+        """
         cur = self.db.execute(
             "UPDATE mem_entities SET is_deleted = 1, updated_at = ? "
             "WHERE id = ? AND is_deleted = 0",
