@@ -112,7 +112,12 @@ def _provider(request: web.Request):
 
 
 async def api_artifacts_list(request: web.Request) -> web.Response:
-    """GET /api/artifacts — list (no content). Filters: tag, kind, q, source, source_path, project_id."""  # noqa: E501
+    """GET /api/artifacts — metadata-only rows; ``q`` searches metadata and body.
+
+    Filters: tag, kind, source, source_path, project_id, collection, folder.
+    ``q`` matches name, slug, description, tags, collection and body content —
+    everything the card shows — while the returned rows remain content-free.
+    """
     prov = _provider(request)
     if prov is None:
         return web.json_response({"error": "unknown provider"}, status=400)

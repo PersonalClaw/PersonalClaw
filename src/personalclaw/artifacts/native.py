@@ -391,14 +391,16 @@ class NativeArtifactProvider(ArtifactProvider):
         collection: str | None = None,
         folder: str | None = None,
     ) -> list[Artifact]:
-        # Deliberately content-free (#630): rows come off _read_meta, which never
-        # persists `live_dirty` — computing it would cost a live read + snapshot
-        # read PER artifact, defeating the cheap-list design. The API serializer
-        # therefore OMITS live_dirty from list-shaped responses (it pairs with
-        # `content` as computed-per-read); take it from get(), like every consumer.
+        # Unfiltered listings stay content-free (#630): rows come off _read_meta,
+        # which never persists `live_dirty`, so the cheap library read does no
+        # per-artifact body I/O. A text query is the deliberate exception because
+        # the artifact card shows body content; searching less than the card shows
+        # makes visible text unfindable. Even then, metadata/collection matches
+        # avoid the body read, and list-shaped responses still omit content.
         root = self._ensure_root()
         with self._lock:
             slugs = [p.name for p in root.iterdir() if p.is_dir()] if root.exists() else []
+        needle = q.casefold() if q else ""
         out: list[Artifact] = []
         for slug in slugs:
             art = self._read_meta(slug)
@@ -421,10 +423,19 @@ class NativeArtifactProvider(ArtifactProvider):
             # the unfiled bucket unaskable (PEP-6).
             if folder is not None and art.folder_id != folder:
                 continue
-            if q:
-                hay = f"{art.name}\n{art.description}\n{' '.join(art.tags)}".lower()
-                if q.lower() not in hay:
-                    continue
+            if needle:
+                # `slug` is in here because it is the artifact's IDENTITY — it is what the
+                # URL shows and therefore what a user pastes back into the search box, so a
+                # slug-shaped query returning nothing reads as a broken search rather than
+                # a scoping choice (#421).
+                metadata = (
+                    f"{art.name}\n{art.slug}\n{art.description}\n"
+                    f"{' '.join(art.tags)}\n{art.collection or ''}"
+                ).casefold()
+                if needle not in metadata:
+                    detail = self.get(art.slug)
+                    if detail is None or needle not in (detail.content or "").casefold():
+                        continue
             art.content = None  # list omits content
             out.append(art)
         out.sort(key=lambda a: a.updated_at or a.created_at, reverse=True)

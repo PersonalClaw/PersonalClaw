@@ -60,7 +60,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/token` — mint an app-scoped identity token.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
-- `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
+- `GET /api/artifacts` — metadata-only rows; ``q`` searches metadata and body.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
 - `GET /api/artifacts/deployed` — the deployed-app listing (slug + in-gateway URL).
 - `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
