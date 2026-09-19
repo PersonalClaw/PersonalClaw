@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ThumbsUp, ThumbsDown, BellOff, RotateCcw } from 'lucide-react'
 import { api, type FeedbackProducerRow } from '../../lib/api'
+import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
-import { PanelHeader, Section } from './settingsUI'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
 
 /** Per-producer feedback accuracy (FEEDBACK-SIGNAL plan 58) — honest counts only.
  *
@@ -51,7 +53,65 @@ export function FeedbackPanel() {
           </div>
         )}
       </Section>
+
+      <FeedbackTuningSection />
     </div>
+  )
+}
+
+/** The four `feedback.*` config knobs (issue #752).
+ *
+ *  They were on the PATCH allowlist, in the dataclass with `_meta` help, and read by `feedback.py`
+ *  — `enabled` gates the thumbs entirely — but nothing in `web/` wrote them, so turning feedback off
+ *  or retuning retirement meant a raw `PATCH /api/config/personalclaw` or a hand edit of
+ *  `config.json`. They live HERE rather than in a panel of their own because this is the panel that
+ *  already owns the mechanism: the section above quotes `window_days` and `min_n` in its own hint.
+ *
+ *  🪤 ITS OWN READ, and its own failure branch. The producers table above swallows its rejection on
+ *  purpose (an unreadable table shows its empty state), but a CONTROL rendered from a swallowed read
+ *  claims a saved value nobody saved — and every control here PATCHes on change, so a user
+ *  "correcting" a switch that never loaded writes the opposite of what they believe is stored. */
+function FeedbackTuningSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:feedback', () =>
+    api.personalclawConfig().then((c) => (c.feedback ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = (cfg ?? {})[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`feedback.${key}`, value).then(() => {
+      onSaved?.()
+      // The section above prints `window_days` and `min_n` in its hint, off a separate endpoint —
+      // re-read it so the two cannot disagree one click after a save.
+      invalidateKeys('settings:feedback-producers')
+    }).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Tuning" hint="When a source has enough verdicts to judge, how far back they count, and how bad it has to get before PersonalClaw asks you to retire it.">
+      {!data && loadErr
+        ? <LoadError what="feedback settings" error={loadErr} onRetry={refresh} />
+        : !cfg
+          ? <FormSkeleton sections={1} what="feedback settings" />
+          : (
+            <RowGroup>
+              <ToggleRow label="Collect feedback" cfg={cfg} field="enabled" patch={patch}
+                hint="Show 👍/👎 on AI judgment outputs and track per-source accuracy. Off means the thumbs never render, so nothing new is attributed — verdicts already recorded are kept." />
+              <NumberRow label="Minimum verdicts" cfg={cfg} field="min_n" min={3} max={50} patch={patch}
+                hint="How many verdicts a source needs before its accuracy is shown or acted on. Below this the row reads “collecting” and no number is shown." />
+              <NumberRow label="Attribution window (days)" cfg={cfg} field="window_days" min={7} max={365} patch={patch}
+                hint="How far back verdicts count toward a source's rolling accuracy. Older verdicts stop counting rather than being deleted." />
+              <NumberRow label="Retire threshold" cfg={cfg} field="retire_threshold" min={0.1} max={0.9} step={0.05} patch={patch}
+                hint="Accuracy below which a source (with enough verdicts) earns a “retire this rule?” proposal — and stops surfacing where that kind of source has a surfacing gate. 0.4 means “wrong more than 6 times in 10”." />
+            </RowGroup>
+          )}
+    </Section>
   )
 }
 

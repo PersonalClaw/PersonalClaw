@@ -421,15 +421,20 @@ class TestConfigRoundTrip:
 
 
 def test_offer_check_work_has_a_frontend_control():
-    """Wiring point 4b applies to the USER-FACING bool. `dashboard.offer_check_work`
-    governs a chat chip, so it gets a Settings toggle and a typed API field.
+    """Wiring point 5 applies to BOTH of this plan's user-facing bools, and they live on
+    different surfaces because they govern different things.
 
-    `loops.check_work_stages` deliberately does not: no frontend surface reads
-    `config.loops` at all in this repo (its siblings `judge_use_case` and
-    `stagnation_window` have no control either), so its write path is the
-    `_EDITABLE_CONFIG` PATCH allowlist — the documented alternative. Inventing a Loops
-    settings panel for one bool is out of this atom's scope; the day one lands, this
-    field belongs in it.
+    `dashboard.offer_check_work` governs a chat chip, so it gets a Settings toggle on the
+    Chat panel plus a typed API field.
+
+    `loops.check_work_stages` governs whether a stage GATE is followed by a derived check,
+    so it belongs beside the other loop settings. This assertion used to record a deferral
+    instead of a control: nothing in `web/` read `config.loops` at all (its siblings
+    `judge_use_case` and `stagnation_window` had no control either), so the only write path
+    was the `_EDITABLE_CONFIG` PATCH allowlist and the docstring said "the day a Loops
+    settings panel lands, this field belongs in it". That day is this change — the panel
+    exists (`pages/settings/LoopsPanel.tsx`, issue #2801), so the deferral is discharged and
+    the field is asserted like its sibling. The next `loops.*` field cannot land without one.
     """
     import pathlib
 
@@ -442,3 +447,11 @@ def test_offer_check_work_has_a_frontend_control():
     assert "CheckWorkChip" in chip
     page = (web / "pages/ChatPage.tsx").read_text(encoding="utf-8")
     assert "chat_check_work_offer" in page and "<CheckWorkChip" in page
+    # The loops half. `field="check_work_stages"` + the `loops.` PATCH prefix together are the
+    # claim: a control bound to the right section. The prefix is what a copied panel gets wrong,
+    # and a wrong prefix is a 400 the optimistic UI rolls back after the user has walked away —
+    # which is why the rendered assertion lives in
+    # `web/src/pages/settings/configSectionControls.test.tsx`, where the click can be driven.
+    loops_panel = (web / "pages/settings/LoopsPanel.tsx").read_text(encoding="utf-8")
+    assert 'field="check_work_stages"' in loops_panel
+    assert "api.patchConfig(`loops.${key}`" in loops_panel

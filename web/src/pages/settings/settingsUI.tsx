@@ -1,13 +1,14 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Plus, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
 import { Surface } from '../../ui/Surface'
-import { FieldHintProvider, FieldLabelProvider, NumberField } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -165,7 +166,7 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  cannot appear quietly. */
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const hintId = useId()
-  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (82 hinted rows, and
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (84 hinted rows, and
   // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
   // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
   // so this provides the hint id without claiming to name anything.
@@ -397,6 +398,146 @@ export function NumberRow({ label, hint, cfg, field, min, max, step = 1, patch }
     <Field label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <NumberField value={value} min={min} max={max} step={step} onChange={(n) => patch(field, n as never, flash, label)} ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
+  )
+}
+
+/** A labelled config ENUM rendered as a pill group — the `ToggleRow`/`NumberRow` sibling for
+ *  `_EDITABLE_CONFIG`'s `{type: 'enum'}` with a SMALL closed vocabulary (2-4 values).
+ *
+ *  Why a second enum row exists beside `SelectRow`: the house rule the rest of this tree already
+ *  follows is "3 options → a Segmented, 5 options (>4) → a Select" (`RoutingPanel`'s two selectors
+ *  state it verbatim, and `GuardrailsPanel`'s three-value `scan_mode` is a `SegPills`). Collapsing
+ *  both into one component would mean picking one shape for both sizes, which is the drift this
+ *  family exists to prevent.
+ *
+ *  `AgentDefaultsPanel`'s private `EnumRow` is this component under another name, plus a legacy
+ *  passthrough that shows an unrecognised stored value as its own option. It is left private for the
+ *  reason `NumberRow` records: its fallback is `options[0].key` rather than a declared default, so
+ *  folding it in would silently change which value two shipped controls display when the key is
+ *  absent. Converging the two is a separate, testable change.
+ *
+ *  `fallback` is REQUIRED, not defaulted: a config key the backend has not written yet reads as
+ *  `undefined`, and `SegPills` with no matching option renders every pill unpressed — a group that
+ *  shows no current value while the backend has a real default. The caller knows the dataclass
+ *  default; this row cannot. */
+export function SegRow<T extends string>({ label, hint, cfg, field, options, fallback, patch }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  options: { key: T; label: string }[]
+  /** The dataclass default, shown when the key is absent from the read. */
+  fallback: T
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const raw = cfg[field]
+  const value = options.some((o) => o.key === raw) ? (raw as T) : fallback
+  return (
+    <Row label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <SavedToast show={saved} />
+        {/* 🪤 NO EXPLICIT TYPE ARGUMENT (`<SegPills<T> …>`), even though it type-checks: the
+            `exclusiveChoiceNamed` rail slices a tag's props at the first `>` outside braces, and
+            `<T>` IS such a `>`, so the sliced props read as empty and the call site scores as
+            unnamed. `T` infers from `options` anyway. Same class as the depth-tracking undercount
+            `fieldHintCounts` documents — a JSX shape a scanner cannot see. */}
+        <SegPills ariaLabel={label} value={value} options={options}
+          onChange={(v) => patch(field, v as never, flash, label)} />
+      </div>
+    </Row>
+  )
+}
+
+/** A labelled config ENUM rendered as a dropdown — the `SegRow` sibling for a vocabulary too long
+ *  for pills (5+ values, e.g. the six model use cases a workflow tier or a loop judge can ride).
+ *
+ *  The `Select` claims this row's published label through `FieldLabelCtx`, so it needs no
+ *  `ariaLabel` — the same mechanism `MemoryPanel`'s vault-mode select relies on. `fallback` is
+ *  required for the reason `SegRow`'s is: an unwritten key must still show the real default. */
+export function SelectRow<T extends string>({ label, hint, cfg, field, options, fallback, patch }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  options: { value: T; label: string }[]
+  /** The dataclass default, shown when the key is absent from the read. */
+  fallback: T
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const raw = cfg[field]
+  const value = options.some((o) => o.value === raw) ? (raw as T) : fallback
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <Select value={value} options={options} onChange={(v) => patch(field, v as never, flash, label)} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
+  )
+}
+
+/** A labelled free-text config field — the `ToggleRow`/`NumberRow` sibling for `_EDITABLE_CONFIG`'s
+ *  `{type: 'str'}`.
+ *
+ *  🪤 IT COMMITS ON ENTER OR ON AN EXPLICIT SAVE, NEVER PER KEYSTROKE, and that is the whole reason
+ *  this is a component rather than a `TextInput` in a `Field`. `SourcesPanel`'s scratchpad path
+ *  already records the measurement: a per-keystroke PATCH sends a request per letter AND lets the
+ *  server normalise a half-typed value, so the field fights the user as they type. A partial
+ *  `22:0` quiet window would be REJECTED by the allowlist mid-typing, which surfaces an error
+ *  toast for a value the user had not finished entering. The Enter-plus-Save pair is the shape
+ *  `SourcesPanel` and `CompanionPanel` already ship, borrowed rather than re-derived.
+ *
+ *  🪤 `surface="high"` IS NOT COSMETIC. `TextInput`'s at-rest chrome is its fill alone and its
+ *  default fill is `container` — the exact tone `RowGroup` paints — so a default field inside a
+ *  settings row group has no visible edge at all (measured at 1.00:1 in both themes on three
+ *  panels; see `fieldOnContainerSurface.test.ts`). Baked in here so a call site cannot forget it.
+ *
+ *  SCOPE — this is the `cfg`/`field`/`patch` contract on a `Field`, NOT every text row in settings.
+ *  `AgentDefaultsPanel` and `PacksPanel` each declare a private `TextRow`, and the same reasoning
+ *  `NumberRow` records above applies unchanged: AgentDefaults' uses `Row` (inline, `size="sm"`,
+ *  trimmed, a primary Save) rather than `Field`, so folding it in would change its layout, and
+ *  picking a winner between the inline and stacked shapes is a judgement about which contract the
+ *  settings panels should standardise on — not something a dedup decides quietly. Packs' is this
+ *  shape with an always-enabled ghost Save; converging it is a one-line behaviour change to a panel
+ *  this atom does not otherwise touch. Both are left alone deliberately. */
+export function TextRow({ label, hint, cfg, field, patch, placeholder, mono }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
+  placeholder?: string
+  /** Monospace for a value with meaningful punctuation (a time window, a path). */
+  mono?: boolean
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const stored = typeof cfg[field] === 'string' ? (cfg[field] as string) : ''
+  const [draft, setDraft] = useState(stored)
+  // A commit the server REFUSES must not leave the refused text in the box: the panel's `patch`
+  // rolls `cfg` back, and this effect pulls the draft back with it. Keeping a refused value is
+  // exactly what `settingsWriteReported` forbids, and it is the reason this syncs on `stored`
+  // rather than only initialising from it.
+  useEffect(() => { setDraft(stored) }, [stored])
+  const dirty = draft !== stored
+  const commit = () => { if (dirty) patch(field, draft as never, flash, label) }
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <TextInput value={draft} onChange={setDraft} surface="high" mono={mono} placeholder={placeholder}
+          onKeyDown={(e) => { if (e.key === 'Enter') commit() }} />
+        <Button variant="secondary" size="sm" onClick={commit} disabled={!dirty}
+          disabledReason={dirty ? undefined : 'No changes to save'}>Save</Button>
         <SavedToast show={saved} />
       </div>
     </Field>

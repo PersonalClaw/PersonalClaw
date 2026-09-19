@@ -78,6 +78,15 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
         rollback_available: false, snapshot_name: '.env.pre-keychain', verified: true,
         verification: { checked: 0, missing: [], still_in_dotenv: [] },
       }),
+      // PHF-1's child-process ceilings section renders inside this SAME panel (the `sandbox.*`
+      // config knobs, which had no control at all before). Same reason as the two stubs above: a
+      // total module mock makes an unstubbed read `undefined()`, which throws inside the effect and
+      // fails this file for a reason that has nothing to do with the denylist. Shipped defaults are
+      // the right answer here.
+      personalclawConfig: () => Promise.resolve({
+        sandbox: { nofile: 4096, max_pids: 0, max_rss_mb: 0, cgroup_scopes: false, env_passthrough: [] },
+      }),
+      patchConfig: () => Promise.resolve({}),
     },
   }))
   const { SecurityPanel } = await import('./SecurityPanel')
@@ -109,7 +118,16 @@ describe('the baseline indicator renders the verified state', () => {
   it('a tamper fixture flips the indicator — role AND copy', async () => {
     const r = await mount({ denied: { baseline: DIVERGED } })
 
-    expect(r.queryByRole('status'), 'the quiet form must be gone').toBeNull()
+    // 🪤 NAMED, not a bare `queryByRole('status')`. This panel now also carries the child-process
+    // ceilings section (the `sandbox.*` knobs, which had no control at all), and each of its rows
+    // mounts an always-present empty polite region for "Saved ✓" — so an unnamed query finds five
+    // regions that have nothing to do with the baseline and this assertion could never pass again.
+    // The name is the same one the verified case asserts, which is what makes "the quiet form is
+    // gone" a claim about THIS chip.
+    expect(
+      r.queryByRole('status', { name: /Baseline v1 matches what shipped/ }),
+      'the quiet form must be gone',
+    ).toBeNull()
     const chip = r.getByRole('alert', {
       name: /Baseline v1 does not match what shipped: packaged file no longer matches the verified baseline\. The 112 verified patterns are still enforced\./,
     })

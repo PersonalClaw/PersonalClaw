@@ -3,7 +3,7 @@ import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
-  FlaskConical, KeyRound, MessageCircle,
+  FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -37,6 +37,8 @@ import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { EvalsPanel } from './EvalsPanel'
 import { AmbientPanel } from './AmbientPanel'
+import { WorkflowsPanel } from './WorkflowsPanel'
+import { LoopsPanel } from './LoopsPanel'
 import { CompanionPanel } from './CompanionPanel'
 import { DevicesPanel } from './DevicesPanel'
 import { SenderTrustPanel } from './SenderTrustPanel'
@@ -116,6 +118,12 @@ const SUBPAGES: SubPage[] = [
   { id: 'usage', label: 'Usage', icon: Coins, render: (c) => <UsagePanel query={c.query} setQuery={c.setQuery} /> },
   { id: 'routing', label: 'Routing & Efficiency', icon: Route, render: (c) => <RoutingPanel query={c.query} setQuery={c.setQuery} /> },
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
+  // Beside Ambient surfaces in Workspace: both are about what the workspace DOES on its own.
+  // Their runs/definitions live on `#/workflows` and `#/loops`; these are the engine settings
+  // those surfaces run under, and every field on both was PATCH-editable with no control
+  // anywhere in `web/` before this (issues #2801, #752's siblings).
+  { id: 'workflows', label: 'Workflows', icon: Workflow, render: () => <WorkflowsPanel /> },
+  { id: 'loops', label: 'Autonomous loops', icon: RefreshCcw, render: () => <LoopsPanel /> },
   { id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard, render: () => <AmbientPanel /> },
   { id: 'companion', label: 'Companion apps', icon: Smartphone, render: () => <CompanionPanel /> },
   { id: 'sources', label: 'Watched sources', icon: Rss, render: () => <SourcesPanel /> },

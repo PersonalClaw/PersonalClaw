@@ -2,7 +2,7 @@ import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
-  MessageCircle,
+  MessageCircle, Workflow, RefreshCcw,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
@@ -251,6 +251,13 @@ const useSourcesCfg = () => useQuery('settings:sources-card', () =>
   api.personalclawConfig().then((c) => (c.sources ?? {}) as Record<string, unknown>), { persist: true })
 const usePacksCfg = () => useQuery('settings:packs', () =>
   api.personalclawConfig().then((c) => (c.packs ?? {}) as Record<string, unknown>), { persist: true })
+// Shared with `WorkflowsPanel`/`LoopsPanel` on purpose — unlike the `sources` case above, both
+// panels read exactly this shape (one config section, no composite), so one key means the card and
+// the panel paint from one fetch instead of two.
+const useWorkflowsCfg = () => useQuery('settings:workflows', () =>
+  api.personalclawConfig().then((c) => (c.workflows ?? {}) as Record<string, unknown>), { persist: true })
+const useLoopsCfg = () => useQuery('settings:loops', () =>
+  api.personalclawConfig().then((c) => (c.loops ?? {}) as Record<string, unknown>), { persist: true })
 // The installed ledger, byte-identical to `PacksPanel`'s read — including its `.catch`, which is
 // what makes the key safe to share. Keeping the swallow means a failed ledger read shows `0` here
 // exactly as the panel shows "No packs installed yet"; de-swallowing it is the panel's fix to make,
@@ -820,6 +827,57 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 ? `Every ${fmtInterval(Number(s.poll_interval_default_secs) || 0)} by default, never faster than ${fmtInterval(Number(s.network_floor_secs) || 0)}`
                 : 'Sources you add are not fetched until you turn it back on'}
             </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'workflows', group: 'Workspace', label: 'Workflows', icon: Workflow, size: 'sm',
+    description: 'How the workflow engine runs — what may start, how much runs at once, and what a new workflow may do on its own.',
+    useSearchText() {
+      const { data: w } = useWorkflowsCfg()
+      const live = w
+        ? `${w.enabled ? 'on enabled' : 'off disabled'} surfacing ${w.surface_mode_default} workspace ${w.workspace_default_mode} llm lane ${w.max_concurrent_llm_nodes} io lane ${w.max_concurrent_io_nodes} retention ${w.retention_per_def}`
+        : ''
+      return `workflows engine runs nodes concurrency lanes timeout stall lease retention fan-out foreach approval confirmation quiet hours duty gate workspace scratch worktree model tier reasoning standard fast surfacing passive suggest ${live}`
+    },
+    render(query, go) {
+      const { data: w, error: wfErr, stale: wStale } = useWorkflowsCfg()
+      const on = w?.enabled !== false
+      return (
+        <BentoCard icon={Workflow} title="Workflows" query={query} onClick={() => go('workflows')} loading={w === undefined && !wfErr} stale={wStale}>
+          {!w && Boolean(wfErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your workflow settings.</div>}
+          {w && <><StatusPill query={query} label={on ? 'Running' : 'Stopped'} tone={on ? 'ok' : 'muted'} />
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
+              {on
+                ? `New workflows surface: ${String(w.surface_mode_default ?? 'off')} · workspace: ${String(w.workspace_default_mode ?? 'scratch')}`
+                : 'Stored definitions are untouched — no new runs start'}
+            </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'loops', group: 'Workspace', label: 'Autonomous loops', icon: RefreshCcw, size: 'sm',
+    description: 'Long-horizon goal loops — which model certifies a cycle, and when one counts as stalled.',
+    useSearchText() {
+      const { data: l } = useLoopsCfg()
+      const live = l
+        ? `judge ${l.judge_use_case} stagnation ${l.stagnation_window} check work ${l.check_work_stages ? 'on' : 'off'} sparse ${l.worktree_sparse ? 'on' : 'off'}`
+        : ''
+      return `loops autonomous goal loop judge model axis use case stagnation window stalled supervisor check work stage gates sdlc sparse worktree parallel tasks hydrate ${live}`
+    },
+    render(query, go) {
+      const { data: l, error: loopErr, stale: lStale } = useLoopsCfg()
+      const onOff = (v: unknown) => (v ? 'On' : 'Off')
+      return (
+        <BentoCard icon={RefreshCcw} title="Autonomous loops" query={query} onClick={() => go('loops')} loading={l === undefined && !loopErr} rows={3} stale={lStale}>
+          {!l && Boolean(loopErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your loop settings.</div>}
+          {l && <KVList query={query} rows={[
+            { k: 'Judge axis', v: String(l.judge_use_case ?? 'reasoning'), vText: String(l.judge_use_case ?? 'reasoning') },
+            { k: 'Stagnation window', v: `${Number(l.stagnation_window) || 5} cycles`, vText: `${Number(l.stagnation_window) || 5} cycles` },
+            { k: 'Check work after gates', v: onOff(l.check_work_stages), vText: onOff(l.check_work_stages) },
+          ]} />}
         </BentoCard>
       )
     },

@@ -37,14 +37,16 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **289** hinted publishers render today — **253** DIRECT call sites (Field 132,
- *  settingsUI's Row 82, NumberRow 39) plus **36** that arrive through five local wrappers which forward
- *  a hint into one of those three (ToggleRow 26, EnumRow 3, CheckList 3, TextRow 2, StrListField 2).
- *  Recounted **2026-09-18** with the depth-tracking scan `fieldHintCounts.test.ts` runs; the earlier
- *  271/236 (Field 120, Row 77, ToggleRow 25) reading is stale — three weeks of ordinary feature work
- *  moved Field +12 and Row +5 — and the 196/99/69/28 reading before it is staler still, its "69" being
- *  the number of hinted `Row` CALL SITES rather than of switches, a distinction the Q13/BE-8 queue
- *  entry lost.
+ *  expected to follow. **336** hinted publishers render today — **284** DIRECT call sites (Field 133,
+ *  settingsUI's Row 84, NumberRow 67) plus **52** that arrive through seven local wrappers which
+ *  forward a hint into one of those three (ToggleRow 34, SelectRow 4, TextRow 4, CheckList 3,
+ *  StrListField 3, EnumRow 2, SegRow 2). Recounted **2026-09-19** with the depth-tracking scan
+ *  `fieldHintCounts.test.ts` runs; the earlier 289/253 (Field 132, Row 82, NumberRow 39) reading is
+ *  stale — closing the nine config sections that were PATCH-editable with no Settings control (#752,
+ *  #2801) added 46 hinted rows in one change and two new wrappers, `SegRow` and `SelectRow`, which is
+ *  NumberRow's +28 by itself. The 271/236 and 196/99/69/28 readings before that are staler still, the
+ *  last one's "69" being the number of hinted `Row` CALL SITES rather than of switches, a distinction
+ *  the Q13/BE-8 queue entry lost.
  *
  *  🪤 THESE NUMBERS ROT IN A DAY, so treat them as a dated observation, not a fact. The previous line
  *  here read 260/229 (Field 118, NumberRow 34) and was recounted **the day before** — one tick of
@@ -53,7 +55,7 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  reds on healthy growth is a rail someone weakens. The floor catches the failure that matters — the
  *  scan breaking, or publishers disappearing — and the test names the command to refresh the prose.
  *
- *  None of the 271 has to change — the id is published here and claimed by the same controls that
+ *  None of the 336 has to change — the id is published here and claimed by the same controls that
  *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }

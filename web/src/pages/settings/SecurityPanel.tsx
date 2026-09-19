@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FieldError } from '../../ui/forms'
+import { notify } from '../../app/appSdk'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import {
   ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe, MonitorOff, ShieldCheck, ShieldAlert,
@@ -16,7 +17,7 @@ import {
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, SavedToast } from './settingsUI'
+import { PanelHeader, Section, SavedToast, RowGroup, ToggleRow, NumberRow, StrListField } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 
@@ -84,9 +85,66 @@ export function SecurityPanel() {
           onChange={onDeniedChange} />
       ) : null}
       <CredentialStoreEditor />
+      <ChildProcessCeilings />
       <EgressPolicyEditor />
       <DesktopCapabilitiesPanel />
     </div>
+  )
+}
+
+/** The `sandbox.*` config section — resource ceilings for agent-influenced child processes
+ *  (PLATFORM-HARDENING-FLOORS §1), delivered post-exec by the ceiling shim.
+ *
+ *  All five were on the PATCH allowlist with `_meta` help and live readers (`sandbox.py`,
+ *  `config/safety.py`, `sandbox_providers/docker.py`) and NO control anywhere in `web/`, so the one
+ *  set of limits standing between a runaway tool and the host could only be changed by hand-editing
+ *  `config.json`. They belong on THIS panel: it is the enforcement-posture page, and the stat cards
+ *  at the top already count the other enforcement mechanisms.
+ *
+ *  🔑 ONLY THE BOUNDS ARE EDITABLE, and the copy says so. Which files may never be captured and
+ *  which env names are refused outright are code-level floors with no config field — no PATCH here
+ *  can widen them, and `env_passthrough` in particular still loses to the credential floor at spawn
+ *  time. A control that implied otherwise would be the worse defect. */
+function ChildProcessCeilings() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:sandbox', () =>
+    api.personalclawConfig().then((c) => (c.sandbox ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = (cfg ?? {})[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`sandbox.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Child process ceilings"
+      hint="Limits applied to processes the agent can influence — bash tools, app backends, MCP servers, hook and cron scripts. They take effect on the next spawn; a running child keeps the limits it was started with. 0 disables an individual limit.">
+      {!data && loadErr
+        ? <LoadError what="sandbox ceilings" error={loadErr} onRetry={refresh} />
+        : !cfg
+          ? <CardGridSkeleton cards={1} cols={1} what="sandbox ceilings" />
+          : (
+            <RowGroup>
+              <NumberRow label="Max open files" cfg={cfg} field="nofile" min={0} max={1048576} step={1024} patch={patch}
+                hint="Open-file ceiling for an agent child process. 0 disables the cap. Connected CLI agents are exempt by profile — they multiplex many pipes and would hit it immediately." />
+              <NumberRow label="Max memory (MB)" cfg={cfg} field="max_rss_mb" min={0} max={1048576} step={256} patch={patch}
+                hint="Address-space ceiling for an agent child. 0 disables it, which is the default: the limit is coarse and can break memory-mapped toolchains, so it is opt-in." />
+              <NumberRow label="Max processes" cfg={cfg} field="max_pids" min={0} max={100000} step={64} patch={patch}
+                hint="Process ceiling for an agent child. 0 disables it, and leaving it at 0 is the recommendation — this limit counts ALL of your existing processes, not just the child's, so an absolute cap can make a busy machine fail with “cannot fork”. Real per-child containment is the cgroup tier below." />
+              <ToggleRow label="Cgroup scopes (Linux)" cfg={cfg} field="cgroup_scopes" patch={patch}
+                hint="Wrap each agent-influenced spawn in a transient systemd user scope carrying the ceilings above, so they bound the child's WHOLE process tree instead of one process. This is the fork-bomb containment the process limit cannot give. Linux only, and a no-op where a systemd user manager is unavailable (macOS, most containers)." />
+              <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" patch={patch}
+                placeholder="Add name…"
+                hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). Everything else is withheld — a child does not inherit the gateway's environment. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
+            </RowGroup>
+          )}
+    </Section>
   )
 }
 

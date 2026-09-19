@@ -1,14 +1,16 @@
 import { ArrowDown, ArrowUp, Trophy } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { api, type RoutingPolicyRow, type RoutingProposal, type TelemetryRow } from '../../lib/api'
+import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { Segmented } from '../../ui/Segmented'
 import { Field, FieldError, Select } from '../../ui/forms'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { unavailableWhen } from '../../ui/unavailable'
-import { PanelHeader, Section } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
 
 /** Routing & Efficiency (MODEL-ROUTING-TELEMETRY, MRT-1e + MRT-4).
  *
@@ -119,6 +121,8 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       <PanelHeader title="Routing & Efficiency"
         hint="Real per-model efficiency for each kind of request — success rate, feedback, latency, and cost per call, measured as models handle work. A model is on the frontier when no other model beats it on all of quality, speed, and cost. Routing policy, below, turns that observation into a decision: which of your bound models this use case tries first." />
 
+      <RouterConfigSection />
+
       <div className="mb-l flex flex-wrap items-end gap-l">
         <Field label="Use case">
           <Segmented
@@ -173,6 +177,63 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
 
       <RoutingPolicySection useCase={useCase} queryClass={queryClass} />
     </div>
+  )
+}
+
+/** The `routing.*` config section — the adaptive router's master switch and its tuning numbers.
+ *
+ *  🔑 THIS IS A DIFFERENT STORE FROM EVERYTHING ELSE ON THE PAGE, and that is why the section had
+ *  to exist. `RoutingPolicySection` below writes `routing_policy.json` through
+ *  `api.setRoutingPolicy` (mode, pin, per-class order); these six write `config.json`'s `routing.*`
+ *  through the PATCH allowlist. All six were allowlisted and read by `routing/policy.py` with NO
+ *  control anywhere in `web/` — so a panel that looked like it configured routing could not reach
+ *  the master switch that turns routing on.
+ *
+ *  🔴 `routing.energy_sampling` IS DELIBERATELY ABSENT. It is allowlisted and has `_meta` help
+ *  promising "record a rough energy estimate for local calls", but it has ZERO readers outside the
+ *  plumbing — the same inert-path defect issue #465 catalogues. An inert knob needs its reader
+ *  wired or its allowlist row dropped; a control would only make a promise the code ignores more
+ *  convincing. */
+function RouterConfigSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:routing-config', () =>
+    api.personalclawConfig().then((c) => (c.routing ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = (cfg ?? {})[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`routing.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Router" hint="Whether PersonalClaw may reorder your bound models at all, and how much evidence it needs before it does.">
+      {!data && loadErr
+        ? <LoadError what="routing settings" error={loadErr} onRetry={refresh} />
+        : !cfg
+          ? <FormSkeleton sections={1} what="routing settings" />
+          : (
+            <RowGroup>
+              <ToggleRow label="Adaptive routing" cfg={cfg} field="enabled" patch={patch}
+                hint="Master switch. Off means every use case resolves in the exact order you bound its models. On lets PersonalClaw prefer a local model for work it handles well and fall back to a cloud model when it can't." />
+              <NumberRow label="Local attempt timeout (seconds)" cfg={cfg} field="local_timeout_secs" min={0} max={600} step={1} patch={patch}
+                hint="How long a local model gets before the call falls back to the next model you bound. Keeps a slow local model from stalling background work." />
+              <NumberRow label="Minimum samples" cfg={cfg} field="min_samples" min={1} max={10000} patch={patch}
+                hint="How many recorded calls a model needs for a kind of request before its measured score may influence order. Below this, the simple local-first rule stands." />
+              <NumberRow label="Hysteresis margin" cfg={cfg} field="hysteresis" min={0} max={1} step={0.01} patch={patch}
+                hint="How much better a model's score must be before the order actually changes. Prevents flip-flopping between two near-equal models." />
+              <NumberRow label="Cloud quality margin" cfg={cfg} field="cloud_quality_margin" min={0} max={1} step={0.01} patch={patch}
+                hint="How much better a cloud model must score than a local one to be tried first. Free and private wins ties." />
+              <NumberRow label="Re-proposal cooldown (days)" cfg={cfg} field="reproposal_cooldown_days" min={0} max={365} patch={patch}
+                hint="After you reject a suggestion below, how long before the same change may be suggested again." />
+            </RowGroup>
+          )}
+    </Section>
   )
 }
 

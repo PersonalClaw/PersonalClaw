@@ -58,6 +58,7 @@ export const SETTINGS_PANELS = [
   'sender-trust', 'guardrails',
   'external-access', 'audit',
   'doctor', 'diagnostics', 'tool-output', 'feedback', 'usage', 'routing', 'legibility',
+  'workflows', 'loops',
   'ambient', 'companion', 'sources', 'packs', 'archive', 'portability', 'durability', 'updates',
 ] as const
 

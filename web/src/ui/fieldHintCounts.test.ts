@@ -73,20 +73,28 @@ const propsOf = (name: string, files: string[]): string[] =>
 const files = sourceFiles(SRC)
 const hinted = (name: string) => propsOf(name, files).filter((p) => /\bhint=/.test(p)).length
 
-/** Measured 2026-08-28. Floors sit just under the reading so ordinary churn does not red the gate. */
+/** Measured 2026-09-19. Floors sit just under the reading so ordinary churn does not red the gate. */
 const PUBLISHERS = [
-  { name: 'Field', measured: 120, floor: 100 },
-  { name: 'Row', measured: 77, floor: 65 },
-  { name: 'NumberRow', measured: 39, floor: 30 },
+  { name: 'Field', measured: 133, floor: 110 },
+  { name: 'Row', measured: 84, floor: 70 },
+  { name: 'NumberRow', measured: 67, floor: 55 },
 ] as const
 
-/** Local wrappers that forward a hint into one of the three above. */
+/** Local wrappers that forward a hint into one of the three above.
+ *
+ *  `SegRow` and `SelectRow` joined on 2026-09-19: closing the nine config sections that were
+ *  PATCH-editable with no Settings control (#752, #2801) put enum keys on screen for the first time,
+ *  so `settingsUI` gained the two enum rows and `TextRow`. A forwarding wrapper that is NOT listed
+ *  here is invisible to the "still forwards" check below — which is the quiet way this rail's
+ *  coverage shrinks while every assertion stays green. */
 const FORWARDERS = [
-  { name: 'ToggleRow', measured: 25, floor: 20 },
-  { name: 'EnumRow', measured: 3, floor: 2 },
+  { name: 'ToggleRow', measured: 34, floor: 25 },
+  { name: 'EnumRow', measured: 2, floor: 1 },
   { name: 'CheckList', measured: 3, floor: 2 },
-  { name: 'TextRow', measured: 2, floor: 1 },
-  { name: 'StrListField', measured: 2, floor: 1 },
+  { name: 'TextRow', measured: 4, floor: 1 },
+  { name: 'StrListField', measured: 3, floor: 1 },
+  { name: 'SegRow', measured: 2, floor: 1 },
+  { name: 'SelectRow', measured: 4, floor: 1 },
 ] as const
 
 describe('the scan slices a tag at ITS OWN closing angle bracket', () => {

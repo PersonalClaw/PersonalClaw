@@ -155,6 +155,29 @@ def effective_budgets() -> dict[str, int]:
     return budgets
 
 
+def max_mentions_per_claim() -> int:
+    """`knowledge.max_mentions_per_claim`, the per-claim evidence ceiling. Its FIRST reader.
+
+    The field shipped with a default of 20, bounds on the PATCH allowlist and a `_meta` naming
+    exactly what it is for — "the cap exists so a high-traffic claim cannot grow its evidence
+    list without bound" — and `Claim.add_mention` applied no count limit at all. It deduped by
+    `source_ref` and stopped there, so a claim repeatedly confirmed by genuinely different
+    sources accumulated one `Mention` per source forever, in a list serialized onto the item's
+    metadata on every write.
+
+    Returns 0 (no cap) only when config is unreadable, which is the safe direction here: the
+    failure this bounds is unbounded GROWTH, and silently capping evidence at some invented
+    number would discard real provenance that cannot be recovered.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return int(getattr(AppConfig.load().knowledge, "max_mentions_per_claim", 0) or 0)
+    except Exception:
+        logger.debug("mention cap config unreadable — leaving the list uncapped", exc_info=True)
+        return 0
+
+
 def citations_required() -> bool:
     """Whether `knowledge.require_citations` is on. The knob's FIRST reader.
 
@@ -336,14 +359,25 @@ class Claim:
             return round(float(self.confidence), 6)
         return aggregate_confidence([m.confidence for m in self.mentions])
 
-    def add_mention(self, mention: Mention) -> bool:
-        """Append a mention and re-aggregate. False if this source already spoke.
+    def add_mention(self, mention: Mention, *, max_mentions: int = 0) -> bool:
+        """Append a mention and re-aggregate. False if this source already spoke, or if the
+        claim has reached `max_mentions` independent sources.
 
         Deduplicated by `source_ref`: the same source re-read twice is not two independent
         confirmations, and counting it as such would let one loud source manufacture
         consensus with itself.
+
+        `max_mentions` <= 0 means no cap, which is what an ad-hoc or test caller wants. The
+        production path passes `knowledge.max_mentions_per_claim` (see `max_mentions_per_claim`)
+        — the knob had no reader at all, so a claim on a high-traffic subject grew its evidence
+        list without bound even though the config carried a ceiling. The cap is applied AFTER
+        the dedup check so a re-read of an already-recorded source still reads as "already
+        spoke" rather than as "the list is full", and `aggregate()` is left alone: confidence
+        saturates well before the ceiling, so refusing the mention does not move it.
         """
         if any(m.source_ref == mention.source_ref for m in self.mentions):
+            return False
+        if max_mentions > 0 and len(self.mentions) >= max_mentions:
             return False
         self.mentions.append(mention)
         self.confidence = self.aggregate()
