@@ -40,7 +40,7 @@ import { type SkillUsed, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTy
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
-import { loopStatusLabel, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
 
@@ -593,7 +593,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // bar is the single place to read "where the loop is right now". ──
   const wsDir = (c as { workspace_dir?: string }).workspace_dir || ''
   const cycleLabel = (() => {
-    const shown = running ? c.total_cycles + 1 : c.total_cycles
+    const shown = shownCycle(c.status, c.total_cycles)
     return c.max_cycles === 0 ? `cycle ${shown} · ongoing` : `cycle ${shown}/${c.max_cycles}`
   })()
   const statusBar = (
