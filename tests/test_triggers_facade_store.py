@@ -1765,10 +1765,11 @@ def test_the_store_projection_EMITS_the_lifecycle_state():
     `health: failing` — and "failing" does not tell the user the automation has STOPPED.
     """
     from personalclaw.triggers.models import Trigger, TriggerState
+    from personalclaw.triggers.store import LoadedTrigger
 
     trigger = Trigger(id="clock:x", name="x", kind="clock")
     trigger.state = TriggerState.AUTOPAUSED.value
-    row = T._serialize_store(trigger)
+    row = T._serialize_store(LoadedTrigger(trigger=trigger))
     assert row["state"] == TriggerState.AUTOPAUSED.value
     assert row["health"] == "ok", "health is a separate rollup, not a substitute"
 
@@ -1777,11 +1778,12 @@ def test_health_and_state_are_BOTH_on_the_wire():
     """Two vocabularies, both needed: `health` says how it has been going, `state` says whether it
     will run at all. A surface given only one has to guess the other."""
     from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
+    from personalclaw.triggers.store import LoadedTrigger
 
     trigger = Trigger(id="clock:y", name="y", kind="clock")
     trigger.state = TriggerState.PARKED.value
     trigger.health_status = TriggerHealth.PARKED.value
-    row = T._serialize_store(trigger)
+    row = T._serialize_store(LoadedTrigger(trigger=trigger))
     assert row["state"] == "parked" and row["health"] == "parked"
 
 
@@ -1789,8 +1791,9 @@ def test_an_ACTIVE_trigger_still_reports_active():
     """The default path is unchanged — every trigger authored before this session projects the same
     way, with `state: "active"` added rather than anything reinterpreted."""
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import LoadedTrigger
 
-    row = T._serialize_store(Trigger(id="clock:z", name="z", kind="clock"))
+    row = T._serialize_store(LoadedTrigger(trigger=Trigger(id="clock:z", name="z", kind="clock")))
     assert row["state"] == "active"
 
 

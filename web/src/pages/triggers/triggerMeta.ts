@@ -258,7 +258,13 @@ export interface Trigger {
    *  arms, so a row the page lets you toggle is always a row the service would actually fire. */
   author?: string
   readOnly?: boolean
-  broken?: string[]          // store only: parse errors (S87 lenient load) — shown, not hidden
+  broken?: string[]          // parse ERRORS (S87 lenient load) — shown, not hidden
+  /** WARNING-severity issues from the same load — advisory, not a fault (issue 531). Kept apart
+   *  from `broken` because the row RUNS as authored: a sub-floor interval is a choice the backend
+   *  allows, and rendering it as "needs attention" red would tell the user their working
+   *  automation is broken. Before this the list had nowhere to put them, so the backend computed
+   *  them and every surface dropped them. */
+  warnings?: string[]
   schedule?: ScheduleJob
   hook?: HookItem
   store?: WireTrigger        // store only: the raw wire row for the inspector
@@ -306,6 +312,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     // Parse errors carried, not hidden (S87 lenient load) — same as `storeToTrigger`, so a
     // schedule that failed to parse flags "needs attention" instead of listing as if healthy.
     broken: j.broken ?? [],
+    warnings: j.warnings ?? [],
     author: j.author, readOnly: j.read_only === true,
   }
 }
@@ -343,7 +350,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     actionProvider: provider,
     lastRunTs: null, lastStatus: t.health || null, state: t.state || null,
     runCount: t.run_count ?? null, usedBy: [],
-    storeKind: t.store_kind, broken: t.broken ?? [], store: t,
+    storeKind: t.store_kind, broken: t.broken ?? [], warnings: t.warnings ?? [], store: t,
     author: t.author, readOnly: t.read_only === true,
   }
 }

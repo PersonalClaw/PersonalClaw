@@ -1167,6 +1167,13 @@ export interface ScheduleJob {
   // rather than hiding an automation the user cannot otherwise debug — the same `broken`
   // contract the store-trigger wire row (`WireTrigger`) already carries.
   broken?: string[]
+  // The same row's WARNING-severity issues — `broken`'s sibling, and absent from this wire until
+  // issue 531. `validate_spec` warns for any interval under the 900s LLM-invoking floor and its own
+  // comment promised the row would be "visibly flagged"; the projection carried `errors` only, so
+  // the warning existed in memory and on no surface. Advisory, not a fault: the trigger runs as
+  // authored (the backend deliberately warns rather than refusing), which is why it is a separate
+  // list and not folded into `broken`.
+  warnings?: string[]
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
@@ -2093,7 +2100,7 @@ export interface Trigger {
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED (S164).
   // `last_error` (declared with the schedule fields below — one shared interface) carries the
   // failure the lifecycle acted on; the store panel had no reader for it until S169.
-  health?: string; state?: string; broken?: string[]
+  health?: string; state?: string; broken?: string[]; warnings?: string[]
   // attribution (TEAM-SHARED-ENTITIES §2.2 — TSE-4). `author` is who WROTE the row; `read_only` is
   // the server's verdict that this machine's owner did not, so the harness will never arm or fire
   // it. Both are computed server-side from the same `ownership.is_owner_authored` predicate the arm

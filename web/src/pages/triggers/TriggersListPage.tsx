@@ -302,6 +302,15 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
                               : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
                           {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {/* The row's WARNING-severity issues, which reached no surface at all
+                              before issue 531 — the store computed them on every load and the wire
+                              projection dropped them. Rendered ONLY when there is no error: a row
+                              already flagged "needs attention" in red does not need a second,
+                              milder verdict beside it. `title` carries the messages — the badge is
+                              the signal, the text is the diagnosis. Warn-toned, not danger, because
+                              the trigger RUNS as authored; this is an advisory, not a fault. */}
+                          {(!t.broken || t.broken.length === 0) && t.warnings && t.warnings.length > 0
+                            && <span data-type="caption" className="shrink-0 text-warn" title={t.warnings.join('\n')}>· check schedule</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
                               on every row would be noise on the single-user install that is the
