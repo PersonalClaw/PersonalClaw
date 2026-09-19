@@ -454,7 +454,7 @@ jobs:
     #
     # Platform-neutral by construction — zero snapshot assertions, and it serves its own build on a
     # private port (PW_PWA_PORT, default 10944) independent of the config's `webServer`. Measured
-    # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 32
+    # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 40
     # baselines are all `-darwin`, so a Linux runner has nothing to compare against
     # (tests/test_e2e_specs_are_executed.py declares that exemption and retires it automatically).
     runs-on: ubuntu-latest
