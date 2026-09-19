@@ -1,0 +1,28 @@
+# Editor-level half of the frontend whitespace contract (#1106). The rail in
+# src/design/whitespaceRail.test.ts CATCHES a regression and turns CI red; this file stops
+# an editor from producing one in the first place. Both halves are wanted — the rail alone
+# teaches the rule through a red build, this alone has no teeth.
+#
+# Scoped to web/ ON PURPOSE, and `root = true` is the deliberate part. Measured before
+# placing it at the repository root instead: 79 prompt snippets under
+# src/personalclaw/config/prompt_snippets/ and CHANGELOG.md — 80 tracked files — end
+# WITHOUT a final newline, and four PDF fixtures under tests/fixtures/ carry trailing
+# whitespace inside their binary payload. A root-level `insert_final_newline` /
+# `trim_trailing_whitespace` would therefore declare a convention the repository violates
+# in 80 places and invite an editor to append bytes to prompt text that reaches a model.
+# The Python tree already has its enforcement anyway (flake8 W291/W293/W391 via
+# `make lint`), so this file covers exactly the gap that had none, which is also exactly
+# the tree the rail scans — the editor rule and the CI rule agree on scope rather than one
+# promising more than the other proves.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{css,html,js,json,jsonc,jsx,md,mjs,svg,ts,tsx,yaml,yml}]
+indent_style = space
+indent_size = 2

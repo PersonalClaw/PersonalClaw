@@ -172,8 +172,11 @@ class _FakeSupervisor:
 
 
 class TestToolSurface:
-    def test_all_nineteen_tools_are_declared(self) -> None:
-        assert len(T._list_tools()) == 19
+    def test_all_twenty_tools_are_declared(self) -> None:
+        # Twenty since `workflow_start_draft` (#372) — the launch verb for a run that already
+        # exists as a DRAFT, which is what `workflow_fork`'s own description had been promising
+        # ("edit it before running it") with nothing able to run it.
+        assert len(T._list_tools()) == 20
 
     def test_tool_names_are_unique_and_prefixed(self) -> None:
         names = [t["name"] for t in T._list_tools()]

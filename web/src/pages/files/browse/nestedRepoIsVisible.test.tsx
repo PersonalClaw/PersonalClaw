@@ -45,6 +45,7 @@ const LISTING: FsEntry[] = [
 /** The `useDirCache` shape FileTree consumes, pre-seeded so nothing fetches. */
 const dirs = () => ({
   cache: { [ROOT]: LISTING } as Record<string, FsEntry[]>,
+  errors: {} as Record<string, string>,
   load: vi.fn(async (p: string) => (p === ROOT ? LISTING : [])),
   invalidate: vi.fn(),
   invalidateSubtree: vi.fn(),
@@ -83,7 +84,7 @@ describe('a git repo nested inside the browsed root is visible in the tree', () 
   it('renders nothing extra when no child is a repo (the pre-#428 tree is unchanged)', async () => {
     const plain = LISTING.map((e) => ({ ...e, repo: false }))
     render(
-      <FileTree dirs={{ cache: { [ROOT]: plain }, load: vi.fn(async () => plain), invalidate: vi.fn(), invalidateSubtree: vi.fn() } as unknown as Parameters<typeof FileTree>[0]['dirs']}
+      <FileTree dirs={{ cache: { [ROOT]: plain }, errors: {}, load: vi.fn(async () => plain), invalidate: vi.fn(), invalidateSubtree: vi.fn() } as unknown as Parameters<typeof FileTree>[0]['dirs']}
         rootPath={ROOT} activePath={null} gitStatuses={{}} onOpenFile={vi.fn()}
         artifactPaths={new Set()} onRename={vi.fn()} onDelete={vi.fn()} onUpload={vi.fn()} />,
     )

@@ -31,7 +31,6 @@ from personalclaw.triggers.store import (
     STORE_VERSION,
     LoadedTrigger,
     TriggerStore,
-    health,
 )
 
 
@@ -436,12 +435,18 @@ def test_a_converted_row_the_entity_refuses_is_RECORDED_not_dropped(store, monke
     assert report["unparseable"] and report["unparseable"][0]["id"] == "j-bad"
 
 
-# ── health ──
+# ── issues belong to the READ, and reach a surface ──
 
 
-def test_health_NAMES_the_broken_ids(store):
-    """ "3 triggers have problems" sends the user hunting; naming them is the difference between a
-    report and a chore. Same rule `InboxView.unrenderable` follows."""
+def test_a_broken_row_is_KEPT_and_NAMES_its_problem(store):
+    """The lenient load's whole point: a malformed row lists, carrying its own diagnosis.
+
+    🔴 This replaces `test_health_NAMES_the_broken_ids`. `store.health()` was deleted in issue 531 —
+    it summed these issues into a count and had zero production callers, which made it the third
+    place the store's warnings went to die. The property it was asserting is a property of the LOAD,
+    so it is asserted on the load: the row survives, it is not `ok`, and it says why. Who renders
+    that is now `test_trigger_cadence_warning.py`'s job, against the real wire and the real doctor.
+    """
     store.path.parent.mkdir(parents=True, exist_ok=True)
     store.path.write_text(
         json.dumps(
@@ -454,15 +459,14 @@ def test_health_NAMES_the_broken_ids(store):
             }
         )
     )
-    report = health(store)
-    assert report["total"] == 2
-    assert report["broken"] == 1
-    assert report["broken_ids"] == ["bad1"]
-    assert report["by_kind"]
+    rows = {r.trigger.id: r for r in store.load()}
+    assert set(rows) == {"good", "bad1"}, "a broken row must still be listed, not dropped"
+    assert rows["good"].ok and not rows["good"].issues
+    assert not rows["bad1"].ok
+    assert [i.message for i in rows["bad1"].errors], "a broken row must say what is wrong with it"
 
 
-def test_health_on_a_missing_store_is_honest(store):
-    report = health(store)
-    assert report["exists"] is False
-    assert report["total"] == 0
-    assert Path(report["path"]).name == "triggers.json"
+def test_a_MISSING_store_loads_empty_rather_than_raising(store):
+    assert store.exists() is False
+    assert store.load() == []
+    assert Path(store.path).name == "triggers.json"

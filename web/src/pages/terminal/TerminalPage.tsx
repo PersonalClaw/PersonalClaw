@@ -6,6 +6,7 @@ import { EmptyState } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { api } from '../../lib/api'
+import { persistAvailableFrom, persistToggleCopy } from '../../lib/persistClaim'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
 import { PageTitle } from '../../ui/PageTitle'
@@ -60,9 +61,10 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // The config flag is INTENT; whether it can be honoured is a host fact (is `tmux` installed?),
   // and the backend ANDs the two — `_persist_enabled`. Deriving the promise from the flag alone
   // made the header claim "Sessions are tmux-backed, so they survive a restart." on a host with no
-  // tmux, where every session dies with the gateway (issue 545). `undefined` = an older backend
-  // that does not publish the fact: make NO capability claim rather than guess either way.
-  const [persistAvailable, setPersistAvailable] = useState<boolean | undefined>(undefined)
+  // tmux, where every session dies with the gateway (issue 545). `null` = not answered YET; an
+  // answer that omits the key is UNAVAILABLE, which `persistAvailableFrom` owns — see
+  // `lib/persistClaim`, which owns both this fact and every sentence derived from it.
+  const [persistAvailable, setPersistAvailable] = useState<boolean | null>(null)
   // EI-4 §1.3(3): the sandbox tiers a new session may open inside, and the current pick. The
   // host ("none") is the default; a container/VM tier appears only when its provider app is
   // enabled, so the picker is hidden entirely when host is the only option (nothing to choose).
@@ -92,7 +94,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
     let alive = true
     api.terminalSessions().then((r) => {
       if (!alive) return
-      setPersistAvailable(r.persist_available)
+      setPersistAvailable(persistAvailableFrom(r))
       const labels = loadLabels()
       const live = (r.sessions || []).filter((s) => s.alive !== false)
       if (live.length) {
@@ -160,6 +162,11 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // Keep the TAB so the user sees "exited" + can restart in place.
   const onExited = useCallback(() => { /* tab stays; TerminalView shows the overlay */ }, [])
 
+  // The header control's every string, plus whether it may be clicked and whether it may READ as
+  // on, from the one owner of this claim. `Boolean(persist)` is safe: the control renders only
+  // under `persist !== null`.
+  const persistCopy = persistToggleCopy(persistAvailable, Boolean(persist))
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -176,16 +183,16 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
                visually; `Hide explorer` / `Show explorer` on the Files header is the same shape done
                right. `hint` is where the tmux detail belongs — it is what the overflow menu shows as its
                secondary line. */
-            <HeaderControl icon={Anchor}
-              label={persist ? 'Disable persistent sessions' : 'Enable persistent sessions'}
-              hint={persistAvailable === false
-                ? (persist
-                  ? 'tmux is not installed on this host, so sessions are still lost on restart — install it to make this take effect.'
-                  : 'Sessions are lost on restart. This needs tmux, which is not installed on this host.')
-                : (persist
-                  ? 'Sessions are tmux-backed, so they survive a restart.'
-                  : 'Sessions are lost on restart. Enabling keeps them alive with tmux.')}
-              active={persist} priority="low" onClick={togglePersist} />
+            /* Every string, the disabled state AND `active` come from `lib/persistClaim` — the one
+               owner of this promise. Branching the hint here (and only the hint) is what this page
+               did before: the control stayed ENABLED and LIT on a tmux-less host, so `aria-pressed`
+               reported ON for a setting `_persist_enabled` can only ever answer False to, and a
+               click wrote a flag that does nothing. The owner withholds `active` until the host
+               confirms, and Settings › Agent's durable-workers row reads the same module — so the
+               two surfaces cannot drift into two explanations of one fact again. */
+            <HeaderControl icon={Anchor} label={persistCopy.label} hint={persistCopy.hint}
+              disabled={persistCopy.disabled} active={persistCopy.active}
+              priority="low" onClick={togglePersist} />
           )}
           {tabs.length > 0 && (
             <HeaderControl icon={SplitSquareHorizontal} label={split ? 'Close split' : 'Split right'}

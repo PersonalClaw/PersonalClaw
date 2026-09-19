@@ -8,6 +8,9 @@ import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader, Section } from './settingsUI'
+// The shared epoch-seconds formatters, not a tenth local copy — `DevicesPanel` in this same
+// directory already imports them, and `design/epoch` rails the family against re-implementation.
+import { relPast } from '../schedule/scheduleMeta'
 import { Select, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -415,7 +418,32 @@ export function RemediationSection() {
     setBusy(true)
     try {
       const r = await api.doctorRemediationRun()
-      notify(`Maintenance: score ${Math.round(r.score_before)}→${Math.round(r.score_after)} (${r.stopped_reason})`, 'success')
+      // 🔴 THE LEVEL WAS THE LITERAL 'success', WHATEVER CAME BACK. Measured against a live
+      // gateway: POST /api/doctor/remediation/run on a home with 25 unembedded knowledge
+      // items returned `{score_before: 100, score_after: 100, jobs: [], stopped_reason:
+      // "target_score already met"}` and the panel raised a GREEN success toast reading
+      // "score 100→100 (target_score already met)". Nothing ran, the one real deficit is
+      // untouched, and the only feedback the user got was the colour that means "done".
+      // A run whose jobs threw took the same green.
+      //
+      // So the level is derived from the result: a failed job is an error, a pass that ran no
+      // work is information, and only a pass that did work without failing is a success.
+      //
+      // `=== 'error'`, NOT `!== 'ok'`: `run_remediation` appends four statuses and
+      // `skipped_cooldown` is the storm guard doing its job, not a failure. Measured against the
+      // live gateway — a second Run now inside the 6h window returned
+      // `jobs: [{status: "skipped_cooldown"}]`, which a `!== 'ok'` count would have reported as
+      // "1 not ok" in error red. It ran nothing, which is `info`.
+      const failed = r.jobs.filter((j) => j.status === 'error').length
+      const ran = r.jobs.filter((j) => j.status === 'ok').length
+      const level = failed > 0 ? 'error' : ran === 0 ? 'info' : 'success'
+      notify(
+        ran === 0 && failed === 0
+          // "no work happened" is the fact the old wording hid behind the score pair.
+          ? `Maintenance changed nothing — ${r.stopped_reason}. Score ${Math.round(r.score_after)}.`
+          : `Maintenance: score ${Math.round(r.score_before)}→${Math.round(r.score_after)} · ${ran} ok${failed > 0 ? ` · ${failed} failed` : ''} (${r.stopped_reason})`,
+        level,
+      )
       load()
     } catch (e) {
       notify(`Maintenance failed: ${String((e as Error)?.message || e)}`, 'error')
@@ -450,7 +478,15 @@ export function RemediationSection() {
             `reachable` is the load-bearing distinction: health_score() sums penalties over
             REACHABLE deficits only, because an unreachable one is at its floor and the engine
             cannot improve it (e.g. missing embeddings with no embedder bound). Those are shown
-            greyed and marked, so a user does not press Run now expecting them to clear. */}
+            greyed and marked, so a user does not press Run now expecting them to clear.
+
+            🔴 AND "not fixable yet" WAS NOT ENOUGH. Measured on a seeded home: score 100 in
+            success green above `Knowledge missing embeddings ×25 · not fixable yet`. Correct
+            arithmetic (the penalty is excluded because no run can improve it) and a dead end
+            on screen — "yet" promises a later pass that will never come, because what is
+            missing is an embedding model, not a maintenance tick. The engine knew that
+            exactly where it computed `reachable`; `blocked_by` is that sentence, carried
+            through instead of dropped, so the row names the prerequisite and the next step. */}
         {scored.length > 0 && (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {scored.map((d) => (
@@ -458,7 +494,14 @@ export function RemediationSection() {
                 <span className={d.reachable ? 'text-on-surface-var' : 'text-on-surface-low'}>
                   {capLabel(d.key)}
                   <span className="ml-1.5 text-on-surface-low tabular-nums">×{d.count}</span>
-                  {!d.reachable && <span className="ml-1.5 text-on-surface-low">· not fixable yet</span>}
+                  {/* One reason string, produced once in `Deficit.blocked_by` and rendered
+                      identically by `personalclaw doctor` — not a per-key map re-derived here,
+                      which is the same sentence written twice in the surface least able to
+                      know why the engine bailed. Non-empty exactly when `reachable` is false;
+                      the truthiness guard keeps a bare "·" off screen if that ever slips. */}
+                  {!d.reachable && d.blocked_by && (
+                    <span className="ml-1.5 text-on-surface-low">· {d.blocked_by}</span>
+                  )}
                 </span>
                 {/* An unreachable deficit is NOT subtracted from the score, so showing its penalty
                     as if it counted would misattribute the number the row above reports. */}
@@ -479,16 +522,45 @@ export function RemediationSection() {
               ? <>Run now would: {snap.plan.map((j) => capLabel(j.id)).join(' · ')}</>
               : scored.some((d) => d.reachable)
                 ? 'Run now would do nothing — the score already meets its target, so the engine stops before touching the fixable items above.'
-                : 'Nothing to do — no fixable deficits.'}
+                : scored.length > 0
+                  /* SPLIT from the branch below, because they were one line for two states that
+                     read opposite. "Nothing to do — no fixable deficits." sitting directly under
+                     `Knowledge missing embeddings ×25` says "no deficits" to anyone not parsing
+                     the word "fixable", which is the exact reading the score already invites. */
+                  ? 'Run now would do nothing — nothing measured above is fixable by maintenance; each row names what it needs instead.'
+                  : 'Nothing to do — no deficits measured.'}
           </div>
         )}
+        {/* The run ledger. It said `score 88→100 · 1 job · target_score reached` — dropping WHEN
+            (`ts`) and WHAT (`jobs[].status`/`detail`/`error`), so a pass whose every job threw
+            rendered identically to one that did the work. A silently failing maintenance job is
+            the one thing this list exists to catch, so failures are counted on the summary line
+            and the newest pass names each job's outcome underneath. */}
         {snap && snap.recent_runs.length > 0 && (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
-            {snap.recent_runs.slice(0, 5).map((r, i) => (
-              <div key={i} data-type="caption" className="text-on-surface-low">
-                score {Math.round(r.score_before)}→{Math.round(r.score_after)} · {r.jobs.length} job{r.jobs.length === 1 ? '' : 's'} · {r.stopped_reason}
-              </div>
-            ))}
+            {snap.recent_runs.slice(0, 5).map((r, i) => {
+              // `=== 'error'`: `skipped_cooldown` is the storm guard working, not a failure. See
+              // the same discrimination on the toast level above.
+              const failed = r.jobs.filter((j) => j.status === 'error').length
+              return (
+                <div key={i} data-type="caption" className="text-on-surface-low">
+                  <div>
+                    {relPast(r.ts)} · score {Math.round(r.score_before)}→{Math.round(r.score_after)} ·{' '}
+                    {r.jobs.length === 1 ? '1 job' : `${r.jobs.length} jobs`}
+                    {failed > 0 && <span style={{ color: 'var(--color-warning)' }}>{` · ${failed} failed`}</span>}
+                    {' · '}{r.stopped_reason}
+                  </div>
+                  {/* Newest pass only — progressive disclosure. Five expanded ledger rows would
+                      bury the score this section is about; the latest one is the pass a reader is
+                      actually asking about, and older failures still show in its count above. */}
+                  {i === 0 && r.jobs.map((j, k) => (
+                    <div key={k} className="ml-3 text-on-surface-low">
+                      {capLabel(j.id)} — {j.status}{(j.error || j.detail) ? `: ${j.error || j.detail}` : ''}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -497,11 +569,17 @@ export function RemediationSection() {
 }
 
 // ── overall status line ──────────────────────────────────────────────────────
+/** 🔴 WHEN THE VERDICT WAS TAKEN. `generated_at` had 0 readers anywhere in `web/src` — found by
+ *  censusing the whole doctor payload, not just the deficits — so "All systems healthy" was a
+ *  claim with no as-of. On a panel left open, or reopened from a cached report, that green line is
+ *  a statement about a moment the reader cannot see, which is the same missing-evidence shape as
+ *  the deficits below: the fact was measured, shipped, and dropped at the last step. */
 function StatusBanner({ report }: { report: DoctorReport }) {
+  const stamp = <span className="text-on-surface-low"> · checked {relPast(report.generated_at)}</span>
   if (report.core_ok && report.ok) {
     return (
       <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-success)' }}>
-        <CheckCircle2 size={16} /> All systems healthy
+        <CheckCircle2 size={16} /> <span>All systems healthy{stamp}</span>
       </div>
     )
   }
@@ -509,7 +587,7 @@ function StatusBanner({ report }: { report: DoctorReport }) {
     return (
       <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-error)' }}>
         <XCircle size={16} />
-        Gateway core failing{report.restart_suggested ? ' — a restart may be required' : ''}
+        <span>Gateway core failing{report.restart_suggested ? ' — a restart may be required' : ''}{stamp}</span>
       </div>
     )
   }
@@ -517,7 +595,7 @@ function StatusBanner({ report }: { report: DoctorReport }) {
   return (
     <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-warning)' }}>
       <AlertTriangle size={16} />
-      Core healthy · {capLabel(report.worst)} degraded
+      <span>Core healthy · {capLabel(report.worst)} degraded{stamp}</span>
     </div>
   )
 }

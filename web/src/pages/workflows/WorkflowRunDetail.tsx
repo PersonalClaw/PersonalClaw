@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -20,6 +20,7 @@ import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
 import { revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
+import { RunToolApprovals } from './RunToolApprovals'
 import { readAttention } from './attentionMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
@@ -202,6 +203,28 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
     })
   }, [act, runId])
 
+  // Launch a run that has not executed yet (#372). Unconfirmed, unlike Cancel: starting is the
+  // affirmative action the draft exists for, and a confirm on the primary verb of a surface reads
+  // as a warning about something that is simply what the user came here to do. No refetch race —
+  // `act` refetches, and the SSE stream is already open for a non-terminal run, so the first tick
+  // arrives on the stream rather than waiting for a poll.
+  //
+  // The header branch this feeds has THREE phases, not two. `isTerminal` is a binary split and
+  // `draft` is neither side of it: a run that has not started is not terminal, so it fell into the
+  // running branch and rendered Pause + Cancel — controls for work in flight, on a run with no
+  // work in flight and no way to start any. The only outcome a forked run offered its author was
+  // cancelling something that never ran. The branch is ordered prelaunch → active → ended so it
+  // reads as the lifecycle it mirrors (`models.RUN_PHASES`), and is gated on `isPrelaunch` rather
+  // than `=== 'draft'` so a future prelaunch status inherits it.
+  //
+  // Kept OUT of the JSX as a `//` comment on purpose: `token-lint` skips lines opening `//`, `*`
+  // or `/*` but not a `{/*` JSX comment, so a three-digit `#372` inside one reads as a raw CSS
+  // hex. Keeping the prose here also keeps the header's right slot short, which matters more than
+  // it looks — see the scanner note in `headerActionsAdoption.test.ts`.
+  const start = useCallback(async () => {
+    await act('Start', () => api.startDraftWorkflowRun(runId))
+  }, [act, runId])
+
   const look = run ? runLook(run.status) : null
   const StatusIcon = look?.icon
 
@@ -357,7 +380,15 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
             <QuietButton onClick={() => setReviewOpen((v) => !v)} ariaExpanded={reviewOpen} title="Review — accept or reject this run's line-anchored findings">
               <MessageSquareCode size={13} /> Review
             </QuietButton>
-            {!isTerminal(run.status) ? (
+            {/* Three lifecycle phases, not two — see the note beside `start` above. */}
+            {isPrelaunch(run.status) ? (
+              <>
+                <QuietButton onClick={start} title="Start this run — it has not executed yet">
+                  <Play size={13} /> Start
+                </QuietButton>
+                <QuietButton onClick={cancel} title="Cancel this run before it starts"><X size={13} /> Cancel</QuietButton>
+              </>
+            ) : !isTerminal(run.status) ? (
               <>
                 <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
                   <MessageSquarePlus size={13} /> Steer
@@ -386,6 +417,15 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
             {conts.map((c) => (
               <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer} />
             ))}
+
+            {/* …and beside them, the run's pending TOOL approvals (issue 258). A stage that
+                spawns a subagent blocks on the global approvals queue rather than on an engine
+                gate, so it rendered nothing here while a gate rendered the card above — two shapes
+                of "the run is waiting on you", one of them invisible on the surface the user is
+                watching. Spelled "issue 258" rather than with a hash: `token-lint` skips lines
+                opening `//`, `*` or `/*` but not a `{/*` JSX comment, so a three-digit ref there
+                reads as a raw CSS hex. */}
+            <RunToolApprovals runId={runId} />
 
             {run.error && (
               <p data-type="body-s" className="text-danger">{run.error}</p>

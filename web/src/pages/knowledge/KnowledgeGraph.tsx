@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Network, Sparkles } from 'lucide-react'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
 import { EmptyState } from '../../ui/ListScaffold'
+import { PartialCount } from '../../ui/MoreRow'
 
 interface GraphNode {
   id: string
@@ -17,6 +18,22 @@ interface GraphNode {
    *  a hub whose relations were thinned; this is the entity's real connectedness. */
   degree?: number | null
   cluster?: number | string | null
+}
+/** What the payload says it LEFT OUT.
+ *
+ *  🔴 ON THE WIRE SINCE THE NODE CAP DIED, READ BY NOTHING. `get_full_graph` replaced the old
+ *  `?limit=` node cap with edge thinning ("?top_k= keeps each node's K strongest and unions the
+ *  keeps") and reports the cost in exactly these two numbers — and no client had ever looked at
+ *  them. Measured on a seeded library: header chip "relations 1540", payload
+ *  `edges_total: 1540, edges_kept: 768`, canvas 768 lines, canvas caption "100%". That is issue 808:
+ *  every entity ships (154 = 154 = 154), and 772 relations do not, silently.
+ *
+ *  Optional because an older gateway sends no `thinning` block; a payload without it is treated as
+ *  complete rather than as an unknown residue, since the alternative is a permanent caveat on data
+ *  that may well be whole. */
+interface GraphThinning {
+  edges_total?: number | null
+  edges_kept?: number | null
 }
 interface GraphEdge {
   source: string
@@ -204,7 +221,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
   onRegenerate?: () => void
   regenerating?: boolean
 } = {}) {
-  const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null)
+  const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[]; thinning?: GraphThinning } | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   // Pan/zoom state: a scale + world-space translation applied via the SVG viewBox.
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
@@ -413,7 +430,31 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
 
       {/* Zoom controls */}
       <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
-      <div data-type="caption" className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low tabular-nums backdrop-blur">{Math.round(view.scale * 100)}%</div>
+      {/* 🔑 WHAT THE CANVAS IS SHOWING, said by the canvas — issue 808. The page header states the
+          LIBRARY's totals (entities 154, relations 1540) and this view honours the first and thins
+          the second, so the two numbers sat side by side with nothing reconciling them. The
+          `thinning` block has carried the difference on the wire the whole time.
+          Counted from what was drawn (`graph.edges.length`), never from the server's `edges_kept`:
+          a filter added below this line would shrink the picture without shrinking that field, and
+          a caption sourced from the payload rather than from the render would keep saying 768.
+          `edges_total` is the denominator, and its absence (older gateway) means "complete", not
+          "unknown".
+          The residue is REACHABLE, which is why this is a caption and not a control: clicking any
+          entity opens its sidebar, whose "Connected to" section reads
+          /api/knowledge/entities/by-name/{name}/related — uncapped, all 20 relations of a node the
+          canvas drew 6 of. The title says so, because a count with no route to the rest is just a
+          nicer silence. */}
+      <div data-type="caption" data-graph-scope
+        title={(graph.thinning?.edges_total ?? graph.edges.length) > graph.edges.length
+          ? 'The canvas draws each entity\'s strongest relations, so weaker ones are left out to keep it readable. Click an entity to see all of its relations in the sidebar.'
+          : 'Every entity and relation in your library is drawn.'}
+        className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low tabular-nums backdrop-blur">
+        <PartialCount shown={graph.nodes.length} of={graph.nodes.length} noun="entities" singular="entity" />
+        <span aria-hidden="true">·</span>
+        <PartialCount shown={graph.edges.length} of={graph.thinning?.edges_total ?? graph.edges.length} noun="relations" singular="relation" />
+        <span aria-hidden="true">·</span>
+        <span>{Math.round(view.scale * 100)}%</span>
+      </div>
     </div>
   )
 }

@@ -46,6 +46,14 @@ vi.mock('../../lib/api', () => ({
     // call the component makes: an absent key is `undefined()`, which throws inside the effect and
     // fails this file for a reason that has nothing to do with reordering.
     routingProposals: () => Promise.resolve({ count: 0, proposals: [] }),
+    // …and a FOURTH: the `routing.*` config section (six knobs that had no control at all).
+    personalclawConfig: () => Promise.resolve({
+      routing: {
+        enabled: true, local_timeout_secs: 20, min_samples: 5, hysteresis: 0.05,
+        cloud_quality_margin: 0.1, reproposal_cooldown_days: 14,
+      },
+    }),
+    patchConfig: () => Promise.resolve({}),
   },
 }))
 vi.mock('../../lib/data', () => ({
@@ -60,13 +68,30 @@ function renderPanel() {
   return render(<RoutingPanel query={{ uc: 'reasoning', qc: 'short_chat' }} setQuery={() => {}} />)
 }
 
+/** The polite live regions inside the ROUTING POLICY section only.
+ *
+ *  🪤 This was a container-wide `querySelectorAll`, and the file's header comment above said why that
+ *  was safe: "the only `role="status"` / `role="alert"` regions on the page belong to" this section.
+ *  That premise no longer holds. The panel now opens with a `Router` config section — the six
+ *  `routing.*` knobs that were PATCH-editable with no Settings control anywhere (#2801) — and every
+ *  `ToggleRow`/`NumberRow` there mounts its own always-present, empty-at-rest `sr-only` polite region
+ *  for "Saved ✓". A container-wide `.find()` therefore returned one of THOSE, which is empty, and the
+ *  move assertion read `''` while the real announcement was correct two sections down.
+ *
+ *  Scoping to the section is the stronger claim: it proves the reorder announcement belongs to the
+ *  reorder, rather than that some region on the panel eventually said something. */
+function politeRegionsOfPolicySection(container: HTMLElement): Element[] {
+  const section = screen.getByRole('heading', { name: /Routing policy/ }).closest('section') ?? container
+  return [...section.querySelectorAll('[role="status"][aria-live="polite"]')]
+}
+
 describe('a routing reorder is announced', () => {
   beforeEach(() => { setRoutingPolicy.mockClear(); setRoutingPolicy.mockImplementation(() => Promise.resolve({})) })
 
   it('the section mounts a polite status region, empty at rest', async () => {
     const { container } = renderPanel()
     await waitFor(() => expect(screen.getAllByRole('button', { name: /^Move / }).length).toBeGreaterThan(0))
-    const regions = [...container.querySelectorAll('[role="status"][aria-live="polite"]')]
+    const regions = politeRegionsOfPolicySection(container)
     const sr = regions.find((r) => r.className.includes('sr-only'))
     expect(sr, 'an sr-only polite region must exist before any move').toBeTruthy()
     expect(sr!.textContent).toBe('')
@@ -77,7 +102,7 @@ describe('a routing reorder is announced', () => {
     const later = await waitFor(() => screen.getByRole('button', { name: 'Move local:qwen later' }))
     await act(async () => { later.click() })
     await waitFor(() => {
-      const sr = [...container.querySelectorAll('[role="status"][aria-live="polite"]')]
+      const sr = politeRegionsOfPolicySection(container)
         .find((r) => r.className.includes('sr-only'))
       // "position 2 of 2" — the number is the point: "moved later" alone does not say where it landed.
       expect(sr!.textContent).toBe('local:qwen moved to position 2 of 2')
@@ -94,7 +119,7 @@ describe('a routing reorder is announced', () => {
     const later = await waitFor(() => screen.getByRole('button', { name: 'Move local:qwen later' }))
     await act(async () => { later.click() })
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
-    const sr = [...container.querySelectorAll('[role="status"][aria-live="polite"]')]
+    const sr = politeRegionsOfPolicySection(container)
       .find((r) => r.className.includes('sr-only'))
     expect(sr!.textContent, 'a rejected write must not claim the move happened').toBe('')
   })

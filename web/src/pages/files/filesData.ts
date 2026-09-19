@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type FsEntry, type FsRoot } from '../../lib/api'
+import { ApiError, api, type FsEntry, type FsRoot } from '../../lib/api'
 
 /** Load the allowed root directories the explorer may browse. */
 export function useFileRoots() {
@@ -40,11 +40,33 @@ function persistCache(cache: Record<string, FsEntry[]>): void {
   } catch { /* quota/serialization failure → skip persistence, in-memory still works */ }
 }
 
+/** Why a listing failed, in the user's words. The server already computed the
+ *  distinction — a refused path answers 400/403, a missing one 404 — and the bare
+ *  `catch { return [] }` below used to discard it, so "you are not allowed here",
+ *  "that path does not exist" and "this folder is empty" all rendered as the tree's
+ *  `emptyLabel` ("Empty"). The go-to-path box is the surface where that matters:
+ *  it leaves the rejected path in the URL, so an unexplained empty tree reads as a
+ *  real-but-empty location (#298). */
+function listErrorLabel(e: unknown): string {
+  const status = e instanceof ApiError ? e.status : 0
+  if (status === 403) return 'You are not allowed to browse that location.'
+  if (status === 404) return 'That path does not exist.'
+  // 400 is the confinement validator refusing the path (outside the allowed roots,
+  // or a traversal attempt) — a different sentence from "not found", because the
+  // path may well exist and simply not be browsable from here.
+  if (status === 400) return 'That path is outside the folders PersonalClaw can browse.'
+  return 'Could not load that folder.'
+}
+
 /** Per-directory listing cache + lazy loader for the tree. */
 export function useDirCache() {
   // Seed from sessionStorage so a refresh repaints the last-known tree immediately
   // (then the live fetch reconciles), instead of flashing empty.
   const [cache, setCache] = useState<Record<string, FsEntry[]>>(loadPersistedCache)
+  // Per-path listing failure, so a consumer can say WHICH refusal it was instead of
+  // falling through to the empty-tree label (#298). Deliberately NOT persisted: a
+  // stale "not allowed" must never outlive the request that produced it.
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const inflight = useRef<Record<string, boolean>>({})
   // Mirror the cache in a ref so the callbacks below can read the latest listing
   // WITHOUT depending on the `cache` state. Otherwise `load`/`invalidateSubtree` (and
@@ -74,9 +96,22 @@ export function useDirCache() {
     try {
       const r = await api.fileList(path)
       // Drop the result if this path was invalidated while the fetch was in flight.
-      if ((gen.current[path] ?? 0) === startGen) setCache((c) => ({ ...c, [path]: r.entries }))
+      if ((gen.current[path] ?? 0) === startGen) {
+        setCache((c) => ({ ...c, [path]: r.entries }))
+        // A path that listed is no longer failing — clear a previous refusal so a
+        // re-navigated-to path doesn't keep the old sentence. Same-object return when
+        // there was nothing to clear, so the memo below keeps its identity.
+        setErrors((m) => (path in m ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== path)) : m))
+      }
       return r.entries
-    } catch {
+    } catch (e) {
+      // Keep the REASON instead of discarding it. Returning [] still holds (every
+      // caller expects an array), but the consumer can now read why it is empty.
+      // Same-message writes return the SAME object: a fresh object each time would
+      // give the memo a new identity, re-fire the consumer effect, and refetch the
+      // failing path forever.
+      const msg = listErrorLabel(e)
+      if ((gen.current[path] ?? 0) === startGen) setErrors((m) => (m[path] === msg ? m : { ...m, [path]: msg }))
       return []
     } finally {
       inflight.current[path] = false
@@ -113,8 +148,10 @@ export function useDirCache() {
   }, [])
 
   // Stable object identity (functions never change) so `[…, dirs]` consumer effects
-  // don't re-fire; only `cache` flips, which is consumed via render, not effects.
-  return useMemo(() => ({ cache, load, invalidate, invalidateSubtree }), [cache, load, invalidate, invalidateSubtree])
+  // don't re-fire; only `cache`/`errors` flip, and both are consumed via render, not
+  // effects — a consumer that loads in an effect must key on `dirs.load` (stable),
+  // never on `dirs`, or a failing path refetches on every error write.
+  return useMemo(() => ({ cache, errors, load, invalidate, invalidateSubtree }), [cache, errors, load, invalidate, invalidateSubtree])
 }
 
 /** Git branch + per-file porcelain status for the active root (best-effort).

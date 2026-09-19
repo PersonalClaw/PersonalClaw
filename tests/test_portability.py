@@ -1412,3 +1412,106 @@ class TestImportReadsTheWidenedExport:
         conn = sqlite3.connect(f"file:{imported}?mode=ro", uri=True)
         assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 500
         conn.close()
+
+
+# ── 🔴 exports and snapshots must agree on what "skills" means (#462) ──
+
+
+def _seed_skills(pc: Path) -> None:
+    """One ACCEPTED skill (`skills/auto/`) and one hand-authored one, as a real home has."""
+    auto = pc / "skills" / "auto" / "delegation"
+    auto.mkdir(parents=True, exist_ok=True)
+    (auto / "SKILL.md").write_text(
+        "---\nname: delegation\nsource: auto\n---\naccepted body\n", encoding="utf-8"
+    )
+    hand = pc / "skills" / "hand-written"
+    hand.mkdir(parents=True, exist_ok=True)
+    (hand / "SKILL.md").write_text("---\nname: hand-written\n---\nbody\n", encoding="utf-8")
+
+
+class TestAcceptedSkillsTravel:
+    """`skills/auto/` — the tier holding skills the user explicitly ACCEPTED — must export.
+
+    🔴 The export walked `skills/` carrying an unexplained
+    ``if dirname == "skills" and "auto" in rel.parts: continue``, so `personalclaw snapshot` kept
+    accepted skills while Export dropped them — two backup mechanisms with different definitions
+    of "your skills", and the silent loss lands on the MIGRATION path, which is exactly when the
+    user has no second copy. Three authorities disagreed with the skip: the inventory declares
+    only `.skill_embeddings.json` derived inside `skills`, `snapshot.py` captures and restores the
+    whole tree, and the panel promises "every non-derived store PersonalClaw holds".
+    """
+
+    def test_the_export_carries_an_accepted_skill(self, fake_personalclaw_home, tmp_path):
+        _seed_skills(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert any(
+            n.endswith("skills/auto/delegation/SKILL.md") for n in names
+        ), f"the accepted-proposal tier was dropped from the export: {names}"
+
+    def test_skill_count_reports_the_whole_library(self, fake_personalclaw_home, tmp_path):
+        """`skill_count` counts what the walk wrote, so an exclusion made the manifest under-report
+        with no way for a reviewer to notice — the count simply looked smaller than the library.
+
+        Measured against the tree rather than a literal: a hardcoded number passes just as well
+        when the count is right for the wrong reason.
+        """
+        _seed_skills(fake_personalclaw_home)
+        on_disk = sum(1 for p in (fake_personalclaw_home / "skills").rglob("*") if p.is_file())
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            _, manifest = create_export_zip()
+        assert manifest["contents"]["skill_count"] == on_disk, manifest["contents"]
+
+    def test_a_round_trip_returns_the_accepted_skill(self, fake_personalclaw_home, tmp_path):
+        """Widening the export alone would only move the drop one step downstream: the import
+        skipped `auto/` too, so the bytes would travel and land nowhere."""
+        _seed_skills(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "export.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        landed = target / "skills" / "auto" / "delegation" / "SKILL.md"
+        assert landed.is_file(), "the accepted skill did not survive the round trip"
+        assert "accepted body" in landed.read_text(encoding="utf-8")
+
+    def test_a_merge_fills_in_a_sibling_the_home_does_not_have(
+        self, fake_personalclaw_home, tmp_path
+    ):
+        """Per-file no-overwrite, not top-level. The old import block compared only the TOP-level
+        name (`auto`), so a home that already had ANY accepted skill rejected the whole incoming
+        namespace — an arriving `auto/b` dropped because the home held `auto/a`."""
+        _seed_skills(fake_personalclaw_home)
+        incoming = fake_personalclaw_home / "skills" / "auto" / "knowledge-grounding"
+        incoming.mkdir(parents=True, exist_ok=True)
+        (incoming / "SKILL.md").write_text("---\nname: kg\n---\nincoming\n", encoding="utf-8")
+
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "export.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "config.json").write_text("{}")
+        # The receiving home already holds a DIFFERENT accepted skill under the same namespace.
+        held = target / "skills" / "auto" / "delegation"
+        held.mkdir(parents=True, exist_ok=True)
+        (held / "SKILL.md").write_text("---\nname: delegation\n---\nMINE\n", encoding="utf-8")
+
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        assert (
+            target / "skills" / "auto" / "knowledge-grounding" / "SKILL.md"
+        ).is_file(), "a namespace the home already had blocked the arriving sibling"
+        # No-overwrite still holds for the one it already had.
+        assert "MINE" in (held / "SKILL.md").read_text(encoding="utf-8")

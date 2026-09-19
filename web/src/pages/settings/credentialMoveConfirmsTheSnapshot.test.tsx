@@ -70,6 +70,13 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
       setCredentialKeychain: () => Promise.resolve({}),
       setUserDeniedCommands: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
+      // The child-process ceilings section (`sandbox.*`) renders inside this SAME panel. A total
+      // module mock makes an unstubbed read `undefined()`, which throws in the effect and fails
+      // this file for a reason unrelated to the credential move.
+      personalclawConfig: () => Promise.resolve({
+        sandbox: { nofile: 4096, max_pids: 0, max_rss_mb: 0, cgroup_scopes: false, env_passthrough: [] },
+      }),
+      patchConfig: () => Promise.resolve({}),
     },
   }))
   const { SecurityPanel } = await import('./SecurityPanel')

@@ -154,7 +154,7 @@ function BrowseLibrary({ provider }: { provider: string }) {
         </div>
         <button onClick={search} data-type="caption"
           {...unavailableWhen(!q.trim(), 'Type a model name first', { busy: searching })}
-          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface hover:bg-surface-container-high disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface hover:bg-surface-high disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
           {searching ? <Loader2 size={13} className="animate-spin" /> : 'Search'}
         </button>
       </div>
@@ -219,7 +219,7 @@ function SearchRow({ provider, result }: { provider: string; result: OllamaSearc
         <Check size={15} className="shrink-0 text-primary" />
       ) : state === 'pulling' ? (
         <button onClick={stop}
-          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-container-high"
+          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-high"
           title="Stop download">
           <X size={12} /> Stop
         </button>
@@ -227,7 +227,7 @@ function SearchRow({ provider, result }: { provider: string; result: OllamaSearc
         <button onClick={pull} className="shrink-0 text-on-surface-low hover:text-on-surface" title="Retry"><RefreshCw size={13} /></button>
       ) : (
         <button onClick={pull}
-          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-container-high">
+          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-high">
           <Download size={12} /> Pull
         </button>
       )}

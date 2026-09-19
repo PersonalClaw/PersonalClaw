@@ -126,7 +126,11 @@ async def test_deleting_a_task_removes_its_comment_sidecar(tmp_path):
         # that a recycled id would have inherited.
         assert not sidecar.exists()
         assert not (tmp_path / "tasks" / f"{t['id']}.json").exists()
-        assert (await (await client.get(f"/api/tasks/{t['id']}/comments")).json())["comments"] == []
+        # The read now RESOLVES the parent task (#2940), so a deleted id 404s where it used to
+        # answer `{"comments": []}`. That is a strictly stronger statement of this test's own
+        # point: an empty list could not distinguish "the thread is gone" from "the task is still
+        # there with nothing on it", which is the indistinguishability #2940 was filed about.
+        assert (await client.get(f"/api/tasks/{t['id']}/comments")).status == 404
 
 
 @pytest.mark.asyncio

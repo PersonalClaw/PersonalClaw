@@ -698,10 +698,25 @@ async def api_app_uninstall_preview(request: web.Request) -> web.Response:
     """classify shared deps (A3) and report what the app's ``data/`` holds.
 
     The ``data`` block lets the removal-confirm dialogs name the trade the user is about
-    to make instead of describing it in the abstract."""
+    to make instead of describing it in the abstract.
+
+    Resolves the PARENT app first (#2940). This answered ``200 {"dependencies": [],
+    "data": {"present": false, ...}}`` for a name that is not installed — indistinguishable from a
+    real app with no shared deps and no data, while every other door on the same ``{name}``
+    (including the ``DELETE`` this preview exists to describe) 404s ``app 'x' not installed``. A
+    preview is the input to a destructive confirm dialog, so a ghost name rendered a real dialog
+    promising to remove nothing.
+
+    Uses ``_manifest_of`` — the SAME predicate the sibling doors on this path already use — rather
+    than ``apps.manager._read_installed``, which reads a different file (``installed.json`` vs the
+    ``app.json`` manifest) out of the retired storage module. Two predicates for "is this app
+    installed" on one path is how the next door disagrees.
+    """
     from personalclaw.apps import app_manager
 
     name = request.match_info["name"]
+    if app_manager._manifest_of(name) is None:
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     classifications = app_manager.preview_uninstall(name)
     return web.json_response(
         {

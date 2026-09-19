@@ -3,12 +3,14 @@ import { api, type DashboardConfig, type SessionTemplate } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, Row, Toggle, SegPills, SavedToast } from './settingsUI'
+import { reportingWrite } from '../../app/reportingWrite'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
+import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { confirmDelete } from '../../ui/dialog'
-import { Trash2 } from 'lucide-react'
+import { Trash2, VolumeX } from 'lucide-react'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
@@ -26,6 +28,7 @@ export function ChatPanel() {
   const [routing, setRouting] = useState<Record<string, unknown> | null>(null)
   const [resilience, setResilience] = useState<Record<string, unknown> | null>(null)
   const [checkpoints, setCheckpoints] = useState<Record<string, unknown> | null>(null)
+  const [tools, setTools] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -49,20 +52,21 @@ export function ChatPanel() {
       routing: (plaw.agents_routing ?? {}) as Record<string, unknown>,
       resilience: (plaw.resilience ?? {}) as Record<string, unknown>,
       checkpoints: (plaw.checkpoints ?? {}) as Record<string, unknown>,
+      tools: (plaw.tools ?? {}) as Record<string, unknown>,
     }
   }, { persist: true })
 
   useEffect(() => {
     if (data) {
       setCfg(data.cfg); setSession(data.session); setRouting(data.routing)
-      setResilience(data.resilience); setCheckpoints(data.checkpoints)
+      setResilience(data.resilience); setCheckpoints(data.checkpoints); setTools(data.tools)
     }
   }, [data])
 
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg || !session || !routing || !resilience || !checkpoints) return <FormSkeleton sections={3} what="settings" />
+  if (!data || !cfg || !session || !routing || !resilience || !checkpoints || !tools) return <FormSkeleton sections={3} what="settings" />
 
   return (
     <div>
@@ -73,6 +77,7 @@ export function ChatPanel() {
       <MidTurnSection resilience={resilience} setResilience={setResilience} />
       <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
+      <BackgroundCompressionSection tools={tools} setTools={setTools} />
       <CheckpointsSection checkpoints={checkpoints} setCheckpoints={setCheckpoints} />
       <StartersSection />
     </div>
@@ -195,10 +200,87 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
           <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n, l) => patch('min_confidence', n, undefined, l)} saved={saved} />
         )}
         {enabled && (
-          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
+          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long. A third dismissal mutes the agent for good — Muted agents below is where you undo that; this field can't, and neither can the switch above." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
         )}
+        {/* NOT gated on `enabled`, deliberately: a mute outlives the master switch. Measured on a
+            live gateway — with three dismissals recorded, PATCHing agents_routing.enabled false then
+            true left muted unchanged, and so did dragging cooldown_hours to 0, because is_suppressed
+            returns on the mute BEFORE it reads the cooldown. Hiding the only working undo behind the
+            switch would recreate the trap this row exists to close (issue 414). */}
+        <MutedAgentsField />
       </RowGroup>
     </Section>
+  )
+}
+
+/** Every agent the auto-router has stopped suggesting, with the undo.
+ *
+ *  🔑 THIS IS THE PROMISE THE PANEL ABOVE MAKES. "Dismiss cooldown" told the user that three
+ *  dismissals "mute it until you re-enable" and no re-enable existed anywhere in the frontend:
+ *  `api.routingUnmute` and `api.routingStatus` were defined in `lib/api.ts` and called by nothing,
+ *  so a muted agent was invisible AND permanent. The per-agent Unmute on the agent detail page
+ *  closed half of it; this closes the half a per-agent control structurally cannot.
+ *
+ *  🪤 THE LIST IS THE STORE, NOT THE AGENT CATALOG. `record_dismiss` writes a key without checking
+ *  that an agent by that name exists, and an agent can be deleted while muted, so the store
+ *  legitimately holds keys with no detail page to visit — measured live: three dismissals of
+ *  `zz414-phantom-agent` produced a durable mute with no page anywhere in the app to clear it from.
+ *  Reserved built-ins are a second such class (their detail panel renders no Advanced section at
+ *  all). Rendering the store's own keys is what makes every one of them reachable; filtering to
+ *  known agents would silently re-orphan exactly the entries that need this row most. */
+function MutedAgentsField() {
+  const { data, refresh } = useQuery('agents:routing-mutes', () => api.routingStatus())
+  const [busy, setBusy] = useState('')
+  const muted = data?.muted ?? []
+  const unmute = async (agent: string) => {
+    setBusy(agent)
+    // Gated: a refused unmute must not drop the row, or the click reads as having worked.
+    if (await reportingWrite(`unmute ${agent}`, () => api.routingUnmute(agent))) {
+      invalidateKeys('agents:routing-mutes')
+      refresh()
+    }
+    setBusy('')
+  }
+  return (
+    <Field label="Muted agents" hint="Agents the router has stopped suggesting because you dismissed them three times. Unmuting clears the mute and the dismissal count, so the agent can be suggested again.">
+      {data === undefined ? (
+        <p data-type="body-s" className="text-on-surface-low">Checking…</p>
+      ) : muted.length === 0 ? (
+        <p data-type="body-s" className="text-on-surface-low">None — no agent is muted.</p>
+      ) : (
+        // One grid, not per-row flex: agent names vary in width, so a button placed after the
+        // name landed at a different x on every row and the actions read as scattered rather
+        // than as one column you can run down.
+        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+          {muted.map((agent) => {
+            const count = data.dismissals?.[agent]?.count
+            return (
+              <li key={agent} data-type="label-s" className="col-span-3 grid grid-cols-subgrid items-center">
+                <VolumeX size={14} className="shrink-0 text-on-surface-low" />
+                <span className="truncate">
+                  <span className="text-on-surface">{agent}</span>
+                  {count ? <span className="text-on-surface-low"> · {count} dismissals</span> : null}
+                </span>
+                {/* `loading` + `loadingLabel`, never a hand-rolled `disabled={busy} + {busy ? 'Unmuting…'}`
+                    ternary. `aria-busy` is published from `loading` alone, so the hand-rolled shape trades
+                    the announcement for the word and a screen-reader user gets neither — see `ui/Button`'s
+                    note on the eight sites that had already made that trade. These rows sit in a column
+                    where several unmutes can be in flight, which is the case the progress verb exists for.
+                    The hand-rolled form raised `busyIsNotAnnounced`'s ceiling from 79 to 80.
+
+                    `ariaLabel` carries the subject because this is a COLUMN of identical buttons: the
+                    visible text is "Unmute" on every row, so a screen reader reading the actions list
+                    announces the same name N times with nothing to choose between. `design/rowActionNames`
+                    measures exactly this and holds the unnamed population at a ceiling of 5 — a sixth bare
+                    row action reds it by file and text, which is how this one was caught. */}
+                <Button size="sm" variant="secondary" onClick={() => unmute(agent)} ariaLabel={`Unmute ${agent}`}
+                  loading={busy === agent} loadingLabel="Unmuting…">Unmute</Button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Field>
   )
 }
 
@@ -403,6 +485,52 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
   )
 }
 
+// ── Background compression (tools.bg_compress_* config) ──────────────────────
+/** The always-on complement to the auto-compact threshold above: old, idle, at-rest history is
+ *  topic-segmented and compressed on the maintenance cadence, with no manual trigger.
+ *
+ *  Its two allowlisted paths (`tools.bg_compress_enabled`, `tools.bg_compress_idle_days`) were
+ *  PATCH-editable and read by `bg_compress.py` with NO control anywhere in `web/` — one of the
+ *  sections issue #2801 counted. They sit here, beside the compaction threshold they complement,
+ *  rather than on the Tool-output page: that panel is about PROJECTING a single tool result, and
+ *  this is about a session's stored history.
+ *
+ *  🪤 `tools.*` IS A DIFFERENT SECTION FROM `session.*`, so this owns its own state and its own
+ *  patch. One setter reaching into both would roll a failed save back into the wrong object — the
+ *  reason `SourcesPanel` declares `patchKnowledge` separately from `patch`. */
+function BackgroundCompressionSection({ tools, setTools }: {
+  tools: Record<string, unknown>; setTools: (t: Record<string, unknown>) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const patch = (key: string, value: unknown, _cb?: () => void, label?: string) => {
+    const prev = tools[key]
+    setTools({ ...tools, [key]: value })
+    api.patchConfig(`tools.${key}`, value).then(flash).catch((e) => {
+      setTools({ ...tools, [key]: prev })
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  const on = tools.bg_compress_enabled !== false
+  return (
+    <Section title="Background compression" hint="Old, idle chats are compressed in the background so long sessions stay fast — no manual compaction needed.">
+      <RowGroup>
+        <Row label="Background compression"
+          hint="Continuously compress old, idle conversation history (topic-segmented, attention-weighted). Every dropped span is archived first and stays fully recoverable, and the summary names its archive. Incognito and temporary chats are never touched.">
+          <div className="flex items-center gap-2">
+            <SavedToast show={saved} />
+            <Toggle on={on} onChange={(v) => patch('bg_compress_enabled', v, undefined, 'Background compression')} label="Background compression" />
+          </div>
+        </Row>
+        {on && (
+          <NumberRow label="Idle window before compressing" hint="Only compress chats untouched for at least this long. An active chat is never compressed."
+            value={Number(tools.bg_compress_idle_days ?? 7)} min={0} max={365} step={1} suffix="d"
+            onCommit={(n, l) => patch('bg_compress_idle_days', n, undefined, l)} saved={saved} />
+        )}
+      </RowGroup>
+    </Section>
+  )
+}
+
 /** The auto-archive threshold, plus what it would actually do right now.
  *
  *  The rule has been running on the heartbeat since S2 with no way to see or change
@@ -437,7 +565,7 @@ export function AutoArchiveRow({ days, onCommit, saved }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         {shown > 0 && preview?.enabled && (
-          <span data-type="caption" className="text-on-surface-variant tabular-nums">
+          <span data-type="caption" className="text-on-surface-var tabular-nums">
             {preview.count === 0 ? 'none stale now' : `${preview.count} stale now`}
           </span>
         )}
@@ -445,7 +573,7 @@ export function AutoArchiveRow({ days, onCommit, saved }: {
           value={shown} min={0} max={3650} step={1} ariaLabel="Auto-archive after (days)"
           onChange={(n) => { setPending(n); onCommit(n, 'Auto-archive after (days)') }}
         />
-        <span data-type="caption" className="text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
+        <span data-type="caption" className="text-on-surface-var">{shown > 0 ? 'days' : 'off'}</span>
       </div>
     </Row>
   )

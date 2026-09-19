@@ -7,7 +7,7 @@
 // Store source and driven in the real UI"), and hand-driving one bundle costs a
 // full agent session. The legs below ARE that clause, mechanised once.
 //
-// The six legs, per bundle:
+// The seven legs, per bundle:
 //   1 store-source        register the bundle's staging dir as a local Store source
 //   2 store-card          the Store card + detail panel describe the app
 //   3 ui-install          install through the UI, clicking through the scanner's
@@ -15,6 +15,14 @@
 //   4 library-and-tools   it lands in the Library and its tools render on #/tools
 //   5 tool-invoke         run one of its tools from the UI and capture the result
 //   6 reactivate          Deactivate → Activate round-trip
+//   7 uninstall-preserves-data
+//                         click the Library's real Uninstall control (confirm dialog
+//                         included), reinstall, and read the app's own data back
+//                         THROUGH THE TOOL REGISTRY — then prove the negative with
+//                         Force uninstall. Deactivate is strictly weaker than removal,
+//                         so before this leg nothing in the harness could tell an app
+//                         removed-with-data-kept from one removed-and-wiped from one
+//                         merely switched off (#2588).
 //
 // Reporting rules (see scripts/lib/app_validate_report.mjs, which owns them and is
 // unit-tested): a leg that cannot run is SKIPPED **with a reason string** and never
@@ -60,8 +68,8 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 import {
-  LEGS, STATUS, newLegs, passLeg, failLeg, skipLeg, noteLeg,
-  shapeBundleReport, shapeReport, formatReport,
+  LEGS, STATUS, APP_DATA, newLegs, passLeg, failLeg, skipLeg, noteLeg,
+  classifyAppData, shapeBundleReport, shapeReport, formatReport,
 } from './lib/app_validate_report.mjs'
 import { fillRequiredArgs } from './lib/app_validate_form.mjs'
 
@@ -249,9 +257,19 @@ function shotter(page, dir) {
 
 // ── UI helpers ───────────────────────────────────────────────────────────────
 
+/** Navigate and wait for the app SHELL, not for the `load` event.
+ *
+ *  `waitUntil: 'load'` was measured to be the wrong gate (2026-09-19, load average 89 on the
+ *  dev host): `document.readyState` sat at `interactive` for over 45s while the dashboard
+ *  rendered, kept lazy-loading route chunks and kept polling, so the initial resource set
+ *  never settled and the `load` event never arrived. Every leg then reported
+ *  `harness error: page.goto timeout` — a false FAIL blamed on the bundle, on a page that was
+ *  visibly usable. `domcontentloaded` plus the shell-visible wait below is both more tolerant
+ *  of a busy machine AND a stronger claim: it asserts the product's own shell is on screen
+ *  rather than that the browser stopped fetching. */
 async function gotoRoute(page, base, route) {
-  await page.goto(`${base}/#${route}`, { waitUntil: 'load', timeout: 45_000 })
-  await page.locator(SHELL_SELECTOR).waitFor({ state: 'visible', timeout: 20_000 })
+  await page.goto(`${base}/#${route}`, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+  await page.locator(SHELL_SELECTOR).waitFor({ state: 'visible', timeout: 45_000 })
   await page.waitForTimeout(500)
 }
 
@@ -287,14 +305,23 @@ async function toolGroupHeader(page, provider) {
 
 /** Click a candidate control if it is actually visible, then wait for the Manage
  *  Sources panel. Every step is visibility-gated: a hidden match (the overflow
- *  menu's copy of a header control) would otherwise burn a full click timeout. */
+ *  menu's copy of a header control) would otherwise burn a full click timeout.
+ *
+ *  The FIRST candidate is waited for rather than sampled. A bare `count()` reads the page
+ *  in the frame it happens to run in, so on a loaded machine (measured at load average 88)
+ *  the Store header had not rendered yet and leg 1 failed with "no Manage Sources control
+ *  was reachable" — a false FAIL against a control that appears a second later. Later
+ *  candidates are still sampled: by then the header exists and their absence is real. */
 async function openManageSources(page) {
   const candidates = [
     page.locator('button[title="Manage Sources"]'),
     page.locator('button', { hasText: 'Add source' }),
   ]
-  for (const candidate of candidates) {
+  for (const [index, candidate] of candidates.entries()) {
     const visible = candidate.locator('visible=true').first()
+    if (index === 0) {
+      await visible.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {})
+    }
     if (!(await visible.count())) continue
     await visible.click({ timeout: 5000 }).catch(() => {})
     const panel = sidePanel(page, 'Manage Sources').first()
@@ -346,7 +373,8 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
   const shot = shotter(page, path.join(outDir, bundle))
 
   try {
-    await page.goto(`${base}/?token=${encodeURIComponent(api.token)}`, { waitUntil: 'load', timeout: 45_000 })
+    // `domcontentloaded`, not `load` — see gotoRoute for the measurement.
+    await page.goto(`${base}/?token=${encodeURIComponent(api.token)}`, { waitUntil: 'domcontentloaded', timeout: 45_000 })
     await gotoRoute(page, base, '/apps?view=store')
 
     // ── leg 1: register the local source ──────────────────────────────────
@@ -390,7 +418,7 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     let found = false
     for (let attempt = 0; attempt < 4 && !found; attempt++) {
       if (attempt === 0) await gotoRoute(page, base, `/apps?view=store&ssrc=${encodeURIComponent(srcKey)}`)
-      else { await page.reload({ waitUntil: 'load' }); await page.locator(SHELL_SELECTOR).waitFor({ state: 'visible', timeout: 20_000 }) }
+      else { await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator(SHELL_SELECTOR).waitFor({ state: 'visible', timeout: 45_000 }) }
       found = await card.first().waitFor({ state: 'visible', timeout: 12_000 }).then(() => true).catch(() => false)
     }
     await page.waitForTimeout(700)
@@ -583,6 +611,14 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     if (round.ok) passLeg(legs, 'reactivate', { screenshots: round.screenshots, details: round.details })
     else if (round.skip) skipLeg(legs, 'reactivate', round.skip, { screenshots: round.screenshots, details: round.details })
     else failLeg(legs, 'reactivate', round.reason, { screenshots: round.screenshots, details: round.details })
+
+    // ── leg 7: uninstall keeps the data; force uninstall does not ─────────
+    const removal = await uninstallPreservesData({
+      page, base, api, appName, displayName, source: link, shot, contributed,
+    })
+    if (removal.ok) passLeg(legs, 'uninstall-preserves-data', { screenshots: removal.screenshots, details: removal.details })
+    else if (removal.skip) skipLeg(legs, 'uninstall-preserves-data', removal.skip, { screenshots: removal.screenshots, details: removal.details })
+    else failLeg(legs, 'uninstall-preserves-data', removal.reason, { screenshots: removal.screenshots, details: removal.details })
   } catch (err) {
     if (!(err instanceof LegAbort)) {
       const crashShot = await shot('crash')
@@ -620,18 +656,23 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
  *  conflating it with an unexpected harness crash. */
 class LegAbort extends Error {}
 
+/** Every required argument is a primitive the harness can fill with a self-describing
+ *  placeholder (see scripts/lib/app_validate_form.mjs). Vacuously true for a tool with no
+ *  required arguments. */
+function argsAreFillable(tool) {
+  return (tool.parameters?.required ?? []).every((k) => {
+    const s = tool.parameters?.properties?.[k]
+    return s && ['string', 'integer', 'number', 'boolean'].includes(s.type)
+  })
+}
+
 /** Prefer a tool with no required arguments — bundle-agnostic and side-effect-light.
  *  Otherwise a tool whose required arguments are all primitives the harness can fill
  *  with a self-describing placeholder. */
 function pickInvokableTool(tools) {
-  const req = (t) => (t.parameters?.required ?? [])
-  const noArgs = tools.filter((t) => req(t).length === 0)
+  const noArgs = tools.filter((t) => (t.parameters?.required ?? []).length === 0)
   if (noArgs.length) return noArgs.find((t) => /list|status|ls|show|get|search/i.test(t.name)) ?? noArgs[0]
-  const primitive = tools.filter((t) => req(t).every((k) => {
-    const s = t.parameters?.properties?.[k]
-    return s && ['string', 'integer', 'number', 'boolean'].includes(s.type)
-  }))
-  return primitive[0] ?? null
+  return tools.filter(argsAreFillable)[0] ?? null
 }
 
 /** Open the tool inspector, expand "Try it", fill any required primitives, and go
@@ -744,6 +785,298 @@ async function deactivateReactivate({ page, base, api, appName, displayName, sho
   screenshots.push(await shot('reactivate-reactivated'))
   details.reactivated = on
   if (!on) return { reason: 'clicking Activate never brought the app back to the enabled state', screenshots, details }
+  return { ok: true, screenshots, details }
+}
+
+// ── leg 7: removal, and what survives it ─────────────────────────────────────
+//
+// The clause this leg mechanises is "the app's data survives removal", and the reason it
+// exists is that proving it by hand cost a full session and produced nothing reusable
+// (PEP-16). The trap it must not fall into is proving the WRONG thing: a `Path.exists()`
+// check shows a file is on disk, which is not the same claim as "the provider still
+// resolves and still answers with the user's data". On 2026-09-06 those two questions gave
+// DIFFERENT answers for the same app — the notebook directory was there and the notes were
+// not readable. So every read-back here goes through the gateway's own tool registry and
+// the same inspector a user drives, never through the filesystem.
+
+/** Tool-name shapes for the two roles this leg needs.
+ *
+ *  Narrow and explicit on purpose: the leg would far rather SKIP with a reason than guess
+ *  that some tool is a "read" and then report a preservation verdict derived from the wrong
+ *  call. */
+const READ_BACK_TOOL = /(^|[_-])(list|get|read|show|status|search|recent|all|dump)([_-]|$)/i
+const WRITE_BACK_TOOL = /(^|[_-])(add|append|create|new|write|save|record|put|set|log|capture)([_-]|$)/i
+
+/** The read-back tool. ARGUMENT-FREE only, and that restriction is load-bearing: a read
+ *  whose arguments the harness invented would read a note nobody wrote (`note_read` with a
+ *  placeholder `ref`), and "not found" both before and after a removal looks exactly like
+ *  preserved data. */
+function pickReadBackTool(tools) {
+  return tools.filter((t) => (t.parameters?.required ?? []).length === 0)
+    .find((t) => READ_BACK_TOOL.test(t.name)) ?? null
+}
+
+/** The write tool, used only to give the leg something to preserve. Placeholder arguments
+ *  are fine here — the content does not matter, only that the same content comes back —
+ *  so this accepts a fillable tool as well as an argument-free one. */
+function pickWriteTool(tools, exclude) {
+  const candidates = tools.filter((t) => t.name !== exclude?.name && WRITE_BACK_TOOL.test(t.name))
+  return candidates.find((t) => (t.parameters?.required ?? []).length === 0)
+    ?? candidates.filter(argsAreFillable)[0]
+    ?? null
+}
+
+async function appEntry(api, appName) {
+  return ((await api.get('/api/apps')).json?.apps ?? []).find((a) => a.name === appName) ?? null
+}
+
+/** The app's data facts, classified into the three states core reports separately.
+ *  The classifier (and its skip reasons) lives in the unit-tested report module. */
+async function appDataFacts(api, appName) {
+  const res = await api.get(`/api/apps/${encodeURIComponent(appName)}/uninstall-preview`)
+  return classifyAppData(res.json?.data)
+}
+
+/** Poll until `/api/tools` publishes `tool` again — the REGISTRY answer to "is the
+ *  provider back", as opposed to "is there a file where it used to be". */
+async function waitForToolInRegistry(api, page, tool, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    const tools = (await api.get('/api/tools')).json?.tools ?? []
+    if (tools.some((t) => t.provider === tool.provider && t.name === tool.name)) return true
+    await page.waitForTimeout(1000)
+  }
+  return false
+}
+
+/** Put the app back from the SAME source, and make sure it is enabled.
+ *
+ *  Through the API deliberately: `ui-install` already covers the browser install path, and
+ *  here the reinstall is setup for the claim under test rather than the claim itself. The
+ *  part only a browser can cover — the removal control and its confirm dialog — stays in
+ *  `clickRemovalInLibrary`. */
+async function reinstall({ page, api, appName, source }) {
+  const res = await api.post('/api/apps', { source, confirm: true })
+  if (res.status !== 201 && !res.json?.ok) {
+    return { ok: false, reason: `POST /api/apps → ${res.status} ${res.json?.error ?? ''}`.trim() }
+  }
+  let nudged = false
+  for (let i = 0; i < 40; i++) {
+    const app = await appEntry(api, appName)
+    if (app?.enabled) return { ok: true }
+    if (app && app.enabled === false && !nudged) {
+      nudged = true
+      await api.post(`/api/apps/${encodeURIComponent(appName)}/enable`)
+    }
+    await page.waitForTimeout(1000)
+  }
+  return { ok: false, reason: 'the app never came back enabled after reinstall' }
+}
+
+/** Click a removal control in the Library detail panel and go through its confirm dialog.
+ *
+ *  `rung` is `keep-data` (the panel's own Uninstall button) or `force` (Advanced → Force
+ *  uninstall). The dialog is clicked through rather than bypassed, exactly as `ui-install`
+ *  clicks through the scanner's consent dialog: it is the part only a browser leg can
+ *  cover, and until this leg existed nobody had clicked either of these in a browser at
+ *  all — they were verified through the endpoint they call and through vitest. */
+async function clickRemovalInLibrary({ page, base, api, appName, displayName, shot, rung }) {
+  const screenshots = []
+  const label = rung === 'force' ? 'Force uninstall' : 'Uninstall'
+  await gotoRoute(page, base, '/apps?view=library')
+  const card = cardFor(page, displayName)
+  await card.first().waitFor({ state: 'attached', timeout: 20_000 }).catch(() => {})
+  if (!(await card.count())) {
+    screenshots.push(await shot(`${rung}-no-card`))
+    return { reason: `the app has no Library card, so its ${label} control is unreachable`, screenshots }
+  }
+  await card.first().click()
+  await page.waitForTimeout(900)
+  const panel = sidePanel(page, displayName)
+
+  if (rung === 'force') {
+    // Force uninstall is deliberately behind an "Advanced" expander, so the leg has to
+    // open it the way a user does rather than reaching for a hidden control.
+    const advanced = panel.getByRole('button', { name: 'Advanced' })
+    if (!(await advanced.count())) {
+      screenshots.push(await shot('force-no-advanced'))
+      return { reason: 'the Library detail panel offers no Advanced section, so Force uninstall is unreachable', screenshots }
+    }
+    await advanced.first().click()
+    await page.waitForTimeout(500)
+  }
+
+  const trigger = panel.getByRole('button', { name: label, exact: true })
+  if (!(await trigger.count())) {
+    screenshots.push(await shot(`${rung}-no-control`))
+    return { reason: `the Library detail panel offers no ${label} control`, screenshots }
+  }
+  await trigger.first().click()
+
+  const dialog = page.locator('[role="dialog"]').filter({ hasText: `${label} ${appName}?` }).first()
+  const opened = await dialog.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true).catch(() => false)
+  if (!opened) {
+    screenshots.push(await shot(`${rung}-no-confirm`))
+    return { reason: `clicking ${label} raised no confirm dialog — a destructive action must state what it is about to do`, screenshots }
+  }
+  // The dialog animates in; screenshotting the frame it became visible captures a
+  // half-transparent ghost that reads as an unreadable dialog (a harness artifact).
+  await page.waitForTimeout(1200)
+  const dialogText = (await dialog.innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
+  screenshots.push(await shot(`${rung}-confirm`))
+
+  const confirm = dialog.getByRole('button', { name: label, exact: true })
+  if (!(await confirm.count())) {
+    return { reason: `the ${label} confirm dialog offers no ${label} button`, screenshots, dialogText }
+  }
+  await confirm.first().click()
+  for (let i = 0; i < 60; i++) {
+    await page.waitForTimeout(1000)
+    if (!(await appEntry(api, appName))) {
+      screenshots.push(await shot(`${rung}-done`))
+      return { ok: true, screenshots, dialogText }
+    }
+  }
+  screenshots.push(await shot(`${rung}-still-installed`))
+  return { reason: `confirming ${label} never removed the app — /api/apps still lists it`, screenshots, dialogText }
+}
+
+/** Leg 7. Uninstall keeps the app's data; Force uninstall does not.
+ *
+ *  Both arms are here because either alone is a false green: a check that only shows
+ *  preservation cannot tell a working preserve from a broken wipe, and a read-back whose
+ *  answer does not depend on the data would satisfy the first arm while failing the second.
+ *  That is the vacuity floor — the force arm is what keeps the preserve arm meaning
+ *  something. */
+async function uninstallPreservesData({ page, base, api, appName, displayName, source, shot, contributed }) {
+  const screenshots = []
+  const details = {}
+
+  const readBack = pickReadBackTool(contributed)
+  if (!readBack) {
+    const inventory = contributed.map((t) => t.name).join(', ') || 'it contributes no tools at all'
+    return {
+      skip: `no argument-free read tool to read this app's data back through the registry (${inventory}) — `
+        + 'checking the filesystem instead would prove a file exists, not that the provider still answers',
+      screenshots, details,
+    }
+  }
+  details.readBackTool = `${readBack.provider}::${readBack.name}`
+
+  // Give the leg something to preserve, through the app's OWN write tool when it has one.
+  // Best-effort: when it has none, the leg falls back to whatever `tool-invoke` left behind
+  // and SKIPs (never passes) if that turns out to be nothing.
+  const writeTool = pickWriteTool(contributed, readBack)
+  details.writeTool = writeTool ? `${writeTool.provider}::${writeTool.name}` : null
+  if (writeTool) {
+    const wrote = await runToolFromUi({ page, base, tool: writeTool, shot })
+    details.writeStatus = wrote.status
+    screenshots.push(...wrote.screenshots)
+  }
+
+  // Which of the three data states is this? `present` and `entries` are separate facts and
+  // the leg reports which one it saw — collapsing absent into empty is the bug one level up.
+  const before = await appDataFacts(api, appName)
+  details.dataStateBefore = before.state
+  details.dataEntriesBefore = before.entries
+  if (before.state !== APP_DATA.PRESENT) return { skip: before.reason, screenshots, details }
+
+  const pre = await runToolFromUi({ page, base, tool: readBack, shot })
+  screenshots.push(...pre.screenshots)
+  if (pre.status !== 'ok' || !pre.output.trim()) {
+    return {
+      skip: `the read-back tool ${readBack.name} produced no baseline before the removal `
+        + `(${pre.status}: ${pre.output.slice(0, 200) || 'empty output'}), so "the data came back" has nothing to be compared against`,
+      screenshots, details,
+    }
+  }
+  details.readBackBefore = pre.output.slice(0, 800)
+
+  // ── arm 1: Uninstall — files go, data/ stays ──────────────────────────────
+  const removed = await clickRemovalInLibrary({ page, base, api, appName, displayName, shot, rung: 'keep-data' })
+  screenshots.push(...removed.screenshots)
+  details.keepDataDialog = removed.dialogText ?? ''
+  if (!removed.ok) return { reason: removed.reason, screenshots, details }
+
+  // GONE from the Library, not merely switched off — that difference is the whole reason
+  // `reactivate` could never stand in for this leg.
+  await gotoRoute(page, base, '/apps?view=library')
+  await page.waitForTimeout(900)
+  const stillCarded = await cardFor(page, displayName).count()
+  screenshots.push(await shot('keep-data-library-after'))
+  if (stillCarded) {
+    return {
+      reason: 'the app still has a Library card after Uninstall, so its files never left disk — '
+        + "that is Deactivate wearing Uninstall's name",
+      screenshots, details,
+    }
+  }
+
+  const back = await reinstall({ page, api, appName, source })
+  details.reinstalledAfterKeepData = back.ok
+  if (!back.ok) {
+    return { reason: `reinstalling from the same source after Uninstall failed (${back.reason}), so preservation could not be checked`, screenshots, details }
+  }
+  const resolved = await waitForToolInRegistry(api, page, readBack, 40)
+  details.readBackToolResolvedAgain = resolved
+  if (!resolved) {
+    return {
+      reason: `after reinstall the gateway's tool registry does not publish ${details.readBackTool} again, `
+        + 'so the provider did not come back — the data question cannot even be asked',
+      screenshots, details,
+    }
+  }
+  const post = await runToolFromUi({ page, base, tool: readBack, shot })
+  screenshots.push(...post.screenshots)
+  details.readBackAfterKeepData = post.output.slice(0, 800)
+  const afterKeep = await appDataFacts(api, appName)
+  details.dataStateAfterKeepData = afterKeep.state
+  details.dataEntriesAfterKeepData = afterKeep.entries
+  if (post.status !== 'ok') {
+    return { reason: `the read-back tool ${readBack.name} no longer runs after reinstall (${post.status}: ${post.output.slice(0, 240)})`, screenshots, details }
+  }
+  if (!post.output.includes(pre.output)) {
+    return {
+      reason: 'Uninstall promises to keep this app\'s data, but the app\'s OWN read-back tool answers '
+        + `differently after reinstalling from the same source. Before: ${pre.output.slice(0, 240)} — `
+        + `after: ${post.output.slice(0, 240) || '(empty)'}. Note what the data facts said: `
+        + `${details.dataStateAfterKeepData} / ${details.dataEntriesAfterKeepData} entries — a directory `
+        + 'coming back is not the same fact as the data being readable',
+      screenshots, details,
+    }
+  }
+
+  // ── arm 2: Force uninstall — everything goes, data included ───────────────
+  // Without this arm the leg could pass on an app whose read-back answer does not depend on
+  // its data at all, which is exactly the "green with no signal" shape it exists to end.
+  const forced = await clickRemovalInLibrary({ page, base, api, appName, displayName, shot, rung: 'force' })
+  screenshots.push(...forced.screenshots)
+  details.forceDialog = forced.dialogText ?? ''
+  if (!forced.ok) return { reason: `the negative arm could not run: ${forced.reason}`, screenshots, details }
+
+  const back2 = await reinstall({ page, api, appName, source })
+  details.reinstalledAfterForce = back2.ok
+  if (!back2.ok) {
+    return { reason: `reinstalling after Force uninstall failed (${back2.reason}), so the negative arm is unproven`, screenshots, details }
+  }
+  const resolvedAgain = await waitForToolInRegistry(api, page, readBack, 40)
+  if (!resolvedAgain) {
+    return { reason: `after the force-uninstall reinstall, ${details.readBackTool} is not in the tool registry`, screenshots, details }
+  }
+  const postForce = await runToolFromUi({ page, base, tool: readBack, shot })
+  screenshots.push(...postForce.screenshots)
+  details.readBackAfterForce = postForce.output.slice(0, 800)
+  const afterForce = await appDataFacts(api, appName)
+  details.dataStateAfterForce = afterForce.state
+  details.dataEntriesAfterForce = afterForce.entries
+  if (postForce.status === 'ok' && postForce.output.includes(pre.output)) {
+    return {
+      reason: 'Force uninstall states it removes everything the app stored, but after reinstalling '
+        + `the app's own read-back tool still answers with the same data (${postForce.output.slice(0, 240)}). `
+        + 'Either the force rung did not wipe it, or this read-back does not depend on the data — '
+        + 'and in that second case the preserve arm above proved nothing either',
+      screenshots, details,
+    }
+  }
   return { ok: true, screenshots, details }
 }
 

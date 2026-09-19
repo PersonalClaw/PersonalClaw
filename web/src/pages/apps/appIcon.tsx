@@ -38,13 +38,53 @@ export function AppIcon({ name, size = 18 }: { name?: string; size?: number }) {
   return <Icon size={size} />
 }
 
+/** lowercase name → the one export it names, icons only.
+ *
+ *  Built once, lazily, and consulted only after an exact-name miss. It exists because the
+ *  manifest contract and this resolver disagreed in a way nobody could see: `manifest.py` accepts
+ *  any identifier as an icon, and a shipped first-party app (`meta-muse-spark`) declares
+ *  `"brain"` — not an export, so it rendered the generic Blocks glyph instead of the brain its
+ *  author asked for, with no error anywhere. A case-fold is a deterministic lookup rather than a
+ *  guess: lucide's names are unique, and an ambiguous fold (two exports differing only in case)
+ *  is dropped instead of chosen between. */
+let _folded: Map<string, LucideIcon> | null = null
+function foldedIndex(): Map<string, LucideIcon> {
+  if (_folded) return _folded
+  const conflicted = new Set<string>()
+  const out = new Map<string, LucideIcon>()
+  for (const [key, value] of Object.entries(Lucide as unknown as Record<string, unknown>)) {
+    if (!LUCIDE_ICON_COMPONENTS.has(value)) continue
+    const lower = key.toLowerCase()
+    if (conflicted.has(lower)) continue
+    const held = out.get(lower)
+    // 🪤 A NAME COLLISION IS NOT A CONFLICT. lucide ships spellings that differ only in case —
+    // `Grid2x2Check`/`Grid2X2Check`, `Grid3x3`/`Grid3X3`, `Move3d`/`Move3D`, `Rotate3d`, `Scale3d`
+    // — and in every such pair today BOTH names export the SAME component object. Dropping on the
+    // collision alone (the obvious `seen`-set version) therefore refused 7 names it had nothing to
+    // choose between, so `grid3x3` fell back to the generic glyph while `Grid3x3` worked. Compare
+    // the VALUES: identical is a no-op, genuinely different is the ambiguity worth refusing.
+    if (held !== undefined && held !== value) {
+      out.delete(lower)
+      conflicted.add(lower)
+      continue
+    }
+    out.set(lower, value as LucideIcon)
+  }
+  _folded = out
+  return out
+}
+
 export function resolveAppIcon(name?: string): LucideIcon {
   if (!name || !/^[A-Za-z]/.test(name)) return Blocks
-  const candidate = (Lucide as unknown as Record<string, unknown>)[name]
+  const exact = (Lucide as unknown as Record<string, unknown>)[name]
   // Identity, not shape and not name — see LUCIDE_ICON_COMPONENTS. A manifest value that is not
   // one of lucide's own icon components falls back, so no app can put a non-component into a React
   // element. This resolver is the only door, and the sidebar nav renders through it: an invalid
   // element type there throws during the app SHELL's render, so the blast radius of one bad
   // manifest word was the whole dashboard rather than that app's own card.
-  return LUCIDE_ICON_COMPONENTS.has(candidate) ? (candidate as LucideIcon) : Blocks
+  if (LUCIDE_ICON_COMPONENTS.has(exact)) return exact as LucideIcon
+  // Either no export under that spelling, or an export that is not an icon. Both fall through to
+  // the case fold, which is built from the SAME identity predicate — so none of the non-icons can
+  // re-enter by spelling.
+  return foldedIndex().get(name.toLowerCase()) ?? Blocks
 }

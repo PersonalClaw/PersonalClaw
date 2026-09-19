@@ -1124,3 +1124,83 @@ def test_a_broken_registry_still_delivers_to_the_dashboard(native_state, monkeyp
     state.notify("error", "Loop stalled", "needs an answer")
     assert len(sent) == 1
     assert "native" not in sent[0]
+
+
+# ── quiet hours over an attention kind (issue #341, bug B) ───────────────
+
+
+@pytest.fixture()
+def quiet_state(home, tmp_path, monkeypatch):
+    """A `notify()` path inside quiet hours, with the window forced rather than clocked.
+
+    The window MATH is already covered in `test_entity_settings_routes.py`; forcing it keeps this
+    test about what `notify()` does with the verdict, and off the wall clock — a test that only
+    reproduces between 22:00 and 08:00 is not a rail.
+    """
+    from personalclaw.providers import entity_routes as er
+    from tests.chat_test_helpers import _make_state
+
+    (tmp_path / "entity_settings" / "notifications.json").write_text(
+        json.dumps(
+            {"quiet_hours_enabled": True, "quiet_hours_start": "22:00", "quiet_hours_end": "08:00"}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(er, "_in_quiet_window", lambda *_a, **_k: True)
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    sent: list[dict] = []
+    monkeypatch.setattr(state, "_broadcast", sent.append)
+    return state, sent
+
+
+def test_quiet_hours_records_an_attention_kind_as_a_badge(quiet_state):
+    """It used to leave NO record: `notify()` returned before the note was even built.
+
+    So "a loop needs your input", raised overnight, was not logged, not persisted and not
+    broadcast — while the durable inbox row still counted toward the badge, which is precisely what
+    made the gap invisible. The whole point is the audit trail, so this asserts on the persisted
+    log, not on a return value.
+    """
+    state, sent = quiet_state
+    state.notify("needs_input", "Loop needs your input", "refactor-auth")
+
+    assert len(state._notification_log) == 1, "the note was dropped, not recorded"
+    note = state._notification_log[-1]
+    assert note["kind"] == "needs_input"
+    assert note["mode"] == "badge", "quiet hours must not let it interrupt"
+    assert note["badge_only"] is True
+    assert sent == [], "a badge does not broadcast — that is what keeps quiet hours quiet"
+
+
+def test_quiet_hours_still_drops_a_non_attention_kind(quiet_state):
+    """🪤 THE VACUITY LEG. Same window, same code path, a kind of the same severity.
+
+    Without it, the test above would pass against a gate that had simply stopped suppressing
+    anything. The carve-out is "this persists a row somebody must answer", not "warning".
+    """
+    state, sent = quiet_state
+    state.notify("warning", "Disk filling", "78% used")
+    assert state._notification_log == []
+    assert sent == []
+
+
+def test_quiet_hours_lets_an_error_through_untouched(quiet_state):
+    """SEV_ERROR rode through quiet hours before and still does, as an `immediate`."""
+    state, sent = quiet_state
+    state.notify("error", "Loop failed", "refactor-auth")
+    assert state._notification_log[-1]["mode"] == "immediate"
+    assert len(sent) == 1
+
+
+def test_quiet_hours_does_not_resurrect_a_never_rule(home, quiet_state):
+    """`never` is the user's own instruction and outranks the downgrade.
+
+    The posture only ever makes delivery quieter, so a kind the user muted must stay muted — a
+    "record it anyway" that resurrected a `never` would be the policy layer overriding the person.
+    """
+    state, sent = quiet_state
+    _write_rules(home, {"rules": {"loop/needs_input": {"mode": "never"}}})
+    state.notify("needs_input", "Loop needs your input", "refactor-auth")
+    assert state._notification_log == []
+    assert sent == []

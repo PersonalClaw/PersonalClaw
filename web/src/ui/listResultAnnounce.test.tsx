@@ -372,7 +372,6 @@ describe('the hand-laid bars reach the same idiom', () => {
   const DIRECT: [string, string, RegExp][] = [
     // file, noun, the `active` expression that must be the surface's OWN definition of narrowed
     ['pages/tasks/TasksListPage.tsx', 'tasks', /active=\{query\.trim\(\)\.length > 0\}/],
-    ['pages/artifacts/ArtifactsSection.tsx', 'artifacts', /active=\{!!\(q\.trim\(\) \|\| kind \|\| src \|\| col\)\}/],
     ['pages/files/FilesSection.tsx', 'matches', /active=\{showResults\}/],
     // The settings area's hand-laid bars. Each `active` is that panel's own narrowed flag, and each
     // count comes from the array its own body renders.
@@ -388,6 +387,18 @@ describe('the hand-laid bars reach the same idiom', () => {
       /active=\{!!query\.trim\(\) && !searching && searchResults !== null\}/],
     ['pages/settings/OllamaModelManager.tsx', 'models',
       /active=\{!!q\.trim\(\) && !searching && results !== null\}/],
+    // Artifacts joined this group when its text search moved server-side (#292/#421): the exact
+    // filters still narrow client-side, so `active` is the union of both with the in-flight query
+    // gated out. 🪤 The gate must live on `active` and NOT be an unmount of the tag, and this
+    // table cannot tell the difference — `{!pending && <ResultAnnouncement …/>}` still matches
+    // the tag regex and still satisfies "renders it". It matters because
+    // `ResultAnnouncement` keeps its aria-live node mounted and only blanks the TEXT, so a
+    // gate announces while an unmount re-inserts a live region with its content already
+    // present, which screen readers do not reliably read out. The live region's presence
+    // DURING the fetch is therefore pinned where it is observable rather than greppable:
+    // `pages/artifacts/artifactBodySearch.test.tsx`.
+    ['pages/artifacts/ArtifactsSection.tsx', 'artifacts',
+      /active=\{!!\(q\.trim\(\) \|\| kind \|\| src \|\| col\) && !searchPending\}/],
     ['pages/settings/SettingsHome.tsx', 'settings', /active=\{q !== ''\}/],
   ]
 

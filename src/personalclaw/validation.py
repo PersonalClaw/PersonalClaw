@@ -725,6 +725,11 @@ WORKFLOW_FORK_SCHEMA = ToolSchema(
     ],
 )
 
+WORKFLOW_START_DRAFT_SCHEMA = ToolSchema(
+    tool_name="workflow_start_draft",
+    fields=[FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE)],
+)
+
 WORKFLOW_PAUSE_SCHEMA = ToolSchema(
     tool_name="workflow_pause",
     fields=[FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE)],
@@ -775,6 +780,7 @@ MCP_WORKFLOW_SCHEMAS: dict[str, ToolSchema] = {
     "workflow_rewind": WORKFLOW_REWIND_SCHEMA,
     "workflow_run_from": WORKFLOW_RUN_FROM_SCHEMA,
     "workflow_fork": WORKFLOW_FORK_SCHEMA,
+    "workflow_start_draft": WORKFLOW_START_DRAFT_SCHEMA,
     "workflow_pause": WORKFLOW_PAUSE_SCHEMA,
     "workflow_cancel": WORKFLOW_CANCEL_SCHEMA,
     "workflow_resume": WORKFLOW_RESUME_SCHEMA,

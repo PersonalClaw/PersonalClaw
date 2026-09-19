@@ -82,7 +82,7 @@ export function ListControls({
  *  "matches" composes "No matching matches", "1 matche" — override `empty`/`singular` rather than
  *  announcing a different word.
  */
-export function ResultAnnouncement({ count, noun, active, singular, empty }: {
+export function ResultAnnouncement({ count, noun, active, singular, empty, partial }: {
   /** How many rows the current search/filter leaves. */
   count: number
   /** Plural noun for the rows ("tasks", "artifacts", "matches") — singularised at count 1. */
@@ -93,13 +93,18 @@ export function ResultAnnouncement({ count, noun, active, singular, empty }: {
   singular?: string
   /** Zero-count sentence, when `No matching ${noun}` reads badly ("No matching matches"). */
   empty?: string
+  /** The count is a CAP, not the answer — the search stopped early. Announces "first 500 matches",
+   *  the same word `ui/MoreRow`'s `PartialCount` paints on screen, because the noun rule above
+   *  applies to the caveat too: the files search said "first 500 matches" visually while announcing
+   *  a flat "500 matches", which is the same lie in the channel nobody was looking at. */
+  partial?: boolean
 }) {
   return (
     <div role="status" aria-live="polite" className="sr-only">
       {active
         ? (count === 0
             ? empty ?? `No matching ${noun}`
-            : `${count} ${count === 1 ? singular ?? noun.replace(/s$/, '') : noun}`)
+            : `${partial ? 'first ' : ''}${count} ${count === 1 ? singular ?? noun.replace(/s$/, '') : noun}`)
         : ''}
     </div>
   )

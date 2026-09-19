@@ -90,6 +90,94 @@ describe('standard-field scale', () => {
     expect(classOf(plain)).not.toContain('pl-9')
   })
 
+  it('TextInput trailingSlot adds the canonical right inset and keeps the slot interactive', () => {
+    const { container } = render(
+      <TextInput value="" onChange={() => {}} trailingSlot={<button data-testid="eye">x</button>} />,
+    )
+    const input = container.querySelector('input')
+    // pr-10 clears the trailing control; pl-m keeps the canonical left pad — and px-m
+    // must NOT also emit (that padding-inline would fight pl-m/pr-10).
+    expectTokens(input, ['pl-m', 'pr-10'])
+    expect(classOf(input)).not.toContain('px-m')
+    expect(classOf(input)).not.toContain('pr-m')
+    const slot = container.querySelector<HTMLElement>('span.absolute')
+    expectTokens(slot, ['right-1.5'])
+    // Unlike leadingIcon this holds a REAL control, so it must stay clickable: a
+    // pointer-events-none here would make the show/hide-secret eye undismissable by mouse.
+    expect(classOf(slot)).not.toContain('pointer-events-none')
+    expect(slot?.querySelector('[data-testid="eye"]')).not.toBeNull()
+  })
+
+  it('TextInput composes both affordances without a padding-shorthand race', () => {
+    const input = render(
+      <TextInput value="" onChange={() => {}} leadingIcon={<svg />} trailingSlot={<button>x</button>} />,
+    ).container.querySelector('input')
+    expectTokens(input, ['pl-9', 'pr-10'])
+    for (const t of ['px-m', 'pl-m', 'pr-m']) expect(classOf(input)).not.toContain(t)
+  })
+
+  it('TextInput forwards the schema-declared bounds a raw field used to carry', () => {
+    // The provider form's numeric branch: min/max are meaningless unless they reach the DOM.
+    const num = render(
+      <TextInput value="30" onChange={() => {}} type="number" min={1} max={600} />,
+    ).container.querySelector('input') as HTMLInputElement
+    expect(num.type).toBe('number')
+    expect(num.min).toBe('1')
+    expect(num.max).toBe('600')
+    // minLength/pattern are the string half — maxLength already shipped.
+    const str = render(
+      <TextInput value="" onChange={() => {}} minLength={8} maxLength={40} pattern="^sk-" />,
+    ).container.querySelector('input') as HTMLInputElement
+    expect(str.minLength).toBe(8)
+    expect(str.maxLength).toBe(40)
+    expect(str.pattern).toBe('^sk-')
+  })
+
+  it('an explicit id binds a caller-owned visible label to each family member', () => {
+    // A form that publishes its OWN <label htmlFor> (the schema-driven provider form) could not
+    // bind to these controls while the id was internal — the visible caption named them for
+    // sighted users only. `id` must win over both `name` and the generated fallback.
+    const ti = render(
+      <TextInput value="" onChange={() => {}} id="f-text" name="other" />,
+    ).container.querySelector('input')
+    expect(ti?.id).toBe('f-text')
+    const sel = render(
+      <Select value="a" onChange={() => {}} id="f-sel" options={[{ value: 'a', label: 'A' }]} />,
+    ).container.querySelector('select')
+    expect(sel?.id).toBe('f-sel')
+    const ta = render(
+      <TextArea value="" onChange={() => {}} id="f-area" />,
+    ).container.querySelector('textarea')
+    expect(ta?.id).toBe('f-area')
+  })
+
+  it('TextArea surface steps swap only the fill token (the other fixed-fill outlier)', () => {
+    const container_ = render(<TextArea value="" onChange={() => {}} />).container.querySelector('textarea')
+    const high = render(<TextArea value="" onChange={() => {}} surface="high" />).container.querySelector('textarea')
+    // Default unchanged, so every prior TextArea call-site stays byte-identical.
+    expect(classOf(container_)).toContain('bg-surface-container')
+    expect(classOf(high)).toContain('bg-surface-high')
+    expect(classOf(high)).not.toContain('bg-surface-container')
+    // The mono branch still composes with the axis rather than replacing it.
+    const monoHigh = render(<TextArea value="" onChange={() => {}} surface="high" mono />).container.querySelector('textarea')
+    expectTokens(monoHigh, ['bg-surface-high', 'font-mono', 'resize-y', 'px-m'])
+    expect(monoHigh?.getAttribute('data-type')).toBe('body-s')
+  })
+
+  it('Select surface steps swap only the fill token (it was the family fixed-fill outlier)', () => {
+    const opts = [{ value: 'a', label: 'A' }]
+    const container_ = render(<Select value="a" onChange={() => {}} options={opts} />).container.querySelector('select')
+    const high = render(<Select value="a" onChange={() => {}} options={opts} surface="high" />).container.querySelector('select')
+    const base = render(<Select value="a" onChange={() => {}} options={opts} surface="base" />).container.querySelector('select')
+    // Default is unchanged, so every prior Select call-site stays byte-identical.
+    expect(classOf(container_)).toContain('bg-surface-container')
+    expect(classOf(high)).toContain('bg-surface-high')
+    expect(classOf(high)).not.toContain('bg-surface-container')
+    expect(classOf(base)).toContain('bg-surface')
+    // The rest of the chrome is invariant across the axis.
+    for (const el of [container_, high, base]) expectTokens(el, ['appearance-none', 'rounded-md', 'pl-m', 'pr-8'])
+  })
+
   it('TextInput ariaLabel survives a name (a name is not an accessible name)', () => {
     // The autofill-suppressed picker (DependencyEditor) passes BOTH a random name
     // and an explicit ariaLabel; the name must never suppress the label, or the

@@ -121,7 +121,10 @@ describe('a destructive confirm explains the consequence', () => {
     // Pinned, because three drafts of this sweep wanted to add "cannot be undone" to these and would
     // have been wrong: a dismissed inbox item can be restored, and a cancelled run keeps its work.
     const inbox = readFileSync(join(SRC, 'pages', 'inbox', 'InboxPage.tsx'), 'utf8')
-    expect(inbox, 'dismiss-all already names its count').toMatch(/Dismiss all \$\{n\} pending item/)
+    // "open item", not "pending item": the sweep is `open_items()` (pending OR seen), and sizing this
+    // dialog from the PENDING-only count understated it by every row the user had already read —
+    // measured, the confirm said 33 and the endpoint answered `{"dismissed": 37}` (issue 493).
+    expect(inbox, 'dismiss-all already names its count').toMatch(/Dismiss all \$\{n\} open item/)
     expect(inbox).not.toMatch(/Dismiss all[\s\S]{0,200}cannot be undone/)
     const run = readFileSync(join(SRC, 'pages', 'workflows', 'WorkflowRunDetail.tsx'), 'utf8')
     expect(run, 'cancel says what survives instead').toContain('Completed work is kept.')

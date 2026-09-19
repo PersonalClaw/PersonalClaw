@@ -43,6 +43,11 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   /** The library read's rejection. Distinct from `artifacts.length === 0`, which a failure and an
    *  empty library both produce — the whole defect this replaces. */
   const [loadErr, setLoadErr] = useState<unknown>(null)
+  // The base library stays the cheap metadata-only read. Searching is a separate, debounced
+  // server query because cards show body excerpts that the base rows deliberately omit.
+  const [searchResult, setSearchResult] = useState<{ q: string; artifacts: Artifact[] } | null>(null)
+  const [searchErr, setSearchErr] = useState<{ q: string; error: unknown } | null>(null)
+  const [searchAttempt, setSearchAttempt] = useState(0)
 
   // URL-backed toolbar state (replace — in-place refinements, not navigations).
   const [q, setQ] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
@@ -68,6 +73,39 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+
+  const searchQuery = q.trim()
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResult(null)
+      setSearchErr(null)
+      return
+    }
+    let alive = true
+    const timer = window.setTimeout(() => {
+      api.artifacts({ q: searchQuery })
+        .then((rows) => {
+          if (!alive) return
+          setSearchResult({ q: searchQuery, artifacts: rows })
+          setSearchErr(null)
+        })
+        .catch((error) => {
+          if (!alive) return
+          setSearchResult(null)
+          setSearchErr({ q: searchQuery, error })
+        })
+    }, 200)
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [searchQuery, searchAttempt, artifacts])
+
+  const currentSearch = searchResult?.q === searchQuery ? searchResult : null
+  const currentSearchErr = searchErr?.q === searchQuery ? searchErr.error : null
+  const searchPending = !!searchQuery && !currentSearch && !currentSearchErr
+  const retrySearch = () => {
+    setSearchResult(null)
+    setSearchErr(null)
+    setSearchAttempt((n) => n + 1)
+  }
 
   // Collections present in the library (derived; free-form labels).
   const collections = useMemo(() => {
@@ -112,24 +150,21 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     return list
   }, [artifacts, collections, src, col, sort, setSrc, setCol, setSort])
 
-  // Client-side filter + sort over the (content-free) list.
+  // Exact filters + sort stay client-side over the server's q-matched rows. This gives the
+  // URL one search meaning everywhere: name, description, tags, collection, or card body.
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    let out = artifacts.filter((a) => {
+    const base = searchQuery ? (currentSearch?.artifacts ?? []) : artifacts
+    let out = base.filter((a) => {
       if (kind && a.kind !== kind) return false
       if (src && a.source !== src) return false
       if (col && a.collection !== col) return false
-      if (needle) {
-        const hay = `${a.name}\n${a.description}\n${a.tags.join(' ')}\n${a.collection ?? ''}`.toLowerCase()
-        if (!hay.includes(needle)) return false
-      }
       return true
     })
     if (sort === 'name') out = [...out].sort((a, b) => a.name.localeCompare(b.name))
     else if (sort === 'kind') out = [...out].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
     // 'updated' keeps the server order (newest first).
     return out
-  }, [artifacts, q, kind, src, col, sort])
+  }, [artifacts, currentSearch, searchQuery, kind, src, col, sort])
 
   const open = (a: Artifact) => navigate(`artifacts/${a.slug}`)
   const back = () => { setVParam(''); setIterate(''); navigate('artifacts') }
@@ -137,11 +172,17 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   // "Source file" on a file-backed artifact opens it in the Files page (its home).
   const openSourceFile = useCallback((path: string) => {
     const dir = path.replace(/\/[^/]*$/, '')
-    navigate(`files?dir=${encodeURIComponent(dir)}`)
+    const params = new URLSearchParams()
+    if (dir && dir !== path) params.set('dir', dir)
+    params.set('file', path)
+    navigate(`files?${params.toString()}`)
   }, [navigate])
 
   // Assign/clear a collection from the detail header (persists via PATCH).
-  const active = slug ? artifacts.find((a) => a.slug === slug) : undefined
+  const active = slug
+    ? artifacts.find((a) => a.slug === slug)
+      ?? currentSearch?.artifacts.find((a) => a.slug === slug)
+    : undefined
   const assignCollection = async () => {
     if (!slug) return
     const name = await promptInput({
@@ -242,23 +283,37 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
             <div className="ml-auto"><DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} /></div>
             {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
                 already uses it to tell an empty library from a filtered-to-nothing one, so the
-                announcement rides the same flag rather than inventing a second rule. */}
-            <ResultAnnouncement count={filtered.length} noun="artifacts" active={!!(q.trim() || kind || src || col)} />
+                announcement rides the same flag rather than inventing a second rule.
+                🪤 `&& !searchPending` rather than unmounting the tag while the query is in
+                flight: text search is now a REMOTE read, and an un-gated `active` would
+                announce the PREVIOUS query's count as though it answered this one. Gating
+                `active` is how the other two remote searches (Local/Ollama model managers)
+                do it, and it matters more than it looks — `ResultAnnouncement` renders its
+                live region unconditionally and only blanks the TEXT, so the region stays in
+                the DOM across the fetch. Unmounting it instead would re-insert an
+                aria-live node with its content already present, which screen readers do not
+                reliably announce; the count would land silently on exactly the path this
+                change adds. */}
+            <ResultAnnouncement count={filtered.length} noun="artifacts"
+              active={!!(q.trim() || kind || src || col) && !searchPending} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {loadErr && artifacts.length === 0
+            {loadErr && artifacts.length === 0 && !currentSearch
               ? <LoadError what="artifacts" error={loadErr} onRetry={load} />
               : loading && artifacts.length === 0
               ? <Loading what="artifacts" />
+              : currentSearchErr
+              ? <LoadError what="artifact search" error={currentSearchErr} onRetry={retrySearch} />
+              : searchPending
+              ? <Loading what="matching artifacts" />
               // `narrowed` lets the grid distinguish an empty library from a filtered-to-nothing
               // one — it only ever sees the post-filter list.
               : <ArtifactGrid artifacts={filtered} onOpen={open}
                   onBrowseFiles={() => navigate('files')}
-                  narrowed={!!(q.trim() || kind || src || col)} />}
+                  narrowed={!!(searchQuery || kind || src || col)} />}
           </div>
         </div>
       )}
     </div>
   )
 }
-

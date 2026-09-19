@@ -291,12 +291,6 @@
     "type": "bool"
   },
   {
-    "default": {},
-    "path": "dashboard.dashboard_layout",
-    "sensitive": false,
-    "type": "dict"
-  },
-  {
     "default": false,
     "path": "dashboard.document_editing",
     "sensitive": false,
@@ -819,12 +813,6 @@
     "path": "knowledge.embed_retry_budget",
     "sensitive": false,
     "type": "int"
-  },
-  {
-    "default": true,
-    "path": "knowledge.idempotent_persist",
-    "sensitive": false,
-    "type": "bool"
   },
   {
     "default": 12,
@@ -1828,12 +1816,6 @@
   {
     "default": 4,
     "path": "workflows.max_concurrent_llm_nodes",
-    "sensitive": false,
-    "type": "int"
-  },
-  {
-    "default": 6,
-    "path": "workflows.max_concurrent_nodes",
     "sensitive": false,
     "type": "int"
   },

@@ -32,14 +32,23 @@ describe('a rejected settings save names the control', () => {
   it('every shared row hands the label to the patch it fires', () => {
     expect(UI, 'the toggle must pass its label').toContain('patch(field, v as never, flash, label)')
     expect(UI, 'the number field must too').toContain('patch(field, n as never, flash, label)')
-    // THREE rows now, not two: `StrListField` joined the family when External Access needed a
-    // str_list control and the copy in `AgentDefaultsPanel` moved here rather than being duplicated.
-    // Named individually rather than just bumping the count — a count alone would go green again if
-    // a fourth row arrived without the argument and a third one lost it.
+    // SIX rows now. `StrListField` joined when External Access needed a str_list control; `SegRow`,
+    // `SelectRow` and `TextRow` joined when the nine control-less config sections (#752, #2801) put
+    // enum and free-text keys on screen for the first time — the family now maps one-to-one onto
+    // `_EDITABLE_CONFIG`'s value types. Named individually rather than just bumping a count — a
+    // count alone would go green again if a seventh row arrived without the argument and one of
+    // these lost it. (`SegRow`/`SelectRow` commit through the same `v as never` line the toggle
+    // does, which is why they add no new string here.)
     expect(UI, 'the string list must too').toContain('patch(field, next as never, flash, label)')
-    // The contract has to admit it, or a panel cannot receive it.
+    expect(UI, 'the text row must too').toContain('patch(field, draft as never, flash, label)')
+    // The contract has to admit it, or a panel cannot receive it. DERIVED from the rows themselves,
+    // not pinned: a SEVENTH shared row declaring a 3-argument `patch` reds here on arrival instead
+    // of waiting for someone to notice the count is stale.
+    const rows = [...UI.matchAll(/export function (\w+)(?:<[^>]*>)?\(\{[^}]*\bpatch\b/g)].map((m) => m[1])
+    expect(rows.length, 'the shared-row matcher must find the rows').toBeGreaterThanOrEqual(6)
     const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string\) => void/g)]
-    expect(sigs.length, 'all three row prop types carry the 4th argument').toBe(3)
+    expect(sigs.length, `every shared row carries the 4th argument (rows: ${rows.join(', ')})`)
+      .toBe(rows.length)
   })
 
   it('NO save failure names a config key or path — the ratchet', () => {
@@ -123,7 +132,9 @@ describe('a rejected settings save names the control', () => {
 
   it('the two panels with their OWN rows forward the label through every commit', () => {
     // Counted, because "some sites forward it" is how four toasts stayed broken.
-    for (const [f, expected] of [['ChatPanel.tsx', 9], ['DurabilityPanel.tsx', 3]] as const) {
+    // ChatPanel moved 9 → 10 with the background-compression idle window (`tools.bg_compress_*`,
+    // one of the nine control-less sections), which forwards the label like its nine siblings.
+    for (const [f, expected] of [['ChatPanel.tsx', 10], ['DurabilityPanel.tsx', 3]] as const) {
       const src = readFileSync(join(SETTINGS, f), 'utf8')
       const commits = [...src.matchAll(/onCommit=\{\(/g)].length
       const forwarding = [...src.matchAll(/onCommit=\{\(\w+, l\) => patch\([^)]*undefined, l\)\}/g)].length

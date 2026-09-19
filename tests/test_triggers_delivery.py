@@ -198,6 +198,75 @@ def test_both_kinds_are_registered_names():
         assert hasattr(notification_kinds, kind.upper())
 
 
+# ── a SCHEDULED job's outcome reaches the cron rows (issue #415) ──
+
+
+def test_a_scheduled_job_uses_the_cron_kinds():
+    """The two `cron/*` rules rows had no emitter at all after the ScheduleService removal.
+
+    So "Scheduled job failed → Notify" was a control nothing could trigger, and the failure it
+    wanted landed on `system/error` — a row the user never configured, and one they cannot quieten
+    without also quietening every other error. Asserted on the resolved PAIR, not just the wire
+    string, because the pair is what the rules engine keys on and what the matrix draws a row for.
+    """
+    assert _ok(scheduled=True).kind == notification_kinds.CRON
+    assert _ok(ok=False, scheduled=True).kind == notification_kinds.CRON_FAILED
+    assert notification_kinds.kind_for_legacy(_ok(scheduled=True).kind).key == "cron/result"
+    assert (
+        notification_kinds.kind_for_legacy(_ok(ok=False, scheduled=True).kind).key == "cron/failed"
+    )
+
+
+def test_a_scheduled_FAILURE_keeps_the_severity_it_has_today():
+    """The severity half of #415, which the report calls a silently inverted contract.
+
+    Routing scheduled failures through `system/error` made them survive a raised `min_severity` —
+    the opposite of what the registry comment had deliberately arranged, and it happened as a side
+    effect rather than a decision. Restoring the kind must not undo that by accident: `cron/failed`
+    carries SEV_ERROR so today's delivery is what continues to happen, now under a row the user can
+    actually configure. `cron/result` stays info — a successful job is not an alert.
+    """
+    failed = notification_kinds.kind_for_legacy(_ok(ok=False, scheduled=True).kind)
+    result = notification_kinds.kind_for_legacy(_ok(scheduled=True).kind)
+    assert failed.default_severity == notification_kinds.SEV_ERROR
+    assert result.default_severity == notification_kinds.SEV_INFO
+    # Unchanged from the generic kind it replaces, which is the argument for shipping it.
+    assert (
+        notification_kinds.kind_for_legacy(notification_kinds.ERROR).default_severity
+        == failed.default_severity
+    )
+
+
+def test_is_scheduled_is_the_one_definition_of_a_scheduled_job():
+    """One predicate, so a test can derive the kind an outcome will carry instead of assuming one.
+
+    It was inlined at the gateway call site, and `test_resilience_remediation_trigger` had
+    independently hardcoded "a remediation run notifies as `info`" — two copies of the same fact,
+    which is how the `cron` rows stayed unnoticed. A clock trigger is a scheduled job whatever its
+    `spec.kind`; every other trigger kind is not.
+    """
+    from types import SimpleNamespace
+
+    for clock_kind in ("cron", "at", "interval", "sequence", "adaptive"):
+        assert D.is_scheduled(SimpleNamespace(kind="clock", spec={"kind": clock_kind})) is True
+    for other in ("webhook", "event", "file", "web_watch", "", None):
+        assert D.is_scheduled(SimpleNamespace(kind=other)) is False
+    assert D.is_scheduled(SimpleNamespace()) is False  # no `kind` at all
+
+
+def test_a_NON_scheduled_trigger_is_not_labelled_a_scheduled_job():
+    """🪤 THE VACUITY LEG, and the reason this is a flag rather than a one-line swap.
+
+    This substrate carries every trigger kind — webhook, event, file, web_watch — so emitting
+    `cron/*` unconditionally (which is what the report's own suggested fix does) would label a
+    webhook's outcome "Scheduled job result" in the feed and route it through the scheduled-job
+    rule. The default is off, so only a caller that has looked at the trigger can opt in.
+    """
+    assert _ok().kind == notification_kinds.INFO
+    assert _ok(ok=False).kind == notification_kinds.ERROR
+    assert _ok(scheduled=False).kind == notification_kinds.INFO
+
+
 # ── destination-aware formatting ──
 
 

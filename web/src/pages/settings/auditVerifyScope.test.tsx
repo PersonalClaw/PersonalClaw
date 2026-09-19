@@ -130,3 +130,88 @@ describe('the panel says what was left out, and where the whole check lives', ()
       .toMatch(/personalclaw security verify/)
   })
 })
+
+// ── A check that never ran is not a verdict ────────────────────────────────────────────────────
+//
+// The same defect as the windowed "Chain intact", pointing the other way. `runVerify` used to
+// answer a rejected fetch by BUILDING a result — `{ ok: false, checked: 0, error: 'verify failed' }`
+// — and feeding it to the verdict renderer. Measured against the shapes at the top of this file:
+//
+//   network failure  →  "Chain broken — ? of all 0 events altered (verify failed)."
+//
+// in the same danger red that two genuinely altered records get, from zero entries examined. #536
+// named this ("a network failure and real tampering paint the identical red 'Chain broken' state")
+// and it outlived the scope fix, because `SelVerify.error` gave the fabrication somewhere to live.
+// A verdict may be as narrow as its evidence but never wider, and "nothing was read" is as narrow
+// as it gets — so it is a third state with a third variable, and the type can no longer hold it.
+describe('a failed check reports that it did not run, not that the chain is bad', () => {
+  beforeEach(() => { vi.clearAllMocks(); auditEvents.mockResolvedValue(page()) })
+
+  it('a rejected verify says nothing about the chain, and carries the real reason', async () => {
+    auditVerify.mockRejectedValue(new Error('gateway unreachable'))
+    render(<AuditPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Verify$/ }))
+    await waitFor(() => expect(screen.getByText(/Couldn't check the chain/)).toBeTruthy())
+
+    expect(screen.getByText(/gateway unreachable/), 'a 403 and an offline gateway are different problems').toBeTruthy()
+    expect(screen.getByText(/No entries were examined/)).toBeTruthy()
+    // THE ASSERTION. Neither verdict word may appear anywhere on the panel.
+    expect(screen.queryByText(/Chain broken/), 'a transport failure is not a tamper finding').toBeNull()
+    expect(screen.queryByText(/Chain intact/), 'and it is not a clean bill of health either').toBeNull()
+    // Not the windowed-pass disclosure either: there is no window to disclose when nothing was read.
+    expect(screen.queryByText(/Older entries were not checked/)).toBeNull()
+  })
+
+  it('a real verdict still renders — the failure branch is not the only branch', async () => {
+    // Vacuity floor for the pair above: a panel wired to always say "couldn't check" passes
+    // every assertion in the previous test.
+    auditVerify.mockResolvedValue({ ok: true, checked: 5000, valid: 5000, tampered: 0, windowed: true, window: 5000 })
+    render(<AuditPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Verify$/ }))
+    await waitFor(() => expect(screen.getByText(/the last 5,000 events verified/)).toBeTruthy())
+    expect(screen.queryByText(/Couldn't check the chain/)).toBeNull()
+  })
+
+  it('the panel never manufactures a result object', () => {
+    const src = strip(PANEL)
+    expect(src, 'no synthetic verdict in the catch').not.toMatch(/setVerify\(\{/)
+    expect(src, 'and the fabricated string is gone').not.toMatch(/verify failed/)
+  })
+})
+
+// ── The verdict type may not declare a field the handler cannot send ───────────────────────────
+//
+// `SelVerify` used to carry `broken_at` and `error`; the handler has never emitted either. #536
+// caught `broken_at` ("the failure message promises a location it can never have") and it was
+// removed, but `error` — the same shape — survived and became the hole the fabricated verdict
+// above fit through. Comparing the two files closes the class rather than the instance: a future
+// ghost field cannot be added to the type without either being emitted or failing here.
+describe('the payload type and the handler agree on the exact key set', () => {
+  const typeKeys = () => {
+    const body = readFileSync(join(process.cwd(), 'src/lib/api.ts'), 'utf8')
+      .match(/export interface SelVerify \{([\s\S]*?)\n\}/)![1]
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    return new Set([...body.matchAll(/(\w+)\??:/g)].map((m) => m[1]))
+  }
+  const handlerKeys = () => {
+    const fn = readFileSync(HANDLER, 'utf8').split('async def api_security_audit_verify')[1]
+    return new Set([...fn.matchAll(/^\s{12}"(\w+)":/gm)].map((m) => m[1]))
+  }
+
+  it('every declared field is one the handler emits, and vice versa', () => {
+    const declared = typeKeys()
+    const emitted = handlerKeys()
+    expect(emitted.size, 'the regex found the response body').toBe(6)
+    expect([...declared].sort()).toEqual([...emitted].sort())
+    expect(declared.has('error'), 'the client-fabricated field is gone').toBe(false)
+    expect(declared.has('broken_at'), 'and the one #536 named stays gone').toBe(false)
+  })
+
+  it('the bento tile reads only emitted fields, and has a third state for "did not run"', () => {
+    const w = strip(WIDGETS)
+    expect(w, 'useAudit swallows a failure to null — reading v.error was reading a ghost')
+      .not.toMatch(/v\.error/)
+    expect(w, 'and null must not render as a blank tile body under a security title')
+      .toMatch(/v === null/)
+  })
+})

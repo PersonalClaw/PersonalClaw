@@ -10,7 +10,9 @@ import { qget, useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { PageTitle } from '../../ui/PageTitle'
-import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
+import {
+  ScheduleForm, emptyDraft as emptySchedule, scheduleDraftInvalidReason, type ScheduleDraft,
+} from '../schedule/ScheduleForm'
 import { intervalToSecs, scheduleWhenMet } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
@@ -149,9 +151,17 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // A One-shot with an empty date-time would omit `at` and earn a bare "every, cron, or at
   // required" 400 — so the WHEN axis is a save requirement, named like the other four (issue 530).
   const scheduleWhenOk = kind !== 'schedule' || scheduleWhenMet(sched.kind, sched.at)
-  const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet && scheduleWhenOk
+  // A cron expression the server will refuse cannot be submitted (#687). `canSave` had NO cron term
+  // and `create()` posted `body.cron` regardless, so `'99 99 * * *'` round-tripped into a saved,
+  // enabled, never-armed automation. The same one-sided validator the field renders its message
+  // from, so the disabled button and the red field always agree — and it only ever refuses what
+  // croniter refuses, so it cannot strand a user on a working expression.
+  const scheduleReason = kind === 'schedule' ? scheduleDraftInvalidReason(sched) : null
+  const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet
+    && scheduleWhenOk && !scheduleReason
 
   async function create() {
+    if (scheduleReason) { setErr(scheduleReason); return }
     if (!canSave) { setErr('Fill in the trigger name, action, and any required action fields'); return }
     // `object`/`array` fields are edited as JSON text, so the form holds strings for them. Coerce
     // to the shapes the provider's schema declares BEFORE saving, and refuse visibly when the JSON
@@ -330,13 +340,17 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !canSave}
             disabledReason={saving ? undefined
               : !name.trim() ? 'Name the trigger first'
-                // The providers read comes FIRST among the provider-shaped reasons: telling someone to
-                // pick from a list that failed to load asks for something they cannot do.
-                : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
-                  : !provider ? 'Pick a provider'
-                    : !requiredConfigMet ? 'Complete the required settings'
-                      : !scheduleWhenOk ? 'Pick the date & time to fire once'
-                        : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
+                // Section 1 (TRIGGER) precedes section 2 (ACTION) on the page, so its unmet
+                // requirement is named first — and this reason is the field's own sentence, so the
+                // button and the red cron field never say two different things.
+                : scheduleReason ? scheduleReason
+                  // The providers read comes FIRST among the provider-shaped reasons: telling someone to
+                  // pick from a list that failed to load asks for something they cannot do.
+                  : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
+                    : !provider ? 'Pick a provider'
+                      : !requiredConfigMet ? 'Complete the required settings'
+                        : !scheduleWhenOk ? 'Pick the date & time to fire once'
+                          : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
         </div>
       </div>
     </div>

@@ -417,6 +417,13 @@ class TestTurnLevel:
         client = AsyncMock()
         client.context_usage_pct = MagicMock(return_value=10.0)
         client.supports_native_commands = False
+        # 🪤 BOTH axes have to be stated on an `AsyncMock`, because an unset attribute is an
+        # auto-created child mock — i.e. TRUTHY. The provider this test describes is the
+        # measured claude-code shape: an ACP backend with no command capability, whose
+        # compaction (when it has one) arrives as a status frame from out of process. Leaving
+        # `compacts_in_process` unset silently turned it into the native runtime's shape and
+        # routed `/compact` to `stream_command` (#470).
+        client.compacts_in_process = False
         provider = _FakeProvider(supports=False)
         client.stream = provider.stream
 

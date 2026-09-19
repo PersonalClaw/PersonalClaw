@@ -1515,15 +1515,6 @@ class DashboardConfig:
             "panel + per-provider Sign-in terminal); set enabled=false to hide.",
         ),
     )
-    dashboard_layout: dict = field(
-        default_factory=dict,
-        metadata=_meta(
-            "Dashboard Layout",
-            "The home dashboard's customized widget layout ({widgets:[{id,x,y,w,h,"
-            "hidden}], v}). Empty = the curated default layout. Persisted per-user "
-            "so the home follows the operator across browsers/machines.",
-        ),
-    )
 
 
 @dataclass
@@ -1745,18 +1736,17 @@ class KnowledgeConfig:
     what it wrote stays trusted. They are config rather than constants because the right
     answer depends on how the owner uses the store: a research-heavy user wants larger
     reports, and someone tracking fast-moving facts wants shorter default expiry.
+
+    Idempotent persist is NOT among them — it is an invariant, not a knob. It used to be
+    declared here as `idempotent_persist`, allowlisted for PATCH, and read by nothing
+    (#465). Its own help text named the reason it must not be switchable: content-derived
+    identity is what stops a retried, resumed or rewound node from writing a second
+    near-identical article "that later reads as independent corroboration". Off would
+    manufacture that corroboration, and `semantics.decide_write` is deliberately pure so a
+    resume cannot behave differently from a first run. So the behaviour stays unconditional
+    and the field is gone, rather than being wired into an off-switch for correctness.
     """
 
-    idempotent_persist: bool = field(
-        default=True,
-        metadata=_meta(
-            "Idempotent Knowledge Writes",
-            "Resolve a knowledge write by its logical identity (kind + title) and skip it "
-            "entirely when the content is unchanged. This is what stops a retried, resumed "
-            "or rewound synthesis node from writing a second near-identical article that "
-            "later reads as independent corroboration. Off = every persist inserts.",
-        ),
-    )
     require_citations: bool = field(
         default=True,
         metadata=_meta(
@@ -2195,8 +2185,15 @@ class WorkflowsConfig:
     keyword tie. It is a real reader this time — not the inert knob it was under the old
     SOP feature — so the field is live and wired through all four config points.
     `enabled` keeps its meaning as the feature kill-switch; the engine's own keys
-    (max_active_runs, per-lane max_concurrent_nodes, model_tiers, retention.*) arrive
-    with Slice 0, each wired through all four config points."""
+    (max_active_runs, the per-lane `max_concurrent_*_nodes` caps, model_tiers, retention.*)
+    arrive with Slice 0, each wired through all four config points.
+
+    There is deliberately NO bare `max_concurrent_nodes` total. It was declared here with a
+    `_meta` promising "total node slots per run, partitioned across typed lanes", and nothing
+    ever partitioned it: `lane_caps()` reads the two per-lane fields plus an unmetered
+    `compute`, and those per-lane fields ARE the live contract. Keeping a second knob over the
+    same quantity — one honoured, one ignored — is what #465 measured as an inert allowlisted
+    path, so the total is gone rather than re-derived on top of the caps that already work."""
 
     enabled: bool = field(
         default=True,
@@ -2224,14 +2221,6 @@ class WorkflowsConfig:
             "unbounded fan-out of clocks is how a helpful loop becomes a runaway one. Counted "
             "over ENABLED agent-created automations, so pausing one frees a slot without "
             "deleting it.",
-        ),
-    )
-    max_concurrent_nodes: int = field(
-        default=6,
-        metadata=_meta(
-            "Max Concurrent Nodes",
-            "Total node slots per run, partitioned across typed lanes (llm/io/compute) "
-            "so a long local-model action cannot block the run's model calls.",
         ),
     )
     default_node_timeout_total_secs: int = field(
@@ -2413,8 +2402,6 @@ class WorkflowsConfig:
         # not stop the gateway booting, and 0 concurrency would deadlock every run.
         if self.max_active_runs < 1:
             object.__setattr__(self, "max_active_runs", 1)
-        if self.max_concurrent_nodes < 1:
-            object.__setattr__(self, "max_concurrent_nodes", 1)
         if self.default_node_timeout_total_secs < 0:
             object.__setattr__(self, "default_node_timeout_total_secs", 0)
         if self.default_node_timeout_stall_secs < 0:
@@ -3720,7 +3707,6 @@ class AppConfig:
                 # hand every existing install a lossy re-render path it never asked for.
                 document_editing=bool(dashboard_data.get("document_editing", False)),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
-                dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),
             legibility=LegibilityConfig(
                 discover_tips=bool(legibility_data.get("discover_tips", True)),
@@ -4072,7 +4058,6 @@ class AppConfig:
                 self_schedule_max_outstanding=_safe_int(
                     workflows_data.get("self_schedule_max_outstanding", 20), 20
                 ),
-                max_concurrent_nodes=_safe_int(workflows_data.get("max_concurrent_nodes", 6), 6),
                 default_node_timeout_total_secs=_safe_int(
                     workflows_data.get("default_node_timeout_total_secs", 900), 900
                 ),
@@ -4151,7 +4136,6 @@ class AppConfig:
                 ),
             ),
             knowledge=KnowledgeConfig(
-                idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),
                 require_citations=bool(knowledge_data.get("require_citations", True)),
                 report_budget_chars=int(knowledge_data.get("report_budget_chars", 40000) or 40000),
                 default_ttl=str(knowledge_data.get("default_ttl", "") or ""),

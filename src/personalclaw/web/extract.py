@@ -101,6 +101,75 @@ def extract_main_content(html: str, *, url: str = "") -> ExtractedDoc:
     )
 
 
+#: Longest `<meta http-equiv="refresh">` delay still treated as a REDIRECT rather than as a
+#: page meant to be read. 0 is unambiguous; 1 is the same intent written by a cautious author.
+#: Above that the page is meant to be seen before it moves, so its content is real and
+#: following would DISCARD what the user asked to save — the opposite of the bug.
+MAX_META_REFRESH_DELAY = 1
+
+#: `<meta http-equiv="refresh" content="0; url=...">`, attribute order either way. Deliberately
+#: a regex over the RAW html rather than a parse: the tag lives in `<head>`, `nh3` may drop it,
+#: and this runs before extraction on every fetched page, so it must be cheap and never raise.
+_META_REFRESH_RE = re.compile(
+    r"<\s*meta\b(?=[^>]*?\bhttp-equiv\s*=\s*['\"]?\s*refresh\b)"
+    r"[^>]*?\bcontent\s*=\s*(?P<q>['\"])(?P<content>.*?)(?P=q)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+#: The `content` payload: a delay, then an optional `url=<target>`.
+_META_REFRESH_CONTENT_RE = re.compile(
+    r"^\s*(?P<delay>\d+(?:\.\d+)?)\s*(?:;\s*url\s*=\s*(?P<url>.*?))?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def meta_refresh_target(html: str, *, url: str = "") -> str:
+    """The absolute http(s) URL a meta-refresh redirect stub points at, or ``""``.
+
+    A docs site that moves a page commonly answers ``200 OK`` with a body whose only content is
+    ``<meta http-equiv="refresh" content="0; url=...">`` plus "You should have been redirected".
+    That is a redirect the HTTP layer never sees, so a fetcher that reads only status codes
+    stores the ~167-byte stub as the article (#265).
+
+    Returns ``""`` — never raises, and never guesses — when there is no such tag, when the delay
+    exceeds :data:`MAX_META_REFRESH_DELAY`, when no target is given (a self-refresh), or when the
+    target does not resolve to http(s). The relative-target case is the one that matters in
+    practice: the measured page pointed at ``Pool Structure/RAIDZ.html``, which is only
+    meaningful resolved against the URL it was fetched from.
+
+    **This returns a target; it does not authorize fetching it.** The caller must put the result
+    back through the egress guard (``net.fetch``), because this URL came out of untrusted fetched
+    content and is exactly the shape an SSRF attempt takes — a public page redirecting to
+    ``169.254.169.254`` or a private host. The scheme filter here narrows the obvious
+    ``file:``/``javascript:`` cases early; it is NOT the security boundary.
+    """
+    if not html:
+        return ""
+    match = _META_REFRESH_RE.search(html)
+    if not match:
+        return ""
+    payload = _META_REFRESH_CONTENT_RE.match(match.group("content") or "")
+    if not payload:
+        return ""
+    try:
+        if float(payload.group("delay")) > MAX_META_REFRESH_DELAY:
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    target = (payload.group("url") or "").strip().strip("'\"")
+    if not target:
+        return ""
+    from urllib.parse import urljoin, urlparse
+
+    try:
+        resolved = urljoin(url or "", target)
+    except Exception:
+        return ""
+    if (urlparse(resolved).scheme or "").lower() not in ("http", "https"):
+        return ""
+    return resolved
+
+
 def _title(html: str, url: str) -> str:
     """Best-effort page title: trafilatura metadata → <title> tag. Reads the ORIGINAL
     (pre-sanitize) html so the <title> in <head> is still present."""

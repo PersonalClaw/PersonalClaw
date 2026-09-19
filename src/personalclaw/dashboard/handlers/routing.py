@@ -35,8 +35,10 @@ async def api_routing_dismiss(request: web.Request) -> web.Response:
 async def api_routing_unmute(request: web.Request) -> web.Response:
     """POST /api/agents/routing/unmute {agent} — clear an agent's mute + dismissals."""
     agent = require_string(await json_object_body(request), "agent")
-    routing.unmute(agent)
-    return web.json_response({"ok": True, "agent": agent})
+    # Echo the key that was actually cleared, not the raw input: the store's agent identity is
+    # case-insensitive (`routing.canonical_agent`) and `dismiss` already returns the canonical
+    # key, so echoing the input made the two endpoints disagree about the same agent's name.
+    return web.json_response({"ok": True, "agent": routing.unmute(agent)})
 
 
 async def api_routing_status(request: web.Request) -> web.Response:

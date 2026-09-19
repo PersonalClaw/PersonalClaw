@@ -549,7 +549,11 @@ export interface RemediationRun {
 export interface RemediationSnapshot {
   score: number
   target_score: number
-  deficits: { key: string; count: number; penalty: number; reachable: boolean }[]
+  /** `blocked_by` is the actionable half of `reachable`: one sentence naming the missing
+   *  prerequisite, produced by `Deficit.blocked_by` and non-empty exactly when `reachable`
+   *  is false. Without it a surface can say no more than "not fixable yet", which reads as
+   *  "the system will get to it" for a deficit nothing will ever get to. */
+  deficits: { key: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
   plan: RemediationJobRow[]
   recent_runs: RemediationRun[]
 }
@@ -1167,6 +1171,13 @@ export interface ScheduleJob {
   // rather than hiding an automation the user cannot otherwise debug — the same `broken`
   // contract the store-trigger wire row (`WireTrigger`) already carries.
   broken?: string[]
+  // The same row's WARNING-severity issues — `broken`'s sibling, and absent from this wire until
+  // issue 531. `validate_spec` warns for any interval under the 900s LLM-invoking floor and its own
+  // comment promised the row would be "visibly flagged"; the projection carried `errors` only, so
+  // the warning existed in memory and on no surface. Advisory, not a fault: the trigger runs as
+  // authored (the backend deliberately warns rather than refusing), which is why it is a separate
+  // list and not folded into `broken`.
+  warnings?: string[]
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
@@ -1529,6 +1540,13 @@ export interface WorkflowTriageResult {
 export interface NodeInspect {
   run_id: string; node_id: string; instance_path: string; state: string
   resolved_prompt: string | { ref: string }
+  // Whether the outbound secret/PII scan SUBSTITUTED something on the way to the provider (#3166).
+  // `resolved_prompt` is the text the model actually received; without this flag a reader cannot
+  // tell a substituted prompt from one whose author typed `[REDACTED_EMAIL]` themselves.
+  // `resolved_prompt_scan` carries finding CLASSES only (credential/email/phone/exfil_url/
+  // injection) — never a matched value. Optional because a run journaled before #3166 has neither.
+  resolved_prompt_redacted?: boolean
+  resolved_prompt_scan?: string[]
   resolved_inputs: Record<string, unknown>
   output: unknown | { artifact_ref: string }
   attempts: Array<Record<string, unknown>>
@@ -2011,7 +2029,10 @@ export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: M
 export interface DiscoverTryIt { route: string; query: Record<string, string>; label: string }
 export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
 export interface DiscoverArea { area: string; tips: DiscoverTip[] }
-export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
+/** `dismissed_count` is what lets the hub's empty state tell "you used every area" from
+ *  "you hid the tips" — `visible_count: 0` means both, and the copy used to claim the
+ *  first unconditionally (#452). */
+export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number; dismissed_count: number }
 /** One always-on convention in effect right now. `preview` is credential-redacted;
  *  `body` is only present on the single-doc editor read, where it is verbatim. */
 export interface AlwaysOnItem {
@@ -2086,7 +2107,7 @@ export interface Trigger {
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED.
   // `last_error` (declared with the schedule fields below — one shared interface) carries the
   // failure the lifecycle acted on; the store panel had no reader for it.
-  health?: string; state?: string; broken?: string[]
+  health?: string; state?: string; broken?: string[]; warnings?: string[]
   // attribution. `author` is who WROTE the row; `read_only` is
   // the server's verdict that this machine's owner did not, so the harness will never arm or fire
   // it. Both are computed server-side from the same `ownership.is_owner_authored` predicate the arm
@@ -3267,7 +3288,7 @@ export interface InboxKindCount { kind: InboxItemKind; total: number; open: numb
  *  filter it drives, which excludes them. */
 export interface InboxOwnerCount { username: string; total: number; open: number; is_me: boolean }
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
- *  unattributed rows) — the same number `InboxStatus.my_pending_count` reports. */
+ *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
@@ -3276,13 +3297,19 @@ export interface InboxStatus {
   enabled: boolean; user_id?: string
   native_source_active?: boolean; sources?: InboxSourceHealth[]
   watched_channels?: Array<{ id: string; name: string }>
-  pending_count: number; total_count: number; health: InboxHealth
+  /** How many rows still want the user — PENDING **or** SEEN, `inbox.OPEN_STATUSES`. The ONE count
+   *  the inbox shows. It replaced `pending_count`, which excluded SEEN while every filter and kind
+   *  chip on the same screen included it (33 against 37, measured), and which a glance decremented
+   *  because opening a row marks it SEEN — attention state moving because the user LOOKED. There is
+   *  deliberately no second count: "new" is a per-ROW signal (the unread dot keys off
+   *  `status === 'pending'`), not a total (issue 493). */
+  open_count: number; total_count: number; health: InboxHealth
   poll_interval_seconds?: number
   // The owner-scoped counters, ALONGSIDE the shared totals above. Two numbers
   // because a shared inbox has two questions: how much is in it, and how much of it is mine.
   // Optional so a frontend built against an older gateway still renders the shared totals.
   owner?: string
-  my_pending_count?: number
+  my_open_count?: number
   my_total_count?: number
 }
 export interface InboxSettings {
@@ -3330,13 +3357,23 @@ export interface AuditFilters {
 }
 // `ok` = every checked record's HMAC verified. `windowed` = only the recent window was
 // checked (the default; `full` walks the whole chain).
+//
+// 🔴 EXACTLY the six keys `api_security_audit_verify` emits — nothing this endpoint cannot
+// produce. This type used to also declare `broken_at` and `error`, and the handler has never
+// sent either, so the panel's failure line read two fields that could only ever be `undefined`.
+// `error` was worse than dead: the only thing that ever filled it was the panel MANUFACTURING
+// one in its own catch, and a `SelVerify` that a transport failure can construct is a verdict
+// object holding a non-verdict. Measured — a rejected fetch rendered
+// "Chain broken — ? of all 0 events altered (verify failed)", i.e. a tamper finding from zero
+// examined entries, in the same red as two genuinely altered records. `get()` rejects with
+// `ApiError` on any non-2xx and on a dead connection, so "the check did not run" is a
+// REJECTION and never a `SelVerify`. Locked by `auditVerifyScope.test.tsx`.
 export interface SelVerify {
   ok: boolean; checked: number; valid?: number; tampered?: number; windowed?: boolean
   /** The entry cap the server applied (`null` for an exhaustive check). `windowed` says a cap was
    *  SET; this says how big it was — the only way a consumer can tell "stopped at 5000" from
    *  "5000 is the whole log". */
   window?: number | null
-  error?: string
 }
 // ── Desktop computer-use live view ─────────────────────────────────────────────
 // One trail point of the cursor-motion overlay: where an APPROVED acting call was about to
@@ -3426,6 +3463,23 @@ export interface SessionTemplate {
   reasoning_effort: string; first_prompt: string; created_at: number
 }
 export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
+/** One document comment AS THE SERVER SPELLS IT (`personalclaw.doc_comments.DocComment`).
+ *  `commentStore` maps this to/from its own camelCase `DocComment`; the two are kept
+ *  separate so the wire shape is stated once and the deck's consumers never see it. */
+export interface WireDocComment {
+  id: string
+  doc_id: string
+  doc_label: string
+  doc_path: string
+  quote: string
+  comment: string
+  /** 1-based anchor, when the quote resolved against the rendered source. */
+  line: number | null
+  column: number | null
+  context: string
+  /** Epoch SECONDS (the server's `time.time()`), not the browser's milliseconds. */
+  ts: number
+}
 // Portability (import/export archive). Manifest is the zip's MANIFEST.json;
 // preview validates without applying, import returns what was merged/replaced.
 export interface PortabilityManifest {
@@ -3489,7 +3543,10 @@ export interface NotificationRuleRow {
   mode: NotificationMode
   /** The registry default, so the UI can show "changed from default". */
   default_mode: NotificationMode
-  /** True when the user has an explicit stored rule for this kind. */
+  /** True when the user has an explicit stored rule for this kind — i.e. the row no longer
+   *  tracks `default_mode`. Clearing the rule (a `null` PUT) is what makes it false again; it
+   *  used to be unreachable from the UI, because "reset" wrote the default value instead of
+   *  removing the rule (#285). */
   configured: boolean
   targets: NotificationTarget[]
   conditions: { keywords: string[]; name_mention: boolean }
@@ -4387,12 +4444,10 @@ export interface DashboardConfig {
   // default; the server refuses `PUT …/model` while it is off, so — like the flag
   // above — this is a real gate rather than a UI preference.
   document_editing: boolean
-  // Vestigial server field from the retired customizable-bento dashboard (the
-  // grid + per-user layout persistence were dropped in the v2 launcher-forward
-  // redesign — everyone gets one curated content-first layout now). No FE
-  // consumer reads it; kept only to type the config round-trip until the backend
-  // drops the field. Do NOT re-introduce a client layout editor against it.
-  dashboard_layout?: { widgets: Array<{ id: string; x: number; y: number; w: number; h: number; hidden?: boolean }>; v: number } | Record<string, never>
+  // `dashboard_layout` used to sit here — the last survivor of the customizable-bento
+  // dashboard, which was retired in the v2 launcher-forward redesign (everyone gets one
+  // curated content-first layout). The backend half outlived the retirement by 46 days
+  // and is gone too as of #529; if a grid ever comes back it lands WITH its consumer.
 }
 /** The four essential-app lanes of the first-run flow. `model`/`channel` hold the
  *  chosen app's NAME (or null); `search`/`speech` are "did the user set one up" flags.
@@ -5226,6 +5281,11 @@ export interface InstalledPackRec {
   // the pack row offer "Add triggers to Automations" (`packTriggersDeploy`), which lands them in
   // the live store STILL disabled for the user to review and arm one at a time.
   staged_triggers?: string[]
+  // The staged roster's rows: one per persona, each carrying its activation tier
+  // (`always` | `phase-N` | `as-needed`). Present so a surface can offer the one-click deploy
+  // and say which members it would leave dormant. Optional: a non-roster pack — and a ledger
+  // row written before the field existed — both omit it.
+  roster?: Array<{ slug: string; name: string; description: string; label: string; icon: string; color: string; activation: string; target: string }>
   // Which paths the pack claims ongoing ownership of, and the per-component
   // `{source, computedHash}` drift lock an update compares against.
   pack_owned?: string[]
@@ -5240,6 +5300,18 @@ export interface PackTriggersDeployRec {
   pack: string
   deployed: string[]
   skipped: string[]
+}
+
+// The one-click team-deploy result. Only the `always` tier is
+// promoted into live `agents{}`: `deployed` are now selectable agents, `dormant` are the
+// `phase-N`/`as-needed` rows installed-but-not-hired, and `missing` names an `always` row
+// whose persona is gone from the store (reported, never silently dropped). Idempotent.
+export interface PackRosterDeployRec {
+  ok: boolean
+  pack: string
+  deployed: string[]
+  dormant: string[]
+  missing: string[]
 }
 
 // One Domain OS pack shipped in this build — the pack store's catalog row.
@@ -5523,6 +5595,11 @@ export const api = {
   // deploy: it never lands one enabled (a pack cannot arm automation, even through its enable
   // path) — the user reviews and arms each in Automations (`#/triggers`).
   packTriggersDeploy: (name: string) => post<PackTriggersDeployRec>(`/api/packs/${encodeURIComponent(name)}/triggers/deploy`, {}),
+  // One-click team deploy. Promotes ONLY the `always` tier into live
+  // `agents{}`; the response names the `dormant` tiers so the UI can say what was deliberately
+  // left un-hired rather than implying the whole roster went live. Idempotent — re-deploying
+  // rewrites the same profiles. 404s when the pack is not installed or ships no roster.
+  packRosterDeploy: (name: string) => post<PackRosterDeployRec>(`/api/packs/${encodeURIComponent(name)}/roster/deploy`, {}),
   // ── Pack store + fingerprint discovery ──
   // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
   // integrity, leaves-first commit with rollback) at BUILTIN trust.
@@ -5810,7 +5887,10 @@ export const api = {
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
   // (present on FTS-index hits; absent when the linear-scan fallback answered).
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
+  // Returns `{sessions, source}` VERBATIM — `source` ('index' | 'scan') reports which
+  // path answered, and the UI surfaces it, so we keep it rather than drop it
+  // one line before the caller. `source` is absent when no search ran (empty/short q).
+  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
@@ -5832,8 +5912,19 @@ export const api = {
   mcpActive: (agent?: string) => get<McpActiveServer[]>(`/api/mcp/active${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`),
   /** Read-only view of the lifecycle hooks in effect (redacted commands). */
   agentHooks: () => get<{ hooks: Record<string, AgentHook[]> }>('/api/agent-hooks').then((d) => d.hooks),
-  /** Reconcile native agent configs on disk (rewrites installed copies). */
-  syncAgents: () => post<{ ok: boolean; synced?: number }>('/api/agents/sync'),
+  /** Fold agents that exist only as FILES under the agents dir (Store activations, app
+   *  bundles, a restored snapshot) into config.json, so `agents()` can see them. `synced`
+   *  NAMES what was added — it was typed `number` here while the server has always answered
+   *  with a list, so nothing could have rendered it (#344). `message` is the server-composed
+   *  sentence; report it verbatim rather than re-deriving one from the arrays. */
+  syncAgents: () => post<{
+    ok: boolean
+    synced: string[]
+    skipped: string[]
+    unreadable: string[]
+    scanned: number
+    message: string
+  }>('/api/agents/sync'),
 
   // ── Channels runtime (live connection health + connect/disconnect/test) ──
   channels: () => get<{ channels: ChannelRuntime[] }>('/api/channels').then((d) => d.channels),
@@ -6460,8 +6551,13 @@ export const api = {
     }),
   pushRelayUnregister: (device_id: string) =>
     post<{ ok: boolean }>('/api/push/relay-unregister', { device_id }),
-  // Inbox items awaiting a decision (richer than client-filtering /api/inbox).
-  inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
+  // Inbox rows awaiting a decision — PENDING **or** SEEN (richer than client-filtering /api/inbox).
+  // Was `inboxPending` on `/api/inbox/pending`, which returned PENDING only: because opening a row
+  // in the inbox marks it SEEN, merely glancing at an item deleted it from Mission Control's lanes,
+  // the Action Center and the hero pill — three surfaces whose own rules all call `seen` open
+  // (`STATUS_OPEN.seen === true`). 33 rows out of this endpoint, then 32 after one open,
+  // nothing resolved (issue 493).
+  inboxOpen: () => get<InboxItem[]>('/api/inbox/open'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
   // Returns the archive split alongside the rows: `did_ids` are fires that DID something,
@@ -7249,6 +7345,22 @@ export const api = {
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
       .then(async (r) => { if (!r.ok) throw await apiError(r); return r.text() }),
+  // ── document comments: the annotation layer over files, artifacts and planning docs ──
+  // 🔴 These routes are why the layer is DURABLE. It persisted to one `localStorage` key, so
+  // clearing site data destroyed the only copy and `personalclaw snapshot` could not carry
+  // what the server never saw — while TASK comments next door were a real store the whole
+  // time (#429). The wire is snake_case (the server's shape); `commentStore` owns the
+  // mapping to its camelCase record so its consumers did not have to change.
+  docCommentsList: () => get<{ comments: WireDocComment[] }>('/api/doc-comments'),
+  docCommentCreate: (body: Omit<WireDocComment, 'id' | 'ts'>) =>
+    post<{ comment: WireDocComment }>('/api/doc-comments', body),
+  docCommentUpdate: (id: string, comment: string) =>
+    patch<{ comment: WireDocComment }>(`/api/doc-comments/${encodeURIComponent(id)}`, { comment }),
+  docCommentDelete: (id: string) => del(`/api/doc-comments/${encodeURIComponent(id)}`),
+  /** One call rather than N so a bulk dismiss cannot half-fail. */
+  docCommentsDeleteMany: (ids: string[]) =>
+    post<{ ok: boolean; removed: number }>('/api/doc-comments/delete', { ids }),
+  docCommentsClear: () => del('/api/doc-comments'),
   // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
@@ -7283,7 +7395,9 @@ export const api = {
   notificationRules: () => get<NotificationRulesDoc>('/api/notifications/rules'),
   // Merges: only the keys named in the body change. Rejects an unknown kind/mode/target
   // rather than persisting something the read path would silently ignore.
-  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
+  // A rule value of `null` CLEARS the stored rule so the row inherits the registry default again
+  // (#285). Every other value is a partial merge over what is stored — one control per PUT.
+  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch | null>; digest?: { schedule?: string } }) =>
     put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
   // ── The triage digest ──
   // The card makes ONE read. The server assembles the sections, so the browser never has to
@@ -7676,6 +7790,11 @@ export const api = {
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>
     post<{ ok?: boolean; queued?: boolean; preview: WorkflowCascadePreview; issues: Array<{ code: string; message: string; node_id?: string }> }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/edit`, body),
+  // Launch a run that already exists as a DRAFT — what a forked run had no verb for (#372).
+  // Distinct from `startWorkflowRun`, which takes a def name and CREATES the row it starts:
+  // pointing that at a fork would mint a second run and strand the lineage the fork recorded.
+  startDraftWorkflowRun: (id: string) =>
+    post<{ run_id: string; status: WorkflowRunStatus; started: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/start`),
   cancelWorkflowRun: (id: string) => post<{ run_id: string; cancel_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/cancel`),
   // Refused with a 409 while the run can still move: cancel and delete are two different
   // intents, and one button doing both would delete work a user only meant to stop.

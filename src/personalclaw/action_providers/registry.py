@@ -21,6 +21,25 @@ def list_action_providers() -> list[str]:
     return list(_providers.keys())
 
 
+def dispatchable_action_providers() -> frozenset[str]:
+    """Every provider name an action could reach, for a READ-ONLY surface (#779).
+
+    The set form of the predicate the trigger write path refuses against
+    (``triggers.tools.unregistered_action_provider_refusal``), so a doctor and a create form can
+    never disagree about whether a name is real. Ensures the built-ins are registered first, for the
+    reason ``dashboard.handlers.doctor._observe_mode_fact`` records: they register lazily on first
+    action execution, so a caller that skipped it would read an EMPTY registry and report every
+    automation as unknown.
+
+    Not ``validation.ALLOWED_HOOK_PROVIDERS``: that static allowlist is the LIFECYCLE-hook door's
+    answer and deliberately carries names core never registers (``webhook``, ``a2a-call`` arrive
+    with first-party app bundles). A trigger naming one of those still cannot dispatch until the app
+    that provides it loads, which is exactly what this surface exists to say.
+    """
+    _ensure_default_providers_registered()
+    return frozenset(_providers)
+
+
 def _ensure_default_providers_registered() -> None:
     """Idempotent registration of the built-in providers.
 

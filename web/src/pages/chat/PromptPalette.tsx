@@ -213,7 +213,10 @@ function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; o
   }
   if (v.type === 'select') {
     return (
-      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={`${base}`}>
+      // `—` means "no choice", which the engine only honours as an ABSENT key: `''`
+      // matches no option and 400s. `undefined` is dropped by JSON.stringify, so the
+      // wire carries no key and the engine's default/unset path applies (#377).
+      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)} data-type="body-s" className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -223,7 +226,9 @@ function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; o
     return <textarea value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} data-type="body-s" className={`${base} resize-y`} />
   }
   if (v.type === 'number') {
-    return <input type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} data-type="body-s" className={base} />
+    // A CLEARED number is unset, not `''` — same reason as the select above: `int('')`
+    // raises, so `''` would 400 the render the moment the user empties the field.
+    return <input type="number" value={value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} data-type="body-s" className={base} />
   }
   return <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={base} />
 }

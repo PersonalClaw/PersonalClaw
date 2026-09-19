@@ -29,7 +29,7 @@ const createInboxNote = vi.fn((_text: string) =>
 const ITEMS: InboxItem[] = []
 const STATUS: InboxStatus = {
   enabled: true,
-  pending_count: 0,
+  open_count: 0,
   total_count: 0,
   health: { running: true },
   sources: [],

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RoutingPanel } from './RoutingPanel'
 
@@ -58,6 +58,16 @@ vi.mock('../../lib/api', () => ({
     routingProposals: () => routingProposals(),
     acceptRoutingProposal: (id: string) => acceptRoutingProposal(id),
     rejectRoutingProposal: (id: string) => rejectRoutingProposal(id),
+    // The panel gained a FOURTH read: the `routing.*` config section, whose six knobs had no
+    // control anywhere in `web/`. Same reason the `routingProposals` stub carries below — a total
+    // module mock makes an unstubbed read `undefined()`, which throws inside the effect.
+    personalclawConfig: () => Promise.resolve({
+      routing: {
+        enabled: true, local_timeout_secs: 20, min_samples: 5, hysteresis: 0.05,
+        cloud_quality_margin: 0.1, reproposal_cooldown_days: 14,
+      },
+    }),
+    patchConfig: () => Promise.resolve({}),
   },
 }))
 vi.mock('../../lib/data', () => ({
@@ -71,6 +81,23 @@ vi.mock('../../lib/data', () => ({
 function renderPanel() {
   return render(<RoutingPanel query={{ uc: 'reasoning', qc: 'summarize' }} setQuery={() => {}} />)
 }
+
+/** THIS section's own polite live region.
+ *
+ *  🪤 These assertions used a page-wide `screen.getByRole('status')`, which worked only while the
+ *  proposals queue owned the only live region on the panel. The panel now opens with a `Router`
+ *  config section — the six `routing.*` knobs that were PATCH-editable with no control at all
+ *  (#2801) — and every `ToggleRow`/`NumberRow` in it mounts an always-present, empty-at-rest polite
+ *  region for its "Saved ✓". A page-wide query therefore finds seven and throws "Found multiple
+ *  elements with the role status".
+ *
+ *  Scoping to the section under test is the STRONGER claim, not a workaround: it proves the proposals
+ *  queue announces its own outcome, where the page-wide form only proved that something, somewhere on
+ *  the panel, had a status region. */
+const proposalStatus = () =>
+  within(
+    screen.getByRole('heading', { name: /Proposed routing changes/ }).closest('section')!,
+  ).getByRole('status')
 
 describe('the routing proposal queue is reviewable in the Routing tab', () => {
   beforeEach(() => {
@@ -116,7 +143,7 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
     // Two reads: the mount, and the reload after the decision. Without the reload the surface would
     // keep offering a decision that has already been made.
     await waitFor(() => expect(routingProposals.mock.calls.length).toBeGreaterThanOrEqual(2))
-    expect(screen.getByRole('status').textContent).toMatch(/Applied/)
+    expect(proposalStatus().textContent).toMatch(/Applied/)
   })
 
   it('reports a refusal instead of claiming the table changed', async () => {
@@ -129,7 +156,7 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
     renderPanel()
     await userEvent.click(await screen.findByRole('button', { name: /^Apply/ }))
     await waitFor(() =>
-      expect(screen.getByRole('status').textContent).toMatch(/Not applied — a hand-set order/),
+      expect(proposalStatus().textContent).toMatch(/Not applied — a hand-set order/),
     )
   })
 
@@ -138,7 +165,7 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^Dismiss/ }))
     await waitFor(() => expect(rejectRoutingProposal).toHaveBeenCalledWith('rp-abc123'))
     expect(acceptRoutingProposal).not.toHaveBeenCalled()
-    expect(screen.getByRole('status').textContent).toMatch(/Dismissed/)
+    expect(proposalStatus().textContent).toMatch(/Dismissed/)
   })
 
   it('a failed decision interrupts and says nothing changed', async () => {
@@ -169,6 +196,6 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
     await waitFor(() => screen.getByRole('listitem'))
     // A live region created at the moment its text appears is not reliably announced, so it exists
     // from the first render with no content.
-    expect(screen.getByRole('status').textContent).toBe('')
+    expect(proposalStatus().textContent).toBe('')
   })
 })

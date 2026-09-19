@@ -85,11 +85,27 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
             action={{ label: 'Open Settings', onClick: () => navigate('settings/legibility'), icon: Compass }}
           />
         ) : data.visible_count === 0 ? (
-          <EmptyState
-            icon={Compass}
-            title="You've explored every part of PersonalClaw"
-            hint="Nice. New tips will appear here as PersonalClaw grows — and anything you dismissed stays hidden. The tour above stays too."
-          />
+          // `visible_count: 0` has TWO causes and this branch used to congratulate the user
+          // for the first regardless (#452). A tip auto-hides once you have used its area,
+          // and an explicit dismiss hides it for good — so a user who hid all ten in their
+          // first minute got "You've explored every part of PersonalClaw", and a user who
+          // genuinely used every area got reassured about dismissals they never made. The
+          // payload knows which happened; `dismissed_count` is the whole reason it is there.
+          // Both sentences stay honest about what is recoverable, which is nothing: hiding a
+          // tip is still one-way (see the residual on #452).
+          data.dismissed_count > 0 ? (
+            <EmptyState
+              icon={Compass}
+              title={`No tips left to show — you hid ${data.dismissed_count} of ${data.total}`}
+              hint="The rest auto-hid once you used those areas. A dismissed tip stays hidden for good; new ones will appear here as PersonalClaw grows. The tour above always stays."
+            />
+          ) : (
+            <EmptyState
+              icon={Compass}
+              title="You've explored every part of PersonalClaw"
+              hint="Nice — every tip auto-hid because you have used its area. New tips will appear here as PersonalClaw grows. The tour above stays too."
+            />
+          )
         ) : (
           // The hub's ENTRANCE GROUP (FLUID-MOTION §S3 T3.2) — the intro and each area
           // band cascade in rather than the whole catalog appearing at once. On THIS

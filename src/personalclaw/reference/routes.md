@@ -33,7 +33,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/agents/routing/dismiss` — {agent} — bump the dismissal counter; the
 - `GET /api/agents/routing/status` — enabled flag + muted/dismissal state.
 - `POST /api/agents/routing/unmute` — {agent} — clear an agent's mute + dismissals.
-- `POST /api/agents/sync` — auto-sync marketplace-installed agents into config.json.
+- `POST /api/agents/sync` — fold file-store agents into config.json and report what it did.
 - `DELETE /api/agents/{name}` — delete a PersonalClaw agent.
 - `PUT /api/agents/{name}` — update a PersonalClaw agent.
 - `GET /api/approvals` — list pending tool approvals.
@@ -60,7 +60,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/token` — mint an app-scoped identity token.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
-- `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
+- `GET /api/artifacts` — metadata-only rows; ``q`` searches metadata and body.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
 - `GET /api/artifacts/deployed` — the deployed-app listing (slug + in-gateway URL).
 - `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
@@ -235,6 +235,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
 - `POST /api/devices/{id}/revoke` — lock one device out.
+- `DELETE /api/doc-comments` — empty the deck.
+- `GET /api/doc-comments` — the whole cross-document deck, oldest first.
+- `POST /api/doc-comments` — append one comment.
+- `POST /api/doc-comments/delete` — drop several by id.
+- `DELETE /api/doc-comments/{comment_id}` — drop one comment.
+- `PATCH /api/doc-comments/{comment_id}` — edit one comment's body.
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
@@ -299,8 +305,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `POST /api/inbox/notes` — the USER writes their own inbox item (INU-9).
+- `GET /api/inbox/open` — every row still wanting the user (PENDING or SEEN).
 - `GET /api/inbox/owners` — owners present in the store, with counts, for the filter chips.
-- `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
 - `GET /api/inbox/providers` — list registered inbox message source providers.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
@@ -551,7 +557,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `DELETE /api/notifications` — delete a single notification by timestamp.
-- `GET /api/notifications` — _(no summary)_
+- `GET /api/notifications` — the delivery log, plus how many of ITS rows are unacked.
 - `POST /api/notifications/ack` — mark a single notification as read.
 - `POST /api/notifications/ack-all` — mark all notifications as read.
 - `POST /api/notifications/clear` — clear all notifications.
@@ -815,6 +821,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/review/triage` — POST accept/reject decisions; dispatch the accepted subset to the originating worker.
 - `POST /api/workflows/runs/{run_id}/rewind` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/start` — Start an existing DRAFT run — the launch a forked run had no verb for (#372).
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 - `GET /api/workflows/runs/{run_id}/steering` — GET what is queued but unconsumed — so the UI can show it as pending.
 - `GET /api/workflows/runs/{run_id}/workspace` — GET the run's workspace review: changed files + the two reintegration verbs (§4.1).

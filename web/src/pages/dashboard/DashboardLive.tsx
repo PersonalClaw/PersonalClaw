@@ -196,7 +196,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
       .finally(() => markRead('approvals'))
   }, [markRead])
   const loadInbox = useCallback(() => {
-    api.inboxPending().then((d) => { guard(setInbox)(d); guard(setInboxErr)(null) }).catch((e) => guard(setInboxErr)(e))
+    api.inboxOpen().then((d) => { guard(setInbox)(d); guard(setInboxErr)(null) }).catch((e) => guard(setInboxErr)(e))
       .finally(() => markRead('inbox'))
   }, [markRead])
   const loadProposals = useCallback(() => {

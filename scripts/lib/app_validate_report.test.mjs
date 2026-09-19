@@ -9,9 +9,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  APP_DATA,
   LEGS,
   STATUS,
   NOT_REACHED_REASON,
+  classifyAppData,
   newLegs,
   passLeg,
   failLeg,
@@ -205,5 +207,50 @@ test('formatReport prints every leg status, its reason and its screenshots', () 
   assert.match(text, /PASS\s+store-source/)
   assert.match(text, /SKIPPED\s+tool-invoke — gh auth missing/)
   assert.match(text, /shot: \/shots\/store-source\.png/)
-  assert.match(text, /totals: 1 PASS · 0 FAIL · 5 SKIPPED/)
+  // Derived from LEGS, not a literal: one leg passed, every other one was skipped, so
+  // adding a leg must not force an edit here (and must not silently change what is asserted).
+  assert.match(text, new RegExp(`totals: 1 PASS · 0 FAIL · ${LEGS.length - 1} SKIPPED`))
+})
+
+// ── the three data states (issue #2588) ──────────────────────────────────────
+
+test('classifyAppData keeps absent, empty and present as three different answers', () => {
+  assert.equal(classifyAppData({ present: false, entries: 0, unconsumed: [] }).state, APP_DATA.ABSENT)
+  assert.equal(classifyAppData({ present: true, entries: 0, unconsumed: [] }).state, APP_DATA.EMPTY)
+  assert.equal(classifyAppData({ present: true, entries: 4, unconsumed: [] }).state, APP_DATA.PRESENT)
+})
+
+test('only the present state is observable, and every other state carries a reason', () => {
+  for (const facts of [
+    { present: false, entries: 0, unconsumed: [] },
+    { present: true, entries: 0, unconsumed: [] },
+    { present: true, entries: 3, unconsumed: ['/home/apps/.notes.data'] },
+    null,
+    undefined,
+    {},
+    'nope',
+  ]) {
+    const got = classifyAppData(facts)
+    assert.notEqual(got.state, APP_DATA.PRESENT, `${JSON.stringify(facts)} must not read as observable`)
+    assert.ok(got.reason.trim(), `${JSON.stringify(facts)} produced a reasonless non-answer`)
+  }
+  assert.equal(classifyAppData({ present: true, entries: 3, unconsumed: [] }).reason, '')
+})
+
+test('an unconsumed earlier copy is BLOCKED and names the paths, not a silent absent', () => {
+  const got = classifyAppData({ present: true, entries: 2, unconsumed: ['/h/apps/.notes.data'] })
+  assert.equal(got.state, APP_DATA.BLOCKED)
+  assert.match(got.reason, /\/h\/apps\/\.notes\.data/)
+  // The facts still round-trip: BLOCKED is about what core will refuse, not about the data.
+  assert.equal(got.present, true)
+  assert.equal(got.entries, 2)
+})
+
+test('missing or malformed facts are UNKNOWN — an absence of an answer, never a pass', () => {
+  for (const facts of [null, {}, { entries: 3 }, { present: 'yes' }]) {
+    assert.equal(classifyAppData(facts).state, APP_DATA.UNKNOWN)
+  }
+  // A non-integer entries count on an otherwise well-formed block degrades to 0 rather
+  // than being trusted: the leg then reports EMPTY, which is a skip, not a pass.
+  assert.equal(classifyAppData({ present: true, entries: null }).state, APP_DATA.EMPTY)
 })

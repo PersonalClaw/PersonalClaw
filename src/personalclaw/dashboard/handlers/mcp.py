@@ -15,6 +15,7 @@ from aiohttp import web
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -669,10 +670,8 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    name = body.get("name", "").strip()
+    name = require_string(body, "name")
     enabled = body.get("enabled", True)
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
 
     async with _get_mcp_lock():
         # 1. Update global mcp.json
@@ -851,9 +850,7 @@ async def api_mcp_remove(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    name = body.get("name", "").strip()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
+    name = require_string(body, "name")
 
     logger.info("MCP remove: %s", name)
 

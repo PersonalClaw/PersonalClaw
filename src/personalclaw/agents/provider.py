@@ -159,6 +159,18 @@ class AgentProvider(ABC):
         turn's terminal frame and kills the whole turn."""
         return False
 
+    @property
+    def compacts_in_process(self) -> bool:
+        """Can this provider compact its OWN conversation history itself? False by default.
+
+        Orthogonal to :attr:`supports_native_commands` (can a BACKEND be handed a slash
+        command over the wire): this asks whether the provider owns the message list at
+        all. See :attr:`personalclaw.llm.base.ModelProvider.compacts_in_process` — the
+        contract is declared identically on both ABCs, like the property above, because
+        they are deliberately method-compatible.
+        """
+        return False
+
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:
         async for ev in self.stream(command):
             yield ev

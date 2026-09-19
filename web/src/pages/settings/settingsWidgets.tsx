@@ -2,7 +2,7 @@ import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
-  MessageCircle,
+  MessageCircle, Workflow, RefreshCcw,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
@@ -251,6 +251,13 @@ const useSourcesCfg = () => useQuery('settings:sources-card', () =>
   api.personalclawConfig().then((c) => (c.sources ?? {}) as Record<string, unknown>), { persist: true })
 const usePacksCfg = () => useQuery('settings:packs', () =>
   api.personalclawConfig().then((c) => (c.packs ?? {}) as Record<string, unknown>), { persist: true })
+// Shared with `WorkflowsPanel`/`LoopsPanel` on purpose — unlike the `sources` case above, both
+// panels read exactly this shape (one config section, no composite), so one key means the card and
+// the panel paint from one fetch instead of two.
+const useWorkflowsCfg = () => useQuery('settings:workflows', () =>
+  api.personalclawConfig().then((c) => (c.workflows ?? {}) as Record<string, unknown>), { persist: true })
+const useLoopsCfg = () => useQuery('settings:loops', () =>
+  api.personalclawConfig().then((c) => (c.loops ?? {}) as Record<string, unknown>), { persist: true })
 // The installed ledger, byte-identical to `PacksPanel`'s read — including its `.catch`, which is
 // what makes the key safe to share. Keeping the swallow means a failed ledger read shows `0` here
 // exactly as the panel shows "No packs installed yet"; de-swallowing it is the panel's fix to make,
@@ -341,7 +348,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'chat', group: 'General', label: 'Chat', icon: MessageSquare, size: 'md',
     description: 'Message behavior, history, and session preferences.',
-    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
+    // `agent routing … muted unmute` is in here on purpose: the panel's Agent-routing section is the
+    // ONLY place a muted agent can be un-muted from the whole list, and a user hunting for it has no
+    // reason to guess "Chat" — the state was created by an ✕ in a chat, not by a chat setting.
+    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps agent routing suggestions specialist dismiss cooldown muted unmute re-enable ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
     render(query, go) {
       const { data: c, refresh, stale: cStale } = useDashCfg()
       // This card is the SECOND writer of these prefs (the Chat settings panel is the other), so it
@@ -825,6 +835,57 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
+    id: 'workflows', group: 'Workspace', label: 'Workflows', icon: Workflow, size: 'sm',
+    description: 'How the workflow engine runs — what may start, how much runs at once, and what a new workflow may do on its own.',
+    useSearchText() {
+      const { data: w } = useWorkflowsCfg()
+      const live = w
+        ? `${w.enabled ? 'on enabled' : 'off disabled'} surfacing ${w.surface_mode_default} workspace ${w.workspace_default_mode} llm lane ${w.max_concurrent_llm_nodes} io lane ${w.max_concurrent_io_nodes} retention ${w.retention_per_def}`
+        : ''
+      return `workflows engine runs nodes concurrency lanes timeout stall lease retention fan-out foreach approval confirmation quiet hours duty gate workspace scratch worktree model tier reasoning standard fast surfacing passive suggest ${live}`
+    },
+    render(query, go) {
+      const { data: w, error: wfErr, stale: wStale } = useWorkflowsCfg()
+      const on = w?.enabled !== false
+      return (
+        <BentoCard icon={Workflow} title="Workflows" query={query} onClick={() => go('workflows')} loading={w === undefined && !wfErr} stale={wStale}>
+          {!w && Boolean(wfErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your workflow settings.</div>}
+          {w && <><StatusPill query={query} label={on ? 'Running' : 'Stopped'} tone={on ? 'ok' : 'muted'} />
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
+              {on
+                ? `New workflows surface: ${String(w.surface_mode_default ?? 'off')} · workspace: ${String(w.workspace_default_mode ?? 'scratch')}`
+                : 'Stored definitions are untouched — no new runs start'}
+            </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'loops', group: 'Workspace', label: 'Autonomous loops', icon: RefreshCcw, size: 'sm',
+    description: 'Long-horizon goal loops — which model certifies a cycle, and when one counts as stalled.',
+    useSearchText() {
+      const { data: l } = useLoopsCfg()
+      const live = l
+        ? `judge ${l.judge_use_case} stagnation ${l.stagnation_window} check work ${l.check_work_stages ? 'on' : 'off'} sparse ${l.worktree_sparse ? 'on' : 'off'}`
+        : ''
+      return `loops autonomous goal loop judge model axis use case stagnation window stalled supervisor check work stage gates sdlc sparse worktree parallel tasks hydrate ${live}`
+    },
+    render(query, go) {
+      const { data: l, error: loopErr, stale: lStale } = useLoopsCfg()
+      const onOff = (v: unknown) => (v ? 'On' : 'Off')
+      return (
+        <BentoCard icon={RefreshCcw} title="Autonomous loops" query={query} onClick={() => go('loops')} loading={l === undefined && !loopErr} rows={3} stale={lStale}>
+          {!l && Boolean(loopErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your loop settings.</div>}
+          {l && <KVList query={query} rows={[
+            { k: 'Judge axis', v: String(l.judge_use_case ?? 'reasoning'), vText: String(l.judge_use_case ?? 'reasoning') },
+            { k: 'Stagnation window', v: `${Number(l.stagnation_window) || 5} cycles`, vText: `${Number(l.stagnation_window) || 5} cycles` },
+            { k: 'Check work after gates', v: onOff(l.check_work_stages), vText: onOff(l.check_work_stages) },
+          ]} />}
+        </BentoCard>
+      )
+    },
+  },
+  {
     id: 'ambient', group: 'Workspace', label: 'Ambient surfaces', icon: LayoutDashboard, size: 'sm',
     description: 'Your composable home, agent-authored widgets, and the menu-bar companion.',
     useSearchText() {
@@ -904,9 +965,17 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: v, stale: vStale } = useAudit()
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined} stale={vStale}>
-          {v && (v.ok
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
-            : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.error || `${v.tampered} altered`}</div>}</>)}
+          {/* Three states, because there are three. `useAudit` swallows a failure to `null`, so
+              `v === null` is "the check did not run" — it used to render an EMPTY tile body under
+              a security title, and the broken branch read `v.error`, a field the handler has never
+              emitted (only `AuditPanel`'s own catch ever filled it, which is the conflation #536
+              flagged). The scope phrase comes from `verifiedScope` so this tile cannot drift from
+              the panel's wording. */}
+          {v === null
+            ? <div data-type="caption" className="text-on-surface-low">Couldn't check the chain — nothing was examined.</div>
+            : v && (v.ok
+              ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
+              : <><StatusPill label="Chain broken" tone="warn" />{!!v.tampered && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.tampered} of {verifiedScope(v)} altered</div>}</>)}
         </BentoCard>
       )
     },

@@ -97,8 +97,32 @@ _PROMPT_KEYS = frozenset({"prompt", "system", "instruction", "instructions", "me
 #: content. A ref from one of these into a prompt must pass a sanitization pipe.
 _UNTRUSTED_ROOTS = frozenset({"trigger", "payload", "webhook", "fetched"})
 
-#: Pipes that make untrusted content safe to interpolate.
-_SANITIZING_PIPES = frozenset({"xml_escape", "truncate", "slugify", "json", "tojson"})
+#: Pipes that make untrusted content safe to interpolate. `fenced`/`fenced_sources` are the
+#: STRONGEST members and were missing: both run `security.fence_untrusted`, which neutralises an
+#: embedded close marker AND the chat-template role tokens (`<|im_start|>`, `[/INST]`) that
+#: `xml_escape` does not touch at all. Their absence meant the lint told an author who had reached
+#: for the platform's real fence to add a weaker pipe instead.
+_SANITIZING_PIPES = frozenset(
+    {"xml_escape", "truncate", "slugify", "json", "tojson", "fenced", "fenced_sources"}
+)
+
+#: The tell of a HAND-ROLLED fence: a template writing the fence's own markup as literal text
+#: instead of piping the value through `fenced`/`fenced_sources`.
+#:
+#: 🔴 This rail exists because the untrusted-ROOT rail structurally cannot see the case (#3112).
+#: `_UNTRUSTED_ROOTS` is a closed set of binding roots, and `nodes` is deliberately not in it —
+#: most node outputs are the run's own computation, so listing it would make every one of the 18
+#: bundled templates that bind a node output into a prompt an error. But a node output CAN be
+#: stored/fetched content (`knowledge-persist` hands back the neighbouring claims it read out of
+#: the store), and an author who knows that reaches for the tag by hand. Measured on
+#: `contradiction-review` at `2fe469b52`: one crafted stored claim rendered THREE
+#: `</untrusted_content>` markers into one prompt, 483 characters outside the fence including a
+#: forged `SYSTEM:` turn, and `<|im_start|>` verbatim.
+#:
+#: Keying on the literal markup rather than on the root is what makes this checkable: a template
+#: has no legitimate reason to write the fence itself — the pipes emit it, with the close marker
+#: and the role tokens neutralised — so the pattern is the defect, whatever root it wraps.
+_HANDROLLED_FENCE_MARKERS = ("<untrusted_content", "</untrusted_content")
 
 _MAX_DEPTH = 12
 _MAX_NODES = 500
@@ -486,6 +510,24 @@ def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
 def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: bool) -> None:
     """Parse every binding and apply the untrusted-origin lint."""
     for key, value in (node.config or {}).items():
+        # The hand-rolled-fence lint (#3112). Keyed on the VALUE TEXT, not on a binding root, so
+        # it fires for the `nodes.*` interpolations `_UNTRUSTED_ROOTS` cannot reach. An ERROR for
+        # the same reason WF_UNFENCED_UNTRUSTED is: a literal tag pair looks exactly as protective
+        # as the real fence in review and provides none of it.
+        if key in _PROMPT_KEYS and isinstance(value, str):
+            lowered = value.lower()
+            if any(marker in lowered for marker in _HANDROLLED_FENCE_MARKERS):
+                _add(
+                    res,
+                    "WF_HANDROLLED_FENCE",
+                    (
+                        f"{key!r} writes the <untrusted_content> fence as literal text — a "
+                        "hand-written fence neutralises neither an embedded close marker nor a "
+                        "chat-template role token. Delete the tags and pipe the value through "
+                        "`| fenced(...)` (any shape) or `| fenced_sources` (retrieved knowledge)"
+                    ),
+                    path,
+                )
         for expr in refs_in(value):
             # Malformed pipes / unknown pipes are caught by parsing the chain.
             for raw_pipe in [p.strip() for p in expr.split("|")[1:]]:
@@ -510,7 +552,7 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
                         (
                             f"{root_seg!r} is untrusted input flowing into {key!r} "
                             "unsanitized — add a sanitization pipe "
-                            "(xml_escape/truncate/json)"
+                            "(fenced/fenced_sources/xml_escape/truncate/json)"
                         ),
                         path,
                     )

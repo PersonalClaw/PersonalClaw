@@ -25,6 +25,12 @@ vi.mock('../../lib/api', () => ({
     feedbackProducers: (...a: unknown[]) => feedbackProducers(...a),
     feedbackSnooze: vi.fn(),
     feedbackClear: vi.fn(),
+    // The Tuning section (the four `feedback.*` knobs, #752) renders below the table; a total
+    // module mock makes an unstubbed read `undefined()`, which throws in the effect.
+    personalclawConfig: () => Promise.resolve({
+      feedback: { enabled: true, min_n: 5, window_days: 90, retire_threshold: 0.4 },
+    }),
+    patchConfig: () => Promise.resolve({}),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))

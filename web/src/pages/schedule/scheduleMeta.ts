@@ -263,6 +263,17 @@ export function mdToPlain(s?: string | null): string {
 }
 
 // ── interval composer (seconds ⇄ {value, unit}) ──
+
+/** The seconds floor below which an LLM-invoking cadence is flagged (issue 531).
+ *
+ *  Mirrors `MIN_CLOCK_INTERVAL_SECS` in `triggers/models.py`, which is the OWNER of the rule — the
+ *  backend warns, and this only renders the same number at author time so the choice is visible
+ *  before the save rather than only after it. A FLOOR, not a limit: the backend deliberately warns
+ *  instead of refusing (R1 makes it overridable — a fast local-model poll is a legitimate choice),
+ *  so this must never gate the form. `ScheduleForm`'s `IntervalField` is the only reader.
+ */
+export const MIN_INTERVAL_SECS = 900
+
 export const INTERVAL_UNITS: Array<{ key: string; label: string; secs: number }> = [
   { key: 'm', label: 'minutes', secs: 60 },
   { key: 'h', label: 'hours', secs: 3600 },

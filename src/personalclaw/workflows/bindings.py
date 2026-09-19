@@ -25,9 +25,12 @@ path with extra steps.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: One `{{ … }}` occurrence. Non-greedy so adjacent refs don't merge.
 _REF_RE = re.compile(r"\{\{(.+?)\}\}")
@@ -235,14 +238,15 @@ def _pipe_window(value: Any, size: Any = None) -> Any:
     reader needs: a window BOUNDS growth, and naming it that way is what makes a template
     review notice its absence on an unbounded sibling read.
     """
-    from personalclaw.workflows import longrun
-
     if value is None:
         return []
     if not isinstance(value, list):
         raise BindingError("window expects a list")
     try:
-        n = longrun.DEFAULT_SYNTHESIS_WINDOW if size is None else int(size)
+        # A bare `| window` means "the default window", which is the user's configured one —
+        # the same value `_default_sibling_view` applies. An explicit `| window(N)` is the
+        # template overriding it, and stays exactly that.
+        n = _synthesis_window() if size is None else int(size)
     except (TypeError, ValueError) as exc:
         raise BindingError("window size must be an integer") from exc
     if n <= 0:
@@ -304,8 +308,54 @@ def _pipe_hygiene(value: Any) -> Any:
     return longrun.web_hygiene(value)
 
 
+def _pipe_fenced(
+    value: Any,
+    source: Any = "",
+    source_type: Any = "",
+    source_id: Any = "",
+    transformation_path: Any = "",
+) -> str:
+    """`fenced` — ANY value, wrapped by `security.fence_untrusted`.
+
+    The shape-agnostic sibling of `fenced_sources`. A template that interpolates stored or
+    fetched content into a prompt has exactly one correct way to do it: run it through the
+    platform's fence. `fenced_sources` is that way for a RETRIEVED-KNOWLEDGE list
+    (`{title, content|summary}`), because it also numbers the set `[1]..[n]` and attaches the
+    citation instruction — but a value of any other shape is silently destroyed by it. Measured
+    on `knowledge-persist`'s `conflict_candidates` (`[{"item_id", "statement"}]`):
+    `fenced_sources` emits `[1]` and NOTHING else, because neither `content` nor `summary` is
+    present — so the model loses both the `item_id` it must copy back and the claim it must
+    judge. That is why this pipe exists rather than `fenced_sources` growing a second shape:
+    numbering a list whose identity is an opaque id is the wrong rendering, not a missing key.
+
+    A non-string value is JSON-dumped first (the same `json` pipe the sanitization set already
+    accepts), then fenced whole. JSON escaping is NOT a fence — a dumped `\\n</untrusted_content>`
+    arrives at the model as a real close marker, and `<|im_start|>` survives a dump untouched —
+    so the dump is the serialization and `fence_untrusted` is the control. Fencing the dump ONCE
+    (rather than per item) is deliberate: the fence's contract is a single balanced span, and a
+    per-item fence over an opaque shape would have to invent a per-item rendering.
+
+    `source`/`source_type`/`source_id`/`transformation_path` are forwarded as the fence's
+    provenance attributes; all four are optional literals, e.g. `| fenced('knowledge')`.
+    """
+    from personalclaw.security import fence_untrusted
+
+    text = value if isinstance(value, str) else _pipe_json(value)
+    return fence_untrusted(
+        text,
+        source=str(source or ""),
+        source_type=str(source_type or ""),
+        source_id=str(source_id or ""),
+        transformation_path=str(transformation_path or ""),
+    )
+
+
 def _pipe_fenced_sources(value: Any) -> str:
     """`fenced_sources` — retrieved knowledge, fenced and numbered, with a citation instruction.
+
+    Shape-BOUND: it reads `title` + `content`/`summary`. For any other shape reach for `fenced`,
+    which fences the value whole — see its docstring for what this pipe does to a list whose
+    items carry neither key (it emits the bare numbering and drops the content).
 
     Knowledge items partly derive from web and inbox content, so interpolating them raw into a
     stage prompt bypasses the platform's fencing doctrine: an ingested page that says "ignore
@@ -421,6 +471,7 @@ PIPES: dict[str, Any] = {
     "full": _pipe_full,
     "hygiene": _pipe_hygiene,
     "clamp": _pipe_clamp,
+    "fenced": _pipe_fenced,
     "fenced_sources": _pipe_fenced_sources,
     "source_refs": _pipe_source_refs,
 }
@@ -599,18 +650,46 @@ def _flatten_sibling(value: Any) -> Any:
     return longrun._flatten_outputs(value)
 
 
+def _synthesis_window() -> int:
+    """`knowledge.synthesis_window`, or `longrun.DEFAULT_SYNTHESIS_WINDOW`. Its FIRST reader.
+
+    `longrun`'s own note on that constant said "`KnowledgeConfig.synthesis_window` overrides
+    it" — and nothing did. The field round-tripped and sat on the PATCH allowlist while every
+    sibling read used the module default, so the one knob for the cost regression its `_meta`
+    describes ("a run that gets slower and more expensive until it hits a context limit") could
+    not be turned. The reader lives HERE rather than in `longrun` because that module is pure
+    over explicit state by contract; this is already the impure boundary that defaults the view.
+
+    Falls back to the module default when config is unreadable: an unbounded sibling view is
+    the failure the window exists to prevent, so a bad read must not remove the bound.
+    """
+    from personalclaw.workflows import longrun
+
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        configured = int(getattr(AppConfig.load().knowledge, "synthesis_window", 0) or 0)
+    except Exception:
+        logger.debug("synthesis window config unreadable — using the default", exc_info=True)
+        return longrun.DEFAULT_SYNTHESIS_WINDOW
+    return configured if configured > 0 else longrun.DEFAULT_SYNTHESIS_WINDOW
+
+
 def _default_sibling_view(value: Any) -> Any:
     """The bounded, significance-filtered default for a sibling read.
 
     Bounded by default because the unbounded failure is invisible: nothing errors, the run
     just costs more every cycle until it hits a context limit hours in. An explicit `| full`
     is a template author saying they accept that.
+
+    The window comes from `knowledge.synthesis_window` (see `_synthesis_window`), so the
+    user's configured bound is what a sibling read actually applies.
     """
     from personalclaw.workflows import longrun
 
     if not isinstance(value, list):
         return value
-    return longrun.sibling_view(value)
+    return longrun.sibling_view(value, window=_synthesis_window())
 
 
 def _stringify(value: Any) -> str:

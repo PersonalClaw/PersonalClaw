@@ -374,9 +374,21 @@ export interface HistMsg { role: string; content: string; ts?: string; variants?
  *  on reload (matching the live-send experience). */
 function recollapsePastes(content: string, pastes: { seq: number; lines: number; content: string }[]): string {
   let out = content
-  // longest content first so a block that contains another doesn't mis-replace.
-  for (const p of [...pastes].sort((a, b) => b.content.length - a.content.length)) {
-    if (p.content) out = out.split(p.content).join(markerForSeq(p.seq))
+  // Longest content first so a block that CONTAINS another doesn't mis-replace; ties
+  // broken by ascending seq so two blocks of identical content claim their occurrences
+  // in send order (#1 the first, #2 the second).
+  const ordered = [...pastes].sort((a, b) => b.content.length - a.content.length || a.seq - b.seq)
+  for (const p of ordered) {
+    if (!p.content) continue
+    // ONE occurrence per block, not `split().join()`. A global replace rewrote EVERY
+    // occurrence, so two identical pastes both became "[Paste #1]" — the second block's
+    // marker was never emitted and `PasteChip` dropped the unresolvable chip, losing the
+    // user's second block entirely (#380). Consuming one occurrence per block makes the
+    // marker count match the block count, so `recollapse(expand(x)) === x` holds for
+    // duplicates as well as for nesting.
+    const at = out.indexOf(p.content)
+    if (at === -1) continue
+    out = out.slice(0, at) + markerForSeq(p.seq) + out.slice(at + p.content.length)
   }
   return out
 }

@@ -19,7 +19,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 //      one invented here.
 //
 // 🪤 THIS FILE CANNOT PASS ON SINGLE-OWNER CODE, and not because of a string: `InboxItem` had no
-// `owner_username` field and `InboxStatus` had no `owner` / `my_pending_count` — so the fixture
+// `owner_username` field and `InboxStatus` had no `owner` / `my_open_count` — so the fixture
 // below describes a shape origin/main cannot produce.
 //
 // 🪤 The owner chips are derived from the ITEMS this page already reads, not from a fourth
@@ -59,8 +59,8 @@ function mockApi(over: Record<string, unknown> = {}) {
       inbox: () => Promise.resolve([MINE, THEIRS, LEGACY]),
       inboxStatus: () => Promise.resolve({
         enabled: true, health: {},
-        pending_count: 3, total_count: 3,
-        owner: OWNER, my_pending_count: 2, my_total_count: 2,
+        open_count: 3, total_count: 3,
+        owner: OWNER, my_open_count: 2, my_total_count: 2,
       }),
       // The page mounts TriageDigestCard, which reads this — a mock must cover what the tree
       // MOUNTS, not only what the assertion touches (the sibling rail's lesson).
@@ -94,10 +94,10 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
     mockApi()
     await renderInbox()
     // known-true: the owner-scoped sentence is on screen with both numbers in it.
-    await waitFor(() => expect(screen.getByText(/2 of 3 pending are yours/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/2 of 3 open are yours/)).toBeInTheDocument())
     // known-false: the unscoped "3 pending" phrasing must NOT be what a shared inbox shows —
     // that is the number that misreads as personal backlog.
-    expect(screen.queryByText(/^3 pending ·/), 'a shared queue must not report 3 as yours').toBeNull()
+    expect(screen.queryByText(/^3 open ·/), 'a shared queue must not report 3 as yours').toBeNull()
   })
 
   it('labels a foreign row on the ROW, with the same "(from x)" form the server uses', async () => {
@@ -151,12 +151,12 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
       inbox: () => Promise.resolve([MINE]),
       inboxStatus: () => Promise.resolve({
         enabled: true, health: {},
-        pending_count: 1, total_count: 1,
-        owner: OWNER, my_pending_count: 1, my_total_count: 1,
+        open_count: 1, total_count: 1,
+        owner: OWNER, my_open_count: 1, my_total_count: 1,
       }),
     })
     await renderInbox()
-    await waitFor(() => expect(screen.getByText(/1 pending · 1 total/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/1 open · 1 total/)).toBeInTheDocument())
     expect(screen.queryByRole('tablist', { name: 'Filter by owner' }),
       'one owner is nothing to choose between').toBeNull()
     expect(screen.queryByText(/are yours/), 'no need to scope a queue that is entirely yours').toBeNull()

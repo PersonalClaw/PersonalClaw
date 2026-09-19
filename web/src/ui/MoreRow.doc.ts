@@ -20,4 +20,25 @@ const doc: UiDoc = {
   anatomy: ['muted 0.75rem row (returns null when total <= shown)'],
 }
 
-export default doc
+const partialCount: UiDoc = {
+  name: 'PartialCount',
+  keywords: ['partial', 'showing', 'of', 'thinned', 'server cap', 'scope', 'count', 'canvas', 'total'],
+  description:
+    'How much of the thing a view is showing, when the cap came from the SERVER rather than the caller\'s own slice — "768 of 1,540 relations". Its sibling MoreRow names the residue of a slice the caller wrote and vanishes when nothing is hidden; this states the scope positively and always renders, because a canvas has no rows to stop short of and the count itself is the fact. Use `of="more"` where the total is genuinely unknowable (a search that stopped at its match limit never counted the rest).',
+  props: [
+    { name: 'shown', description: 'How many the view has in hand — the number it drew, listed or plotted. Read it from the payload, never from a literal: the server owns the cap.' },
+    { name: 'of', description: 'How many exist, from the same payload. `"more"` when the total is unknowable, which renders "first 500 matches" rather than inventing a denominator. A value at or below `shown` means the view is complete and the caveat drops.' },
+    { name: 'noun', description: 'Plural word for what is counted. Required, unlike MoreRow\'s: this sentence is often the only count on the surface.' },
+    { name: 'singular', description: 'The singular, for a count that can legitimately be 1. Agreement follows the number the noun belongs to — the total in "1 of 1,540 relations", the shown count everywhere else.' },
+    { name: 'className', description: 'Layout-only override — a segment inside an overlay pill inherits the pill\'s colour rather than setting its own.' },
+  ],
+  bestPractices: [
+    { guidance: true, description: 'Reach for it whenever a payload carries both a partial array and its own true total (`thinning.edges_total`, `counts.selected`, `truncated`). ui/serverCapDisclosed.test.ts sweeps the gateway handlers for exactly those signals and reds when one reaches a surface that says nothing.' },
+    { guidance: true, description: 'Take both numbers from the payload. A hard-coded `shown` states the cap the client THINKS applies, which silently becomes wrong the day the server\'s default moves.' },
+    { guidance: false, description: 'Do not use it for a slice the caller applied itself — that is MoreRow, whose "… N more" reads correctly under a list whose label already states the total.' },
+    { guidance: false, description: 'Do not make it disappear when the view is complete. Inside a summary line a vanishing segment leaves a `·` separating nothing (ui/danglingSeparator.test.ts).' },
+  ],
+  anatomy: ['inline caption span, tabular-nums, inherits its parent\'s ink'],
+}
+
+export default [doc, partialCount]

@@ -968,3 +968,104 @@ class TestUiCapabilities:
             f"appSdk.tsx UiCapability {sorted(declared)} != manifest UI_CAPABILITIES "
             f"{sorted(UI_CAPABILITIES)} — the gate and the manifest must agree"
         )
+
+
+# ---------------------------------------------------------------------------
+# Icon names (#579) — the boundary half of a two-layer guard
+# ---------------------------------------------------------------------------
+
+
+class TestIconValidation:
+    """An app's icon reaches the dashboard SHELL: the sidebar nav resolves it through
+    ``web/src/pages/apps/appIcon.tsx``, so a value that cannot name a lucide component used to
+    crash the entire dashboard rather than one app's card. The render site is fail-safe now; this
+    is the outer layer, catching at INSTALL the shapes that can be proven wrong without knowing
+    lucide's export list — and giving the app author a message instead of a silent Blocks glyph.
+    """
+
+    def test_a_lucide_name_is_accepted(self):
+        assert AppManifest.from_dict(_valid_manifest(icon="SquareTerminal")).validate() == []
+
+    def test_a_lowercase_name_is_accepted(self):
+        """`meta-muse-spark` ships `"brain"` today. A PascalCase-only rule here would refuse to
+        install an app that already works, so the resolver folds case and this permits it."""
+        assert AppManifest.from_dict(_valid_manifest(icon="brain")).validate() == []
+
+    def test_no_icon_is_fine(self):
+        assert AppManifest.from_dict(_valid_manifest()).validate() == []
+        assert AppManifest.from_dict(_valid_manifest(icon="")).validate() == []
+
+    def test_an_emoji_icon_is_refused(self):
+        """The no-emoji tenet, enforced instead of silently absorbed: the resolver has always
+        fallen back for an emoji, so an app declaring one got a glyph it never asked for and no
+        explanation anywhere."""
+        errors = AppManifest.from_dict(_valid_manifest(icon="🎉")).validate()
+        assert len(errors) == 1
+        assert "lucide icon name" in errors[0]
+        assert "🎉" in errors[0], "the message must name the offending value"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "my icon",  # a phrase
+            "../../etc/passwd",  # a path
+            "Square-Terminal",  # punctuation
+            "square_terminal",  # snake_case
+            "3Circles",  # leading digit
+        ],
+    )
+    def test_a_value_that_cannot_name_a_component_is_refused(self, bad):
+        errors = AppManifest.from_dict(_valid_manifest(icon=bad)).validate()
+        assert errors, f"{bad!r} should not validate as an icon name"
+
+    def test_a_page_icon_is_validated_too_and_names_its_page(self):
+        """The page icon is the one that lands in the NAV, so it carries the shell risk."""
+        errors = AppManifest.from_dict(
+            _valid_manifest(ui={"pages": [{"route": "/apps/x", "label": "X", "icon": "🎉"}]})
+        ).validate()
+        assert len(errors) == 1
+        assert "/apps/x" in errors[0], "an error a reader cannot locate is half an error"
+
+    def test_a_traversing_page_iconUrl_is_refused(self):
+        """`iconUrl` has no consumer today (nothing in web/ or src/ reads it), so this is
+        prophylactic — the check belongs with the field rather than with its first reader, which
+        is how every other app-supplied path in this manifest is treated."""
+        errors = AppManifest.from_dict(
+            _valid_manifest(
+                ui={"pages": [{"route": "/apps/x", "label": "X", "iconUrl": "../../../secret.png"}]}
+            )
+        ).validate()
+        assert any("iconUrl" in e and "traversal" in e for e in errors)
+
+    def test_the_crashing_value_is_deliberately_NOT_refused_here(self):
+        """🔑 THE LAYERING, asserted so it cannot be mistaken for an oversight. `"icons"` is a
+        perfectly well-formed identifier — this layer cannot know it is lucide's lookup map, and
+        pretending otherwise would mean shipping a copy of lucide's export list in Python and
+        letting it rot. The render site is what makes that value safe; this layer catches the
+        classes it can actually prove."""
+        assert AppManifest.from_dict(_valid_manifest(icon="icons")).validate() == []
+
+    def test_every_BUNDLED_icon_value_still_validates(self):
+        """The census, kept executable: a rule that refused an icon a shipped app already uses
+        would be a worse bug than #579. Scoped to the BUNDLED apps because that is what this repo
+        can assert about; the separate first-party apps repo carries 58 values in total, one of
+        which (meta-muse-spark's lowercase "brain") is why this rule is case-insensitive."""
+        import json
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[1]
+        seen: dict[str, str] = {}
+        for app_json in sorted((repo / "src" / "personalclaw" / "apps").rglob("app.json")):
+            try:
+                data = json.loads(app_json.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            for value in [data.get("icon", "")] + [
+                p.get("icon", "") for p in (data.get("ui", {}) or {}).get("pages", []) or []
+            ]:
+                if value:
+                    seen[value] = app_json.parent.name
+        assert seen, "found no bundled app icons — has the bundled-apps path moved?"
+        for value, app in sorted(seen.items()):
+            errors = AppManifest.from_dict(_valid_manifest(icon=value)).validate()
+            assert errors == [], f"{app} ships icon {value!r}, which this rule would refuse"

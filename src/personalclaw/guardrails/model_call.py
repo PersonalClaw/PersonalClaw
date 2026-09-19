@@ -50,6 +50,7 @@ from personalclaw.guardrails.failure import (
     SecretLeakBlocked,
 )
 from personalclaw.guardrails.scan import scan_outbound
+from personalclaw.guardrails.wire import record_outbound
 from personalclaw.llm.base import EVENT_COMPLETE, CancelOutcome, LLMEvent, ModelProvider
 
 logger = logging.getLogger(__name__)
@@ -221,8 +222,26 @@ class ModelCallGuard(ModelProvider):
         ``NON_RETRYABLE``, and carrying its own retry semantics — could never be recorded by
         anything. §2.2's taxonomy separates the two deliberately: they are both non-retryable
         for *different* reasons, and an operator reading the audit trail cannot tell a
-        credential slip from an attack if both say ``secret_leak``."""
+        credential slip from an attack if both say ``secret_leak``.
+
+        🔴 The outcome is PUBLISHED, not just returned (#3166). This method is the last point
+        before the provider, so the text it returns is definitionally what went on the wire — and
+        the caller that journals a prompt (the workflow engine) holds the text from BEFORE the
+        substitution. Measured on `c22f79660`: the recorded prompt artifact for a judge node still
+        carried `127.0.0.1` while the model was handed `[REDACTED_PHONE]`, so every replay, eval
+        and judge bench read text the model never saw, with nothing saying so. Publishing here
+        rather than re-scanning at the recording seam is not a style choice: `redact_credentials`
+        is NOT idempotent over a composed `key: value` line, so a second pass can garble the text
+        and silently drop the field name. One scan, one chokepoint, and the result carried
+        forward."""
         result = scan_outbound(text, mode=self._scan_mode)
+        record_outbound(
+            result.text,
+            original=text,
+            findings=result.findings,
+            categories=result.categories,
+            blocked=result.blocked,
+        )
         if result.blocked:
             mode = FailureMode.INJECTION_BLOCKED if result.injection else FailureMode.SECRET_LEAK
             self._audit(_new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")

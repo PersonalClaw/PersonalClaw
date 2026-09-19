@@ -23,6 +23,20 @@ from personalclaw import notification_kinds as nk
 
 SRC = pathlib.Path(nk.__file__).parent
 
+#: The pre-registry delivery gate's severity table, verbatim.
+#:
+#: This USED TO LIVE IN `providers/entity_routes.py` as `_KIND_SEVERITY` and be imported here. It
+#: is gone from src as of #341: the gate now reads severity from the registry, because a local
+#: wire-string table ranked every kind outside these three as info — including `loop/needs_input`
+#: and `system/agent_request`, which the registry declares SEV_WARNING and the matrix SHOWS as
+#: severity 2 — and because it made the emitter fix unshippable (a loop failure switched from the
+#: generic `error` to its own `loop_failed` would have silently dropped from rank 3 to rank 1).
+#:
+#: It belongs here now because what it is, is a HISTORICAL RECORD: the baseline the two tests below
+#: hold the registry to, so no user's min-severity filtering changes under them. A frozen copy in
+#: the test that asserts against it cannot drift with the code it is meant to constrain.
+_PRE_REGISTRY_GATE_SEVERITY: dict[str, int] = {"error": 3, "warning": 2, "inbox_alert": 2}
+
 
 # ── registration mechanics ──────────────────────────────────────────────
 
@@ -186,10 +200,8 @@ def test_severity_vocabulary_matches_the_existing_delivery_gate():
 
 
 def test_severity_of_legacy_kinds_matches_the_old_hardcoded_map():
-    """`_KIND_SEVERITY` ranked error=3, warning=2, inbox_alert=2. Preserve exactly."""
-    from personalclaw.providers.entity_routes import _KIND_SEVERITY
-
-    for flat, old_rank in _KIND_SEVERITY.items():
+    """The old gate ranked error=3, warning=2, inbox_alert=2. Preserve exactly."""
+    for flat, old_rank in _PRE_REGISTRY_GATE_SEVERITY.items():
         assert (
             nk.kind_for_legacy(flat).default_severity == old_rank
         ), f"{flat} ranked {old_rank} before this plan; the registry must not requalify it"
@@ -206,12 +218,16 @@ def test_reachable_pairs_preserve_their_old_severity_exactly():
     Pairs NOT reachable from any flat string are new (they exist for the attention kinds
     S2 introduces via `emit_attention_item`) and are free to carry their honest severity —
     there is no established behavior to preserve.
-    """
-    from personalclaw.providers.entity_routes import _KIND_SEVERITY
 
+    🔑 THIS IS WHAT MAKES THE REGISTRY-BACKED GATE BEHAVIOUR-PRESERVING (#341). The gate no longer
+    carries its own table; it ranks by `kind_for_legacy(kind).default_severity`. That is a
+    same-answer substitution for every string a pre-existing emitter passes precisely because this
+    assertion holds, so the change cannot alter min-severity filtering or quiet hours for any
+    kind a user already receives.
+    """
     drift = []
     for flat, ident in nk._LEGACY_FLAT.items():
-        old_rank = _KIND_SEVERITY.get(flat, nk.SEV_INFO)
+        old_rank = _PRE_REGISTRY_GATE_SEVERITY.get(flat, nk.SEV_INFO)
         new_rank = nk.resolve_kind(*ident).default_severity
         if new_rank != old_rank:
             drift.append(f"{flat!r} → {'/'.join(ident)}: was {old_rank}, now {new_rank}")
@@ -425,24 +441,106 @@ def test_the_ast_sweep_actually_finds_call_sites():
 
 
 def test_every_emitted_constant_resolves():
-    """Every constant used at a call site exists and maps to a registration."""
+    """Every constant used at a call site exists and maps to a REGISTERED pair.
+
+    Checks `_WIRE_TO_PAIR` — "every wire string this build understands" — and not `_LEGACY_FLAT`,
+    for the reason `test_every_wire_constant_resolves` already records for itself: legacy
+    membership is a claim about HISTORY, and requiring it forces a brand-new kind to pretend it has
+    some. The loop watchdog's `LOOP_FAILED`/`LOOP_COMPLETE` (#341) are the first emitted constants
+    to make that distinction bite; before them every emitted constant happened to be legacy.
+
+    Strengthened while being corrected: the resolution must land on a real registration, not merely
+    be present in the map. A constant that resolves to the generic fallback is the silent downgrade
+    this test exists to catch, and a membership check alone cannot see it.
+    """
     unknown = sorted(n for n in _emitted_constant_names() if not hasattr(nk, n))
     assert not unknown, f"call sites reference nonexistent constants: {unknown}"
     unregistered = sorted(
-        n for n in _emitted_constant_names() if getattr(nk, n) not in nk._LEGACY_FLAT
+        n for n in _emitted_constant_names() if getattr(nk, n) not in nk._WIRE_TO_PAIR
     )
     assert not unregistered, (
         f"these constants are emitted but unregistered: {unregistered} — "
-        "add a NotificationKind + a _LEGACY_FLAT entry"
+        "add a NotificationKind + a wire-string entry"
+    )
+    generic = sorted(
+        n
+        for n in _emitted_constant_names()
+        if nk.kind_for_legacy(getattr(nk, n)).kind == nk.GENERIC_KIND
+        and getattr(nk, n) != nk.GENERIC
+    )
+    assert not generic, (
+        f"these emitted constants resolve to the generic fallback: {generic} — they carry "
+        "GENERIC's severity and mode and show no row of their own in Settings → Notifications"
     )
 
 
 def test_loop_watchdog_dynamic_kinds_are_all_registered():
-    """The watchdog's kind comes from `_NOTIFY_EVENTS`; every value must resolve."""
+    """The watchdog's kind comes from `_NOTIFY_EVENTS`; every value must resolve.
+
+    `_WIRE_TO_PAIR` rather than `_LEGACY_FLAT`: the outcome events emit their OWN typed strings
+    now (#341), which have no legacy history by construction.
+    """
     from personalclaw.loop.watchdog import LoopWatchdog
 
     for event, (kind, _title) in LoopWatchdog._NOTIFY_EVENTS.items():
-        assert kind.lower() in nk._LEGACY_FLAT, f"watchdog event {event!r} emits {kind!r}"
+        assert kind.lower() in nk._WIRE_TO_PAIR, f"watchdog event {event!r} emits {kind!r}"
+
+
+def test_the_loop_OUTCOME_events_emit_their_own_typed_kinds():
+    """The routing fix, asserted on the outcome rather than the map (#341).
+
+    `complete`/`failed` used to emit the generic severity strings `success`/`error`, so they
+    resolved to `system/success` / `system/error`: setting "Loop failed → Never" in the matrix did
+    nothing, and the control that actually governed loop failures was "System error" — so a user
+    quietening unrelated noise silently stopped being told when a loop broke.
+
+    Also pins the SEVERITY, which is the half that makes this safe to ship: the typed rows rank
+    exactly as the generic strings did, so the gate treats them identically and nobody's delivery
+    changes as a side effect of the routing fix.
+    """
+    from personalclaw.loop.watchdog import LoopWatchdog
+
+    expected = {"complete": ("loop/complete", nk.SEV_INFO), "failed": ("loop/failed", nk.SEV_ERROR)}
+    for event, (key, severity) in expected.items():
+        wire = LoopWatchdog._NOTIFY_EVENTS[event][0]
+        resolved = nk.kind_for_legacy(wire)
+        assert resolved.key == key, f"{event!r} emits {wire!r} → {resolved.key}, not {key}"
+        assert resolved.default_severity == severity
+    # The generic strings the events used to pass rank the same, which is the whole argument.
+    assert nk.kind_for_legacy("success").default_severity == nk.SEV_INFO
+    assert nk.kind_for_legacy("error").default_severity == nk.SEV_ERROR
+
+
+def test_EVERY_MATRIX_ROW_IS_REACHABLE_FROM_SOME_WIRE_STRING():
+    """A configurable control that nothing can address is a lie in the settings UI (#341/#415).
+
+    `rules_document()` draws one row per registered pair, but `notify()` takes a flat wire string,
+    so a pair no string maps to can never be delivered: the mode pill saves, the row round-trips,
+    and the note lands on whatever `system/*` row its emitter's generic severity string resolves to
+    instead. Measured before the fix: 5 of 32 rows were unaddressable —  `loop/complete`,
+    `loop/failed`, `loop/stalled`, `cron/failed` and `guardrails/autonomy_revocation`, the last one
+    despite a registration comment asserting the opposite.
+
+    The exemption list is PINNED so it can only shrink, and every entry needs a reason. This is the
+    direction the pre-existing suite could not see: it walked the maps (the compliant population)
+    and so could never notice a registered pair absent from all of them.
+    """
+    reachable = set(nk._WIRE_TO_PAIR.values())
+    unreachable = sorted(
+        f"{k.source}/{k.kind}" for k in nk.all_kinds() if (k.source, k.kind) not in reachable
+    )
+    assert unreachable == [
+        # No emitter to give a wire string TO, and the events its label names ("Loop stalled or
+        # blocked") are deliberately delivered as `loop/needs_input` instead: the watchdog routes
+        # `stagnant`/`blocked` through `emit_attention_item` because a loop waiting on the user is a
+        # standing request, not a moment. Pointing them here would move stalled and blocked loops
+        # OUT of the "Loop needs your input" rule — the rule a user is most likely to have set to
+        # always interrupt — so making this row fire is a product decision, not a routing fix.
+        "loop/stalled",
+    ], (
+        f"the unaddressable-row population changed to {unreachable} — a new entry means a matrix "
+        "row nothing can deliver to; give its emitter a wire string rather than widening this list"
+    )
 
 
 def test_notify_action_provider_allowed_kinds_are_registered():
@@ -583,13 +681,15 @@ def test_frontend_display_map_kinds_all_resolve():
         # Bare kinds whose pair emits a legacy flat string instead. Kept for persisted history.
         "alert",  # inbox/alert     → emits `inbox_alert`
         "result",  # cron/result     → emits `cron`
-        "failed",  # cron|loop/failed → emits `cron` / `failed`
+        # cron|loop/failed → emit `cron_failed` / `loop_failed` (#341/#415). The bare form was
+        # never emitted by anything: it is what `kind_for_legacy_pair` FELL BACK to, which is how
+        # both pairs used to resolve to system/generic.
+        "failed",
         "fired",  # hook/fired      → emits `hook`
         "message",  # agent/message   → emits `agent`
         "status",  # heartbeat/status → emits `heartbeat`
         "progress",  # loop/progress   → emits `loop`
-        "complete",  # loop/complete   → emits `loop`
-        "stalled",  # loop/stalled    → emits `loop`
+        "complete",  # loop/complete   → emits `loop_complete`
         "retire",  # learning/retire → emits `feedback_retire`
         "route_drift",  # system/route_drift → emits `app.route.drift`
         "update",  # apps/update     → emits `app_update`

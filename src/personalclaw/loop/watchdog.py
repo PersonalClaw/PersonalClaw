@@ -294,9 +294,21 @@ class LoopWatchdog:
 
     # ── publishing ──
 
+    #: event → (notification wire kind, title).
+    #:
+    #: 🔴 THE FIRST TWO USED TO PASS `success`/`error` — generic SEVERITY strings (#341). The
+    #: registry has had `loop/complete` and `loop/failed` rows all along, and the matrix rendered
+    #: them with mode pills and condition editors, but a generic string resolves to `system/*`, so
+    #: those rows governed nothing: "Loop failed → Never" was inert, while "System error → Never"
+    #: silently stopped reporting loop failures. Severity is unchanged by the switch — `loop/failed`
+    #: is SEV_ERROR and `loop/complete` SEV_INFO in the registry, exactly what `error`/`success`
+    #: ranked — which is what makes this a routing fix rather than a delivery change.
+    #:
+    #: The three events in `_ATTENTION_EVENTS` below take the durable-item path instead, so only
+    #: their TITLE is read from here; their kind comes from that map.
     _NOTIFY_EVENTS = {
-        "complete": ("success", "Loop complete"),
-        "failed": ("error", "Loop failed"),
+        "complete": (notification_kinds.LOOP_COMPLETE, "Loop complete"),
+        "failed": (notification_kinds.LOOP_FAILED, "Loop failed"),
         "stagnant": ("warning", "Loop stalled — needs direction"),
         "blocked": ("warning", "Loop blocked — needs you"),
         "needs_input": ("info", "Loop needs your input"),
@@ -458,7 +470,11 @@ class LoopWatchdog:
         try:
             loop = store.get(loop_id)
             self._state.notify(
-                notification_kinds.INFO,
+                # `LOOP`, not `INFO` (#341): the `loop/progress` row exists in the matrix and this
+                # is its only emitter, so passing the generic severity string put every cycle
+                # heads-up under `system/info` and left the row it belongs to inert. Same rank
+                # either way (both SEV_INFO), so nobody's delivery changes.
+                notification_kinds.LOOP,
                 "Loop progress",
                 f"Cycle {count}{budget} complete — {self._loop_name(loop_id)}",
                 meta={"loop_id": loop_id, "cycle": count, "loop_kind": loop.kind if loop else ""},

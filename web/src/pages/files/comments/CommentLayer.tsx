@@ -83,7 +83,9 @@ export function CommentLayer({ scrollRef, docId, docLabel, docPath, content, onS
     if (!composing || !c) return
     const coords = content ? findCoords(content, composing.quote) : undefined
     const context = content && coords ? captureContext(content, composing.quote, coords.line, coords.column) : undefined
-    commentStore.add({ docId, docLabel, docPath, quote: composing.quote, comment: c, line: coords?.line, column: coords?.column, context })
+    // Fire-and-forget: the store adds the card optimistically and reports its own failure
+    // (with a resync) rather than leaving a rejected note looking saved.
+    void commentStore.add({ docId, docLabel, docPath, quote: composing.quote, comment: c, line: coords?.line, column: coords?.column, context })
     setComposing(null); setDraft('')
   }
 
@@ -262,7 +264,7 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
             const docPaths = [...new Set(comments.map((c) => c.docPath).filter((p): p is string => !!p))]
             onSubmit(message, docPaths)
             // clear the submitted comments — they've been handed to the agent
-            commentStore.removeMany(comments.map((c) => c.id))
+            void commentStore.removeMany(comments.map((c) => c.id))
             setSubmitting(false); setInstructions(''); setExpanded(false)
           }} />
       )}
@@ -278,17 +280,17 @@ function CommentCard({ c, muted }: { c: DocComment; muted: boolean }) {
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={c.docLabel}>{c.docLabel}</span>
         {!editing && <IconButton icon={Pencil} label="Edit comment" size={26} onClick={() => { setVal(c.comment); setEditing(true) }} />}
-        <IconButton icon={X} label="Remove comment" size={26} tone="danger" onClick={() => commentStore.remove(c.id)} />
+        <IconButton icon={X} label="Remove comment" size={26} tone="danger" onClick={() => void commentStore.remove(c.id)} />
       </div>
       <div className="mb-2 max-h-20 overflow-y-auto rounded-md bg-surface-low px-2 py-1.5 text-on-surface-var text-[0.75rem] italic">“{c.quote}”</div>
       {editing ? (
         <div className="flex flex-col gap-1.5">
           <textarea autoFocus value={val} onChange={(e) => setVal(e.target.value)} rows={3} aria-label="Edit comment"
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = val.trim(); if (t) { commentStore.update(c.id, { comment: t }); setEditing(false) } } if (e.key === 'Escape') setEditing(false) }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = val.trim(); if (t) { void commentStore.update(c.id, { comment: t }); setEditing(false) } } if (e.key === 'Escape') setEditing(false) }}
             className="w-full resize-none rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <div className="flex justify-end gap-1.5">
             <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-            <Button size="sm" onClick={() => { const t = val.trim(); if (t) { commentStore.update(c.id, { comment: t }); setEditing(false) } }}><Check size={13} /> Save</Button>
+            <Button size="sm" onClick={() => { const t = val.trim(); if (t) { void commentStore.update(c.id, { comment: t }); setEditing(false) } }}><Check size={13} /> Save</Button>
           </div>
         </div>
       ) : (

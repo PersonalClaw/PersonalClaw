@@ -70,6 +70,29 @@ describe('IdentityReportPanel', () => {
     expect(screen.queryByText('Showing 1 of 1.')).toBeNull()
   })
 
+  it('renders a loading AFFORDANCE while the read is still in flight, not nothing', () => {
+    // `useQuery` leaves `report` undefined until its GET answers and `LearningPage` does not pass
+    // its `loading` flag down, so this pair IS the pending state. It used to render `null`, which
+    // made the section (heading + cadence strip + four cards, ~195px) appear out of nowhere once
+    // the read landed — a content jump for the user, and an invisible one to any observer: a
+    // pending read that renders nothing looks exactly like a settled empty state, so DOM
+    // quiescence, the skeleton sweep and two-identical-screenshots all report "at rest" while a
+    // whole section is in flight. That is how the visual rail captured `#/learning` WITHOUT this
+    // section and reported 15,911px of "drift" on a run where nothing had drifted.
+    render(
+      <IdentityReportPanel report={undefined} error={undefined} onRetry={() => {}} onDelivered={() => {}} />,
+    )
+
+    const busy = document.querySelectorAll('[aria-busy="true"], .skeleton')
+    expect(
+      busy.length,
+      'the pending panel must render a loading affordance the page can be observed to be waiting on',
+    ).toBeGreaterThan(0)
+    // And it must not assert the settled claims while it is still asking.
+    expect(screen.queryByText("How I've adapted to you")).toBeNull()
+    expect(screen.queryByText(/Nothing recorded yet/)).toBeNull()
+  })
+
   it('renders a failed fetch as an error, never as an empty report', () => {
     render(
       <IdentityReportPanel report={undefined} error={new Error('boom')} onRetry={() => {}} onDelivered={() => {}} />,

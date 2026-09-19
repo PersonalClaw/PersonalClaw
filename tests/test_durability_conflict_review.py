@@ -193,6 +193,15 @@ def test_which_memory_or_knowledge_entries_can_conflict_is_exactly_one():
 
     The population is pinned as a SET, not just "non-empty": a second knowledge entry, or any
     memory entry at all, is still a visible change that lands here first.
+
+    🔴 And `doc_comments` is that second knowledge entry (#429). Same shape again — a list of
+    rows each carrying `id`, so `json_file` + `union_by_id` — and the same reason for arriving
+    now: it could not be declared before, because the annotation layer lived in one
+    `localStorage` key and there was no server-side file to name. It does NOT widen the gap
+    above, it doubles it: the count surfaces under Knowledge, the resolution still happens in
+    Durability, and the missing knowledge-side review screen is now owed for two entries rather
+    than one. Recorded here rather than improvised for the same reason — a review screen is not
+    #429's subject.
     """
     conflictable = [
         e
@@ -201,7 +210,8 @@ def test_which_memory_or_knowledge_entries_can_conflict_is_exactly_one():
     ]
     assert conflictable, "no entry can conflict at all — the detector is unreachable"
     assert {e.id for e in conflictable if e.domain == inv.DOMAIN_KNOWLEDGE} == {
-        "research_reports"
+        "doc_comments",
+        "research_reports",
     }, "the knowledge conflict population changed — a review screen may now be owed"
     assert not [
         e for e in conflictable if e.domain == inv.DOMAIN_MEMORY

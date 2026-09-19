@@ -9,6 +9,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A pack's staged roster could be deployed only by `curl`. `POST /api/packs/{name}/roster/deploy` shipped complete — route, handler, `deploy_roster`, and the `roster` rows already on the `/api/packs/installed` wire — with no control anywhere in the dashboard**
+- **Nine config sections were PATCH-editable, backend-read and reachable from NO control in the dashboard. They have controls now — two new Settings panels and five new sections on existing ones.**
+- **`knowledge.synthesis_window` and `knowledge.max_mentions_per_claim` now do what they say.**
 - **The contradiction judge's typed relations are now stored instead of discarded.**
 - **A notification can now say WHO it is for, and one addressed to somebody else is visible here but fired nowhere here.**
 - **`sharing_policy: shared` knowledge now actually goes somewhere: the provider contract gains its outbound half.**
@@ -42,14 +45,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`run_chat` is no longer exported from `personalclaw.sdk.channel`.**
 - **Workflow runs gain a sparse `policy_overrides` overlay: the five per-instance supervisor knobs (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) can now be persisted per run, composed on top of the template/kind defaults at resolution time.**
 - **The install one-liner now verifies something, and stops claiming to verify what it does not ([#2582](https://github.com/PersonalClaw/PersonalClaw/issues/2582)).**
+- **The inbox has one definition of "open" and publishes one count.**
 - **The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field.**
 - **⚠️ TIMED TRIGGERS WITH NO EXPLICIT TIMEZONE NOW FIRE AT THEIR LOCAL WALL-CLOCK TIME, NOT AT UTC.**
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Removed
+- **⚠️ Two runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.**
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **The persistence toggle no longer lights up for a setting the host cannot honour, the durable-workers hint now answers the requirement it names, and "sessions survive a restart" has exactly one owner.**
+- **An automation can no longer be EDITED into a state it could never run from, and the doctor names the rows already on disk that are.**
+- **`pip install personalclaw` on Python 3.14 is now refused at install time instead of succeeding and handing you a connector-pack parser that refuses every import.**
+- **A trigger set to fire faster than the 900s LLM-invoking floor now says so — in the form, on the list, and in the doctor — and a cosmetic edit no longer re-phases its cadence.**
+- **Four defects in the workflows engine, each one a documented promise the code did not keep.**
+- **Settings → Notifications is a promise the app now keeps, in the five places it was breaking it.**
 - **An IPv4 address or a date in your prompt reaches the model as itself, not as `[REDACTED_PHONE]`.**
 - **`personalclaw doctor` now reports only what its checks actually established.**
 - **The kiro-cli runner id the product advertised could not be bound, and now it can.**
@@ -122,6 +133,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The **Tasks** page now loads every task instead of the server's default first 50, and says so when it cannot.
 - A project or task-list **name** is now validated the same way on create and update, and is length-capped.
 - The project hub's task-list **count badge** now renders.
+- The inbox header and its own filters no longer describe different sets, and **glancing at an item no longer decrements the count**.
+- **An app's `icon` can no longer crash the dashboard, and it is now validated at install rather than only at paint.**
+- **The Doctor's health score now says what it is excluding, and so does `personalclaw doctor`.**
+- A routing mute can now be undone from **Settings → Chat → Agent routing → Muted agents**, and the panel stops promising a control it did not have.
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -200,6 +215,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Prompts:**
 - **Loops:**
 - **Security (egress guard):**
+- **Three views that show less than they were given now say so, and the numbers they state are the numbers they honour.**
 
 ### Added
 

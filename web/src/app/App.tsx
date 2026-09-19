@@ -25,6 +25,7 @@ import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
 import { useNativeNotifications } from '../lib/nativeNotifications'
+import { useNotificationToasts } from '../lib/notificationToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
@@ -198,6 +199,11 @@ function AppInner() {
   // are native and this relays them to the Electron shell, which raises the OS banner and
   // hands back the route on a tap. A no-op in a browser tab — the bell is the fallback.
   useNativeNotifications(navigate)
+  // The `immediate` mode's toast (#343). Mounted beside the native relay because it is the same
+  // shape of thing — the gateway has already decided the note interrupts, and this is the surface
+  // that acts on it — and because the matrix's promise ("Notify = a toast") has to hold on every
+  // route, not only where a notification list happens to be mounted.
+  useNotificationToasts()
   // Sound cues need their AudioContext built inside a real user gesture, and the
   // three cue points (turn settled, approval requested, error toast) are none of
   // them. So the shell arms a one-shot primer here and the next click/keypress

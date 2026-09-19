@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw.inbox import OPEN_STATUSES
 from personalclaw.proactive.manifest import (
     MATERIALITY_ACTION,
     MATERIALITY_ERROR,
@@ -46,7 +47,12 @@ logger = logging.getLogger(__name__)
 #: Inbox statuses that still want attention. `handled`, `dismissed`, `sent` and `filtered` are
 #: all answers already given — re-collecting them would make the digest a list of things the
 #: user already dealt with, which is the fastest way to teach someone to ignore it.
-ATTENTION_STATUSES = frozenset({"pending", "seen"})
+#:
+#: An ALIAS, not a second definition: this used to re-spell the set and would then have drifted
+#: from the counts on the inbox surface, so a digest could announce work the inbox no longer shows
+#: (or stay silent about work it does). One owner in `inbox` (issue 493); the name stays because
+#: this module's own vocabulary calls the lane "attention" and it is re-exported below.
+ATTENTION_STATUSES = OPEN_STATUSES
 
 #: How many recent runs the run lane inspects. A ceiling rather than a window-only filter: the
 #: run lane reads one ledger file per run, so an unbounded "since last digest" after a busy

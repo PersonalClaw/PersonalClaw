@@ -46,6 +46,11 @@ class ArtifactProvider(ABC):
     ) -> list[Artifact]:
         """Return matching artifacts (without ``content``).
 
+        ``q`` matches everything the user can see of an artifact: name, slug,
+        description, tags, collection, and body content. Providers may keep
+        unfiltered listings metadata-only; the body read is only required when a
+        query is present, and only for rows whose metadata did not already match.
+
         ``folder`` is present-vs-absent, not truthy: ``None`` means every folder
         (no filter), ``""`` means only *unfiled* artifacts, and an id means that
         folder. A truthy check would make the unfiled bucket unaskable.

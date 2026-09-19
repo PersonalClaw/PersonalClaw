@@ -112,7 +112,12 @@ def _provider(request: web.Request):
 
 
 async def api_artifacts_list(request: web.Request) -> web.Response:
-    """GET /api/artifacts — list (no content). Filters: tag, kind, q, source, source_path, project_id."""  # noqa: E501
+    """GET /api/artifacts — metadata-only rows; ``q`` searches metadata and body.
+
+    Filters: tag, kind, source, source_path, project_id, collection, folder.
+    ``q`` matches name, slug, description, tags, collection and body content —
+    everything the card shows — while the returned rows remain content-free.
+    """
     prov = _provider(request)
     if prov is None:
         return web.json_response({"error": "unknown provider"}, status=400)
@@ -977,6 +982,13 @@ async def api_artifact_versions(request: web.Request) -> web.Response:
         return web.json_response({"error": "unknown provider"}, status=400)
     slug = request.match_info["slug"]
     try:
+        # The PARENT artifact first (#2940). `list_versions` answers `[]` for a slug that was
+        # never stored, which is indistinguishable from a real artifact whose history was
+        # trimmed — while `GET`/`DELETE /api/artifacts/{slug}` on the same slug 404 "not found".
+        # Resolved through the provider's own `get`, so a provider that stores versions
+        # separately cannot disagree with itself about whether the artifact exists.
+        if prov.get(slug) is None:
+            return web.json_response({"error": "not found"}, status=404)
         versions = prov.list_versions(slug)
     except ValueError:
         return web.json_response({"error": "invalid slug"}, status=400)
@@ -1148,15 +1160,14 @@ async def api_artifact_folder_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "unknown provider"}, status=400)
     fid = request.match_info["id"]
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        body = await json_object_body(request)
+        name = require_string(body, "name") if "name" in body else None
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     try:
         folder = _folder_store(prov).update(
             fid,
-            name=str(body["name"]) if "name" in body else None,
+            name=name,
             parent_id=str(body["parent_id"] or "") if "parent_id" in body else None,
             order=int(body["order"]) if "order" in body else None,
             icon=str(body["icon"] or "") if "icon" in body else None,

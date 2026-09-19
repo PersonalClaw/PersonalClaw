@@ -118,6 +118,23 @@ class ModelProvider(ABC):
         """
         return False
 
+    @property
+    def compacts_in_process(self) -> bool:
+        """Whether this provider compacts its OWN conversation history itself.
+
+        Orthogonal to :attr:`supports_native_commands`, which asks whether a *backend*
+        can be handed a slash command over the wire. This asks whether the provider owns
+        the message list at all: the native loop does (``runtime._messages``), so it can
+        run ``context_compaction.compact`` synchronously with no command axis and no
+        agent to fire anything. An ACP backend owns its own history out of process, so
+        the answer there is False — its compaction arrives as a status frame.
+
+        The two flags answer the same question for ``/compact`` from opposite ends, and
+        exactly one of them being true is what stops the command reaching a model as the
+        literal text "/compact" (#470).
+        """
+        return False
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         """Execute a slash command and yield streaming events.
 

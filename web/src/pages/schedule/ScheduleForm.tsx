@@ -9,8 +9,9 @@ import { SoonTag } from '../tasks/taskMeta'
 import { epochSeconds } from '../../lib/epoch'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
-  secsToInterval, intervalToSecs, INTERVAL_UNITS, CRON_PRESETS,
+  secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
 } from './scheduleMeta'
+import { cronExprInvalidReason } from './cronExpr'
 
 /** The draft mirrors the create/update payload but keeps the kind/mode axes
  *  explicit (the wire derives them from which fields are set). */
@@ -106,6 +107,21 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     // field not at all (`null`/`undefined`) falls back to the entity default.
     failure_delivery: j.failure_delivery ?? 'inbox', failure_dedupe: !!j.failure_dedupe,
   }
+}
+
+/** Why this draft's SCHEDULE cannot be submitted, or `null` (#687).
+ *
+ *  Both surfaces that render `ScheduleForm` gate their Save on this, so neither can post a cron
+ *  expression the server will refuse: `TriggerCreatePage`'s `canSave` had no cron term at all and
+ *  posted `body.cron` regardless, and `ScheduleDetail`'s Save gated only on a non-empty name. One
+ *  exported function rather than a copy in each, because a per-surface copy is how one of them ends
+ *  up still submitting the bad value.
+ *
+ *  Scoped to the CADENCE on purpose: `every` and `at` drafts carry no cron and must stay
+ *  submittable, and the name/action requirements belong to the surfaces that own those fields.
+ */
+export function scheduleDraftInvalidReason(d: ScheduleDraft): string | null {
+  return d.kind === 'cron' ? cronExprInvalidReason(d.cron) : null
 }
 
 /** Build the create/update payload. The backend create handler accepts every/cron/at + agent
@@ -210,14 +226,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       <Field label="When" right={km.soon ? <SoonTag /> : undefined} hint={km.hint}>
         <Segmented options={KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={draft.kind} onChange={(v) => set('kind', v as ScheduleKind)} />
       </Field>
-      {draft.kind === 'every' && (
-        <div className="flex items-center gap-s">
-          <input type="number" min={1} value={draft.intervalValue} onChange={(e) => set('intervalValue', Math.max(1, Number(e.target.value) || 1))}
-            name="interval-value" aria-label="Run every — interval count"
-            className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-          <NativeSelect value={draft.intervalUnit} onChange={(v) => set('intervalUnit', v)} options={INTERVAL_UNITS.map((u) => ({ value: u.key, label: u.label }))} label="Run every — interval unit" name="interval-unit" />
-        </div>
-      )}
+      {draft.kind === 'every' && <IntervalField draft={draft} set={set} />}
       {draft.kind === 'cron' && <CronField value={draft.cron} onChange={(v) => set('cron', v)} />}
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
@@ -353,6 +362,39 @@ function CheckRow({ label, hint, checked, onChange }: { label: string; hint: str
   )
 }
 
+/** The interval composer — a count, a unit, and the cadence floor said out loud.
+ *
+ *  The floor line is the ONLY guard this control has, and deliberately so: `MIN_INTERVAL_SECS`
+ *  mirrors the backend's `MIN_CLOCK_INTERVAL_SECS`, which WARNS rather than refuses (R1 makes it
+ *  overridable — a fast local-model poll is a legitimate choice), so gating Save on it here would
+ *  refuse a cadence the API accepts. Before this, `min={1}` was the whole story and the floor was
+ *  mentioned nowhere, so the one thing standing between a typo and a per-minute LLM invocation was a
+ *  warning the backend computed and every surface then dropped (issue 531).
+ */
+function IntervalField({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void }) {
+  const secs = intervalToSecs(draft.intervalValue, draft.intervalUnit)
+  const belowFloor = secs > 0 && secs < MIN_INTERVAL_SECS
+  return (
+    <div className="flex flex-col gap-s">
+      <div className="flex items-center gap-s">
+        <input type="number" min={1} value={draft.intervalValue} onChange={(e) => set('intervalValue', Math.max(1, Number(e.target.value) || 1))}
+          name="interval-value" aria-label="Run every — interval count"
+          aria-describedby={belowFloor ? 'interval-floor-hint' : undefined}
+          className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        <NativeSelect value={draft.intervalUnit} onChange={(v) => set('intervalUnit', v)} options={INTERVAL_UNITS.map((u) => ({ value: u.key, label: u.label }))} label="Run every — interval unit" name="interval-unit" />
+      </div>
+      {/* `role="status"`, not `role="alert"`: this is an advisory the user may knowingly accept,
+          and an assertive interruption on every keystroke under fifteen minutes would train them
+          to ignore it. Same reason it is warn-toned rather than danger-toned. */}
+      {belowFloor && (
+        <p role="status" id="interval-floor-hint" data-type="caption" className="text-warn">
+          Every {secs}s is below the {MIN_INTERVAL_SECS}s floor for an LLM-invoking trigger. It will still run — confirm this is what you want.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function NativeSelect({ value, onChange, options, label, name }: { value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }>; label?: string; name?: string }) {
   return (
     <div className="relative">
@@ -367,19 +409,31 @@ function NativeSelect({ value, onChange, options, label, name }: { value: string
 
 /** Cron field — text input + live human description + quick presets. */
 function CronField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const valid = value.trim().split(/\s+/).length === 5
+  // 🔴 A REAL validator, not a token count. `value.trim().split(/\s+/).length === 5` was wrong in
+  // BOTH directions — `'99 99 * * *'` has five tokens and the server refuses it, `'@daily'` has one
+  // and the server accepts it — so this field reddened a working expression and cleared a broken
+  // one. `cronExprInvalidReason` is sound against croniter (railed by `cronExpr.test.ts`), so a red
+  // here is an expression `POST /api/triggers` would refuse too.
+  const reason = cronExprInvalidReason(value)
   return (
     <div className="flex flex-col gap-s">
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="0 9 * * *"
         name="cron-expression" aria-label="Cron expression (minute hour day-of-month month day-of-week)"
-        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary' : 'ring-1 ring-danger/50'}`} />
+        aria-invalid={reason ? true : undefined}
+        aria-describedby={reason ? 'cron-expression-error' : undefined}
+        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${reason ? 'ring-1 ring-danger/50' : 'focus:ring-primary'}`} />
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map((p) => (
           <button key={p.expr} type="button" onClick={() => onChange(p.expr)}
             className={`rounded-pill px-m h-7 text-[0.75rem] transition-colors ${value.trim() === p.expr ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-var hover:bg-surface-highest'}`}>{p.label}</button>
         ))}
       </div>
-      {!valid && <p className="text-danger text-[0.75rem]">Cron needs five fields: minute hour day-of-month month day-of-week.</p>}
+      {/* `role="alert"` because this line became a DYNAMIC failure. It used to be one static
+          sentence ("Cron needs five fields…") — a label, which is why `fieldErrorAnnounced`'s
+          census never covered it. Rendering `{reason}` puts it in the family that rail owns, and a
+          failure with no role announces to nobody; the four other `0.75rem` sites carry the role on
+          the raw element for the same reason (`FieldError` is size-locked to `0.8125rem`). */}
+      {reason && <p role="alert" id="cron-expression-error" className="text-danger text-[0.75rem]">{reason}</p>}
     </div>
   )
 }

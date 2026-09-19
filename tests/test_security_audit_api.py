@@ -426,6 +426,71 @@ async def test_verify_says_which_cap_it_applied(home):
     assert whole["checked"] == 3
 
 
+#: One over the window. Every other verify test here sits at 3-4 entries, so the cap has
+#: never actually BITTEN in this file — and "the cap bit" is the whole state issue #536 was
+#: filed about. Deliberately the smallest chain that crosses the line: the two tests below
+#: cost ~0.8s each to write, and a bigger one buys no additional proof.
+_OVER_WINDOW = _VERIFY_WINDOW + 7
+
+
+@pytest.mark.asyncio
+async def test_verify_on_a_chain_longer_than_the_window_reports_a_partial_pass(home):
+    """The state the bug report was filed from: 62,907 entries, 5,000 checked.
+
+    Reproduced at the boundary rather than at 62,907. Both facts the consumer needs must be
+    on the wire: `checked == window` (the cap bit, so entries were left out) and, from
+    `?full=1`, that an exhaustive pass exists and reports a DIFFERENT, larger count. The
+    second half is the vacuity floor — a handler hard-coded to say "partial" would pass the
+    first three assertions and fail here.
+    """
+    _write(_OVER_WINDOW)
+    on_disk = sum(
+        1 for ln in (home / "security_events.jsonl").read_text().splitlines() if ln.strip()
+    )
+    assert on_disk == _OVER_WINDOW
+
+    async with _client() as client:
+        _, partial = await _get(client, "/api/security/audit/verify")
+        _, whole = await _get(client, "/api/security/audit/verify?full=1")
+
+    assert partial["checked"] == _VERIFY_WINDOW
+    assert partial["window"] == _VERIFY_WINDOW
+    assert partial["windowed"] is True
+    # The cap BIT — this is the comparison `capped()` makes in the panel, and the reason the
+    # verdict may not be worded as a statement about the chain.
+    assert partial["checked"] >= partial["window"]
+    assert partial["checked"] < on_disk
+
+    assert whole["checked"] == on_disk
+    assert whole["window"] is None
+    assert whole["windowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_tamper_below_the_window_is_invisible_to_the_default_check(home):
+    """WHY the verdict may not claim the chain: the default check cannot see this tamper.
+
+    The oldest record is altered in place. The windowed pass returns a clean `ok: true`
+    having never read it; only `?full=1` finds it. So "Chain intact" from the default call
+    is not a weaker claim than the truth — on this log it is the OPPOSITE of it, which is
+    what makes stating the examined scope a correctness fix and not a wording preference.
+    """
+    _write(_OVER_WINDOW)
+    victim = _tamper(home, 0)
+
+    async with _client() as client:
+        _, partial = await _get(client, "/api/security/audit/verify")
+        _, whole = await _get(client, "/api/security/audit/verify?full=1")
+
+    assert partial["ok"] is True, "the windowed pass cannot see below its own window"
+    assert partial["tampered"] == 0
+    assert partial["checked"] == _VERIFY_WINDOW
+
+    assert whole["ok"] is False, f"the exhaustive pass must find the altered {victim}"
+    assert whole["tampered"] == 1
+    assert whole["checked"] == _OVER_WINDOW
+
+
 # ── Filters: they work, and they fail closed ─────────────────────────────────
 
 

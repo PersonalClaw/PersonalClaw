@@ -12,7 +12,9 @@ import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, lastRunMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
-import { ScheduleForm, toDraft, draftToPayload, type ScheduleDraft } from './ScheduleForm'
+import {
+  ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, type ScheduleDraft,
+} from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
@@ -84,8 +86,15 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     return () => { clearTimeout(fade); clearTimeout(clear) }
   }, [ranFlash])
 
+  // The EDIT half of #687. `PUT /api/triggers/{id}` refuses a cron expression croniter cannot
+  // parse, and Save gated only on a non-empty name — so an existing 9am automation could be edited
+  // into one that never fires again. Same exported check the create page gates on, so an expression
+  // is accepted or refused identically wherever it is typed.
+  const scheduleReason = scheduleDraftInvalidReason(draft)
+
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
+    if (scheduleReason) { setErr(scheduleReason); return }
     setSaving(true); setErr('')
     try { await api.updateSchedule(job.id, draftToPayload(draft)); onSaved(); setEditing(false) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
@@ -155,8 +164,9 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
+          <Button size="sm" onClick={save} loading={saving}
+            disabled={saving || !draft.name.trim() || !!scheduleReason}
+            disabledReason={!draft.name.trim() ? 'Enter a name first' : scheduleReason ?? undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

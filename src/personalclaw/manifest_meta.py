@@ -590,6 +590,22 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "workflow_start_draft": {
+        "response_type": "workflow.run.started",
+        # Empty like every sibling: the workflow service's `WF_*` codes are not in the §2
+        # `errors.ERROR_CODES` registry, and `test_api_manifest_drift`'s
+        # `test_declared_error_codes_exist` enforces that any code declared here is. The
+        # refusals this tool can return
+        # (`WF_RUN_NOT_FOUND`, `WF_RUN_NOT_PRELAUNCH`, `WF_NO_SUPERVISOR`) are documented on
+        # `service.start_draft_run` until §2 populates the registry tool-by-tool.
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Launch the draft a fork created",
+                "args": {"run_id": "9c3e239b"},
+            },
+        ],
+    },
     "workflow_pause": {
         "response_type": "workflow.run.paused",
         "error_codes": [],

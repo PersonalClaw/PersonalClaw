@@ -21,7 +21,7 @@ import type { InboxItem, PendingApproval } from '../../lib/api'
 // `lib/attentionLanes` is mocked at the boundary so this suite runs standalone, and — see the
 // vacuity floor at the bottom — so that a component which classified items ITSELF could not pass.
 
-const inboxPending = vi.fn()
+const inboxOpen = vi.fn()
 const approvals = vi.fn()
 const chatSessions = vi.fn()
 const resolveApproval = vi.fn()
@@ -32,7 +32,7 @@ vi.mock('../../lib/api', async (orig) => ({
   // its `.message`, so a stubbed error class would let a broken message path pass.
   ...(await orig<Record<string, unknown>>()),
   api: {
-    inboxPending: (...a: unknown[]) => inboxPending(...a),
+    inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
     chatSessions: (...a: unknown[]) => chatSessions(...a),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
@@ -99,7 +99,7 @@ beforeEach(() => {
   // The data layer is a module-level cache: without this, a lane split from the previous test
   // paints before the new fetch lands and an emptiness assertion could pass on stale bytes.
   resetDataStore()
-  inboxPending.mockResolvedValue([])
+  inboxOpen.mockResolvedValue([])
   approvals.mockResolvedValue([])
   chatSessions.mockResolvedValue([])
   toLanes.mockReturnValue(lanes())
@@ -193,7 +193,7 @@ describe('answering a pending question', () => {
   const card = { id: 'q1', title: 'loop-worker', item: questionItem() }
 
   beforeEach(() => {
-    inboxPending.mockResolvedValue([questionItem()])
+    inboxOpen.mockResolvedValue([questionItem()])
     toLanes.mockReturnValue(lanes({ 'your-turn': [card] }))
   })
 
@@ -261,7 +261,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     // would pass every test above, because the fixtures would still be on screen.
     const item = questionItem()
     const appr = approval()
-    inboxPending.mockResolvedValue([item])
+    inboxOpen.mockResolvedValue([item])
     approvals.mockResolvedValue([appr])
     chatSessions.mockResolvedValue([session()])
     render(<MissionControl />)
@@ -284,7 +284,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
       ...questionItem(), id: 'inbox-mirror', item_kind: 'agent_request',
       refs: { session: 'chat-1', approval: 'appr-9' },
     }
-    inboxPending.mockResolvedValue([mirror])
+    inboxOpen.mockResolvedValue([mirror])
     approvals.mockResolvedValue([appr])
     render(<MissionControl />)
 

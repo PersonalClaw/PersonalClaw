@@ -686,3 +686,117 @@ def test_a_gitfile_pointing_inside_the_roots_is_marked(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: raw or None)
     monkeypatch.setattr(F, "_sel", lambda: _mock())
     assert F._is_git_repo_root(str(ws / "wt")) is True
+
+
+# ── #431: a wholly-untracked DIRECTORY, and everything under it ──────────────
+# `git status --porcelain` collapses a directory that is untracked in full to one entry
+# with a TRAILING SLASH (`?? report/`). The status map was keyed on that verbatim while
+# the file tree keys on `os.path.realpath`, which never carries one, so the lookup missed
+# on the folder AND on every file inside it — zero badges across the whole subtree. That
+# is the shape an agent produces most (a new directory of deliverables), which is why the
+# most common way new content appears in a workspace was the one case badges never marked.
+
+
+@pytest.fixture
+def repo_with_untracked_dir(tmp_path, monkeypatch):
+    """A repo whose HEAD holds ``tracked.md`` and ``a/tracked.md``, plus:
+
+    * ``report/`` — untracked in full, two levels deep, with one gitignored child
+    * ``a/b/`` — untracked in full, but nested under a directory that HAS tracked content
+    """
+    repo = tmp_path / "repo"
+    (repo / "a").mkdir(parents=True)
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    def run(*a):
+        return subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, env=env)
+
+    run("init", "-q")
+    (repo / "tracked.md").write_text("x\n")
+    (repo / "a" / "tracked.md").write_text("x\n")
+    (repo / ".gitignore").write_text("ign.log\n")
+    run("add", "-A")
+    run("commit", "-qm", "init")
+    (repo / "report" / "assets").mkdir(parents=True)
+    (repo / "report" / "index.md").write_text("new\n")
+    (repo / "report" / "assets" / "chart.svg").write_text("new\n")
+    (repo / "report" / "ign.log").write_text("noise\n")  # gitignored INSIDE the new dir
+    (repo / "a" / "b").mkdir()
+    (repo / "a" / "b" / "new.md").write_text("new\n")
+
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Repo", str(repo))])
+    monkeypatch.setattr(
+        F, "_validate_dashboard_path", lambda raw: str(repo) if raw == str(repo) else None
+    )
+    monkeypatch.setattr(F, "_sel", lambda: _mock())
+    return repo
+
+
+def test_a_collapsed_untracked_dir_keys_without_its_trailing_slash(repo_with_untracked_dir):
+    """The folder's own badge — the one-character key-shape mismatch this issue named.
+
+    Asserted as an absence too: a key ending in `/` can never match a tree entry, so
+    leaving one behind is the defect regardless of what else is in the map.
+    """
+    repo = str(repo_with_untracked_dir)
+    _, body = _call(repo)
+    statuses = body["statuses"]
+    assert statuses[os.path.join(repo, "report")] == "??"
+    assert not [k for k in statuses if k.endswith("/")], "a status key still carries a slash"
+
+
+def test_every_file_under_a_collapsed_untracked_dir_is_badged(repo_with_untracked_dir):
+    """The subtree half: porcelain never names these, so the folder badge alone still
+    leaves the deliverables themselves unmarked. Intermediate directories count — the
+    tree renders a row for `report/assets` too."""
+    repo = str(repo_with_untracked_dir)
+    _, body = _call(repo)
+    statuses = body["statuses"]
+    for rel in ("report/index.md", "report/assets", "report/assets/chart.svg"):
+        assert statuses.get(os.path.join(repo, rel)) == "??", f"{rel} unbadged"
+
+
+def test_a_gitignored_child_of_an_untracked_dir_is_not_badged(repo_with_untracked_dir):
+    """Why the expansion asks git instead of walking the tree: `ign.log` is inside the
+    untracked directory but matched by `.gitignore`, and git does not consider it
+    untracked. An `os.walk` would badge it `??` — a badge claiming an ignored file is
+    unsaved work."""
+    repo = str(repo_with_untracked_dir)
+    _, body = _call(repo)
+    assert os.path.join(repo, "report/ign.log") not in body["statuses"]
+
+
+def test_the_expansion_never_badges_a_tracked_ancestor(repo_with_untracked_dir):
+    """The bound on the derivation. `a/` holds committed content, which is exactly why
+    porcelain collapsed to `?? a/b/` and not `?? a/`; walking ancestors up from
+    `a/b/new.md` without stopping at the collapsed root would badge a whole committed
+    directory as new."""
+    repo = str(repo_with_untracked_dir)
+    _, body = _call(repo)
+    statuses = body["statuses"]
+    assert statuses[os.path.join(repo, "a/b")] == "??"
+    assert statuses[os.path.join(repo, "a/b/new.md")] == "??"
+    assert os.path.join(repo, "a") not in statuses, "a tracked directory was badged untracked"
+
+
+def test_a_repo_with_no_collapsed_dir_makes_no_extra_git_call(git_repo, monkeypatch):
+    """The expansion is pathspec-scoped and skipped outright when porcelain reports no
+    collapsed directory, so the common case (single untracked FILES) pays nothing."""
+    seen: list[list[str]] = []
+    real = F._git
+
+    async def _spy(args, cwd, *a, **k):
+        seen.append(list(args))
+        return await real(args, cwd, *a, **k)
+
+    monkeypatch.setattr(F, "_git", _spy)
+    monkeypatch.setattr(F, "_sel", lambda: _mock())
+    _, body = _call(str(git_repo))
+    assert body["statuses"][os.path.join(str(git_repo), "untracked.txt")] == "??"
+    assert not [a for a in seen if a[:1] == ["ls-files"]], "ls-files ran with nothing to expand"

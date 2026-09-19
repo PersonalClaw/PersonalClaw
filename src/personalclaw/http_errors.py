@@ -617,6 +617,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "local_model_bind_failed": (
         "A reachable local model could not be bound; the detail explains what was missing."
     ),
+    # ── engine-owned fields on a workflow-managed task (tasks/handlers.py — #390) ──
+    # A 409 state refusal, not a 403: the caller is permitted to edit this task, and every
+    # field outside the engine-owned set still writes. What refuses is that the workflow run
+    # owns these particular fields, and the message names the alternative (`workflow_skip` /
+    # `workflow_rewind`) — a refusal that does not say what to do instead reads as breakage.
+    "engine_owned_field": (
+        "The field is driven by the workflow run that owns this task; change what the run "
+        "does and the task will follow."
+    ),
 }
 
 

@@ -59,7 +59,7 @@ def test_report_module_unit_tests_pass() -> None:
     ]
 
 
-def test_declared_legs_are_the_six_standard_ones() -> None:
+def test_declared_legs_are_the_seven_standard_ones() -> None:
     """The leg catalogue is the acceptance clause, so a silent shrink is a defect."""
     assert _leg_ids() == [
         "store-source",
@@ -68,7 +68,87 @@ def test_declared_legs_are_the_six_standard_ones() -> None:
         "library-and-tools",
         "tool-invoke",
         "reactivate",
+        # Issue #2588. Deactivate is strictly weaker than removal, so with the first six
+        # legs alone nothing in the harness could distinguish an app removed with its data
+        # preserved from one removed and wiped from one merely switched off — and
+        # "data survives removal" was therefore provable only by a bespoke hand-written
+        # script that nothing else could reuse.
+        "uninstall-preserves-data",
     ]
+
+
+def test_the_removal_leg_reads_back_through_the_registry_not_the_filesystem() -> None:
+    """The substitution this leg exists to refuse, pinned as source-level rails.
+
+    A removal check written with ``Path.exists()`` proves a FILE is on disk; it does not
+    prove the provider still resolves and still answers with the user's data. On 2026-09-06
+    those two questions gave different answers for the same app, which is the whole reason
+    the leg's read-back goes through ``/api/tools`` and the tool inspector.
+    """
+    driver = DRIVER.read_text(encoding="utf-8")
+    leg = driver.split("async function uninstallPreservesData", 1)
+    assert len(leg) == 2, "the driver no longer carries the removal leg"
+    # Bounded to the leg's own body: reading to end of file would sweep in the model-wiring
+    # and main() helpers, and an `existsSync` THERE is not this leg probing the filesystem.
+    body = leg[1].split("// ── model wiring", 1)[0]
+    assert len(body) < len(
+        leg[1]
+    ), "the removal leg is no longer followed by the model-wiring section"
+    assert "waitForToolInRegistry" in body, (
+        "the removal leg does not re-resolve the app's tool through the gateway's registry "
+        "after reinstalling, so it cannot tell a restored provider from a restored directory"
+    )
+    assert "runToolFromUi" in body, (
+        "the removal leg does not read the data back through the app's own tool, which is "
+        "the only surface that can answer whether the data is READABLE"
+    )
+    # A filesystem probe in the driver would be the defect itself, under any spelling.
+    assert "existsSync" not in body, (
+        "the removal leg probes the filesystem — that proves a path exists, not that the "
+        "provider survived removal"
+    )
+    # Both arms, because a preservation check that only shows preservation cannot tell a
+    # working preserve from a broken wipe.
+    assert "rung: 'keep-data'" in body and "rung: 'force'" in body, (
+        "the removal leg drives only one removal rung; the force arm is what keeps the "
+        "preserve arm from passing vacuously"
+    )
+
+
+def test_the_removal_leg_clicks_the_real_control_and_its_confirm_dialog() -> None:
+    """The browser is the only thing that can cover the dialog, which nothing covered."""
+    driver = DRIVER.read_text(encoding="utf-8")
+    block = driver.split("async function clickRemovalInLibrary", 1)
+    assert len(block) == 2, "the driver no longer clicks removal from the Library"
+    body = block[1][:4000]
+    assert 'role="dialog"' in body, "the removal leg never waits for the confirm dialog"
+    assert "dialog.getByRole('button'" in body, (
+        "the confirm click is not scoped to the dialog — an unscoped lookup can re-click "
+        "the panel's own control and never confirm anything"
+    )
+    assert "Force uninstall" in body and "'Advanced'" in body, (
+        "the force rung must be reached through the Advanced expander a user opens, not by "
+        "calling the endpoint behind it"
+    )
+
+
+def test_the_three_data_states_are_classified_in_the_tested_module() -> None:
+    """``absent`` / ``empty`` / ``present`` are three promises, and this repo has
+    collapsed the first two into one nine times. The discrimination therefore lives in
+    the unit-tested module, not in browser plumbing only a live gateway can exercise."""
+    report = REPORT_MODULE.read_text(encoding="utf-8")
+    assert "export function classifyAppData" in report
+    for state in ("absent", "empty", "present", "blocked", "unknown"):
+        assert f"'{state}'" in report, f"the data-state vocabulary is missing {state!r}"
+    driver = DRIVER.read_text(encoding="utf-8")
+    assert "classifyAppData" in driver, (
+        "the driver classifies the data states itself instead of going through the tested "
+        "module, which is where the reason-required rule is enforced"
+    )
+    assert "APP_DATA.PRESENT" in driver, (
+        "the driver must gate its preservation claim on the one observable state; a skip "
+        "for the other states is the absence of an answer, not a pass"
+    )
 
 
 def test_driver_settles_every_declared_leg() -> None:

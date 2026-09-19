@@ -266,8 +266,15 @@ async def stream_slash_command(
 ) -> "AsyncIterator[LLMEvent]":
     """Run *command* natively if the provider can, else answer *prompt* as plain text.
 
-    THE slash-command dispatch decision (`G4`). Three outcomes, all deliberate:
+    THE slash-command dispatch decision (`G4`). Four outcomes, all deliberate:
 
+    0. **The provider runs THIS command itself, in-process** (``compacts_in_process``) →
+       ``stream_command`` is dispatched even though the provider has no wire-level command
+       axis, because there is nothing to send: the native loop owns its own message list, so
+       ``/compact`` is a local operation on local state. Checked FIRST, ahead of the axis
+       gate — otherwise the one command the runtime can genuinely execute falls into the
+       substitution below and the model is asked about the TEXT "/compact", which is what
+       made the composer's advertisement a lie on the default provider (#470).
     1. **Provider declares no command axis** → nothing is sent as a command; *prompt* is
        streamed as an ordinary turn and ``notify`` says so. Covers the measured
        claude-code case (adapter 0.60.0 advertises no command capability) and every
@@ -293,6 +300,13 @@ async def stream_slash_command(
         AcpCommandsUnsupported,
         AcpMethodNotFound,
     )
+
+    # Outcome 0 — a command the provider performs on its OWN state. No wire, no
+    # substitution, no notice: the command really ran, so there is nothing to disclose.
+    if command == "/compact" and bool(getattr(client, "compacts_in_process", False)):
+        async for event in client.stream_command(command):
+            yield event
+        return
 
     if not bool(getattr(client, "supports_native_commands", False)):
         notify(f"`{command}` isn't a command this agent can run — sent as a plain message.")
@@ -403,12 +417,22 @@ def _broadcast_auto_tool(state: DashboardState, session: _ChatSession, event: "L
 def _broadcast_compaction_result(
     state: DashboardState, session: _ChatSession, event: "LLMEvent"
 ) -> str | None:
-    """Broadcast compaction completed/failed to the session. Returns message text or None."""
+    """Broadcast a compaction outcome to the session. Returns message text or None.
+
+    Three terminal statuses, and the third is the one worth reading. ``noop`` says the pass
+    ran and found nothing to reclaim — a short conversation is already compact. It is NOT a
+    failure and NOT a "Conversation compacted." either: the in-process compaction the native
+    runtime performs returns a real before/after, so on a fresh chat the honest answer is
+    that nothing moved. Saying "compacted" there would be the same shape of lie as the
+    substituted plain-prompt answer this replaced (#470).
+    """
     status_type = event.text
     if status_type == "completed":
         summary, _ = redact_credentials(event.title)
         summary, _ = redact_exfiltration_urls(summary)
         msg_text = f"Conversation compacted: {summary}" if summary else "Conversation compacted."
+    elif status_type == "noop":
+        msg_text = "Nothing to compact — this conversation is already short enough."
     elif status_type == "failed":
         error, _ = redact_credentials(event.title or "unknown error")
         error, _ = redact_exfiltration_urls(error)

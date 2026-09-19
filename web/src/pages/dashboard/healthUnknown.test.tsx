@@ -40,7 +40,7 @@ function mockApi(over: Record<string, unknown>) {
       discover: () => Promise.resolve({ tips: [] }),
       // Every slice DashboardLive polls on mount — an unmocked one throws before the widget renders.
       approvals: () => Promise.resolve([]),
-      inboxPending: () => Promise.resolve([]),
+      inboxOpen: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
       uLoops: () => Promise.resolve([]),
       readyTasks: () => Promise.resolve([]),

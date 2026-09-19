@@ -1,0 +1,363 @@
+{
+  "_": [
+    "Cron expressions with croniter's MEASURED verdict. One corpus, two consumers:",
+    "  * web/src/pages/schedule/cronExpr.test.ts asserts the frontend validator is SOUND against it",
+    "    -- every expression it reports a reason for is one croniter rejects.",
+    "  * tests/test_cron_expr_corpus.py asserts this `valid` column still matches",
+    "    schedule.validate_cron_expr, so a croniter upgrade that changes an answer reds the build",
+    "    here instead of silently making the frontend check disagree with the server's refusal.",
+    "Regenerate the verdicts, never hand-edit them: they are what croniter says, not what we want."
+  ],
+  "cases": [
+    {
+      "expr": "0 9 * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "* * * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 * * 1-5",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 1 * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 * * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "*/15 * * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "*/5 */2 * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 0,12 * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 1,15 * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "00 09 * * *",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "59 23 31 12 7",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 * * 7",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 * * 0",
+      "valid": true,
+      "group": "valid — five plain fields"
+    },
+    {
+      "expr": "0 9 * * MON",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 * * mon-fri",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 * JAN *",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 * jan-mar *",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 * * 1-5,SAT",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 * * SUN-SAT",
+      "valid": true,
+      "group": "valid — month/day names"
+    },
+    {
+      "expr": "0 9 L * *",
+      "valid": true,
+      "group": "valid — croniter day extensions"
+    },
+    {
+      "expr": "0 9 * * 5#2",
+      "valid": true,
+      "group": "valid — croniter day extensions"
+    },
+    {
+      "expr": "0 9 * * 1#2",
+      "valid": true,
+      "group": "valid — croniter day extensions"
+    },
+    {
+      "expr": "0 9 * * * *",
+      "valid": true,
+      "group": "valid — six fields, TRAILING seconds"
+    },
+    {
+      "expr": "0 9 * * * 30",
+      "valid": true,
+      "group": "valid — six fields, TRAILING seconds"
+    },
+    {
+      "expr": "0 9 * * * 59",
+      "valid": true,
+      "group": "valid — six fields, TRAILING seconds"
+    },
+    {
+      "expr": "30 0 9 * * *",
+      "valid": true,
+      "group": "valid — six fields, TRAILING seconds"
+    },
+    {
+      "expr": "0 9 * * 1 30",
+      "valid": true,
+      "group": "valid — six fields, TRAILING seconds"
+    },
+    {
+      "expr": "@daily",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@hourly",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@weekly",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@monthly",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@yearly",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@annually",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@midnight",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "@DAILY",
+      "valid": true,
+      "group": "valid — macros, case-insensitive"
+    },
+    {
+      "expr": "0 9 * * *  ",
+      "valid": true,
+      "group": "valid — surrounding whitespace"
+    },
+    {
+      "expr": "  0 9 * * *",
+      "valid": true,
+      "group": "valid — surrounding whitespace"
+    },
+    {
+      "expr": "99 99 * * *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "60 * * * *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "* 24 * * *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "* * 32 * *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "* * * 13 *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "* * * * 8",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "0 9 -1 * *",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "0 9 * * * 60",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "0 9 * * * 2026",
+      "valid": false,
+      "group": "invalid — a field out of range"
+    },
+    {
+      "expr": "",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "   ",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "abc",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * * * 2026",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * * 30 *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * MOM",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "*/0 * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "5-1 * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "1,,2 * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * -1",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "0 9 * * 1-",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "?  * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "H * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "- * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "*/  * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "+ * * * *",
+      "valid": false,
+      "group": "invalid — shape"
+    },
+    {
+      "expr": "@reboot",
+      "valid": false,
+      "group": "invalid — not a macro croniter knows"
+    },
+    {
+      "expr": "@fortnightly",
+      "valid": false,
+      "group": "invalid — not a macro croniter knows"
+    },
+    {
+      "expr": "@",
+      "valid": false,
+      "group": "invalid — not a macro croniter knows"
+    },
+    {
+      "expr": "0 9 * * 5L",
+      "valid": false,
+      "group": "invalid — croniter rejects these extension spellings"
+    },
+    {
+      "expr": "0 9 LW * *",
+      "valid": false,
+      "group": "invalid — croniter rejects these extension spellings"
+    }
+  ]
+}

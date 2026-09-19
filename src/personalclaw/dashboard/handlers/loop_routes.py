@@ -30,7 +30,7 @@ from personalclaw.loop.loop import (
     LoopStatus,
 )
 from personalclaw.loop.watchdog import registry_key
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string
 
 logger = logging.getLogger(__name__)
 
@@ -645,7 +645,7 @@ async def api_loop_update(request: web.Request) -> web.Response:
     if updated is None:
         # spec frozen — allow a name-only patch via rename
         if set(body) <= {"name"}:
-            renamed = store.rename(cid, str(body.get("name", "")))
+            renamed = store.rename(cid, require_string(body, "name"))
             return (
                 web.json_response(store.get_redacted(cid))
                 if renamed

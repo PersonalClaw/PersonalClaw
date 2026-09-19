@@ -13,6 +13,8 @@ import { ComposerStage } from '../../ui/ComposerStage'
 import { DotGlow } from '../../ui/DotGlow'
 import { spring } from '../../design/motion'
 import { api, type Granularity, type LoopKind } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
 import type { ComposerControls } from '../../ui/composer/types'
 
 /** The ONE Loop front door — a single composer with a kind slider (General / Goal /
@@ -132,8 +134,16 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     const t = task.trim()
     if (!t || optimizing) return
     setOptimizing(true)
-    try { const r = await api.optimizePrompt(t, ''); if (r.changed && r.optimized) setTask(r.optimized) }
-    catch { /* keep the draft */ } finally { setOptimizing(false) }
+    // #277: the one-line version of this swallowed BOTH non-rewrite answers — `changed:false`
+    // fell out of the `if`, a thrown request fell into an empty `catch`. This is the surface the
+    // report was filed from (a 514-char prompt, ~15s spinner, byte-identical text, clean console).
+    try {
+      const out = optimizeOutcome(await api.optimizePrompt(t, ''))
+      if (out.kind === 'rewritten') setTask(out.optimized)
+      else notify(out.message, out.level)
+    }
+    catch (e) { const f = optimizeFailure(e); notify(f.message, f.level) }
+    finally { setOptimizing(false) }
   }
   async function transcribe(blob: Blob): Promise<string> {
     const r = await api.transcribeAudio(blob); return r.text ?? ''

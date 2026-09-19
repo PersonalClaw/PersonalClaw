@@ -251,7 +251,9 @@ function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown
   }
   if (v.type === 'select') {
     return (
-      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={`${base}`}>
+      // `—` ⇒ absent, never `''`: the engine rejects `''` for a select and honours a
+      // missing key as "apply the default / leave unset" (#377).
+      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)} data-type="body-s" className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -261,7 +263,8 @@ function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown
     return <textarea id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={v.description} data-type="body-s" className={`${base} resize-y`} />
   }
   if (v.type === 'number') {
-    return <input id={fid} name={v.name} aria-label={label} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} placeholder={v.description} data-type="body-s" className={base} />
+    // A cleared number is unset (absent), not `''` — `int('')` raises server-side (#377).
+    return <input id={fid} name={v.name} aria-label={label} type="number" value={value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} placeholder={v.description} data-type="body-s" className={base} />
   }
   return <input id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} data-type="body-s" className={base} />
 }

@@ -68,6 +68,40 @@ describe('NodeInspectorDrawer', () => {
     expect(screen.getByTestId('cached-badge')).toHaveTextContent('cached')
   })
 
+  // #3166 — the stored prompt is the text the PROVIDER received. When the outbound scan
+  // substituted something the drawer has to say so: `[REDACTED: credential]` sitting in a prompt
+  // body is otherwise indistinguishable from an author who typed that string, and a reader
+  // debugging a run against this body would be reading it as verbatim template text.
+  it('notes that the prompt was redacted before sending, naming the finding classes', async () => {
+    workflowRunNodeInspect.mockResolvedValue(inspect({
+      resolved_prompt: 'Summarize the log. The operator pasted [REDACTED: credential] in.',
+      resolved_prompt_redacted: true,
+      resolved_prompt_scan: ['credential', 'email'],
+    }))
+    render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)
+
+    const note = await screen.findByTestId('prompt-redacted-note')
+    expect(note).toHaveTextContent(/redacted before sending/i)
+    expect(note).toHaveTextContent('credential, email')
+    // The prompt body still renders — the note explains it, it does not replace it.
+    expect(screen.getByTestId('resolved-prompt')).toHaveTextContent('[REDACTED: credential]')
+  })
+
+  // The calibration case. A note that is always present is not a signal, and the flag is absent
+  // entirely on any run journaled before #3166 — which must render as "not redacted", not as a crash.
+  it('shows no redaction note for a clean prompt, or when the field is absent', async () => {
+    workflowRunNodeInspect.mockResolvedValue(inspect({ resolved_prompt_redacted: false }))
+    const { unmount } = render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)
+    expect(await screen.findByTestId('resolved-prompt')).toBeInTheDocument()
+    expect(screen.queryByTestId('prompt-redacted-note')).not.toBeInTheDocument()
+    unmount()
+
+    workflowRunNodeInspect.mockResolvedValue(inspect())  // no resolved_prompt_redacted key at all
+    render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)
+    expect(await screen.findByTestId('resolved-prompt')).toBeInTheDocument()
+    expect(screen.queryByTestId('prompt-redacted-note')).not.toBeInTheDocument()
+  })
+
   it('renders "fresh" when the output was not cached', async () => {
     workflowRunNodeInspect.mockResolvedValue(inspect({ cached: false }))
     render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)

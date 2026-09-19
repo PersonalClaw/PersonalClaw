@@ -18,7 +18,7 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.skills.marketplace import DEFAULT_SKILLS_INSTALL_PATH
 
 logger = logging.getLogger(__name__)
@@ -663,9 +663,7 @@ async def api_skill_overlay_revert(request: web.Request) -> web.Response:
         body: dict[str, Any] = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    name = str(body.get("name", "")).strip()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
+    name = require_string(body, "name")
 
     from personalclaw.skills import overlays
 
@@ -714,7 +712,7 @@ async def api_ephemeral_skill_promote(request: web.Request) -> web.Response:
             slug,
             scope,
             agent=(str(body.get("agent", "")).strip() or None),
-            title=(str(body["title"]).strip() if body.get("title") else None),
+            title=(string_field(body, "title") or None),
             body=(str(body["body"]) if body.get("body") else None),
         )
     except ephemeral.PromotionError as exc:

@@ -677,7 +677,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           <SidePanel key="sources" fillHeight storeKey="app-sources-panel-w"
             title="Manage Sources" icon={<Database size={18} />}
             onClose={() => setSourcesOpen(false)}>
-            <SourcesPanel catalog={catalog} reloadCatalog={reloadCatalog} onInstalled={reload} />
+            <SourcesPanel catalog={catalog} catalogError={catalogErr} reloadCatalog={reloadCatalog} onInstalled={reload} />
           </SidePanel>
         )}
       >
@@ -896,8 +896,11 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
 /** The Store's source list. Exported so the default/removable labelling of a shipped source
  *  can be driven at the level a user meets it (`sourceLabels.test.tsx`) — a badge and a missing
  *  remove control are exactly the kind of claim no backend test can make. */
-export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
+export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled }: {
   catalog: AppCatalog | null | undefined
+  /** The `app-catalog` rejection, so this panel can tell a FAILED read from an empty one.
+   *  Same prop `StoreView` already takes, from the same `useQuery` — see the guard below. */
+  catalogError?: unknown
   reloadCatalog: () => void
   onInstalled: () => void
 }) {
@@ -997,6 +1000,34 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const unavailableReason = new Map(
     (catalog?.unavailableSources ?? []).map((u) => [u.source, u.reason]),
   )
+
+  // 🔴 THE EMPTY STATES BELOW ARE CLAIMS ABOUT CONFIGURATION, AND THEY WERE RENDERED ON A FACT
+  // ABOUT LOADING (#2629). `sources.length === 0` is `catalog?.gitSources ?? []` — so an
+  // in-flight read and a failed one both collapse to `[]` and the panel stated *"No git
+  // sources configured"* / *"No local sources"*. Absent and zero are different facts, and on
+  // THIS panel the difference is security-relevant: Manage Sources is the egress-disclosure
+  // surface (#2528), and the disclosure paragraph below is gated on `networkSources.length > 0`
+  // from the same absent object. So during the catalog fetch a user read "no git sources" with
+  // no egress notice, concluded nothing reaches the network, and closed a panel that then
+  // populated with the sources that were there all along — the panel briefly asserted the
+  // OPPOSITE of the fact it exists to disclose. It also cost real time: the first screenshot
+  // taken for #2528 captured this state and read as a genuine "the Store has no sources" bug.
+  //
+  // 🔑 NOT A NEW EMPTY-STATE STRING — the THIRD case the kit already documents. `ListScaffold`'s
+  // own header spells the condition out ("Pair with the ONE condition that distinguishes the two
+  // states"), and `StoreView` above already uses it verbatim; this panel was the consumer that
+  // didn't. Both branches now sit behind one settled-ness gate, so they cannot diverge.
+  //
+  // 🪤 THE FAILED READ WAS THE WORSE HALF, and it is why this takes `catalogError` rather than
+  // just a boolean. Measured at this head: `StoreView` gets `catalogError` and renders
+  // `LoadError` (`:840`), but `SourcesPanel` was handed `catalog` alone — so a 500 on
+  // `/api/apps/catalog` was INDISTINGUISHABLE here from a deliberately empty configuration,
+  // and it retried nothing. The grid said "couldn't load"; the panel beside it said "none
+  // configured", about the same failed request.
+  if (catalog === undefined && catalogError) {
+    return <LoadError what="app sources" error={catalogError} onRetry={reloadCatalog} />
+  }
+  if (catalog === undefined) return <ListSkeleton rows={2} what="app sources" />
 
   return (
     <div className="flex flex-col gap-xl">

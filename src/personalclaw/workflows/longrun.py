@@ -32,8 +32,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: Default window for a sibling view — how many of the most recent items cross the boundary.
-#: `KnowledgeConfig.synthesis_window` overrides it. 20 is a compromise: enough for a synthesis
-#: to see a trend, few enough that a 500-cycle run costs the same per cycle as a 5-cycle one.
+#: `KnowledgeConfig.synthesis_window` overrides it, via `bindings._synthesis_window()`, which is
+#: where that read lives because this module is pure over explicit state. 20 is a compromise:
+#: enough for a synthesis to see a trend, few enough that a 500-cycle run costs the same per
+#: cycle as a 5-cycle one — and it remains the fallback when config cannot be read.
 DEFAULT_SYNTHESIS_WINDOW = 20
 
 #: Items below this significance do not cross a sibling boundary. A watcher's job is to notice

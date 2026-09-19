@@ -21,9 +21,11 @@ answer has to come from the ledger, not from reading logs.
 **Run Ledger.** The event subset the Learning Flywheel's template-refiner reads. These
 are emission REQUIREMENTS, not a nice-to-have: a downstream evaluator that wants to know
 which model a step used, what it cost, and why it failed is starved if the engine only
-journals free text. `resolved_prompt_ref` points at the fully-resolved post-binding
-prompt so a trajectory can be replayed — the acceptance bar is that prompt → tool calls
-→ output is reconstructable from ledger events alone.
+journals free text. `resolved_prompt_ref` points at the prompt as the PROVIDER received
+it — post-binding AND post-outbound-scan (#3166) — so a trajectory replays against the
+model's real input rather than text it never saw; `resolved_prompt_redacted` beside it
+says whether the two differ. The acceptance bar is that prompt → tool calls → output is
+reconstructable from ledger events alone.
 
 Everything written here passes through `redact()` first. A journal is read back by the
 flywheel, shipped in bug reports, and rendered in a UI; a credential that reaches it is
@@ -196,11 +198,22 @@ class Journal(LedgerWriter):
         cost_usd: float = 0.0,
         degraded_reason: str = "",
         resolved_prompt_ref: str = "",
+        resolved_prompt_redacted: bool = False,
+        resolved_prompt_scan: tuple[str, ...] | list[str] = (),
         output_ref: str = "",
     ) -> None:
         """The ledger's primary record. Every field here is required by the flywheel's
         refiner (§5 Run Ledger) — `cost_usd` is backend-authoritative with a rate-table
-        floor, never a frontend estimate."""
+        floor, never a frontend estimate.
+
+        `resolved_prompt_ref` points at the prompt as the PROVIDER received it, and the two
+        `resolved_prompt_*` flags beside it say why that may differ from what the node composed
+        (#3166). Both are on THIS row rather than in a parallel channel for the reason the
+        extraction exists: a reader reconciles one vocabulary, and "the stored prompt was altered"
+        is a property of the step, not a separate event. `resolved_prompt_scan` carries finding
+        CLASSES only — never a matched value, since the substitution's whole purpose is that the
+        value is not written down.
+        """
         self.write(
             STEP_COMPLETED,
             instance_path=path,
@@ -216,6 +229,8 @@ class Journal(LedgerWriter):
             cost_usd=round(float(cost_usd), 6),
             degraded_reason=degraded_reason,
             resolved_prompt_ref=resolved_prompt_ref,
+            resolved_prompt_redacted=bool(resolved_prompt_redacted),
+            resolved_prompt_scan=sorted({str(c) for c in (resolved_prompt_scan or ())}),
             output_ref=output_ref,
         )
 

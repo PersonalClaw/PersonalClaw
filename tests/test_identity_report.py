@@ -877,7 +877,6 @@ def test_the_notification_pair_is_registered_so_it_keeps_its_own_severity():
     unregistered pair really does collapse.
     """
     import personalclaw.notification_kinds as nk
-    from personalclaw.providers.entity_routes import _KIND_SEVERITY
 
     resolved = nk.resolve_kind(LR.NOTIFY_SOURCE, LR.NOTIFY_KIND)
 
@@ -885,7 +884,10 @@ def test_the_notification_pair_is_registered_so_it_keeps_its_own_severity():
     assert resolved.attention is True
     assert nk.kind_for_legacy_pair(LR.NOTIFY_SOURCE, LR.NOTIFY_KIND) == LR.NOTIFY_KIND
     # Below SEV_ERROR, which is what `notification_allowed` requires for quiet hours to bite.
-    assert _KIND_SEVERITY.get(LR.NOTIFY_KIND, nk.SEV_INFO) < nk.SEV_ERROR
+    # Read through the RESOLUTION the gate itself uses (`kind_for_legacy`), not the hardcoded
+    # wire-string table the gate used to carry — that table is gone (#341) precisely because it
+    # answered this question differently from the registry.
+    assert nk.kind_for_legacy(LR.NOTIFY_KIND).default_severity < nk.SEV_ERROR
     # The floor: an unregistered sibling DOES collapse, so the assertion above is not
     # something every pair satisfies.
     assert nk.resolve_kind("learning", "not-a-registered-kind").kind == nk.GENERIC_KIND

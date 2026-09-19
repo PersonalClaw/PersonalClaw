@@ -643,11 +643,18 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                   <FilterChip active={!collectionTok} onClick={() => setCollectionTok('')}>
                     <Library size={12} /> All items
                   </FilterChip>
+                  {/* The shelf name is the only user-authored text in this rail, so it is the
+                      only chip that can be arbitrarily long. Bounded + truncated (with the full
+                      name in `title`) so one long name cannot push its siblings out of reach —
+                      the store now caps new names, and this keeps ALREADY-STORED ones legible
+                      without a migration (issue 393). Same idiom as the project path chip.
+                      (Issue numbers are spelled out here: a bare hash-393 reads as a 3-digit
+                      hex colour to the design-system token lint.) */}
                   {collections.map((c) => (
-                    <FilterChip key={c.id} active={collectionTok === c.id} onClick={() => setCollectionTok(c.id)}>
-                      {c.kind === 'smart' ? <Sparkles size={12} /> : <Layers size={12} />}
-                      {' '}{c.name}
-                      {c.kind === 'manual' && typeof c.item_count === 'number' ? ` ${c.item_count}` : ''}
+                    <FilterChip key={c.id} active={collectionTok === c.id} onClick={() => setCollectionTok(c.id)} title={c.name}>
+                      {c.kind === 'smart' ? <Sparkles size={12} className="shrink-0" /> : <Layers size={12} className="shrink-0" />}
+                      <span className="min-w-0 max-w-[16rem] truncate">{c.name}</span>
+                      {c.kind === 'manual' && typeof c.item_count === 'number' ? <span className="shrink-0">{c.item_count}</span> : null}
                     </FilterChip>
                   ))}
                   {/* Reuses the rail's own chip rather than a bespoke button — it
@@ -1028,8 +1035,36 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
                 title="This intent is not evaluated against new items, and Run gathers nothing while it is paused.">Paused</span>}
               {it.propose_skill && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis">proposes skill</span>}
             </div>
-            <div data-type="caption" className="truncate text-on-surface-low">
-              {(it.outcome_count ?? 0) > 0 ? `${it.outcome_count} gathered` : 'nothing gathered yet'}
+            {/* 🔴 "nothing gathered yet" WAS A VERDICT THIS ROW HAD NOT EARNED (issue 266). An
+                intent only evaluates items saved AFTER it exists, so a freshly-created one says
+                this even when the library is already full of matches — and the one-click backfill
+                that fixes it, `Run on existing items`, lives a level down in the detail panel.
+                Neither the row nor the new-intent form mentioned it, so the reasonable conclusion
+                was "intent matching doesn't work" and the feature got abandoned. Measured in the
+                report: the same intent went from "nothing gathered yet" to "2 gathered" with
+                structured field extraction the moment Run was found.
+                The empty half now names the CAUSE (forward-only) and points at the affordance,
+                which is the shape the detail panel's own empty state already had — *"Nothing
+                gathered yet. Save items relevant to this intent, or run it on what you already
+                have."* The row was the only surface still stating a conclusion instead.
+                `title` because this line `truncate`s: at 390px the sentence is cut, and this app's
+                idiom for a truncating element is to carry the full text there (the same fix the
+                goal above it got). The count branch keeps the bare number — it IS established.
+
+                🪤 AND THE HINT IS WITHHELD WHILE PAUSED, or this fix would commit the same error it
+                removes. `Run on existing items` is enabled on a paused intent and SUCCEEDS — it just
+                evaluates nothing (measured on a live gateway: paused answers `{evaluated: 0}` over
+                the same five items enabled answers `{evaluated: 5}` for). Pointing a user at it here
+                would promise a backfill that gathers nothing. The `Paused` badge beside this line
+                already carries that consequence in its own `title`, and the detail panel states it
+                above the button, so the paused row keeps the bare text and adds no promise. */}
+            <div data-type="caption" className="truncate text-on-surface-low"
+              title={(it.outcome_count ?? 0) > 0 || !on ? undefined
+                : 'This intent only evaluates items saved after it was created. Open it and use “Run on existing items” to scan what you already saved.'}>
+              {(it.outcome_count ?? 0) > 0
+                ? `${it.outcome_count} gathered`
+                : on ? 'nothing gathered yet — open to run it on items you already saved'
+                : 'nothing gathered yet'}
               {(it.enabled_for?.length ?? 0) > 0 && ` · ${it.enabled_for!.join('/')}`}
             </div>
           </div>
@@ -1333,14 +1368,18 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
  *  would be both a new contrast risk and visually wrong. Those chips do not render selected on this
  *  surface in any state measured here; if one ever fails, it needs its own container value, not a
  *  guess made from this one. */
-function FilterChip({ active, onClick, tone, children }: { active: boolean; onClick: () => void; tone?: string; children: React.ReactNode }) {
+function FilterChip({ active, onClick, tone, title, children }: { active: boolean; onClick: () => void; tone?: string; title?: string; children: React.ReactNode }) {
   const selected = tone
     // Untouched: a type-toned chip keeps its own tint + ink.
     ? { background: `color-mix(in srgb, ${tone} 20%, transparent)`, color: tone }
     : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
   return (
-    <button type="button" onClick={onClick} aria-pressed={active}
-      data-type="body-s" className="inline-flex items-center gap-1 rounded-pill px-m h-8 transition-colors"
+    // `min-w-0` so a bounded, truncating child (the shelf-name span) can actually shrink:
+    // a flex item's default `min-width:auto` floors it at its content width, which is what
+    // let a 10k-character shelf name render as one pill wider than the viewport (issue 393).
+    // Inert for every short chip. `title` surfaces the full text a truncated child hides.
+    <button type="button" onClick={onClick} aria-pressed={active} title={title}
+      data-type="body-s" className="inline-flex min-w-0 items-center gap-1 rounded-pill px-m h-8 transition-colors"
       style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {children}
     </button>

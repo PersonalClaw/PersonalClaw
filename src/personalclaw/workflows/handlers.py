@@ -34,7 +34,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
@@ -157,6 +157,26 @@ def _reply(body: dict[str, Any], *, status: int = 200) -> web.Response:
     return _ok(body, status=status) if body.get("ok") else _fail(body)
 
 
+async def _parent_def_refusal(name: str) -> web.Response | None:
+    """The refusal for a request scoped to a template that does not exist, else ``None`` (#2940).
+
+    A request scoped to a parent must establish that the parent exists before it reads anything
+    underneath it. Three sub-resource reads under ``/api/workflows/{name}`` did not, and each
+    answered a well-formed EMPTY body for a name that is not a template at all —
+    ``{"runs": [], "total": 0}``, ``{"a": 0, "b": 0, "ops": []}`` and a zero-sample trajectory.
+    Measured: those were byte-identical to a real bundled template with no runs apart from the
+    echoed name, while ``GET /api/workflows/{name}`` on the same id answered 404. All three are
+    ``agent_callable``, so an agent that mistyped or reused a deleted name was told the template
+    exists and is idle.
+
+    Resolves through the family's OWN resolver and returns its OWN envelope, so there is no new
+    error code and no second dialect: ``WF_DEF_NOT_FOUND`` is already in :data:`_STATUS_MAP`. It is
+    one extra definition lookup on a read, which is the honest price of the read being truthful.
+    """
+    found = await service.get_def(name)
+    return None if found.get("ok") else _reply(found)
+
+
 def _guard(request: web.Request, operation: str) -> web.Response | None:
     """Refuse a mutation from a restricted session, and audit either way.
 
@@ -230,7 +250,11 @@ async def api_template_trajectory(request: web.Request) -> web.Response:
     pure read over ledgers already on disk; the run projection at `/runs/{run_id}/introspect` shows
     the same signal for one run in the context of its siblings.
     """
-    return _reply(service.template_trajectory(request.match_info.get("name", "")))
+    name = request.match_info.get("name", "")
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
+    return _reply(service.template_trajectory(name))
 
 
 async def api_def_save(request: web.Request) -> web.Response:
@@ -244,8 +268,9 @@ async def api_def_save(request: web.Request) -> web.Response:
             {"error": {"code": "invalid_request", "message": "'root' must be an object"}},
             status=400,
         )
+    name = require_string(body, "name")
     result = await service.author_def(
-        name=str(body.get("name", "") or ""),
+        name=name,
         root=root,
         description=str(body.get("description", "") or ""),
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
@@ -265,7 +290,7 @@ async def api_def_save(request: web.Request) -> web.Response:
         request,
         "workflow_def_save",
         "success" if result.get("ok") else "failure",
-        str(body.get("name", "")),
+        name,
     )
     return _reply(result, status=201 if result.get("saved") else 200)
 
@@ -501,6 +526,13 @@ async def api_def_version_diff(request: web.Request) -> web.Response:
     from personalclaw.workflows import versions
 
     name = request.match_info.get("name", "")
+    # The parent FIRST, before the query is parsed (#2940's "Suggested fix" wording): the name
+    # addresses the resource, so a bogus template is a 404 whatever `a`/`b` say. Validating the
+    # query first would answer 400 "a/b must be integers" for a template that does not exist,
+    # which sends the caller to fix the wrong half of their request.
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
     try:
         a = int(request.query.get("a", "0"))
         b = int(request.query.get("b", "0"))
@@ -548,6 +580,9 @@ async def api_def_ledger(request: web.Request) -> web.Response:
     from personalclaw.workflows import journal
 
     name = request.match_info.get("name", "")
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
     try:
         limit = max(1, min(int(request.query.get("limit", "20")), 100))
     except ValueError:
@@ -651,8 +686,9 @@ async def api_run_start(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     body = await json_object_body(request)
+    name = require_string(body, "name")
     result = await service.start_run(
-        name=str(body.get("name", "") or ""),
+        name=name,
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         mode=str(body.get("mode", "background") or "background"),
         supervisor=_supervisor(request),
@@ -667,7 +703,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         request,
         "workflow_run_start",
         "success" if result.get("ok") else "failure",
-        str(body.get("name", "")),
+        name,
     )
     return _reply(result, status=202 if result.get("ok") and not result.get("blocking") else 200)
 
@@ -928,12 +964,21 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
     is the sole caller today.
 
     SECRETS ABSENT is the contract. The service read returns persisted values verbatim, and
-    the resolved prompt in particular is stored UN-redacted (`_store_prompt` writes through
-    `store.write_output`, not the redacting journal path). So every reconstructability field
-    is routed through `journal.redact` — the SAME recursive redactor the journal writer uses,
-    reused rather than re-derived so the two cannot drift — before it leaves the process. A
-    credential that reached this endpoint would be a credential shipped to a browser, a bug
-    report, and (via the drawer) a screenshot.
+    the resolved prompt in particular is stored UN-redacted by the JOURNAL (`_store_prompt`
+    writes through `store.write_output`, not the redacting journal path). So every
+    reconstructability field is routed through `journal.redact` — the SAME recursive redactor the
+    journal writer uses, reused rather than re-derived so the two cannot drift — before it leaves
+    the process. A credential that reached this endpoint would be a credential shipped to a
+    browser, a bug report, and (via the drawer) a screenshot.
+
+    This stays load-bearing after #3166. That change made the persisted prompt the POST-OUTBOUND-
+    SCAN text, which is a different guarantee: the outbound scan only substitutes when the run's
+    `scan_mode` is `redact`, it is forced to `warn` for local providers, and it never runs at all
+    on a node whose completion was injected. `journal.redact` is the unconditional one.
+
+    `resolved_prompt_redacted` / `resolved_prompt_scan` are deliberately NOT in the redacted set:
+    they are a bool and a list of finding CLASS names, carrying no matched value, and running a
+    credential redactor over the word "credential" would only garble the explanation.
     """
     from personalclaw.workflows import journal
 
@@ -1207,6 +1252,29 @@ async def api_run_fork(request: web.Request) -> web.Response:
     return _reply(result, status=201 if result.get("ok") else 200)
 
 
+async def api_run_start_draft(request: web.Request) -> web.Response:
+    """Start an existing DRAFT run — the launch a forked run had no verb for (#372).
+
+    Distinct from `POST /api/workflows/runs`, which takes a def NAME and creates the row it
+    starts. This one addresses a run that already exists, because the whole point of forking is
+    that the child carries the parent's lineage and inherited state: creating a second run from
+    the same def would launch something else entirely and leave the fork stranded.
+
+    Guarded by `workflow_run_start`, the same operation the create-and-start route uses. A
+    separate permission would let a caller who may not start a workflow start one through the
+    other door — and starting a draft spends exactly the same money.
+    """
+    denied = _guard(request, "workflow_run_start")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    result = await service.start_draft_run(run_id, supervisor=_supervisor(request))
+    _audit(request, "workflow_run_start", "success" if result.get("ok") else "failure", run_id)
+    # 202, matching the create-and-start route's non-blocking arm: the tick loop is scheduled, and
+    # the run's own status endpoint is where its progress is read.
+    return _reply(result, status=202 if result.get("ok") else 200)
+
+
 async def api_run_continuations(request: web.Request) -> web.Response:
     """The pending resume tokens for a run — what a needs-input inbox renders.
 
@@ -1355,6 +1423,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)
     app.router.add_put("/api/workflows/runs/{run_id}/policy-overrides", api_run_policy_overrides)
+    app.router.add_post("/api/workflows/runs/{run_id}/start", api_run_start_draft)
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)

@@ -167,6 +167,14 @@ class Node:
 
     kind: NodeKind
     id: str = ""
+    #: The author's human-readable name for this node — what a surface shows a user instead of
+    #: the snake_case `id`. A FIRST-CLASS field rather than an `extra` key it used to survive as:
+    #: every bundled definition writes it at the node level (92 of them), and while it was
+    #: unknown the one consumer that needed it (`materialize.plan_materialization`, which titles
+    #: a projected Task) read `config.label` and found nothing, so every materialized task was
+    #: titled with its raw node id (#382). Optional, and an empty label means "no better name
+    #: than the id" — never a validation failure.
+    label: str = ""
     children: list[Node] = field(default_factory=list)
     body: Node | None = None  # foreach/loop
     cases: dict[str, Node] = field(default_factory=dict)  # branch
@@ -199,12 +207,16 @@ class Node:
 
     # ── serialization ──
 
-    _KNOWN = frozenset({"kind", "id", "children", "body", "cases", "default", "config", "needs"})
+    _KNOWN = frozenset(
+        {"kind", "id", "label", "children", "body", "cases", "default", "config", "needs"}
+    )
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"kind": self.kind.value}
         if self.id:
             d["id"] = self.id
+        if self.label:
+            d["label"] = self.label
         if self.children:
             d["children"] = [c.to_dict() for c in self.children]
         if self.body is not None:
@@ -234,6 +246,7 @@ class Node:
         return cls(
             kind=kind,
             id=str(d.get("id", "") or ""),
+            label=str(d.get("label", "") or ""),
             children=[cls.from_dict(c) for c in (d.get("children") or [])],
             body=cls.from_dict(body) if isinstance(body, dict) else None,
             cases={k: cls.from_dict(v) for k, v in (d.get("cases") or {}).items()},

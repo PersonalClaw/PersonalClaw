@@ -16,6 +16,10 @@ const KINDS: Record<string, KindMeta> = {
   cron: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
   schedule: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
   result: { label: 'Scheduled job result', icon: CheckCircle2, tone: 'var(--color-ok)' },
+  // cron/failed's own wire string (#415). The kind had no emitter after the ScheduleService
+  // removal — scheduled-job failures arrived as `error` and were indistinguishable from any other
+  // system error — so the trigger substrate now emits this pair for a CLOCK trigger that breaks.
+  cron_failed: { label: 'Scheduled job failed', icon: XCircle, tone: 'var(--color-danger)' },
   hook: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   fired: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },
@@ -28,9 +32,16 @@ const KINDS: Record<string, KindMeta> = {
   alert: { label: 'Inbox alert', icon: BellRing, tone: 'var(--color-warn)' },
   loop: { label: 'Loop progress', icon: Target, tone: 'var(--color-primary)' },
   complete: { label: 'Loop complete', icon: CheckCircle2, tone: 'var(--color-ok)' },
-  // Registered under BOTH loop/failed ("Loop failed") and cron/failed ("Scheduled job
-  // failed"). The loop wording wins: its sibling bare kinds (complete/stalled/progress)
-  // are all loop-domain, and a scheduled-job failure reaches the UI as the flat `cron`.
+  // The loop watchdog's OWN wire strings (#341). It used to pass `success`/`error`, so a loop
+  // outcome was labelled "Success"/"System error" here and governed by a `system/*` rule; these
+  // are the strings it emits now, and the rows that make the `loop/*` matrix controls real.
+  loop_complete: { label: 'Loop complete', icon: CheckCircle2, tone: 'var(--color-ok)' },
+  loop_failed: { label: 'Loop failed', icon: XCircle, tone: 'var(--color-danger)' },
+  // The bare kind is registered under BOTH loop/failed ("Loop failed") and cron/failed
+  // ("Scheduled job failed"), and keyed by bare kind alone this map cannot express both. The loop
+  // wording wins because its sibling bare kinds (complete/stalled/progress) are all loop-domain.
+  // Neither pair emits the bare form any more — both have a distinct wire string above — so this
+  // row exists for notifications persisted by an older build, and the log is append-only.
   failed: { label: 'Loop failed', icon: XCircle, tone: 'var(--color-danger)' },
   stalled: { label: 'Loop stalled or blocked', icon: AlertTriangle, tone: 'var(--color-warn)' },
   needs_input: { label: 'Loop needs your input', icon: HelpCircle, tone: 'var(--color-warn)' },

@@ -121,14 +121,39 @@ const BASE_LANE: Record<InboxItemKind, Lane | null> = {
  *  `filtered` is off-surface but NOT resolved — inbox.py:66 calls it "withheld by verification
  *  (INU-6); restorable to PENDING". Mission Control showing a row the verifier withheld would
  *  undo that decision, so it reads as closed here.
- *  `sent` is the dead member from fact 3; the branch is defensive, not load-bearing. */
-const STATUS_OPEN: Record<InboxItemStatus, boolean> = {
+ *  `sent` is the dead member from fact 3; the branch is defensive, not load-bearing.
+ *
+ *  🔑 **The frontend's ONE definition of open, for every surface — not just the lanes.**
+ *  `pages/inbox/inboxMeta` re-exports `isOpen`/`OPEN_STATUSES` straight off this map, so the inbox
+ *  header, its filter counts, its kind chips and these lane counts cannot disagree about which rows
+ *  are waiting. They did disagree: `/api/inbox/status` published a PENDING-only `pending_count` for
+ *  the header while every filter used this predicate — 33 against 37 on one screen, and a glance
+ *  (which marks a row SEEN) silently decremented the header while resolving nothing (issue 493).
+ *  The server half is `inbox.OPEN_STATUSES`, and `tests/test_inbox_open_status_is_one_owner.py`
+ *  parses this record to pin the two together — the frontend cannot import Python, so parity is
+ *  asserted from the one side that can read both. */
+export const STATUS_OPEN: Record<InboxItemStatus, boolean> = {
   pending: true,
   seen: true, // the read/unread boundary — surfaced, not yet resolved. Still your turn.
   sent: false,
   handled: false,
   dismissed: false,
   filtered: false,
+}
+
+/** The open statuses as a list, DERIVED from `STATUS_OPEN` rather than spelled out a second time. */
+export const OPEN_STATUSES: InboxItemStatus[] = (Object.keys(STATUS_OPEN) as InboxItemStatus[])
+  .filter((s) => STATUS_OPEN[s])
+
+/** Is this row still asking for something?
+ *
+ *  A MISSING status reads as `pending` — the default `inbox.py` gives the field, so a row written
+ *  before the field existed is open — and an UNRECOGNISED one fails OPEN, per the trap note in the
+ *  header: on an attention surface, hiding an unresolved row is worse than showing a resolved one. */
+export function isOpenStatus(status?: string): boolean {
+  if (!status) return true
+  const known = STATUS_OPEN[status as InboxItemStatus]
+  return known === undefined ? true : known
 }
 
 /** The nine kinds this build knows. Exported so a caller can distinguish "off-surface by decision"
@@ -194,11 +219,10 @@ export function laneFor(item: AttentionInput): Lane | null {
   if (!isKnownKind(kind)) return null
 
   // Closed items leave the surface. An unknown or missing status fails OPEN (still asking) — the
-  // opposite direction from an unknown kind, argued in the header.
-  const status = item.status
-  if (typeof status === 'string' && Object.prototype.hasOwnProperty.call(STATUS_OPEN, status)) {
-    if (!STATUS_OPEN[status as InboxItemStatus]) return null
-  }
+  // opposite direction from an unknown kind, argued in the header. Both of those defaults now live
+  // in `isOpenStatus`, the one predicate every other surface reads, rather than being re-derived
+  // from `STATUS_OPEN` here (issue 493).
+  if (!isOpenStatus(typeof item.status === 'string' ? item.status : undefined)) return null
 
   const base = BASE_LANE[kind]
   if (base === null) return null

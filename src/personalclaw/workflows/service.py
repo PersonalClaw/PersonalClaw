@@ -855,11 +855,17 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     terminal state is a 409 (`WF_NODE_NOT_TERMINAL` — retry as the run advances), and neither
     is a server fault.
 
-    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored raw
-    by the controller (`_store_prompt` writes through `store.write_output`, which does NOT
-    redact), so this dict is NOT safe to emit as-is. Redaction is the HTTP surface's job
-    (WF2-A2 secrets contract); keeping the read un-redacted mirrors `output()`/`status()`,
-    which also hand back stored state verbatim to their one in-process caller.
+    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored by the
+    controller through `store.write_output`, which does NOT run the journal's redactor, so this
+    dict is NOT safe to emit as-is. Redaction is the HTTP surface's job (WF2-A2 secrets contract);
+    keeping the read un-redacted mirrors `output()`/`status()`, which also hand back stored state
+    verbatim to their one in-process caller.
+
+    Since #3166 the stored prompt is the text the PROVIDER received rather than the text the node
+    composed, and `resolved_prompt_redacted` / `resolved_prompt_scan` say whether the outbound
+    secret/PII scan substituted anything on the way out. That is a narrower guarantee than the
+    HTTP redaction, not a replacement for it: the outbound scan only substitutes in `redact` mode,
+    is forced to `warn` for local providers, and does not run for an injected completion.
     """
     from personalclaw.workflows.bindings import node_deps
 
@@ -911,9 +917,16 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     # `<path>::prompt`. Inline when small; a ref past the inline boundary, so a megabyte prompt
     # does not ride in every inspect response. The ref is the one step_completed already recorded.
     prompt_ref = ""
+    prompt_redacted = False
+    prompt_scan: list[str] = []
     for e in node_events:
         if e.get("kind") == journal_mod.STEP_COMPLETED and e.get("resolved_prompt_ref"):
             prompt_ref = str(e["resolved_prompt_ref"])
+            # Why the stored prompt may not be verbatim (#3166). Read from the SAME row as the
+            # ref so the body and the explanation cannot disagree: a redaction badge sourced from
+            # anywhere else could say "altered" about a prompt this ref does not point at.
+            prompt_redacted = bool(e.get("resolved_prompt_redacted", False))
+            prompt_scan = [str(c) for c in (e.get("resolved_prompt_scan") or [])]
             break
     stored_prompt = store.read_output(run_id, f"{target}::prompt")
     resolved_prompt: Any
@@ -974,6 +987,11 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         instance_path=target,
         state=inst.state.value,
         resolved_prompt=resolved_prompt,
+        # "This prompt is what the model saw, and here is why it differs from the template"
+        # (#3166). Without these two the stored body is ambiguous: a reader cannot tell a
+        # substituted prompt from one whose author typed `[REDACTED_EMAIL]` themselves.
+        resolved_prompt_redacted=prompt_redacted,
+        resolved_prompt_scan=prompt_scan,
         resolved_inputs=resolved_inputs,
         output=output_field,
         # The retry records for this node — empty for a node that succeeded first try, since
@@ -2094,6 +2112,19 @@ def resume_run(
     # with this exact code; `resume` was the one that did not ask.
     if run.status in TERMINAL_RUN_STATUSES:
         return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    # A run that never launched has no pause to clear and no gate to answer, and answering
+    # `resumed: true` to one was the false success at the centre of #372's closed loop: `run_from`
+    # refused with "resume the run before run_from", `resume` reported success, and the draft stayed
+    # draft forever. The refusal names `start`, which is the verb that actually applies. Sits above
+    # the clear-pause path deliberately — that path is what produced the lie, by popping a key a
+    # draft never had and saving.
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has not started, so there is no pause to clear and no gate to "
+            "answer — start it first.",
+            status=run.status.value,
+        )
 
     if answer is None and not token:
         run.extra.pop("pause_requested", None)
@@ -2146,13 +2177,18 @@ def _reentry(
     # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
     # resumed because there is nothing to resume (issue 765). 404 first, then the liveness 409,
     # which is the order the eight sibling verbs already use.
-    if store.get(run_id) is None:
+    run = store.get(run_id)
+    if run is None:
         return _run_not_found(run_id)
     controller = _live(run_id, supervisor)
     if controller is None:
+        # The remediation names the verb that APPLIES to this run's phase. A draft has nothing to
+        # resume, and saying "resume the run before run_from" sent the caller to a call that
+        # answered `resumed: true` and changed nothing — the other half of #372's closed loop.
+        first = "start" if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH else "resume"
         return _service_failure(
             "WF_RUN_NOT_LIVE",
-            f"run {run_id!r} has no live controller — resume the run before {op}",
+            f"run {run_id!r} has no live controller — {first} the run before {op}",
         )
     return controller.submit_mutation(
         [{"op": op, "node_id": node_id, "redo_effects": redo_effects, "force": force}],
@@ -2203,6 +2239,60 @@ def fork_run(
     except ValueError as exc:
         return _service_failure("WF_FORK_FAILED", str(exc))
     return _ok(**result.to_dict())
+
+
+async def start_draft_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+    """Start a run that already EXISTS as a draft — the caller-driven launch `_apply_fork`
+    promises.
+
+    `fork_run` mints its child in DRAFT deliberately ("starting it is the caller's decision,
+    because a fork is usually created to be edited before it runs"), and until #372 no verb
+    delivered that decision. `start_run` could not: it takes a def name plus inputs and CREATES
+    the row, so pointing it at an existing draft would mint a second run and orphan the first —
+    the lineage the fork recorded is the thing being launched. The nine run verbs
+    (edit/cancel/pause/resume/confirm/steer/rewind/run_from/fork) all assume a run that has
+    already started, and the two re-entry verbs say so in their own remediation ("resume the run
+    before run_from"), which closed the loop: `resume` popped `pause_requested`, answered
+    `resumed: true`, and left the status `draft`.
+
+    Gated on the run's lifecycle PHASE rather than the literal DRAFT status, exactly like
+    `set_policy_overrides` — a future prelaunch status inherits the gate without this function
+    changing, and the two prelaunch-only operations cannot drift apart. A launched or finished
+    run is refused with the same `WF_RUN_NOT_PRELAUNCH` the overlay editor uses, naming the
+    verb that DOES apply, because "cannot start" with no alternative reads as breakage.
+
+    Nothing special is needed for an overlap-QUEUED draft (`overlap.QUEUED_KEY`): the drain
+    selects on `status=DRAFT`, so a manually started run leaves its window and cannot be
+    launched twice — and `supervisor.launch` is idempotent per run id regardless.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _run_not_found(run_id)
+    if RUN_PHASES[run.status] is not LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_PRELAUNCH",
+            f"run {run_id!r} is already {run.status.value}, so there is nothing to start — "
+            "resume it to answer a gate or clear a pause, rewind it to re-run a node, or fork "
+            "it to branch a fresh attempt.",
+            status=run.status.value,
+        )
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    if supervisor is None:
+        return _service_failure(
+            "WF_NO_SUPERVISOR", "the workflow supervisor is unavailable, so the run cannot start"
+        )
+    try:
+        await supervisor.launch(run, spec)
+    except Exception as exc:
+        return _service_failure(
+            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
+        )
+    # RUNNING optimistically, the same reading `start_run` returns on its non-blocking path: the
+    # tick loop is scheduled but has not run yet, so reading the row back here would report the
+    # `draft` the caller just left. `started` is the fact this call is actually reporting.
+    return _ok(run_id=run.id, status=RunStatus.RUNNING.value, started=True)
 
 
 def audit(*, dry_run: bool = True, supervisor: Any = None) -> dict[str, Any]:

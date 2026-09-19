@@ -28,13 +28,24 @@ def home(tmp_path):
         yield tmp_path
 
 
+#: The agents these rails PUT against. The door resolves its PARENT — the agent must exist before
+#: its routing note can be written (#2995) — so a rail driving the note has to declare the agent it
+#: is annotating. This is a PRECONDITION, not a relaxed assertion: every status and store-effect
+#: assertion below is unchanged, and the ghost-name case is asserted on purpose in
+#: ``tests/test_parent_resource_validation.py`` rather than left implicit here.
+_CONFIGURED_AGENTS = ("router-a", "router-b", "router-c", "router-d")
+
+
 @pytest.fixture(autouse=True)
 def _quiet_side_effects():
     # Orchestrator regen reads the real AppConfig; SEL logs to the real ledger.
     # Neither is under test — the contract here is the PUT's store effect + status.
+    cfg = MagicMock()
+    cfg.agents = {name: MagicMock() for name in _CONFIGURED_AGENTS}
     with (
         patch("personalclaw.dashboard.handlers.agents._regen_orchestrator"),
         patch("personalclaw.dashboard.handlers.agents._sel", return_value=MagicMock()),
+        patch("personalclaw.dashboard.handlers.agents.AppConfig.load", return_value=cfg),
     ):
         yield
 

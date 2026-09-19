@@ -322,7 +322,7 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
     from personalclaw.voice import migration as vm
 
     raw = await json_object_body(request)
-    name = str(raw.get("name") or "") if isinstance(raw, dict) else ""
+    name = string_field(raw, "name")
     try:
         profile = vm.migrate_active_to_default_profile(name=name)
     except vp.VoiceProfileError as exc:

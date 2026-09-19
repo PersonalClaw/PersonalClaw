@@ -56,15 +56,20 @@ export function findAnnouncement(query: string, active: number, total: number): 
  *  (#546: two derivations of "the same" offsets drifted, and `Range.setEnd` threw).
  *
  *  Paints under the `pc-find` highlight name, styled once in `design/tokens.css`. */
-export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, onClose }: {
+export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, initialQuery, onClose }: {
   items: readonly T[]
   segmentsOf: (item: T) => string[]
   nodeOf: (item: T, index: number) => HTMLElement | null | undefined
   scrollRef: React.RefObject<HTMLElement | null>
   label: string
+  initialQuery?: string
   onClose: () => void
 }) {
-  const [query, setQuery] = useState('')
+  // Read ONCE at mount (like a defaultValue): a caller that opens the bar over a known
+  // term — a chat-history search result deep-linked here — pre-seeds it, and everyone
+  // else opens empty. Later changes to the prop do not reset a bar the user is already
+  // typing in; a caller that needs a fresh seed remounts the bar (a keyed instance).
+  const [query, setQuery] = useState(initialQuery ?? '')
   const [active, setActive] = useState(0)
   const [debounced, setDebounced] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -133,6 +138,21 @@ export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, onClos
     const i = matchIndices[next]
     nodeOf(items[i], i)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
+
+  // Seeded open: a bar created WITH an initialQuery brings its FIRST match into view on
+  // its own — the same scroll pressing ↓ once gives (`go(0)`), so there is no second
+  // scroll path. One-shot and gated on the seed: a bar opened empty (⌘F, the reader)
+  // never auto-scrolls, so it keeps its type-then-cycle behavior unchanged. It fires only
+  // once the seed has debounced through AND a match actually exists — so a deep-link into a
+  // transcript that is still loading scrolls when the matching turn mounts, not to nothing.
+  const seeded = useRef(!!initialQuery?.trim())
+  useEffect(() => {
+    if (!seeded.current) return
+    if (debounced.trim() !== (initialQuery ?? '').trim()) return
+    if (!matchIndices.length) return
+    seeded.current = false
+    go(0)
+  }, [debounced, matchIndices]) // eslint-disable-line react-hooks/exhaustive-deps -- one-shot; reads go at fire time
 
   return (
     <motion.div

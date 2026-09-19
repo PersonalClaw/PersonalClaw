@@ -2456,15 +2456,18 @@ async def update_collection(request: web.Request) -> web.Response:
     """PATCH /api/knowledge/collections/{id} — rename / re-icon / re-query / reorder."""
     cid = request.match_info["id"]
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        body = await json_object_body(request)
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     store = _store(request)
     if not store.get_collection(cid):
         return web.json_response({"error": "collection not found"}, status=404)
     fields = {k: v for k, v in body.items() if k in ("name", "kind", "query", "icon", "position")}
+    if "name" in fields:
+        try:
+            fields["name"] = require_string(body, "name")
+        except RequestValidationError as exc:
+            return web.json_response({"error": exc.message}, status=exc.status)
     if not fields:
         return web.json_response(
             {
@@ -2680,6 +2683,12 @@ async def list_item_relations(request: web.Request) -> web.Response:
     if not item_id:
         return web.json_response({"error": "item id required"}, status=400)
     store = _store(request)
+    # The PARENT item first (#2940). The two edge queries below are keyed by item id and match
+    # nothing for an id that is not an item, so a mistyped or deleted id answered
+    # `200 {"outbound": [], "inbound": []}` — identical to a real item with no edges, while
+    # `DELETE /api/knowledge/items/{id}` on the same id 404s "not found".
+    if store.get_item(item_id) is None:
+        return web.json_response({"error": "item not found"}, status=404)
     out: dict[str, list[dict]] = {"outbound": [], "inbound": []}
     try:
         for direction, sql in (

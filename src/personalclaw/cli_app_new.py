@@ -15,6 +15,12 @@ Two halves, and the split is the point:
   via ``personalclaw.sdk.*``, so the generator refuses to teach a boundary violation.
   (``notification`` left that list with `TSE2-5`: ``sdk/notification.py`` now publishes
   ``NotificationDeliveryProvider``, so the stub is derived like any other contract's.)
+* **The generated suite CALLS the type's conformance kit** when the type ships one
+  (``channel`` today — see :data:`_CONFORMANCE_KITS`). A suite that asserts only the
+  stub's shape reports ``7 passed`` while saying nothing about the contract core resolves
+  the app through, which is exactly how a freshly scaffolded channel app used to sail past
+  the two vendor seams it was missing (issue #2577). The kit call ships with a negative
+  test beside it, because a kit call that can never fail is the same silence relocated.
 
 Generated output is MIT-licensed, carries no credentials or placeholder secrets, and is
 validated against the REAL manifest validator (:meth:`AppManifest.validate`) before
@@ -462,6 +468,91 @@ def _logger_root(app_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Conformance kits — the generated suite has to CALL one
+# ---------------------------------------------------------------------------
+#
+# A scaffolded bundle's suite used to assert only the stub's SHAPE: the factory, the
+# identity pair, no leftover abstract methods, settings reaching the provider. Seven
+# tests, ``7 passed``, and not one word about the contract core actually resolves the app
+# through. Measured on ``--type channel`` (issue #2577): the generated app declares one of
+# the four channel seams, ``assert_channel_contract`` appeared ZERO times in the bundle,
+# and the author was told nothing — a green suite with no signal, which is worse than a
+# warning because it reads as confirmation.
+#
+# So a type whose contract ships an executable conformance kit gets that kit CALLED from
+# the generated ``test_provider.py``, with a negative test beside it. The negative test is
+# not decoration: a kit call that cannot fail is the same silence with a new location, and
+# every shipped channel app's own suite carries the same guard.
+#
+# This table is explicit rather than derived, unlike the type table and the provider stub.
+# A kit's CALL is not introspectable from the ABC: its keyword arguments, and what a
+# deliberately non-conformant provider of that type looks like, are contract knowledge, not
+# signature knowledge. What IS checked mechanically is that the names still resolve on the
+# app boundary — :func:`resolve_kit` imports them, so a kit core renames or moves fails
+# ``app new`` loudly instead of generating an import the author discovers.
+
+
+@dataclass(frozen=True)
+class ConformanceKit:
+    """The executable contract a generated bundle of one provider type must call."""
+
+    type: str
+    #: The SDK facade that re-exports the kit — apps import core ONLY via ``personalclaw.sdk.*``.
+    sdk_module: str
+    #: The entry point the generated test calls.
+    assert_fn: str
+    #: The exception it raises, which the generated negative test expects.
+    error_name: str
+    #: Extra SDK names the generated tests need (to build a non-conformant provider).
+    extra_names: tuple[str, ...] = ()
+
+    @property
+    def imported_names(self) -> tuple[str, ...]:
+        return (self.assert_fn, self.error_name, *self.extra_names)
+
+
+_CONFORMANCE_KITS: dict[str, ConformanceKit] = {
+    "channel": ConformanceKit(
+        type="channel",
+        sdk_module="personalclaw.sdk.channel",
+        assert_fn="assert_channel_contract",
+        error_name="ChannelContractError",
+        # The negative test declares `inbound=True` on a provider with no inbound path,
+        # which is the kit's own honesty clause and the mistake a channel author makes.
+        extra_names=("ChannelCapabilities",),
+    ),
+}
+
+
+def resolve_kit(type_name: str) -> ConformanceKit | None:
+    """The conformance kit for ``type_name``, proven importable, or ``None``.
+
+    ``None`` means this type ships no kit — most types do not, and that is a fact about
+    core, not a defect in the scaffold. A kit that is NAMED but no longer resolvable is a
+    different thing entirely: it would generate a bundle whose suite fails on an
+    ImportError the author has no way to fix, so it raises here (the same posture as the
+    generated-manifest validation in :func:`scaffold`).
+    """
+    kit = _CONFORMANCE_KITS.get(type_name)
+    if kit is None:
+        return None
+    try:
+        module = importlib.import_module(kit.sdk_module)
+    except ImportError as exc:  # pragma: no cover - a missing SDK facade breaks far more
+        raise ScaffoldError(
+            f"the {type_name} conformance kit names {kit.sdk_module}, which does not "
+            f"import ({exc}) — this is a scaffold bug, please report it"
+        ) from exc
+    missing = [name for name in kit.imported_names if not hasattr(module, name)]
+    if missing:
+        raise ScaffoldError(
+            f"the {type_name} conformance kit names {missing} on {kit.sdk_module}, which "
+            "does not export them — this is a scaffold bug, please report it"
+        )
+    return kit
+
+
+# ---------------------------------------------------------------------------
 # File templates
 # ---------------------------------------------------------------------------
 
@@ -618,6 +709,82 @@ def doctor() -> list[DoctorLine]:
 '''
 
 
+def _render_channel_kit_tests(kit: ConformanceKit, *, class_name: str) -> str:
+    """The ``channel`` kit call + the negative test that proves it can fail.
+
+    The break chosen for the negative test is the kit's own inbound-honesty clause: a
+    transport that declares ``inbound=True`` while having no inbound path at all. That is
+    a real channel-author mistake (the flag and the receive loop live in different places),
+    it names a clause rather than a typo, and it cannot start passing by accident.
+    """
+    return f'''
+
+# ── Core's conformance kit: the ONE executable statement of the channel contract ──
+#
+# `{kit.assert_fn}` drives the clauses every channel shares — identity + info(),
+# capability-dict completeness, connect/send echo shapes, health/test agreement, the
+# unpaired-DM pairing flow (canned reply + exactly one deduped owner request), and
+# non-owner group content entering a session FENCED. It raises `{kit.error_name}`
+# naming the violated obligation, so a failure reads as an obligation, not an expression.
+#
+# It ALSO advises: watch pytest's warnings summary. A scaffolded channel app declares one
+# seam of four, so the kit warns that this bundle registers no `inbox` message source and
+# no `trigger_source`. Those warnings are your checklist, not a failure — one vendor app
+# owns every seam that vendor touches. Add them to app.json's `providers` array, or record
+# the exemption with `no_inbox_source_reason=` / `no_trigger_source_reason=`.
+#
+# Grow the call as you fill the stub in:
+#   * declare `inbound=True` in capabilities() and pass `inbound_via="<your handler>"`;
+#   * ship a ChannelDelivery and pass `delivery=`, `fake_backend=`, `min_edit_interval=`
+#     and `clock=` to switch the delivery + streaming-throttle clauses on.
+#
+# See docs/guides/build-a-channel-app.md for the full checklist.
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway PERSONALCLAW_HOME, so no test here can touch the real one.
+
+    The kit drives REAL core seams: its unknown-sender clause reads and writes the trust
+    store, whose path resolves through `config_dir()` — i.e. `PERSONALCLAW_HOME`, re-read
+    live on every call. Pointing that at a per-test tmp dir isolates the trust store, the
+    app store and the credential store at once. Without it the clause asserting the
+    DEFAULT 'pairing' policy would fail for anyone who has changed their own.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    return home
+
+
+def test_meets_the_channel_contract(isolated_home: Path) -> None:
+    {kit.assert_fn}(create_provider({{}}))
+
+
+def test_the_conformance_kit_can_actually_fail(isolated_home: Path) -> None:
+    """A kit call that can never fail is the same silence with a new location.
+
+    So prove this one bites. Declaring `inbound=True` with no inbound path is the kit's
+    inbound-honesty clause: nothing on the platform could route to such a transport.
+    """
+
+    class NoInboundPath({class_name}):
+        def capabilities(self) -> ChannelCapabilities:
+            return ChannelCapabilities(inbound=True)
+
+    with pytest.raises({kit.error_name}):
+        {kit.assert_fn}(NoInboundPath({{}}))
+'''
+
+
+#: Per-type renderer for the kit block appended to the generated ``test_provider.py``.
+#: A kit in :data:`_CONFORMANCE_KITS` without a renderer here is a scaffold bug, caught by
+#: :func:`resolve_kit`'s caller rather than by generating a file with a dangling call.
+_KIT_RENDERERS: dict[str, Callable[..., str]] = {
+    "channel": _render_channel_kit_tests,
+}
+
+
 def _render_test_provider_py(
     contract: TypeContract, *, app_name: str, display_name: str, class_name: str
 ) -> str:
@@ -631,6 +798,33 @@ def _render_test_provider_py(
         if contract.has_abc
         else f"Contract: duck-typed ({contract.type} publishes no SDK ABC yet)"
     )
+    kit = resolve_kit(contract.type)
+    kit_note = ""
+    kit_imports = ""
+    kit_block = ""
+    if kit is not None:
+        render = _KIT_RENDERERS.get(kit.type)
+        if render is None:  # pragma: no cover - guarded by test_app_scaffold
+            raise ScaffoldError(
+                f"the {kit.type} conformance kit has no generated-test renderer — this is "
+                "a scaffold bug, please report it"
+            )
+        kit_note = (
+            f"\nThe suite also calls `{kit.assert_fn}` — core's {contract.type} conformance\n"
+            "kit, which is the contract the platform holds this provider to rather than the\n"
+            "shape this file happens to assert. Read its advisories in pytest's warnings\n"
+            "summary; the block at the bottom of this file explains them.\n"
+        )
+        # Trailing blank line included, so a type WITHOUT a kit renders byte-identically
+        # to before this block existed. Exploded with a magic trailing comma: black keeps
+        # that form, so the file it emits is the file black would emit.
+        kit_imports = (
+            "from pathlib import Path\n\nimport pytest\n\n"
+            f"from {kit.sdk_module} import (\n"
+            + "".join(f"    {name},\n" for name in sorted(kit.imported_names))
+            + ")\n\n"
+        )
+        kit_block = render(kit, class_name=class_name)
     return f'''"""Stub-level contract tests for the {app_name} {contract.type} provider.
 
 {contract_note}
@@ -638,11 +832,11 @@ def _render_test_provider_py(
 These run with no network, no credentials and no gateway: they assert the provider
 SHAPE core depends on, so a change that breaks registration fails here first. Add your
 behaviour tests beside them as you fill the stub in.
-"""
+{kit_note}"""
 
 from __future__ import annotations
 
-from provider import {class_name}, create_provider
+{kit_imports}from provider import {class_name}, create_provider
 
 CONTRACT_METHODS = ({method_list}{"," if len(contract.methods) == 1 else ""})
 
@@ -677,7 +871,7 @@ def test_every_contract_method_is_declared_on_the_stub() -> None:
 
 def test_settings_reach_the_provider() -> None:
     assert create_provider({{"timeout_secs": 5}})._timeout == 5
-'''
+{kit_block}'''
 
 
 def _render_readme(
@@ -692,6 +886,28 @@ def _render_readme(
         "\n".join(f"- `{m}`" for m in contract.methods)
         if contract.methods
         else "- (no abstract methods — core resolves this provider by attribute)"
+    )
+    kit = resolve_kit(contract.type)
+    # A README that does not mention the kit leaves the author reading a warnings summary
+    # with no idea what produced it — the advisories ARE the missing-seam checklist.
+    kit_section = (
+        ""
+        if kit is None
+        else f"""
+## The conformance kit
+
+`test_provider.py` calls `{kit.assert_fn}` from `{kit.sdk_module}` — core's one
+executable statement of the {contract.type} contract, and the same kit every shipped
+{contract.type} app runs against. Two things to know on your first `pytest` run:
+
+- It **advises** about the companion seams this scaffold does not declare. A vendor app
+  owns every seam that vendor touches, so a {contract.type}-only bundle warns that it
+  registers no `inbox` message source and no `trigger_source`. Read those warnings as the
+  checklist they are: add the providers to `app.json`, or record why this vendor has no
+  such semantics with `no_inbox_source_reason=` / `no_trigger_source_reason=`.
+- The negative test beside the call is load-bearing. A kit call that cannot fail proves
+  nothing, so keep one non-conformant case in the suite as you grow the provider.
+"""
     )
     return f"""# {display_name}
 
@@ -708,7 +924,7 @@ A PersonalClaw **{contract.type}** app. It implements {contract_line}.
 Each stub either returns a neutral value or raises `NotImplementedError` — replace the
 bodies, then extend `test_provider.py` with tests for what you wrote. Import core only
 through `personalclaw.sdk.*`; a deep core import will break on the next release.
-
+{kit_section}
 ## Run the tests
 
 ```bash

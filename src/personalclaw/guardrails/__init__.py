@@ -104,6 +104,12 @@ from personalclaw.guardrails.policy import (
     unattended_dispatch_key,
 )
 from personalclaw.guardrails.scan import ScanResult, scan_outbound
+from personalclaw.guardrails.wire import (
+    WirePrompt,
+    capture_wire_prompt,
+    current_wire_prompt,
+    record_outbound,
+)
 from personalclaw.guardrails.writes import live_writes_disabled
 
 __all__ = [
@@ -135,11 +141,14 @@ __all__ = [
     "PromptInjectionBlocked",
     "SecretLeakBlocked",
     "SpendMeter",
+    "WirePrompt",
     "action_type",
     "approval_policy_for_session",
     "budget_from_config",
+    "capture_wire_prompt",
     "ceiling_permits_approval",
     "check_action",
+    "current_wire_prompt",
     "demote",
     "enforce_action",
     "ensure_governance_boot",
@@ -155,6 +164,7 @@ __all__ = [
     "load_ceiling",
     "profile_for_session",
     "promotion_eligibility",
+    "record_outbound",
     "register_action_type",
     "registered_action_types",
     "reset_action_types",

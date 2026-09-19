@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { reportingWrite } from '../../app/reportingWrite'
+import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
+import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
@@ -105,16 +106,26 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
     reload()
   }
   const [syncing, setSyncing] = useState(false)
-  // A header click, not a poll — the person who asked is owed the failure. The reload is gated
-  // (probeMcp's precedent): after a failed sync it would re-render the same unchanged list.
+  // A header click, not a poll — the person who asked is owed the failure AND the OUTCOME. The
+  // sync reconciles the agent FILE store (Store activations, app bundles, a restored snapshot)
+  // into config.json, so "which agents just appeared" is the whole answer; it takes the `.catch`
+  // form of the shared report rather than `reportingWrite`'s boolean, which would discard the
+  // result. The sentence is the server's (one author for it) — this only picks the toast level.
+  // Both reloads are gated (probeMcp's precedent): nothing added means the list is unchanged, so
+  // refetching would re-render the same rows and read as "nothing happened".
   async function syncAgents() {
     setSyncing(true)
     try {
-      if (!(await reportingWrite('sync the agents', async () => {
-        const r = await api.syncAgents()
-        if (!r?.ok) throw new Error('the gateway declined the sync')
-      }))) return
-      reload()
+      const r = await api.syncAgents().catch((e: unknown) => {
+        reportActionFailure('sync the agents')(e)
+        return null
+      })
+      if (!r) return
+      // The handler answers an `{ok,…}` envelope instead of throwing on a refusal, so the
+      // !ok shape funnels through the same reporter rather than passing as success.
+      if (!r.ok) return reportActionFailure('sync the agents')(new Error('the gateway declined the sync'))
+      notify(r.message, r.synced.length ? 'success' : 'info')
+      if (r.synced.length) reload()
     } finally { setSyncing(false) }
   }
 
@@ -132,7 +143,10 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
           keepCornerPadding
           left={<PageTitle>Agents</PageTitle>}
           right={<HeaderActions>
-            <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="low" onClick={syncAgents} />
+            {/* `default`, not `low`: it was a load/save that reported nothing when it was
+                ranked lowest; it now reconciles the agent file store into the config and is
+                the only control that makes a Store/app/snapshot agent visible (issue 344). */}
+            <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="default" onClick={syncAgents} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />
           </HeaderActions>}
         />

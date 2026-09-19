@@ -1554,6 +1554,13 @@ class GatewayOrchestrator:
                 # automation that BROKE reported through the silent channel. Its own comment names
                 # the contract: "failures reach the inbox even when `delivery` is none".
                 destination=_delivery.route_for(trigger, ok=ok),
+                # 🔴 A CLOCK TRIGGER IS A SCHEDULED JOB (issue #415), and its outcome belongs on the
+                # `cron/*` rows the matrix has always offered — which nothing had emitted since the
+                # ScheduleService removal, leaving two configurable controls that could not fire.
+                # Read off the trigger because this substrate also carries webhook, event, file and
+                # web_watch outcomes, and those are not scheduled jobs. Through `is_scheduled` so a
+                # test can derive the kind an outcome WILL carry instead of assuming one.
+                scheduled=_delivery.is_scheduled(trigger),
             )
             _delivery.deliver(state, note, delivered_ids=self._delivered_event_ids)
         except Exception:  # noqa: BLE001 - see the docstring
