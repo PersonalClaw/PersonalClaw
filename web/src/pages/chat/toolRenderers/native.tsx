@@ -134,10 +134,10 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
 
 /** web_fetch: render the fetched page as a titled card with its extracted content
  *  as Markdown (the normalized web_fetch output is markdown/text + a title line).
- *  The URL comes from the call's INPUT, so it resolves the input rather than
- *  reading `inputObj`: OUTPUT renderers are handed the segment untouched (only the
- *  input path builds a normalized copy), so a persisted session would otherwise
- *  lose the URL line the card is titled by. */
+ *  The URL comes from the call's INPUT, so it goes through `inputOf` like every
+ *  other renderer here — both dispatch paths hand the segment over untouched, so
+ *  reading `seg.inputObj` would lose the URL line this card is titled by on every
+ *  persisted session. */
 function webFetchOutput(seg: ToolSegment): ReactNode {
   const text = (seg.output ?? '').trim()
   if (!text || text.startsWith('{') || text.startsWith('[')) return undefined as unknown as ReactNode
