@@ -510,6 +510,22 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           {full.file_size != null && <span>{fmtBytes(full.file_size)}</span>}
           {full.file_metadata?.width && full.file_metadata?.height && <span>{full.file_metadata.width}×{full.file_metadata.height}</span>}
           {typeof full.file_metadata?.page_count === 'number' && <span>{full.file_metadata.page_count} pages</span>}
+          {/* KOCR — a TRUNCATED OCR read has to SAY it was truncated. A scanned PDF with no
+              text layer is read by rasterizing its pages, and that is capped: past the cap the
+              remaining pages are not in the extracted text and not in search. Without this the
+              strip showed "120 pages" beside text drawn from only the first 40, which reads as
+              a complete document. The cap itself lives in the backend; this is the only place a
+              user can see that it bit. */}
+          {full.file_metadata?.ocr_pages_capped === true && typeof full.file_metadata?.ocr_pages_rasterized === 'number' && (
+            <span
+              data-type="caption"
+              title={`This document has no text layer, so its pages were read by OCR. Only the first ${full.file_metadata.ocr_pages_rasterized} pages were read — text beyond them is not extracted and will not appear in search.`}
+              className="rounded-pill border border-warning/30 bg-warning/15 px-2 h-6 inline-flex items-center text-on-surface"
+            >
+              OCR read first {full.file_metadata.ocr_pages_rasterized}
+              {typeof full.file_metadata?.page_count === 'number' ? ` of ${full.file_metadata.page_count}` : ''} pages
+            </span>
+          )}
           {typeof full.file_metadata?.sheet_count === 'number' && <span>{full.file_metadata.sheet_count} sheet{full.file_metadata.sheet_count === 1 ? '' : 's'}</span>}
           {typeof full.file_metadata?.slide_count === 'number' && <span>{full.file_metadata.slide_count} slide{full.file_metadata.slide_count === 1 ? '' : 's'}</span>}
           {typeof full.file_metadata?.row_count === 'number' && full.file_metadata.row_count > 0 && <span>{full.file_metadata.row_count} row{full.file_metadata.row_count === 1 ? '' : 's'}</span>}

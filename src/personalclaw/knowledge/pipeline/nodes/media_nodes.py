@@ -99,18 +99,33 @@ class OcrNode:
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         # OCR a single image (ctx.file_path) OR frames passed by an upstream node.
+        from personalclaw.knowledge.pipeline.nodes.ocr_nodes import ocr_rejection
+        from personalclaw.ocr.filetype import partition_images
+
         images = _images_from(inputs, ctx)
         if not images:
             return NodeOutput(
                 node_type=self.node_type, backend=self.backend, success=False, error="no image"
             )
+        # The SAME true-type gate the engine backend uses, applied BEFORE the model sees the
+        # bytes. This backend used to skip it, so a plain text file named `.png` was uploaded
+        # to a vision model unchecked while its sibling backend refused the identical file —
+        # the gate belongs to the `ocr` node type, not to whichever backend happened to run.
+        accepted, rejected = partition_images(images)
+        if not accepted:
+            return ocr_rejection(self.node_type, self.backend, rejected)
         text = await complete_text(
             self.uses_use_case,
             "Transcribe ALL text visible in this image verbatim. Output only the text, no commentary.",  # noqa: E501
-            images=images[:1],
+            images=accepted[:1],
         )
+        meta: dict = {"ocr_rejected": rejected} if rejected else {}
         return NodeOutput(
-            node_type=self.node_type, backend=self.backend, text=text, classification="text-heavy"
+            node_type=self.node_type,
+            backend=self.backend,
+            text=text,
+            metadata=meta,
+            classification="text-heavy",
         )
 
 

@@ -20,7 +20,11 @@ input this gate exists to stop.
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Iterable
+
+logger = logging.getLogger(__name__)
 
 #: Magic-number prefixes for the image types OCR accepts, by canonical type name.
 #: Bytes, because that is what a magic number is. Kept deliberately small: every entry
@@ -132,3 +136,30 @@ def assert_image(path: str) -> str:
             f"{actual} — refusing to OCR it"
         )
     return actual
+
+
+def partition_images(paths: Iterable[str]) -> tuple[list[str], list[str]]:
+    """Split *paths* into ``(accepted, rejection_reasons)`` through :func:`assert_image`.
+
+    The gate the ``ocr`` node type shares across BOTH its backends. It lives here, applied
+    once per path, because the alternative — each backend gating itself — is how the engine
+    backend ended up byte-checked while the vision-llm backend was not, and a gate only one
+    route honours is not a gate: a text file named ``.png`` simply took the other road.
+    Whichever backend the executor resolves, the bytes are checked before a decoder or a
+    model sees them.
+
+    Rejections are COLLECTED rather than raised: one unreadable page out of forty must not
+    discard the thirty-nine that are readable, and the reasons are what the item reports so
+    a user learns which input was refused and why.
+    """
+    accepted: list[str] = []
+    rejected: list[str] = []
+    for path in paths:
+        try:
+            assert_image(path)
+        except TrueTypeRejected as exc:
+            logger.info("OCR refused %s: %s", path, exc)
+            rejected.append(str(exc))
+            continue
+        accepted.append(path)
+    return accepted, rejected

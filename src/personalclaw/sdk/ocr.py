@@ -19,6 +19,7 @@ from personalclaw.ocr.filetype import (  # noqa: F401
     TrueTypeRejected,
     assert_image,
     detect_image_type,
+    partition_images,
 )
 from personalclaw.ocr.provider import (  # noqa: F401
     OcrError,
@@ -36,6 +37,7 @@ __all__ = [
     "active_ocr",
     "ocr_available",
     "assert_image",
+    "partition_images",
     "detect_image_type",
     "TrueTypeRejected",
     "MAX_IMAGE_BYTES",

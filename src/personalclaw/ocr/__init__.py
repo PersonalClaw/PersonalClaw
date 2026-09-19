@@ -14,6 +14,7 @@ from personalclaw.ocr.filetype import (
     TrueTypeRejected,
     assert_image,
     detect_image_type,
+    partition_images,
 )
 from personalclaw.ocr.provider import OcrError, OcrProvider, OcrRejected, OcrResult
 from personalclaw.ocr.registry import (
@@ -37,6 +38,7 @@ __all__ = [
     "get_provider",
     "list_providers",
     "assert_image",
+    "partition_images",
     "detect_image_type",
     "TrueTypeRejected",
     "MAX_IMAGE_BYTES",

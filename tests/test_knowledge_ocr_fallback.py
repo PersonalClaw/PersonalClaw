@@ -50,6 +50,7 @@ from personalclaw.knowledge.pipeline.nodes.ocr_nodes import (
 )
 from personalclaw.knowledge.pipeline.registry import can_resolve_use_case, resolve_runnable
 from personalclaw.knowledge.pipeline.runner import ingest_item
+from personalclaw.knowledge.pipeline.types import NodeContext
 from personalclaw.knowledge.readers import FileReader
 from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 from personalclaw.ocr.provider import OcrProvider, OcrResult
@@ -178,6 +179,18 @@ def _ingest_pdf(store: KnowledgeStore, home: Path, src: Path) -> str:
     )
     assert item_id
     return item_id
+
+
+def _one_pixel_png() -> bytes:
+    """A real 1×1 PNG, built rather than committed: the gate reads the magic number, so the
+    bytes have to be genuine, and a tiny generated file keeps that fact visible here."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1), "white").save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _pool_text(store: KnowledgeStore, item_id: str, node_type: str) -> str:
@@ -482,12 +495,178 @@ def test_the_render_scale_is_bounded_in_both_directions():
 
 def test_the_page_cap_is_reported_when_it_bites(tmp_path):
     """A truncated read that does not say it was truncated is the silent-empty defect in a
-    different costume."""
+    different costume.
+
+    Note what this reads: ``_render``'s RETURN VALUE. That is necessary but nowhere near
+    sufficient, and on its own it was the defect's camouflage — see
+    ``test_the_page_cap_is_visible_on_the_stored_item``, which reads the same facts off the
+    item a user actually sees.
+    """
     _paths, meta = PdfRasterizeNode._render(str(BOMB_PAGES_PDF), str(tmp_path))
     assert meta["pages_rasterized"] == MAX_OCR_PAGES
     assert meta["page_count"] > MAX_OCR_PAGES
     assert meta["pages_capped"] is True
     assert meta["page_cap"] == MAX_OCR_PAGES
+
+
+def test_the_page_cap_is_visible_on_the_stored_item(tmp_path, spy):
+    """The cap read off the STORED ITEM — the surface a user has — not off ``_render``.
+
+    **The defect this exists for.** ``pdf_rasterize`` computed ``pages_capped`` /
+    ``page_cap`` / ``pages_rasterized`` correctly and they went nowhere: the node is
+    ``pooled=False``, so its metadata fed the next node and reached no user-visible surface.
+    A 120-page scan therefore stored 40 pages of OCR'd text with a ``page_count`` of 120
+    beside it and nothing anywhere saying the read stopped at 40 — measured live on item
+    ``287c7ddb``, whose ``file_metadata`` carried only ``content_hash`` / ``format`` /
+    ``page_count`` / ``node_phases``.
+
+    The sibling above stayed GREEN throughout, because it asserts the function's return
+    value rather than anything persisted. That is why this rail reads ``get_item`` instead:
+    a ceiling the user cannot see is indistinguishable from no ceiling.
+    """
+    store = _store_for(tmp_path)
+    item_id = _ingest_pdf(store, tmp_path, BOMB_PAGES_PDF)
+
+    asyncio.run(ingest_item(store, item_id, embedder=_Embedder()))
+
+    meta = (store.get_item(item_id) or {}).get("file_metadata") or {}
+    assert meta.get("ocr_pages_capped") is True, (
+        f"the scan was truncated to {MAX_OCR_PAGES} of its pages and the stored item does "
+        f"not say so — file_metadata keys: {sorted(meta)}"
+    )
+    assert meta.get("ocr_pages_rasterized") == MAX_OCR_PAGES, (
+        f"expected {MAX_OCR_PAGES} rasterized pages on the item, got "
+        f"{meta.get('ocr_pages_rasterized')!r}"
+    )
+    assert meta.get("ocr_page_cap") == MAX_OCR_PAGES
+    # The truncation is only meaningful NEXT TO the real length: "40 of 120".
+    assert meta.get("page_count", 0) > MAX_OCR_PAGES
+
+
+def test_an_untruncated_scan_does_not_claim_truncation(tmp_path, spy):
+    """The mirror of the rail above, and the reason it cannot pass vacuously.
+
+    Hardcoding ``ocr_pages_capped = True`` would satisfy the truncation assertions and make
+    every scanned document announce a truncation that never happened. A one-page scan must
+    carry NO such key — ``_merge_file_metadata`` removes a key written as ``None``, so the
+    absence here is the same mechanism a re-ingest relies on to stop claiming a stale cap.
+    """
+    store = _store_for(tmp_path)
+    item_id = _ingest_pdf(store, tmp_path, IMAGE_ONLY_PDF)
+
+    asyncio.run(ingest_item(store, item_id, embedder=_Embedder()))
+
+    meta = (store.get_item(item_id) or {}).get("file_metadata") or {}
+    assert (
+        "ocr_pages_capped" not in meta
+    ), f"a scan that was read in full reports a truncation: {meta.get('ocr_pages_capped')!r}"
+    # …while the cap facts that are always true of an OCR'd document still land, so the
+    # absence above is a real negative rather than the whole block having gone missing.
+    assert meta.get("ocr_pages_rasterized") == 1, f"expected 1 rasterized page, got {meta!r}"
+
+
+# ── the true-type gate belongs to the NODE TYPE, not to one backend ───────────────
+
+
+def _ocr_ctx(tmp_path, file_path: str) -> NodeContext:
+    return NodeContext(
+        item_id="itm_gate",
+        item_type="image",
+        file_path=file_path,
+        work_dir=str(tmp_path),
+    )
+
+
+def test_the_vision_llm_backend_refuses_a_non_image_before_the_model(tmp_path, monkeypatch):
+    """The gate was ENGINE-PATH-ONLY, so the other backend accepted a liar file.
+
+    ``assert_image`` was called only inside ``OcrEngineNode.run``. With no engine app
+    installed the executor resolves ``ocr`` / ``vision-llm`` instead, which called no gate
+    at all — so uploading a plain-text file named ``not_really.png`` returned HTTP 200 with
+    ``node_phases`` ``ocr=done``, no ``ocr=rejected`` marker and an empty pool (measured live
+    on item ``c13fd0e9``). Identical bytes, opposite handling, decided by which backend
+    happened to be resolvable.
+
+    The assertion that matters is ``called == []``: not merely that the output says
+    "rejected", but that the model was never handed the bytes. ARCC ``cnt_eMkU5kkpTaEk65``
+    requires validating the true type BEFORE a consumer processes the file.
+    """
+    from personalclaw.knowledge.pipeline.nodes import media_nodes
+
+    liar = tmp_path / "not_really.png"
+    liar.write_text("this is plain text that merely claims to be a PNG")
+
+    called: list[tuple] = []
+
+    async def _never_called(*args, **kwargs):
+        called.append(args)
+        return "the model should never have been asked"
+
+    monkeypatch.setattr(media_nodes, "complete_text", _never_called)
+
+    out = asyncio.run(media_nodes.OcrNode().run({}, _ocr_ctx(tmp_path, str(liar))))
+
+    assert called == [], "a non-image was handed to the vision model — the gate did not run"
+    assert out.success is False
+    assert (
+        out.metadata.get("ocr") == "rejected"
+    ), f"expected the shared 'rejected' marker both backends report, got {out.metadata!r}"
+    assert out.metadata.get("ocr_rejected"), "the refusal carries no reason a user could act on"
+
+
+def test_the_vision_llm_backend_still_reads_a_real_image(tmp_path, monkeypatch):
+    """The non-vacuity mirror: the gate refuses liars, not everything.
+
+    Without this, deleting the vision-llm OCR path outright would satisfy the rail above.
+    A genuine PNG must reach the model and its text must come back.
+    """
+    from personalclaw.knowledge.pipeline.nodes import media_nodes
+
+    honest = tmp_path / "real.png"
+    honest.write_bytes(_one_pixel_png())
+
+    seen: list[list[str]] = []
+
+    async def _fake_model(_use_case, _prompt, images=None):
+        seen.append(list(images or []))
+        return "transcribed text"
+
+    monkeypatch.setattr(media_nodes, "complete_text", _fake_model)
+
+    out = asyncio.run(media_nodes.OcrNode().run({}, _ocr_ctx(tmp_path, str(honest))))
+
+    assert seen == [[str(honest)]], f"the real image did not reach the model: {seen!r}"
+    assert out.success is True
+    assert out.text == "transcribed text"
+    assert "ocr" not in out.metadata, f"a clean read reported a gate verdict: {out.metadata!r}"
+
+
+def test_both_ocr_backends_refuse_the_same_bytes(tmp_path, spy, monkeypatch):
+    """The gate is a property of the ``ocr`` NODE TYPE, so the two backends must agree.
+
+    This is the rail that would have caught the original defect: it hands the SAME liar file
+    to both registered backends and requires the same refusal from each. Before the shared
+    gate, ``vision-llm`` returned ``success=True`` here while ``engine`` refused.
+    """
+    from personalclaw.knowledge.pipeline.nodes import media_nodes
+    from personalclaw.knowledge.pipeline.nodes.ocr_nodes import OcrEngineNode
+
+    liar = tmp_path / "not_really.png"
+    liar.write_text("plain text wearing a PNG extension")
+
+    async def _never_called(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("the vision model was handed un-gated bytes")
+
+    monkeypatch.setattr(media_nodes, "complete_text", _never_called)
+
+    ctx = _ocr_ctx(tmp_path, str(liar))
+    vision_out = asyncio.run(media_nodes.OcrNode().run({}, ctx))
+    engine_out = asyncio.run(OcrEngineNode().run({}, ctx))
+
+    for label, out in (("vision-llm", vision_out), ("engine", engine_out)):
+        assert out.success is False, f"{label} accepted a non-image"
+        assert out.metadata.get("ocr") == "rejected", f"{label} metadata: {out.metadata!r}"
+    assert spy.pages_seen == 0, "the engine decoded bytes the gate should have refused"
 
 
 # ── the rail's own negative cases ─────────────────────────────────────────────────
