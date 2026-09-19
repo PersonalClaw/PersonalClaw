@@ -76,8 +76,7 @@
     "update_dev_mode": false,
     "terminal": {
       "enabled": true
-    },
-    "dashboard_layout": {}
+    }
   },
   "legibility": {
     "discover_tips": true,

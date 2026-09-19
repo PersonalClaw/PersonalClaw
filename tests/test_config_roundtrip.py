@@ -278,7 +278,6 @@ _SPECIAL = {
     # would fail load()'s validation and fall back to the default.
     ("dashboard", "stream_reveal"): "immediate",
     ("dashboard", "terminal"): {"enabled": False, "persist": True},
-    ("dashboard", "dashboard_layout"): {"widgets": [], "v": 1},
     ("inbox", "poll_interval_seconds"): 90,
     # loops.judge_use_case is constrained to the use-case vocabulary (WF2LOO-17) — a
     # generated "reasoning-x" would (correctly) be refused by load() and collapse back to
@@ -650,3 +649,80 @@ def test_the_sandbox_decision_has_exactly_one_input():
     assert "mode" in inspect.signature(sandbox.wrap_argv).parameters
     assert "config_mode" in inspect.signature(sandbox.detect_backend).parameters
     assert sandbox.wrap_argv(["true"], mode="off") == (["true"], None)
+
+
+def test_no_dashboard_layout_config_field_on_any_surface():
+    """#529 — the second half of a clean break that only removed one side.
+
+    The customizable-bento dashboard was retired in the v2 launcher-forward redesign and
+    the frontend half was deleted with it. The backend half outlived it by 46 days: a
+    10-id widget registry, a 45-line validator clamping to a "12-col grid" that no longer
+    existed, a PUT allowlist entry, a write branch, a GET echo, the config field, and the
+    typed client member. Measured before deleting, `dashboard_layout` had **nine** live
+    sites across `src/` and `web/src` and **zero readers** — no code positioned, sized or
+    hid anything from it. So `PUT {"dashboard_layout": {"widgets": [{"id": "tasks", …,
+    "hidden": true}], "v": 1}}` returned 200, persisted, round-tripped — and the Tasks
+    widget stayed visible. That is worse than an absent field: the stored data looks
+    authoritative, so an app or MCP tool reading it would trust a layout the dashboard
+    demonstrably ignores.
+
+    One rail across every surface on purpose, following
+    :func:`test_no_agent_sandbox_config_field_on_any_surface`: a per-surface check passes
+    while any single surface still carries the field, which is the exact shape that left
+    a "retired" mechanism fully writable for 46 days.
+    """
+    from pathlib import Path
+
+    from personalclaw.config.loader import DashboardConfig
+    from personalclaw.dashboard.handlers import files as F
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    repo = Path(__file__).resolve().parent.parent
+
+    assert "dashboard_layout" not in {
+        f.name for f in fields(DashboardConfig)
+    }, "DashboardConfig.dashboard_layout is back: a persisted grid layout with no renderer"
+    assert (
+        "dashboard_layout" not in AppConfig().to_dict()["dashboard"]
+    ), "dashboard.dashboard_layout is serialized into config.json again"
+    assert (
+        "dashboard.dashboard_layout" not in _EDITABLE_CONFIG
+    ), "dashboard.dashboard_layout is PATCH-writable again"
+    for gone in ("_sanitize_dashboard_layout", "_DASHBOARD_WIDGET_IDS"):
+        assert not hasattr(F, gone), f"{gone} is back — the validator without a consumer"
+
+    handlers = (repo / "src/personalclaw/dashboard/handlers/files.py").read_text(encoding="utf-8")
+    assert (
+        "dashboard_layout" not in handlers
+    ), "the dashboard-config PUT allowlist or its GET echo names dashboard_layout again"
+    client = (repo / "web/src/lib/api.ts").read_text(encoding="utf-8")
+    assert "dashboard_layout?" not in client, "the typed client field is back"
+    docs = (repo / "docs/reference/configuration.md").read_text(encoding="utf-8")
+    assert (
+        "dashboard.dashboard_layout" not in docs
+    ), "docs still document dashboard.dashboard_layout as a real setting"
+
+
+def test_the_dashboard_config_put_still_rejects_an_unknown_field():
+    """The positive half of the rail above. Deleting the allowlist ENTRY must not be
+    confused with deleting the allowlist: the endpoint's refusal of unknown keys is what
+    makes a re-added `dashboard_layout` a 400 rather than a silently ignored write."""
+    import asyncio
+    import json as _json
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import files as F
+
+    req = make_mocked_request(
+        "PUT", "/api/dashboard/config", payload={"dashboard_layout": {"widgets": [], "v": 1}}
+    )
+
+    async def _json_body():
+        return {"dashboard_layout": {"widgets": [], "v": 1}}
+
+    req.json = _json_body  # type: ignore[method-assign]
+    with patch.object(F, "_sel"):
+        resp = asyncio.run(F.api_dashboard_config(req))
+    assert resp.status == 400
+    assert "dashboard_layout" in _json.loads(resp.body.decode())["error"]

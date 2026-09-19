@@ -258,7 +258,6 @@ makes the voice loop noisier, never less safe.
 | `dashboard.screen_share_enabled` | boolean | `false` | Settings → Chat | Master opt-in for the composer's "Share screen" control. Off (the default) hides the control **and** makes the server refuse a frame outright. On, a message can carry ONE frame of a screen/window you pick in the browser's own share dialog: held in memory for that single turn, never written to disk, dropped as soon as it is used. Pinning a frame (composer "+" → "Pin shared frame") is the only path to disk, and is refused in temporary/incognito chats. |
 | `dashboard.auto_open_browser` | boolean | `true` | backend-only | Open the dashboard in a browser on gateway start (`--no-open` overrides per-run). |
 | `dashboard.terminal` | object | `{"enabled": true}` | `enabled`: backend-only; `persist`: Terminal page | `enabled` is the kill switch for the built-in terminal (PTY) feature, read raw with a 30s cache. `persist` (tmux-backed persistence across gateway restarts) is toggled on the Terminal page. |
-| `dashboard.dashboard_layout` | object | `{}` | Home dashboard (drag/resize widgets) | The home dashboard's customized widget layout. Empty = the curated default. |
 
 ## Top-level keys
 
