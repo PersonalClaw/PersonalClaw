@@ -559,6 +559,12 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
     (never calls it — that mutates): flags a real-directory copy shadowing the
     runtime symlink, and a symlink whose target is gone. Also counts dead
     ``locks/*.lock`` and dead PID rows in ``session_pids.txt``/``agent_pids.txt``.
+
+    Covers BOTH variants of the stale-SPA bug-class. The symlink checks above
+    only see a shadowing copy or a broken link; a correct symlink pointing at an
+    OUTDATED build passes every one of them, which is how a standing validation
+    rig served a two-commit-old SPA while this probe reported healthy. The
+    freshness check closes that blind spot via ``frontend.spa_dist_freshness``.
     """
     import os
 
@@ -583,6 +589,12 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
             ev["dist"] = {"kind": "copy", "target_ok": (dist / "index.html").is_file()}
         else:
             ev["dist"] = {"kind": "missing", "target_ok": False}
+
+        # Is the build BEHIND the sources? (the variant the symlink checks miss)
+        from personalclaw.frontend import spa_dist_freshness
+
+        state, freshness_ev = spa_dist_freshness(pkg_dir.parent.parent)
+        ev["dist_freshness"] = {"state": state, **freshness_ev}
 
         # dead locks
         locks_dir = home / "locks"
@@ -637,6 +649,11 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
         fix_id = "serving-fs.symlink-repair"  # confirm-gated repair (§2)
     elif not dist.get("target_ok"):
         problems.append(f"static/dist {dist.get('kind')} — SPA not resolvable")
+    if ev.get("dist_freshness", {}).get("state") == "stale":
+        problems.append(
+            "the built SPA is STALE — web/dist was built from different sources than the "
+            "checked-out web/ (serves an old dashboard); rebuild with `make web-build`"
+        )
     if ev.get("dead_locks") or ev.get("dead_pids"):
         fix_id = fix_id or "serving-fs.orphan-prune"
     return ProbeResult(
