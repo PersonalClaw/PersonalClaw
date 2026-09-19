@@ -38,14 +38,26 @@ import { ReviewTriagePanel } from './ReviewTriagePanel'
  *
  *  A terminal run does not subscribe at all: its stream would close immediately anyway, and
  *  the status it already has is final. */
-export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
+export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
+  runId: string
+  onBack: () => void
+  /** The node named by `?node=<id>` (WV-10) — the chat card's active-node deep link. Seeds and
+   *  then follows the inspector's open node, so arriving from that link lands ON the node rather
+   *  than on the run with nothing open. Absent on every other entry into this page. */
+  deepLinkNodeId?: string | null
+}) {
   const [run, setRun] = useState<WorkflowRunDetailData | null>(null)
   const [conts, setConts] = useState<WorkflowContinuation[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   // The node whose inspector drawer is open (WV-10). Null = closed. Holds the node_id — the
   // drawer fetches on open, so nothing is loaded until a row's Inspect is actually clicked.
-  const [inspectNodeId, setInspectNodeId] = useState<string | null>(null)
+  const [inspectNodeId, setInspectNodeId] = useState<string | null>(deepLinkNodeId)
+  // The `?node=<id>` deep link, FOLLOWED rather than merely seeded: a second link to the same run
+  // (a different node in a later chat card) does not remount this page, so a one-shot `useState`
+  // seed would silently keep showing the first node. Local state stays the render source — a row's
+  // own Inspect click must not depend on a URL round-trip — and this only pushes into it.
+  useEffect(() => { if (deepLinkNodeId) setInspectNodeId(deepLinkNodeId) }, [deepLinkNodeId])
   // The mid-run steering + judge-triage panel (R14 / criterion 8). Docked to the right like
   // the inspector; toggled from the header, live runs only.
   const [steerOpen, setSteerOpen] = useState(false)
