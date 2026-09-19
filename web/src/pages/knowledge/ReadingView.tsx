@@ -14,15 +14,10 @@ import { prefersReducedMotion } from '../../design/motion'
 import { api, type KnowledgeAnnotation, type KnowledgeItem } from '../../lib/api'
 import { anchorFromSelection, clearMarks, markAnchors, scrollProgress } from './readingAnchors'
 import { getReadingPosition, setReadingPosition } from './readingPosition'
+import { readingMinutes } from './readingTime'
 import { parseOutline, type OutlineEntry } from './readingOutline'
 import { DocumentOutline } from './DocumentOutline'
 import { RestructureControl } from './RestructureControl'
-
-/** Words per minute used for the "N min read" estimate. The common editorial figure for
- *  adult prose; it is a rough orientation cue, not a measurement, and being off by 20%
- *  costs a reader nothing while having no estimate at all costs them the decision of
- *  whether to start now. */
-const WPM = 220
 
 /** The reader-pane width at which the insight rail can sit BESIDE the article instead of
  *  under it, as a container-query threshold rather than a viewport breakpoint.
@@ -199,7 +194,9 @@ export function ReadingView({
   const [blockText, setBlockText] = useState<string[]>([])
 
   const content = item.content || ''
-  const minutes = item.word_count ? Math.max(1, Math.round(item.word_count / WPM)) : 0
+  // The bare number, not the "N min read" label: this strip already says "% read" one token
+  // over (see the rail below), so it composes "· N min" to avoid reading "…read · … min read".
+  const minutes = readingMinutes(item.word_count)
   const titleIsInBody = bodyOpensWithTitle(content, item.title || item.url_title || '')
   const outline = useMemo(() => parseOutline(content), [content])
   // Whether the outline panel will render anything. It drops rows with no text (`##` alone is

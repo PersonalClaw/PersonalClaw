@@ -163,7 +163,13 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                 // instead of painting OVER the action cluster (the overlap bug). This is
                 // container-relative — it tracks the header's flex width, not the viewport.
                 <div className="flex items-center gap-s min-w-0 overflow-hidden">
-                  <button type="button" onClick={onBack} data-type="body-m" className="text-on-surface-low hover:text-on-surface transition-colors whitespace-nowrap shrink-0">Knowledge</button>
+                  {/* `focus-visible:-outline-offset-2`: this button sits inside the
+                      `overflow-hidden` group above, and it is the group's FIRST child, so the
+                      global rail's outward `outline-offset: 2px` draws the ring 4px outside the
+                      clip on the left and 2px outside top/bottom — it computes and never paints
+                      (WCAG 2.4.7). Negative offset draws the same ring just inside the box, where
+                      the clip cannot reach it. Same fix, same reason as DisclosureCard's header. */}
+                  <button type="button" onClick={onBack} data-type="body-m" className="text-on-surface-low hover:text-on-surface transition-colors whitespace-nowrap shrink-0 focus-visible:-outline-offset-2">Knowledge</button>
                   <span className="text-on-surface-low shrink-0">/</span>
                   {/* `canvasInk`, not `tm.tone`: this segment is 13px accent text on the CANVAS.
                       The icon travels with the label so the segment stays ONE ink — it passes at

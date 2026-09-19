@@ -70,6 +70,12 @@ const UNCAPTURED: { key: string; why: string }[] = [
   { key: 'learning-dark', why: 'route added to routes.ts without capturing goldens' },
   { key: 'knowledge-graph-light', why: 'VIEW_ROUTE added without capturing goldens' },
   { key: 'knowledge-graph-dark', why: 'VIEW_ROUTE added without capturing goldens' },
+  // KL-16's reading route (a VIEW_ROUTE). Recorded uncaptured for the same reason as its
+  // knowledge-graph sibling: goldens must be captured on a machine matching the committed set (or
+  // as a wholesale recapture), which this dev machine is not — 22 of the existing goldens already
+  // fail here. `a11y.spec.ts` (the one suite CI runs) scans the route for real regardless.
+  { key: 'knowledge-reading-light', why: 'VIEW_ROUTE added without capturing goldens' },
+  { key: 'knowledge-reading-dark', why: 'VIEW_ROUTE added without capturing goldens' },
 ]
 
 describe('the visual gate has a committed baseline for every surface it snapshots', () => {
