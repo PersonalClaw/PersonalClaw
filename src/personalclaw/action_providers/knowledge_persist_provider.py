@@ -51,6 +51,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_ITEM_TYPE = "note"
 
 
+@dataclass
+class ConflictPass:
+    """One persist-time conflict pass: what was proven, and what is left to judge.
+
+    Two fields because §3.2's two tiers consume different halves. `conflicts` is the free
+    deterministic tier's proof. `candidates` is the remainder — stored neighbours near enough to
+    be worth a metered opinion but not separable without one. A reader given only `conflicts`
+    cannot tell "nothing is nearby" from "nothing was provable", and those warrant opposite
+    next actions.
+    """
+
+    conflicts: list[dict]
+    candidates: list[dict]
+
+
 class KnowledgePersistActionProvider(ActionProvider):
     """Persist a knowledge item. Zero tokens, idempotent, error-as-return.
 
@@ -175,13 +190,14 @@ class KnowledgePersistActionProvider(ActionProvider):
         appended = 0
 
         conflicts: list[dict] = []
+        conflict_candidates: list[dict] = []
         if claims_raw:
             incoming_claims = [c for c in claims_raw if isinstance(c, dict)]
             # Conflict check BEFORE the merge, against what is stored NEARBY (§3.2). At ingest,
             # not at query: by the time a contradiction surfaces during retrieval, something has
             # already cited one side of it, and unwinding that means finding everything
             # downstream. This tier is deterministic and costs nothing per write.
-            conflicts = _detect_conflicts(
+            conflict_pass = _detect_conflicts(
                 store,
                 incoming_claims,
                 item_id=decision.item_id,
@@ -193,6 +209,8 @@ class KnowledgePersistActionProvider(ActionProvider):
                 # two surfaces then disagreed about whether the store knew about the conflict.
                 edge_source=decision.item_id or "",
             )
+            conflicts = conflict_pass.conflicts
+            conflict_candidates = conflict_pass.candidates
             merged, appended = _merge_claims(
                 existing=metadata.get("claims") or [],
                 incoming=incoming_claims,
@@ -223,6 +241,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                         "created": False,
                         "mentions_appended": appended,
                         "conflicts": conflicts,
+                        "conflict_candidates": conflict_candidates,
                         "citation_warnings": cited.warnings,
                         "reason": decision.reason,
                     }
@@ -293,6 +312,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                     "created": decision.action == "create",
                     "mentions_appended": appended,
                     "conflicts": conflicts,
+                    "conflict_candidates": conflict_candidates,
                     "citation_warnings": cited.warnings,
                     "reason": decision.reason,
                 }
@@ -674,13 +694,19 @@ def _write_metadata(store, item_id: str, metadata: dict[str, Any], *, source_ref
 
 def _detect_conflicts(
     store, incoming: list[dict], *, item_id: str, source_ref: str, edge_source: str = ""
-) -> list[dict]:
+) -> ConflictPass:
     """Deterministic conflicts between arriving claims and stored ones, plus their edges.
 
     Neighbours come from the hybrid retriever rather than a recency window, because "the claims
     most likely to disagree with this one" is a similarity question and recency is a proxy that
     misses an old contradicted fact entirely — which is the case that matters most, since it has
     had the longest time to be cited.
+
+    Returns the settled conflicts AND the neighbours the deterministic tier could not settle.
+    Both, because they answer different questions and the model tier only has a job because of
+    the second one: a caller handed only `conflicts` can tell a reader what was already proven,
+    but it cannot ask anything about the rest, and "the rest" is precisely what §3.2's fast-model
+    pass exists to judge.
 
     Best-effort by design: a conflict pass that failed a WRITE would mean losing the knowledge
     rather than losing the annotation, and the annotation is the cheaper thing to lose.
@@ -694,19 +720,56 @@ def _detect_conflicts(
         ]
         existing = _neighbour_claims(store, claims, exclude=item_id)
         if not existing:
-            return []
+            return ConflictPass([], [])
         found = contradiction.find_conflicts(claims, existing)
+        candidates = _unsettled_candidates(claims, existing, settled=found)
         if not found:
-            return []
+            # No edges to write, but the candidate set is the whole point of still returning:
+            # "nothing proven deterministically" is the common case AND the case the model tier
+            # is for. Returning early here is what made the judge's input unconditionally empty.
+            return ConflictPass([], candidates)
         # Edges are deferred when the row does not exist yet: a CREATE has no id until the insert,
         # and an edge written against a missing row is refused by the foreign key. The caller
         # writes them after the upsert.
         if edge_source:
             _write_edges(store, contradiction.edges_from_conflicts(found), source_item=edge_source)
-        return [c.to_dict() for c in found]
+        return ConflictPass([c.to_dict() for c in found], candidates)
     except Exception:
         logger.warning("conflict detection failed — the write proceeds", exc_info=True)
-        return []
+        return ConflictPass([], [])
+
+
+def _unsettled_candidates(incoming: list, existing: list, *, settled: list) -> list[dict]:
+    """The stored neighbours a model tier would have to judge, ranked, minus the settled ones.
+
+    `contradiction.shortlist` is the built-and-tested ranker (§3.2); this is its production
+    caller. Already-settled neighbours are removed because the prompt that consumes this tells
+    the model not to re-litigate the deterministic tier's findings — leaving them in would
+    spend the one metered call re-deciding what a free pass already proved.
+
+    Keyed on `(right_item, statement)` rather than on statement alone: two items can legitimately
+    store the same sentence, and collapsing them would drop a real candidate whose item id is the
+    only thing that makes the model's `right_item` answer resolvable.
+    """
+    from personalclaw.knowledge import contradiction
+
+    settled_keys = {(c.right_item, _norm_claim(c.right_claim)) for c in settled}
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for claim in incoming:
+        for candidate in contradiction.shortlist(claim, existing):
+            key = (candidate.source_ref, _norm_claim(candidate.statement))
+            if key in settled_keys or key in seen:
+                continue
+            seen.add(key)
+            out.append({"item_id": candidate.source_ref, "statement": candidate.statement})
+            if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+                return out
+    return out
+
+
+def _norm_claim(statement: str) -> str:
+    return " ".join((statement or "").split()).casefold()
 
 
 def _neighbour_claims(store, incoming: list, *, exclude: str) -> list:
