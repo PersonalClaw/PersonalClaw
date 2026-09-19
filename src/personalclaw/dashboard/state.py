@@ -1475,9 +1475,12 @@ class DashboardState:
         THE single delivery choke point for every emitter (crons, loops, hooks, inbox
         alerts, heartbeats, app actions). Three layers of policy, in this order:
 
-        1. **The global gate** (`notification_allowed`) — mute-all, minimum severity,
-           quiet hours. Unchanged, and still outermost: mute means mute, whatever a rule
-           says. A suppressed notification is dropped entirely, not logged unread.
+        1. **The global gate** (`notification_posture`) — mute-all, minimum severity,
+           quiet hours. Still outermost: mute means mute, whatever a rule says, and a dropped
+           notification is dropped entirely, not logged unread. The one gradation is quiet hours
+           over an ATTENTION kind, which returns `quiet` and is recorded as a `badge` below
+           instead of vanishing — a loop that needed an answer overnight has to leave a trace
+           (#341).
         2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
            immediate / digest, plus conditions that escalate a quieter mode when the text
            matches a keyword or names the operator.
@@ -1500,14 +1503,17 @@ class DashboardState:
         """
         from personalclaw import notification_addressing as addressing
         from personalclaw import notification_rules as rules
-        from personalclaw.providers.entity_routes import notification_allowed
+        from personalclaw.providers import entity_routes
 
+        posture = entity_routes.POSTURE_DELIVER
         try:
-            if not notification_allowed(kind):
-                logger.debug("Notification suppressed by settings: %s %r", kind, title)
-                return
+            posture = entity_routes.notification_posture(kind)
         except Exception:  # never let the prefs gate break delivery
-            logger.debug("notification_allowed failed; delivering", exc_info=True)
+            logger.debug("notification_posture failed; delivering", exc_info=True)
+            posture = entity_routes.POSTURE_DELIVER
+        if posture == entity_routes.POSTURE_DROP:
+            logger.debug("Notification suppressed by settings: %s %r", kind, title)
+            return
 
         # 🔴 THE NOTE OWNS ITS OWN FIELDS (issue 423). This was `note = {kind, title, body, ts}`
         # followed by `note.update(meta)`, so caller-supplied meta merged OVER the four fields the
@@ -1561,6 +1567,13 @@ class DashboardState:
             rule = None
 
         mode = rule.mode if rule is not None else "immediate"
+        # QUIET HOURS ON AN ATTENTION KIND (#341, bug B). The gate no longer drops it — it says
+        # "record it, don't interrupt", which is what `badge` already means. Written here rather
+        # than inside the gate because the gate decides WHETHER, and the mode is HOW: this is the
+        # one place that vocabulary lives. Only `immediate` is downgraded; `digest` and `badge` are
+        # already quieter and `never` is the user's own instruction, honoured below.
+        if posture == entity_routes.POSTURE_QUIET and mode == "immediate":
+            mode = "badge"
         note["mode"] = mode
         if rule is not None:
             note["targets"] = list(rule.targets)

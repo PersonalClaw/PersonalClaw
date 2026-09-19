@@ -266,9 +266,23 @@ async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
 
 
 async def api_notifications(request: web.Request) -> web.Response:
+    """GET /api/notifications — the delivery log, plus how many of ITS rows are unacked.
+
+    🔴 `unread` USED TO BE `state.unread_count()` (issue #422), which counts PENDING INBOX items
+    — a deliberate pivot documented on that method, and the wrong answer under this key. The two
+    track unrelated state and drifted independently: measured live, the field read 33 while every
+    badge in the app rendered 41 over the same 74 rows.
+
+    No frontend read it — `NotificationBell`, `NotificationsPage` and `HeroPulse` each compute
+    `items.filter(n => !n.acked).length` themselves — so the field was dead weight that read as
+    authoritative to anyone integrating against the endpoint (a mobile client, the MCP surface).
+    Corrected rather than deleted: three surfaces already agree on what the number means, and now
+    the payload says the same thing they do.
+    """
     state: DashboardState = request.app["state"]
+    log = state._notification_log
     return web.json_response(
-        {"notifications": state._notification_log, "unread": state.unread_count()}
+        {"notifications": log, "unread": sum(1 for n in log if not n.get("acked"))}
     )
 
 

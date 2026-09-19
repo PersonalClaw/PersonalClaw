@@ -15,6 +15,13 @@ const MODES: { key: NotificationMode; label: string }[] = [
   { key: 'digest', label: 'Digest' },
 ]
 
+/** A mode's user-facing name. The wire value is not one: `immediate` is called "Notify" on every
+ *  pill in this matrix, so a tooltip that said "default (immediate)" named a mode the user cannot
+ *  see anywhere on the surface. */
+export function modeLabel(mode: NotificationMode): string {
+  return MODES.find((m) => m.key === mode)?.label ?? mode
+}
+
 // Per-kind sound options, sourced from the closed voice set in `design/soundCues.ts` (the `CUES`
 // keys). The voice is played by an OPEN device when a push for this kind arrives (MC-6) — a
 // service worker cannot play audio — and only ever if the user has turned sound cues on. "None"
@@ -31,20 +38,25 @@ const SOUND_OPTIONS: { value: string; label: string }[] = [
   ...(Object.keys(CUES) as CueName[]).map((v) => ({ value: v, label: SOUND_LABELS[v] })),
 ]
 
-// `push` is accepted and persisted but inert until MOBILE-COMPANION lands. Showing it as a
-// choice you can make now would promise delivery that won't happen, so it's labelled rather
-// than hidden — the setting survives, the expectation is honest.
+// `push` is accepted and persisted but needs a registered device to land anywhere. Showing it as
+// an unqualified choice would promise delivery that won't happen, so it's labelled rather than
+// hidden — the setting survives, the expectation is honest.
 //
 // `native` came OFF that list with DC-5: it now raises a real OS notification whenever the
 // desktop app is running, and falls back to this dashboard's own bell when it isn't. Leaving
 // it dimmed would have been the opposite lie to the one the dimming was there to prevent.
+//
+// 🔴 `channel_dm` WENT ON IT (issue #343). It is the one target with nothing behind it —
+// `notification_rules.TARGETS`' own comment says it is *"still accepted and persisted but
+// inert"* — and it was the only one presented as a plain, live choice. Ticking Channel DM
+// silently did nothing, which is precisely the expectation the dimming exists to manage.
 const TARGET_LABELS: Record<NotificationTarget, string> = {
   dashboard: 'Dashboard',
-  channel_dm: 'Channel DM',
+  channel_dm: 'Channel DM (not delivered yet — saved for when channels can)',
   push: 'Push (mobile app required)',
   native: 'Desktop notification (when the desktop app is running)',
 }
-const INERT_TARGETS: NotificationTarget[] = ['push']
+const INERT_TARGETS: NotificationTarget[] = ['channel_dm', 'push']
 
 /** Per-(source, kind) delivery rules.
  *
@@ -69,7 +81,8 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
     return [...groups.entries()]
   }, [doc.rules])
 
-  async function save(key: string, patch: Record<string, unknown>) {
+  // `patch === null` clears the stored rule so the row inherits the registry default again (#285).
+  async function save(key: string, patch: Record<string, unknown> | null) {
     setBusy(key); setErr('')
     try { await api.saveNotificationRules({ rules: { [key]: patch } }); onSaved() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
@@ -92,11 +105,21 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                   <div key={r.key} className="rounded-md bg-surface-container px-m py-2">
                     <div className="flex flex-wrap items-center gap-s">
                       <span data-type="body-m" className="flex-1 min-w-0 truncate text-on-surface">{r.label}</span>
-                      {/* Only shown when the user has actually diverged — a "default" tag on
-                          every untouched row would be noise on the common case. */}
-                      {r.configured && r.mode !== r.default_mode && (
-                        <Button size="xs" variant="ghost" onClick={() => save(r.key, { mode: r.default_mode })}
-                          loading={busy === r.key} title={`Reset to default (${r.default_mode})`}>
+                      {/* Only shown when the row carries an explicit stored rule — a "default" tag
+                        * on every untouched row would be noise on the common case.
+                        *
+                        * 🔴 THE CONDITION USED TO ALSO REQUIRE `r.mode !== r.default_mode`, AND
+                        * THAT WAS SELF-MASKING (issue #285). Reset was implemented as a save of
+                        * the default VALUE, so pressing it made mode === default_mode, which
+                        * turned this very condition false and hid the chip — while the row stayed
+                        * `configured` and permanently pinned to whatever the default was at that
+                        * moment. There was then no UI path back to inheriting. `r.configured` is
+                        * what the field means and what the chip should follow: a row explicitly
+                        * set TO its default is still pinned, and still worth offering to clear. */}
+                      {r.configured && (
+                        <Button size="xs" variant="ghost" onClick={() => save(r.key, null)}
+                          loading={busy === r.key}
+                          title={`Clear this override and inherit the default (${modeLabel(r.default_mode)})`}>
                           <RotateCcw size={11} /> reset
                         </Button>
                       )}

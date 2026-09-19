@@ -169,12 +169,67 @@ def load_notifications_settings() -> dict[str, Any]:
     return {**NOTIFICATIONS_DEFAULTS, **known}
 
 
-# Notification kinds ranked for the min-severity / quiet-hours delivery gate.
-# Every kind the backend emits (see web/src/pages/notifications/notificationMeta.ts
-# for the display map): "error" is critical, "warning" + "inbox_alert" (user-
-# configured keyword/name alerts) are warnings, everything else is info.
-_KIND_SEVERITY: dict[str, int] = {"error": 3, "warning": 2, "inbox_alert": 2}
 _MIN_SEVERITY_RANK: dict[str, int] = {"info": 1, "warning": 2, "error": 3}
+
+#: Named rather than a bare 2, because it is a THRESHOLD here and not a value: it is the rank at
+#: which an attention-bearing kind stops being a notice and starts being a question (see
+#: `_must_be_answered`). Mirrors `notification_kinds.SEV_WARNING`, which cannot be imported at
+#: module scope — this module is imported from `notification_kinds`'s own docstring's chain and the
+#: severity read below is deliberately lazy.
+SEV_WARNING_RANK = _MIN_SEVERITY_RANK["warning"]
+
+#: What the gate concluded about one notification. Three outcomes, because quiet hours needs a
+#: middle one: a kind that carries a durable row somebody has to ANSWER, and dropping it entirely
+#: left the notification log with no record that the system ever asked (#341, bug B).
+POSTURE_DELIVER = "deliver"
+POSTURE_QUIET = "quiet"
+POSTURE_DROP = "drop"
+
+
+def _must_be_answered(registered) -> bool:
+    """Whether quiet hours must RECORD this kind rather than drop it (#341, bug B).
+
+    `attention` ALONE is too wide, and the tree says so. It means "this persists a durable row",
+    which the info-ranked attention kinds use for the opposite purpose: `learning/report`'s
+    registration states that `immediate` + SEV_INFO is *"what make quiet hours suppress the PING
+    while the artifact stays durable"*, and `knowledge/research_finding` leans on the same shape
+    (*"the report runs while nobody is watching"*). For those, the durable artifact IS the record
+    and the silence is the designed behaviour — `test_lv4_identity_report` pins it.
+
+    Severity is the axis that separates them, and the registry already draws the line: the
+    attention kinds ranked SEV_WARNING are exactly the "you must decide" ones — `loop/needs_input`,
+    `system/agent_request`, and `guardrails/autonomy_revocation`, whose comment names the other two
+    as its own precedent (*"the same 'you must decide' shape"*). Those are the kinds #341 measured
+    as dropped, and the ones where losing the log row loses the fact that the system asked at all.
+    An info-ranked attention kind keeps its designed suppression.
+    """
+    return bool(registered.attention) and registered.default_severity >= SEV_WARNING_RANK
+
+
+def _registered_kind(kind: str):
+    """The registration behind a flat wire *kind* — the gate's source for severity and attention.
+
+    🔴 READS THE REGISTRY, not a local table (#341). This was
+    ``{"error": 3, "warning": 2, "inbox_alert": 2}`` keyed on the wire string, so every kind
+    outside those three ranked as info however the registry declared it: `loop/needs_input` and
+    `system/agent_request` are both SEV_WARNING in `notification_kinds`, showed severity 2 in the
+    rules matrix, and ranked 1 here — so raising min_severity to `warning` silently suppressed the
+    two kinds that mean "something is waiting on you".
+
+    It also made the typed rows unfixable: an emitter switched to its own kind (`loop_failed`
+    rather than the generic `error`) would have DROPPED from rank 3 to rank 1 at this gate. One
+    source for severity is what lets the emitter fix land without changing who gets notified.
+
+    Behaviour-preserving for every historical kind by construction —
+    `test_reachable_pairs_preserve_their_old_severity_exactly` pins each `_LEGACY_FLAT` string to
+    the rank the old table gave it.
+
+    Resolved ONCE per gate call and both facts read off the result: `kind_for_legacy` warns on an
+    unregistered kind, and two lookups would log the same warning twice per notification.
+    """
+    from personalclaw import notification_kinds as nk
+
+    return nk.kind_for_legacy(kind)
 
 
 def _parse_hhmm(hhmm: str) -> int | None:
@@ -201,15 +256,31 @@ def _in_quiet_window(start: str, end: str, now_minutes: int) -> bool:
     return now_minutes >= s or now_minutes < e
 
 
-def notification_allowed(kind: str, *, now: "object | None" = None) -> bool:
+def notification_posture(kind: str, *, now: "object | None" = None) -> str:
     """THE delivery gate for dashboard notifications (DashboardState.notify()).
 
     Applies the notification entity settings semantically:
-      * ``mute_all`` — pause every notification regardless of severity.
+      * ``mute_all`` — pause every notification regardless of severity. Always ``drop``.
       * ``min_severity`` — deliver only kinds at or above the threshold
-        (info < warning < error; unknown kinds rank as info).
+        (info < warning < error; unknown kinds rank as info). Below it ⇒ ``drop``.
       * quiet hours — suppress everything below *error* inside the window
-        (24-hour, server-local time; the window may wrap midnight).
+        (24-hour, server-local time; the window may wrap midnight)… **except a kind that has
+        to be answered (see :func:`_must_be_answered`), which returns ``quiet`` instead of
+        ``drop``**.
+
+    🔴 WHY ``quiet`` EXISTS (#341, bug B). Quiet hours used to drop an attention kind outright:
+    a loop that needed an answer at 02:00, or an agent request, was *"not logged, not persisted,
+    not broadcast"* — `notify()` returned before the note was even built, so the notification
+    log had no record the system had ever asked. The durable inbox row survived, which is
+    precisely what made the gap invisible: the badge counted an item whose audit trail did not
+    exist.
+
+    ``quiet`` is a DOWNGRADE, not the bypass the report suggested, and deliberately so. A bypass
+    would raise a toast at 02:00 — the one thing quiet hours exists to prevent. The downgrade
+    keeps the record (the note is persisted, counted and auditable) and keeps the silence: the
+    caller renders it as ``badge``, which is the mode the system already has for "in the list,
+    without interrupting". `mute_all` and `min_severity` are untouched, because both are the
+    user saying "not at all" rather than "not now".
 
     ``now`` is an optional ``datetime`` for tests; defaults to local time.
     """
@@ -217,17 +288,27 @@ def notification_allowed(kind: str, *, now: "object | None" = None) -> bool:
 
     s = load_notifications_settings()
     if s.get("mute_all"):
-        return False
-    severity = _KIND_SEVERITY.get(kind, 1)
+        return POSTURE_DROP
+    registered = _registered_kind(kind)
+    severity = registered.default_severity
     threshold = _MIN_SEVERITY_RANK.get(str(s.get("min_severity", "info")), 1)
     if severity < threshold:
-        return False
+        return POSTURE_DROP
     if s.get("quiet_hours_enabled") and severity < 3:
         dt = now if isinstance(now, datetime) else datetime.now()
         minutes = dt.hour * 60 + dt.minute
         if _in_quiet_window(s.get("quiet_hours_start", ""), s.get("quiet_hours_end", ""), minutes):
-            return False
-    return True
+            return POSTURE_QUIET if _must_be_answered(registered) else POSTURE_DROP
+    return POSTURE_DELIVER
+
+
+def notification_allowed(kind: str, *, now: "object | None" = None) -> bool:
+    """Whether *kind* is delivered at all — :func:`notification_posture` as a boolean.
+
+    Kept as the name every caller and doc already uses ("the global gate"). A ``quiet`` posture
+    IS allowed: the note is recorded, it just does not interrupt. Only ``drop`` is a refusal.
+    """
+    return notification_posture(kind, now=now) != POSTURE_DROP
 
 
 def register_entity_routes(app: web.Application) -> None:
@@ -381,8 +462,27 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                 return web.json_response(
                     {"error": f"unknown notification kind '{key}'"}, status=400
                 )
+            # 🔴 `null` CLEARS THE RULE (issue #285). Reset used to be implemented in the SPA as a
+            # save of the registry default — `save(key, {mode: default_mode})` — so "back to
+            # default" persisted an explicit rule holding today's default value. The row stayed
+            # `configured: true` forever (it is computed as `key in stored`,
+            # `notification_rules.rules_document`) and stopped tracking the registry: change a
+            # kind's `default_mode` in a later release and every user who ever pressed reset keeps
+            # the OLD default, indistinguishably from a user who never touched the row.
+            #
+            # It was also self-masking: the reset chip rendered only while `mode !== default_mode`,
+            # so the buggy reset hid the only control that could have revealed the pin.
+            #
+            # A null is the clear, rather than a DELETE route, because this endpoint is already a
+            # per-key partial merge (see the merge note below) — "this key has no rule" is a value
+            # in that vocabulary, and a second route would need the same guards for one sentinel.
+            if raw is None:
+                stored.pop(key, None)
+                continue
             if not isinstance(raw, dict):
-                return web.json_response({"error": f"rule '{key}' must be an object"}, status=400)
+                return web.json_response(
+                    {"error": f"rule '{key}' must be an object, or null to clear it"}, status=400
+                )
             mode = raw.get("mode")
             if mode is not None and mode not in nk.MODES:
                 return web.json_response(
@@ -452,7 +552,13 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
             base = stored.get(key)
             merged = dict(base) if isinstance(base, dict) else {}
             merged.update(raw)
-            stored[key] = merged
+            # An EMPTY rule is not a rule (#285, second shape). `{}` carries no policy, so storing
+            # it changes exactly one thing — it flips `configured` true and pins the row off the
+            # registry — which is the defect above arriving by a different door. Treated as a clear.
+            if merged:
+                stored[key] = merged
+            else:
+                stored.pop(key, None)
         doc["rules"] = stored
 
     digest = body.get("digest")

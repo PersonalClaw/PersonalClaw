@@ -551,7 +551,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `DELETE /api/notifications` — delete a single notification by timestamp.
-- `GET /api/notifications` — _(no summary)_
+- `GET /api/notifications` — the delivery log, plus how many of ITS rows are unacked.
 - `POST /api/notifications/ack` — mark a single notification as read.
 - `POST /api/notifications/ack-all` — mark all notifications as read.
 - `POST /api/notifications/clear` — clear all notifications.
