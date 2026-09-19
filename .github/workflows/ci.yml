@@ -2,6 +2,10 @@
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
 # lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
 #
+# The three browser-driven jobs (e2e-a11y · e2e-walkthrough · e2e-pwa) take a `needs:` on the
+# cheap `changes` job, so a diff that cannot reach a rendered pixel does not pay for a Chromium
+# — see that job's header for the measurements and for why its verdict defaults to TRUE.
+#
 # TWO SIBLING WORKFLOWS EXIST BECAUSE THIS ONE CANNOT TALK TO A FORK PR.
 #   dco.yml          pull_request_target — so sign-off is checked without a maintainer first
 #                    approving the run, which is exactly when sign-off tends to be missing.
@@ -51,6 +55,94 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # ── The browser gates' admission decision (#3110) ─────────────────────────────────────────
+    # `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` each boot a real gateway, build the SPA and
+    # drive a real Chromium. MEASURED 2026-09-19 over the last 14 CONCLUDED runs of this
+    # workflow: `e2e-a11y` took 19.9-29.4 min (median 21.9) and was the run's TAIL in 10 of 14,
+    # so it added a median 6.4 and up to 14.0 min to time-to-ripe — and it has neither a path
+    # filter nor a `needs:`, so it paid that on every PR. Over 60 recent merged PRs, 22 touched
+    # no `web/` file at all.
+    #
+    # This job answers one question — can the diff reach a rendered pixel or the harness boot —
+    # and the three jobs below take a `needs:` on it. It is ~20s: a depth-1 checkout plus one
+    # API call, no uv and no npm. That 20s sits in front of jobs that measured 0.1-33.3 min of
+    # runner QUEUE wait in the same sample, so it is noise against what it saves.
+    #
+    # 🪤 THE VERDICT DEFAULTS TO TRUE, AND `scripts/ci_touches_frontend.py` IS AN IGNORE-LIST,
+    # NOT A TRIGGER-LIST. "Run when `web/**` changes" is the same function inverted and fails in
+    # the dangerous direction: a new top-level directory or a renamed asset root silently stops
+    # paying the gate and nothing reports it. Default-deny means forgetting to update that file
+    # costs wasted minutes, never a missed regression. The reasons per entry are in its
+    # docstring; `tests/test_ci_e2e_path_gate.py` rails both the classifier and this wiring.
+    #
+    # 🪤 `src/personalclaw/**` IS NOT IGNORABLE, which is the biggest possible saving and is
+    # unsound. web/playwright.config.ts's header states the dependency: without the gateway the
+    # SPA "renders the ONBOARDING screen for every route… axe then reports a clean tree for 96
+    # surfaces it never actually visited." Sixteen of eighteen routes in web/e2e/routes.ts are
+    # `needsData: true`. A backend diff can change scanned DOM, so a backend diff pays.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # `pulls/{n}/files` below. READ only, and a fork PR's token is
+                            # read-only regardless — both calls are GETs, so that is enough.
+    outputs:
+      frontend: ${{ steps.verdict.outputs.frontend }}
+    steps:
+      # Depth 1 deliberately: the classifier reads a path LIST, never history, so the
+      # `fetch-depth: 0` the `harness` job needs would be pure latency in front of three jobs.
+      - uses: actions/checkout@v7
+      - name: enumerate the changed paths, and decide
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          # NOT `set -e`: a failed enumeration must fall through to the empty-file case, which
+          # the classifier reads as "unknown diff → run the gates". Exiting non-zero here would
+          # red a PR over an API hiccup; exiting zero with no paths would be worse still, since
+          # it would skip. Falling through to `frontend=true` is the only safe third option.
+          : > /tmp/changed.txt
+          if [ -n "${PR_NUMBER:-}" ]; then
+            # Every `pull_request` run, fork included — the payload carries the number, so the
+            # read-only fork token never has to resolve it.
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+          else
+            # A `push` run on a feature branch. Compared against the DEFAULT branch rather than
+            # `github.event.before`, which is all-zeros on a branch's first push and would
+            # enumerate nothing — the fail-open case, but reached on a routine event instead of
+            # a broken one, so the gate would never fire for anybody's first push.
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+              --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+          fi
+          echo "enumerated $(wc -l < /tmp/changed.txt) changed path(s)"
+          # stdout carries `frontend=<bool>`; stderr carries the human verdict table, which goes
+          # to the run summary so the decision is readable without opening the log.
+          #
+          # 🪤 THE VERDICT IS VALIDATED BEFORE IT IS PUBLISHED, and that is the whole safety
+          # argument for this step. Appending the script's stdout straight to $GITHUB_OUTPUT
+          # looks equivalent and fails in the silent direction: if the interpreter is missing or
+          # the script raises, NO `frontend` key is written, `needs.changes.outputs.frontend`
+          # resolves to the EMPTY STRING, `== 'true'` is false, and all three browser gates skip
+          # on a green run. A crashed classifier would disable the gates it exists to schedule.
+          # So anything that is not exactly one of the two legal answers becomes `true`.
+          verdict=$(python3 scripts/ci_touches_frontend.py \
+                      < /tmp/changed.txt 2>> "$GITHUB_STEP_SUMMARY") || verdict=""
+          case "$verdict" in
+            frontend=true|frontend=false) ;;
+            *)
+              echo "::warning title=e2e gate inconclusive::the classifier produced" \
+                   "'${verdict:-no output}' instead of frontend=true|false, so the browser gates" \
+                   "RUN. An unanswered question must not arrive as a skipped job."
+              verdict="frontend=true"
+              ;;
+          esac
+          echo "verdict: $verdict"
+          printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-latest
     permissions:
@@ -457,6 +549,12 @@ jobs:
     # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 40
     # baselines are all `-darwin`, so a Linux runner has nothing to compare against
     # (tests/test_e2e_specs_are_executed.py declares that exemption and retires it automatically).
+    #
+    # Gated on `changes` (#3110): this spec builds and serves the SPA, so a diff that cannot
+    # reach a rendered pixel cannot reach it either. See that job's header for why the verdict
+    # defaults to TRUE and why `src/personalclaw/**` is not ignorable.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -505,6 +603,26 @@ jobs:
     #
     # Auth stays ON — no PERSONALCLAW_AUTH_MODE=none, which would swap the csrf middleware for the
     # dev one and make every finding describe a user who does not exist.
+    #
+    # ── 🪤 WHAT THIS JOB IS *NOT* ANY MORE, AND WHY THAT WAS THE REAL COST (#3110) ──────────────
+    # MEASURED 2026-09-19 on green run 35421244889, per step: the axe sweep this job is NAMED for
+    # took 5.6 min, and `walkthrough.spec.ts` — a different contract entirely — took 11.9 of the
+    # job's 21.4. So 56% of the tail that every PR waited on was not the a11y rail. Splitting
+    # walkthrough into its own `e2e-walkthrough` job below takes ~8 min off the e2e critical path
+    # for EVERY PR, web-touching ones included, and removes ZERO coverage: the same spec, the same
+    # assertions, on its own runner in parallel.
+    #
+    # That split is also what this job's own comments already argued for twice and never did.
+    # `e2e-pwa`: "one job covering both means a red tells you 'the frontend is broken' instead of
+    # which contract broke." `browse-live`: "steps are sequential and fail-fast, so a browse step
+    # appended to `e2e-pwa` would only run when the service-worker spec passed." Both applied here
+    # verbatim — walkthrough ran only when the axe sweep passed, and its red was titled "e2e-a11y".
+    # The step comment it replaced claimed "a separate STEP so a failure names which property
+    # broke"; a step cannot do that, only a job can.
+    #
+    # Gated on `changes` (#3110) — see that job's header.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -556,13 +674,6 @@ jobs:
       - name: app-authored DOM is really mounted and swept (web/e2e/appSurface.spec.ts)
         working-directory: web
         run: npx playwright test e2e/appSurface.spec.ts --project=chromium
-      # DSC-11's OTHER half. axe cannot express any of these three: whether a focus stop is
-      # VISIBLE (it checks name/role, not "was the user told"), what a user with
-      # prefers-reduced-motion actually gets, or whether the page pans sideways on a phone.
-      # A separate step so a failure names which property broke rather than "the a11y job".
-      - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
       # PHF-7's clause: the browser gate completes a real chat turn OFFLINE, with no
       # provider credential anywhere in the environment, against the scripted fixture
       # provider. A separate step because this one proves a different property from the
@@ -588,6 +699,59 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: axe-violations
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-walkthrough:
+    # ── DSC-11's OTHER half, lifted off the a11y job's critical path (#3110) ─────────────────────
+    # `web/e2e/walkthrough.spec.ts` asserts the three properties axe cannot express: whether a
+    # focus stop is VISIBLE (axe checks name/role, not "was the user told"), what a user with
+    # prefers-reduced-motion actually gets, and whether the page pans sideways on a phone.
+    #
+    # WHY IT IS ITS OWN JOB, measured rather than asserted. On green run 35421244889 it was step
+    # 12 of `e2e-a11y` and took 11.9 min of that job's 21.4 — 56% of the tail every PR waited on,
+    # for a contract that is not a11y. As a step it also inherited both defects this file's other
+    # comments name: it ran ONLY when the axe sweep passed (steps are sequential and fail-fast),
+    # and its failure was titled `e2e-a11y`, so a broken keyboard path read as "the a11y job is
+    # red". Its own step comment claimed a separate step made "a failure name which property
+    # broke" — that is what a separate JOB does.
+    #
+    # It needs the identical harness to `e2e-a11y` (isolated gateway + built SPA + chromium), so
+    # this is the same setup verbatim, running in PARALLEL: it adds a runner and ~1 min of setup,
+    # and removes ~8 min from the e2e critical path of every PR that pays it. No assertion, route,
+    # ruleset or budget changes — the spec is untouched.
+    #
+    # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
+      - name: upload the traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: walkthrough-traces
           path: web/test-results/
           if-no-files-found: ignore
           retention-days: 7
