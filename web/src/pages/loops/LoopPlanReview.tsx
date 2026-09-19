@@ -257,8 +257,9 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         taskText = `${loop.goal}\n\nClarifications:\n${answered.map((x) => `- ${x.q.prompt} → ${x.a}`).join('\n')}`
       }
       // Structured phase answers persisted alongside the phases so a resumed/inspected
-      // loop keeps the guided-decomposition record (kind_config round-trips wholesale).
+      // loop keeps the guided-decomposition record.
       const phaseAnswers = grillPhases ? Object.fromEntries(answered.map((x) => [x.q.id, x.a])) : undefined
+      const hasGrill = Boolean(grillPhases && grillPhases.length)
       // Unified update: spine fields at top level, goal-specific in kind_config
       // (goal_type/sub_goals/granularity/verify_command/execution_plan). Flat goal
       // fields would be dropped by update_spec, so they MUST go through kind_config.
@@ -270,14 +271,31 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         // Capabilities the user confirmed → injected actively each cycle. Flat ids =
         // the always-on baseline; per-phase ids ride in kind_config.execution_plan.
         skill_ids: [...skillIds], workflow_ids: [...workflowIds],
+        // `kind_config` is a PATCH the server merges over the stored config (#411). These six
+        // keys are the ones THIS screen authors; every key belonging to a field it never renders
+        // — a research loop's subtopics / output template + manner / primary deliverable /
+        // breadth-depth budget, the granularity dial — survives untouched instead of being wiped
+        // by a goal-shaped screen that never knew about it.
+        //
+        // They cannot be preserved by spreading `loop.kind_config` in here, which is the obvious
+        // shape: the loop this screen holds is the REDACTED view (`get_redacted` runs kind_config
+        // through `_redact_value`), so echoing it back would persist redaction placeholders over
+        // the user's own text. Only the server has the real config to merge against.
+        //
+        // The flip side of merge semantics: omission now means "keep", so an owned key this screen
+        // holds no value for is sent EXPLICITLY as `null`, which is what clears it. That matters
+        // most for verify_command — `instrument.py` resolves it as the reproduce anchor without
+        // re-reading goal_type, so a goal switched away from `verifiable` has to be able to drop
+        // the command it no longer runs on.
         kind_config: {
           goal_type: goalType,
           sub_goals: subGoals,
-          ...(hasPlan ? { execution_plan: phases } : {}),
-          ...(goalType === 'verifiable' ? { verify_command: verifyCommand.trim() } : {}),
+          execution_plan: hasPlan ? phases : null,
+          verify_command: goalType === 'verifiable' ? verifyCommand.trim() : null,
           // Guided decomposition (#16): persist the memory-checked phases + the
           // structured answers so the record survives resume/inspect.
-          ...(grillPhases && grillPhases.length ? { grill_phases: grillPhases, phase_answers: phaseAnswers } : {}),
+          grill_phases: hasGrill ? grillPhases : null,
+          phase_answers: hasGrill ? (phaseAnswers ?? null) : null,
         },
       }).catch(() => {})
       // start re-runs pre-flight validation server-side; surface a rejection
