@@ -35,10 +35,10 @@ Two failure modes this closes, both of which read as success:
 
 | Command | What it does |
 |---|---|
-| `npm run e2e` | Run visual + a11y against committed baselines — **must be zero-diff / zero serious-critical** |
+| `npm run e2e` | Everything, as **two** invocations: the non-visual specs, then the visual rail on its own fresh gateway — **must be zero-diff / zero serious-critical** |
 | `npm run e2e:visual` | Visual regression only |
 | `npm run e2e:a11y` | Axe WCAG AA scan only |
-| `npm run e2e:update` | **Regenerate** baselines (do this INTENTIONALLY when a real visual change is expected) |
+| `npm run e2e:update` | **Regenerate** the visual baselines — visual-only, INTENTIONALLY, when a real visual change is expected |
 | `npm run e2e:report` | Open the last HTML report |
 
 First-time setup on a fresh machine/CI: `npx playwright install chromium`.
@@ -52,6 +52,7 @@ First-time setup on a fresh machine/CI: `npx playwright install chromium`.
 ## Notes
 
 - The harness builds + serves the app via `vite preview`, proxying `/api` to the gateway it starts (`PERSONALCLAW_PORT`). Data-backed routes still render their **empty** state — the gateway's home is fresh — which is a valid baseline: we guard *chrome*, not data. What is **not** a valid baseline is the onboarding screen, which is what "no gateway" actually produced.
+- **That "fresh home" is true at BOOT, not for the whole run — which is why the visual rail gets its own invocation.** The home is wiped once per `playwright test`, but `a11y`, `chat` and `sessionMap` drive **real** scripted turns into the one gateway every spec shares, and a turn writes flywheel state twice over (`context.py` records an allocation sample per ambient render; `controller.py` calls `run_end.capture()` at run end). `#/learning` reads both back, so it renders "not measured yet" before any turn and live numbers after one — and `fullyParallel` decides which side a mixed run captures. Measured 2026-09-19: visual-only is 40/40 zero-diff; a mixed run reds `learning-light`/`learning-dark` at ~14,900 px each. So `e2e` and `e2e:update` both run `visual.spec.ts` alone (selected by its `@visual` tag), `helpers.assertPristineFlywheel` refuses to compare pixels if that contract is bypassed, and `src/design/visualRailInvocation.test.ts` keeps the two scripts honest. Raising the pixel tolerance was never an option here: the two renderings are different **content**.
 - `PW_PORT` overrides the preview port (default 4318). `PW_GATEWAY_PORT` overrides the gateway port (default 10437 — deliberately not 10000, so the harness can never drive your real install). `PW_NO_SERVER=1` skips both built-in servers (use an already-running pair). `PW_BASE_URL` points at an external server; `STORAGE_STATE` at an existing cookie jar.
 - The gateway is launched with `../.venv/bin/personalclaw` when that exists, else `personalclaw` from `PATH`. With neither, the run fails loudly on the webServer — it does **not** fall back to a backendless SPA.
 - Screenshots disable animations; `seedTheme` runs before app boot so there's no theme-flash in the capture.

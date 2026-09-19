@@ -12,10 +12,10 @@
     "test": "vitest run",
     "audit:consistency": "PC_WRITE_AUDIT=1 vitest run src/design/consistencyAudit.generate.test.ts",
     "test:watch": "vitest",
-    "e2e": "playwright test",
+    "e2e": "playwright test --grep-invert @visual && npm run e2e:visual",
     "e2e:visual": "playwright test e2e/visual.spec.ts",
     "e2e:a11y": "playwright test e2e/a11y.spec.ts",
-    "e2e:update": "playwright test --update-snapshots",
+    "e2e:update": "playwright test e2e/visual.spec.ts --update-snapshots",
     "e2e:report": "playwright show-report"
   },
   "dependencies": {
