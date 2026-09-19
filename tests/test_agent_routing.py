@@ -27,6 +27,12 @@ def _cfg(
     )
 
 
+async def _noop_run(state, session, message):
+    """Stand-in for the turn runner: `api_chat` schedules it as a task, and the routing
+    hook fires beside that scheduling, not inside it."""
+    return None
+
+
 class TestEligibleCandidates:
     def test_only_agents_with_metadata_and_not_reserved(self):
         cfg = _cfg(
@@ -194,3 +200,93 @@ class TestSuggestForSend:
             )
             is None
         )
+
+
+class TestSuggestionReachesTheFirstMessage:
+    """🔴 The suggestion must reach the send that CREATED the session (issue 569).
+
+    `api_chat` broadcasts `routing_suggestion` synchronously — before the run task's
+    first await — so it is the EARLIEST frame of a send. On a brand-new chat the
+    frontend creates the session and navigates, which re-keys its ChatSession; that
+    remount closes the socket that would have received the frame while its replacement
+    is still handshaking. Measured against a live gateway: the broadcast reached every
+    other socket on the page and NO chat socket, so the SEL audit recorded a suggestion
+    as surfaced while the chip never rendered — on the one message where routing is most
+    useful, because the user has not chosen a specialist yet.
+
+    The fix ships the SAME payload on the send response, which exists only because the
+    request did and therefore cannot be raced. Pinned here: the response carries it, and
+    it is the same object as the broadcast — a second dict would be a second chance to
+    name a different session, and a suggestion delivered to the WRONG chat is worse than
+    one that is dropped.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _routing_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.config_dir", lambda: tmp_path, raising=False
+        )
+        cfg = _cfg(
+            {"dba": _profile("database expert", "optimize slow sql query, fix db index")},
+            default="general",
+        )
+        monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", staticmethod(lambda: cfg))
+        # The turn itself is not what is under test; a real run would need a model.
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_handlers._run_chat_scoped",
+            _noop_run,
+            raising=True,
+        )
+        yield
+
+    @pytest.mark.asyncio
+    async def test_ws_send_response_carries_the_broadcast_payload(self, tmp_path, monkeypatch):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from tests.chat_test_helpers import _make_app, _make_state
+
+        state = _make_state(tmp_path)
+        # `api_chat` refuses a key it has never seen (`session_key_exists`, 404
+        # session_not_found) so that a stale tab or a retried send cannot resurrect a
+        # deleted chat. The real first message is create-THEN-send, so seed the key the
+        # way creation does — a log file is that predicate — rather than weakening it.
+        state.conversation_log.append("s-new", "user", "seed")
+        sent: list[tuple[str, object]] = []
+        monkeypatch.setattr(
+            state, "broadcast_ws", lambda t, d, **kw: sent.append((t, d)), raising=False
+        )
+        async with TestClient(TestServer(_make_app(state))) as c:
+            resp = await c.post(
+                "/api/chat?ws=1",
+                json={"message": "please optimize slow sql query now", "session": "s-new"},
+            )
+            assert resp.status == 200
+            body = await resp.json()
+
+        broadcast = [d for t, d in sent if t == "routing_suggestion"]
+        assert len(broadcast) == 1, "the live transport must still fire for other clients"
+        assert body.get("routing_suggestion") == broadcast[0], (
+            "the response and the broadcast must be the SAME payload — two dicts are two "
+            "chances to name a different session"
+        )
+        assert body["routing_suggestion"]["session"] == body["session"] == "s-new"
+        assert body["routing_suggestion"]["agent"] == "dba"
+
+    @pytest.mark.asyncio
+    async def test_no_suggestion_means_no_key_on_the_response(self, tmp_path, monkeypatch):
+        """A send with nothing to suggest must not ship an empty/placeholder suggestion —
+        the frontend keys the chip off the field's presence."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from tests.chat_test_helpers import _make_app, _make_state
+
+        state = _make_state(tmp_path)
+        state.conversation_log.append("s-plain", "user", "seed")  # see the sibling test
+        monkeypatch.setattr(state, "broadcast_ws", lambda *a, **kw: None, raising=False)
+        async with TestClient(TestServer(_make_app(state))) as c:
+            resp = await c.post(
+                "/api/chat?ws=1", json={"message": "hello there", "session": "s-plain"}
+            )
+            assert resp.status == 200
+            body = await resp.json()
+        assert "routing_suggestion" not in body

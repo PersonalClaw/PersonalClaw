@@ -37,6 +37,7 @@ import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoard
 import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
+import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
 import { ScreenShareChip } from '../ui/ScreenShareChip'
@@ -492,6 +493,16 @@ const SLASH_HELP = [
 
 export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub: string; navigate: (p: string, opts?: { replace?: boolean }) => void; navEpoch?: number; query?: Record<string, string>; setQuery?: RouteProps['setQuery'] }) {
   const seg = (sub || '').split('/')[0]
+  // The pending routing suggestion lives HERE, not in ChatSession, because sending on
+  // a brand-new chat CREATES the session and re-keys ChatSession (`new-<epoch>` → the
+  // session key). That remount destroys the instance that issued the send along with
+  // its state and its WebSocket — which is why the suggestion never surfaced on the
+  // first message (issue 569). ChatPage spans the boundary (the route wrapper is keyed
+  // on the route name, so it does not remount when the session id appears in the URL),
+  // so the send's own response can still land somewhere the new instance will read.
+  // The payload names its session; `deliverableToOpenSession` is the ONE place that
+  // decides whether it may be shown.
+  const [routing, setRouting] = useState<RoutingSuggestion | null>(null)
   // A ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project
   // (the project page's "Chat" launch). It takes precedence over the history landing.
   const projectId = query?.project || ''
@@ -504,7 +515,7 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // so they're Back-closable + refresh-stable. Threaded down to ChatSession.
   const q = query ?? {}
   const setQ: RouteProps['setQuery'] = setQuery ?? (() => {})
-  if (projectId && (!seg || seg === 'new')) return <ChatSession key={`new-proj-${projectId}-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} projectId={projectId} seed={seed} agent={agentParam} />
+  if (projectId && (!seg || seg === 'new')) return <ChatSession key={`new-proj-${projectId}-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} projectId={projectId} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} />
   // #/chat/history → the history list. (Chat history is also reachable as a
   // right-docked rail from the new-chat page, so bare #/chat lands on new chat.)
   if (seg === 'history') return <ChatHistoryPage navigate={navigate} query={q} setQuery={setQ} />
@@ -512,15 +523,15 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // nav target opens straight into a new conversation). The key folds in navEpoch
   // so clicking "New chat" always remounts a fresh session even when the URL was
   // silently rewritten by the composer's replaceState (the "New Chat stuck" fix).
-  if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} />
+  if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} />
   // else it's a session key to resume (deep-linked; keyed off `sub` only so
   // unrelated navigations don't remount/reload it). `seed` rides along for
   // sessions STAGED before their first turn (plan 60's investigate opening
   // prompt) — the composer pre-fill is editable, never auto-sent.
-  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} />
+  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} routing={routing} setRouting={setRouting} />
 }
 
-function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '' }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string }) {
+function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void }) {
   const data = useComposerData()
   const { name } = useIdentity()
   // SSM-14: the Session Map's persisted mark-density preference, read off the appearance
@@ -685,10 +696,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [checkWorkOffer, setCheckWorkOffer] = useState<{ label: string; prompt: string } | null>(null)
   useEffect(() => { setCheckWorkOffer(null) }, [sessionId])
   // Agent routing suggestion (AGENT-ROUTING S2): a non-blocking chip proposing a
-  // better-fit specialist for this default-agent chat. Cleared on send / agent
-  // switch / session change; arrives via the routing_suggestion WS push.
-  const [routingSuggestion, setRoutingSuggestion] = useState<RoutingSuggestion | null>(null)
-  useEffect(() => { setRoutingSuggestion(null) }, [sessionId])
+  // better-fit specialist for this default-agent chat. Cleared on send / agent switch;
+  // arrives EITHER on the routing_suggestion WS push (an already-open session) or on
+  // the send response (a session this send just created — its push cannot reach the
+  // socket the create-remount closed). The pending payload is held by ChatPage, above
+  // that remount; here it is DERIVED, so a suggestion the server named for another
+  // session cannot render against this one no matter which transport carried it.
+  const routingSuggestion = deliverableToOpenSession(pendingRouting?.session, sessionId)
+    ? pendingRouting
+    : null
+  // Opening a DIFFERENT session retires a pending suggestion — the moment it was
+  // proposed for has passed. Same resolution, so this cannot disagree with the render
+  // gate above; it just stops a stale chip resurfacing when the user navigates back.
+  useEffect(() => {
+    if (pendingRouting && !deliverableToOpenSession(pendingRouting.session, sessionId)) setRoutingSuggestion(null)
+  }, [sessionId])
   // composer extras: @-mentioned file paths (sent as meta.files) + large-paste
   // blocks (collapsed to cards + inline [Paste #N] markers, expanded on send).
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([])
@@ -1034,8 +1056,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const onWs = useCallback((m: WsMessage) => {
     const s = sessionRef.current
     const d = m.data || {}
-    // approval events are keyed by id, not session — but still gate on session
-    if (!s || (d.session !== s && d.session !== undefined)) return
+    // ── THE session gate. Every case below inherits it and NONE re-checks. ──
+    // This used to be duplicated as `if (d.session !== sessionRef.current) break` at the
+    // top of ~11 cases, plus three near-misses that each compared something slightly
+    // different (`d.session &&` …, `d.session === …`, and `d.key === …` for
+    // session_title). Eleven copies of a rule are eleven chances for the twelfth push
+    // kind to gate on the wrong thing — and the routing suggestion (issue 569) showed
+    // the cost of identity resolution living in more than one place. One resolver,
+    // shared with the send-response delivery path in `send()`; a session-less frame
+    // (approval/voice/side-chat, keyed by id) passes, a foreign session is dropped here
+    // and nowhere else. `chat/sessionDelivery.test.ts` fails if a case re-adds one.
+    if (!deliverableToOpenSession(d.session, s)) return
     lastWsActivityRef.current = Date.now()  // for the idle approval-reconciler
     switch (m.type) {
       case 'chat_chunk': {
@@ -1069,7 +1100,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the UI this way today is a turn-level `error` — e.g. a provider/model
       // rejection). Without this the turn ends blank ("no response").
       case 'chat_message': {
-        if (d.session && d.session !== sessionRef.current) break
         if (d.role === 'error') {
           endTextRun()  // land buffered text before the error segment
           markStreaming(false); setStatusText(''); setLatestActivity(null)
@@ -1157,7 +1187,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // turn's text with the echoed content and update the ‹n/N› switcher state. No
       // refetch — the event is authoritative. (Only meaningful once >1 variant.)
       case 'chat_variant_switch': {
-        if (d.session !== sessionRef.current) break
         const content = String(d.content ?? '')
         const index = typeof d.index === 'number' ? (d.index as number) : 0
         const count = typeof d.count === 'number' ? (d.count as number) : undefined
@@ -1177,7 +1206,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'context_usage':
         // A non-number `pct` (null) is the backend saying "not measured" — clear the
         // ring rather than leaving a stale or fabricated percentage on screen.
-        if (d.session === sessionRef.current) setContextPct(typeof d.pct === 'number' ? d.pct : undefined)
+        setContextPct(typeof d.pct === 'number' ? d.pct : undefined)
         break
       // A title resolved server-side (auto-titled after the first turn, or renamed
       // from elsewhere). Reflect it live in the header of the open session, so the
@@ -1185,7 +1214,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'session_title': {
         const key = String(d.key ?? '')
         const t = String(d.title ?? '')
-        if (key && t && key === sessionRef.current) setTitle(t)
+        if (t && deliverableToOpenSession(key, sessionRef.current)) setTitle(t)
         break
       }
       case 'chat_done': {
@@ -1265,14 +1294,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Visible message queue (mid-stream sends). The server owns the FIFO; these
       // events keep the strip above the composer in sync.
       case 'queue_push': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.queue_id ?? ''); const content = String(d.content ?? '')
         if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, { id, content }]))
         break
       }
       case 'queue_pop':
       case 'queue_cancel': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.queue_id ?? '')
         if (id) setQueued((prev) => prev.filter((q) => q.id !== id))
         break
@@ -1280,7 +1307,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // A queued item was promoted to the front (interrupt-now). Reorder the strip
       // so the promoted card jumps to the top on every client (it runs next).
       case 'queue_promoted': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.queue_id ?? '')
         if (id) setQueued((prev) => {
           const i = prev.findIndex((q) => q.id === id)
@@ -1292,24 +1318,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Follow-up chips (CHAT-CRAFT S3): 2-3 suggested next messages for the just-
       // completed turn. Render under the last assistant turn; any user activity clears.
       case 'chat_followups': {
-        if (d.session !== sessionRef.current) break
         const items = Array.isArray(d.items) ? d.items.filter((x): x is string => typeof x === 'string') : []
         setFollowups(items)
         break
       }
       // "Check this work" offer (HARNESS-CRAFT §3.3) for the just-completed turn.
       case 'chat_check_work_offer': {
-        if (d.session !== sessionRef.current) break
         const prompt = String(d.prompt ?? 'check your work')
         setCheckWorkOffer({ label: String(d.label ?? 'Check this work'), prompt })
         break
       }
       // Agent routing suggestion (AGENT-ROUTING S2): a specialist fits this message
       // better — surface the routing chip above the composer (non-blocking proposal).
+      // No session comparison here: the payload carries the session the SERVER named,
+      // and `deliverableToOpenSession` decides at the render gate whether that is the
+      // session on screen. One resolution point, so this transport and the send-response
+      // one cannot drift apart. (The same push also reaches OTHER clients viewing this
+      // chat; the sender's own copy comes back on its send response, because this frame
+      // is emitted while a just-created session's socket is still reconnecting — 569.)
       case 'routing_suggestion': {
-        if (d.session !== sessionRef.current) break
         const agent = String(d.agent ?? '')
-        if (!agent) break
+        if (!agent || !d.session) break
         setRoutingSuggestion({
           session: String(d.session), agent,
           specialty: String(d.specialty ?? ''),
@@ -1322,7 +1351,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // (retained in history server-side) and the provider was reset. Re-hydrate from
       // the now-truncated transcript so the divider chip + tail disclosure appear.
       case 'chat_rewound': {
-        if (d.session !== sessionRef.current) break
         const sk = sessionRef.current
         if (sk) api.chatSessionDetail(sk).then((det) => {
           writeCachedDetail(sk, det)
@@ -1337,7 +1365,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // discards, not lands: the user bubble is pushed below, so a landed tail would end up
       // in the NEW turn.
       case 'chat_user_message': {
-        if (d.session !== sessionRef.current) break
         const content = String(d.content ?? '')
         if (!content) break
         dropTextRun()
@@ -1348,7 +1375,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Async subagent lifecycle (fire-and-forget). Cards live in the Activity
       // panel's Subagents tab; the final output also posts to the transcript.
       case 'subagent_spawn': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.id ?? '')
         if (!id) break
         setSubagents((prev) => prev.some((s) => s.id === id) ? prev
@@ -1356,13 +1382,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'subagent_tool': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.id ?? '')
         if (id) setSubagents((prev) => prev.map((s) => s.id === id ? { ...s, lastTool: String(d.tool ?? '') } : s))
         break
       }
       case 'subagent_done': {
-        if (d.session !== sessionRef.current) break
         const id = String(d.id ?? '')
         if (id) setSubagents((prev) => prev.map((s) => s.id === id
           ? { ...s, done: true, error: (d.error as string | null) ?? null, elapsed: typeof d.elapsed === 'number' ? d.elapsed : undefined, result: String(d.result ?? ''),
@@ -1837,7 +1861,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // continuous stream, and not a frame from whenever sharing happened to start.
       // Awaited before sendChat so the slot is staged when the runner drains it.
       if (screenShare.sharing) await screenShare.captureAndStage(sid)
-      await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
+      const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
+      // Agent routing (569): the server emits its suggestion as the FIRST frame of the
+      // send, which on a chat created BY this send is before the remounted ChatSession's
+      // socket has finished reconnecting — so the WS copy reaches nobody and the chip
+      // never appeared on the one message where routing matters most. The response
+      // carries the same payload and cannot be raced (it exists only because the request
+      // did). Stored, not shown: the payload names its own session and the render gate
+      // resolves it, so a suggestion is surfaced for the session the server named or not
+      // at all. `setRoutingSuggestion` belongs to ChatPage, which survives the remount.
+      if (sent?.routing_suggestion?.agent) setRoutingSuggestion(sent.routing_suggestion)
     }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
   }

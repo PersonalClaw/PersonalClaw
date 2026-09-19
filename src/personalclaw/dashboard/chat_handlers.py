@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -388,26 +389,45 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # Agent routing (AGENT-ROUTING S1): if this default-agent chat's message fits an
     # installed specialist, broadcast a non-blocking suggestion the FE renders as a
     # chip. Best-effort — a classifier error must never break the send.
+    #
+    # This broadcast is the EARLIEST frame of a send (it runs before the run task's
+    # first await), which is what made it the one frame a brand-new chat could never
+    # receive: creating the session by sending re-keys the frontend's ChatSession, and
+    # the remount closes its WebSocket while the replacement is still handshaking, so
+    # the frame lands in the reconnect gap and is delivered to nothing (issue 569). So
+    # the same payload also rides the send RESPONSE below — causally after the request,
+    # therefore unraceable. ONE dict feeds both transports so they cannot disagree
+    # about the session (or anything else) the suggestion is for.
+    _routing: dict[str, Any] | None = None
     try:
         from personalclaw.agents.routing import suggest_for_send
 
         _suggestion = suggest_for_send(state, session, message)
         if _suggestion is not None:
-            state.broadcast_ws(
-                "routing_suggestion",
-                {
-                    "session": session.key,
-                    "agent": _suggestion.agent,
-                    "specialty": _suggestion.specialty,
-                    "score": round(_suggestion.score, 3),
-                    "method": _suggestion.method,
-                },
-            )
+            _routing = {
+                "session": session.key,
+                "agent": _suggestion.agent,
+                "specialty": _suggestion.specialty,
+                "score": round(_suggestion.score, 3),
+                "method": _suggestion.method,
+            }
+            state.broadcast_ws("routing_suggestion", _routing)
     except Exception:
         logger.debug("routing suggestion hook failed", exc_info=True)
 
     if ws_mode:
-        return web.json_response({"ok": True, "session": session.key})
+        # Built as a LITERAL at the call site, not assembled into a name above: the wire
+        # envelope census (tests/test_wire_error_envelope_census.py) reads response shapes
+        # statically, and `json_response(_body)` hides this one from it. The suggestion key
+        # is absent rather than null when there is nothing to suggest — the frontend keys
+        # the chip off the field's presence.
+        return web.json_response(
+            {
+                "ok": True,
+                "session": session.key,
+                **({"routing_suggestion": _routing} if _routing is not None else {}),
+            }
+        )
 
     resp = web.StreamResponse()
     resp.content_type = "text/event-stream"
