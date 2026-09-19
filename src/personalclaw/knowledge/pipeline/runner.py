@@ -505,15 +505,28 @@ def _lying_extractors(result) -> list[str]:
 
     Non-pooled nodes are excluded because their product never reaches the text pool at all
     (``exif`` writes structural metadata), so "produced no text" is not a claim about them.
+
+    **A node whose gap another node CLOSED has not lied** (KOCR-1). Since a text-less PDF is
+    routed to rasterize → OCR, ``document_read`` returning empty on a scan is a TRUE report —
+    "this PDF has no text layer" — that a downstream node then covered. Measured on a real
+    ingest through the gateway before this condition existed: the item's content was the
+    OCR'd text of the scan and its status simultaneously said no text could be extracted from
+    it. So the set is emptied when ANY pooled node contributed text, which is precisely the
+    claim ``no_extractable_text`` makes and which is then false. This cannot mask the defect
+    the verdict exists for: in that case NO pooled node had text — that is what left the item
+    carrying only the synthesized descriptor.
     """
     names: list[str] = []
+    recovered = False
     for node_type in result.ran:
         out = result.outputs.get(node_type)
         if out is None or not getattr(out, "pooled", False):
             continue
-        if not (getattr(out, "text", "") or "").strip():
+        if (getattr(out, "text", "") or "").strip():
+            recovered = True
+        else:
             names.append(node_type)
-    return names
+    return [] if recovered else names
 
 
 def _searchability_reason(store, item_id: str, embedder, empty_success_extractors) -> str | None:
@@ -588,6 +601,11 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
                 "slide_count",
                 "row_count",
                 "paragraph_count",
+                # KOCR-1: `ocr: "unavailable"` on a scanned PDF nobody can read. It belongs
+                # on the item for the same reason page_count does — it is a fact ABOUT the
+                # document the detail strip and `knowledge_get` have to be able to state, and
+                # an empty item with no explanation is the silent-empty-ingest defect itself.
+                "ocr",
             )
             and v is not None
         }

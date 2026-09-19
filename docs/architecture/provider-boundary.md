@@ -57,6 +57,15 @@ implements it. What matters here is where the boundary sits inside each family:
   provider wins).
 - **Agent apps** own binary resolution, dialect selection, and login argv; core
   `acp/` is the vendor-neutral protocol layer.
+- **OCR engines** register through `ocr/` (`OcrProvider`, re-exported by `sdk/ocr.py`).
+  Deliberately its own type rather than a `model` serving `image_modality`: an engine takes
+  no prompt and must be byte-stable for the same input, which the model seam does not
+  promise. Core ships **no** engine, so an empty registry is the normal state — the
+  ingestion graph's `ocr` node has a model-backed backend (`vision-llm`) and an
+  engine-backed one (`engine`) and runs whichever can run, falling back to today's
+  graceful skip when neither can. The true-type gate every engine must pass its input
+  through (`ocr/filetype.py`) is core's, not each bundle's: a magic-number table copied per
+  bundle is a table that drifts per bundle.
 - **Channel apps** own the vendor transport and delivery both ways.
   `slack-channel` is the completed reference — see
   [inbox-channels.md](inbox-channels.md) and

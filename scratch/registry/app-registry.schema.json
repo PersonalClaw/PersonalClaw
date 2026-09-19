@@ -55,6 +55,7 @@
                 "memory",
                 "model",
                 "notification",
+                "ocr",
                 "prompt",
                 "sandbox",
                 "search",

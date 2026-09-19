@@ -1112,6 +1112,11 @@ PROVIDER_TYPES = frozenset(
         # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
         # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit (the #47 rule).
         "trigger_source",
+        # KNOWLEDGE-OCR-INGESTION KOCR-2: an app-contributed OCR ENGINE — reads text out of
+        # pixels with NO model bound. Deliberately not the `model` type: an OCR engine takes no
+        # prompt and must be byte-stable for the same input, which the model seam does not
+        # promise. Its `OcrTypeHandler` lands in the same commit (the #47 rule).
+        "ocr",
         # TEAM-SHARED-ENTITIES §3 (TSE-4): an app-contributed STORE of trigger ROWS — a shared or
         # team trigger backend. NOT `trigger_source` above: that supplies the STIMULUS (live
         # observer, pushes events), this supplies the RULE (passive store, serves definitions).

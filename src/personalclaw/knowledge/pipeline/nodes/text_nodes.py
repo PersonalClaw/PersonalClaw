@@ -68,8 +68,26 @@ class DocumentReadNode:
         # the internal UUID filename — meaningless noise in the pool drill-down. Drop
         # it; the item's own title is the source of truth.
         meta.pop("title", None)
+        # KOCR-1: a PDF with no extractable text layer is a SCAN. Classify it so the
+        # graph's conditional edge routes it to rasterize→OCR, and — when nothing can OCR
+        # it — say so on the item instead of storing an empty document as if it had been
+        # read. `meta.ocr == "unavailable"` mirrors `_read_pdf`'s "pdfplumber is None"
+        # contract: an explicit signal with empty content and no exception, never a silent
+        # empty ingest. The text itself is untouched either way.
+        classification = ""
+        if meta.get("format") == "pdf" and meta.get("text_layer") is False:
+            from personalclaw.knowledge.pipeline.registry import resolve_runnable
+
+            if resolve_runnable("ocr", "vision-llm") is None:
+                meta["ocr"] = "unavailable"
+            else:
+                classification = "no-text-layer"
         return NodeOutput(
-            node_type=self.node_type, backend=self.backend, text=text or "", metadata=meta
+            node_type=self.node_type,
+            backend=self.backend,
+            text=text or "",
+            metadata=meta,
+            classification=classification,
         )
 
 
