@@ -22,12 +22,18 @@ Every capability below is in exactly one of three buckets:
 A fourth list per provider — **not yet measured** — is not a bucket. It exists so a reader can
 tell *measured absent* from *never driven*. A cell in that list is neither working nor broken
 as far as this document is concerned; it has no runtime observation behind it, and no claim
-here rests on it.
+here rests on it. **As of 2026-09-19 that list is EMPTY for all three shipped providers** — every
+one of the 63 cells on claude-code, codex and kiro-cli carries a runtime observation. It is kept
+in the vocabulary because it is the honest mark for a future provider (gemini-cli is 63/63 in it)
+and because a re-drive can legitimately put a cell back.
 
 **Versions are stated because a CLI can change any week.** Every constraint row names the
-build it was measured against. Two of the three columns were measured against *older* builds
-than the ones installed today, and one column was measured against the same build and then
-failed to reproduce — see "Coverage" below before treating any row as current fact.
+build it was measured against. **All three columns were measured against builds older than the
+ones installed today** — every CLI on the host has moved, and one adapter has moved eleven minor
+versions — and one column was measured against the same build and then failed to reproduce. Read
+"Verified versions" and "The 2026-09-19 re-drive" below before treating any row as current fact.
+A completed column is a *dated* column, not a durable one: cell coverage reaching 63/63 says every
+cell was once observed, **not** that any row still reproduces.
 
 **Evidence ids** (`O4`, `C12`, `K30`, `G27`) refer to the observation ledgers and gap
 inventory in the ACP-AGENT-PARITY plan (internal).
@@ -35,6 +41,11 @@ Every claim in this document traces to a ledger row, a `G`-entry, or a measured 
 Nothing here was derived by reading code alone.
 
 ## Verified versions
+
+Two dated readings. The second does not replace the first — a version row is a measurement, and
+the columns below were filled against the 2026-08 builds. **Every CLI on the host has moved since
+the columns were driven, so no row below is current fact until it is re-driven** (what has and has
+not been re-driven is stated in "The 2026-09-19 re-drive" section).
 
 Measured on the development host on 2026-08-19:
 
@@ -47,10 +58,54 @@ Measured on the development host on 2026-08-19:
 | `kiro-cli` | `2.18.1` | native ACP — no adapter in the path |
 | `gemini` | **not installed** | catalog row and bundle exist; provider unverified |
 
-**The adapters are installed per-home, not globally.** They live at
-`<PERSONALCLAW_HOME>/acp-adapters/node_modules/.bin/` — a reader who checks `PATH` for
-`claude-agent-acp` or `codex-acp` finds nothing and will wrongly conclude the adapters are
-missing. `kiro-cli` is the exception: it speaks ACP natively, so there is no adapter and no
+Re-measured on the same host on **2026-09-19**, both by the CLIs' own `--version` and by the
+product's own probe (`GET /api/agent-runners?probe=1`, which is what a user sees — a plain `GET`
+is a read of persisted evidence and reports `health: null` until something probes):
+
+| Component | Version | Notes |
+|---|---|---|
+| `claude` (Claude Code CLI) | `2.1.277.866` | probe reports `2.1.277`; **44 patch builds ahead** of the column |
+| `@agentclientprotocol/claude-agent-acp` | **`0.74.0`** | the build that actually **ran**, resolved from the global node install — **14 minors ahead** of the column's `0.60.0`. See the pin warning below: a `0.60.0` copy was also present per-home and was *not* used |
+| `codex` | `0.154.0.488` | probe reports `0.154.0`; **8 minor builds ahead** of the column |
+| `@agentclientprotocol/codex-acp` | `1.12.0` | **eleven minors ahead** of the column's `1.1.7` |
+| `kiro-cli` | `2.22.1` | authenticated via IAM Identity Center (`kiro-cli user whoami` exits 0). It does **not** use midway, so a `mwinit` freshness step is moot for this provider |
+| `gemini` | **still not installed** | unchanged; its catalog row still carries `dialect: ""` and `adapter: no_adapter`, which is the shipped-data honesty note below, now re-observed |
+
+**🔴 The per-home adapter pin is ADVISORY, and a global install silently wins it.** This was measured
+the hard way on 2026-09-19 and it invalidated a first draft of this very table. The managed prefix
+pins `claude-agent-acp` at `^0.60.0`, and under npm's `0.x` rule that admits only `0.60.x` — so a
+`0.60.0` copy duly installed into `<PERSONALCLAW_HOME>/acp-adapters/`. **It never ran.** The resolver
+prefers an adapter already on `PATH` or in a node-manager bin dir, so the process that actually served
+every claude-code turn was the **global `0.74.0`** under the mise node — a build fourteen minors past
+the pin and twelve past the `0.62.0` this document used to name as current.
+
+Two consequences worth more than the version numbers:
+
+- **A pinned version in the per-home prefix is not evidence of the version in use.** Read the running
+  process, not the prefix. The 2026-09-19 drive first recorded `0.60.0` from the prefix and concluded
+  that claude-code reaches through the *same* adapter its column used — exactly backwards. Left
+  uncorrected it would have published the claude column as the stable one when its adapter had in fact
+  drifted furthest of the three. The error was caught only by listing the adapter processes still alive
+  after the drive.
+- **The tell was on screen the whole time.** When a global adapter wins, provisioning never runs, so
+  no integrity digest is recorded and the runner row reads `state: "unverified"` —
+  *"resolves on disk but has no recorded provenance"*. That string does not only mean "someone
+  hand-installed it"; it means **the version you pinned is probably not the version running**. Both
+  adapter rows read `unverified` during this drive, and both were being served from outside the prefix.
+
+So **both** shipped adapters had moved substantially by 2026-09-19 (`0.60.0 → 0.74.0`,
+`1.1.4 → 1.12.0`), and the earlier idea that the two columns rot at different rates because of their
+pin shapes is withdrawn: the pins did not govern either one.
+
+**The adapters are installed per-home — but they are not necessarily *run* from there.** PersonalClaw
+provisions them into `<PERSONALCLAW_HOME>/acp-adapters/node_modules/.bin/`, and on a host with no
+global copy that is the only place they exist, so a reader who checks only `PATH` can wrongly conclude
+they are missing. **The converse is the trap that actually bit a sweep:** where a global or
+node-manager copy *does* resolve (mise shims, `npm -g`), the resolver prefers it, the per-home
+provisioning never runs, and the pinned per-home version is inert. On the 2026-09-19 drive both
+adapters ran from the global mise node install — `claude-agent-acp 0.74.0` while the per-home prefix
+held `0.60.0`. **So check both, and treat the running process as authoritative over either.**
+`kiro-cli` is the exception to all of this: it speaks ACP natively, so there is no adapter and no
 adapter version to pin.
 
 ## Coverage — what has actually been measured
@@ -63,10 +118,24 @@ capability verdict), `NOT-EXERCISED` (no runtime observation).
 
 | Provider | CONFIRMED | DIVERGED | ENV | NOT-EXERCISED | Sweep |
 |---|---|---|---|---|---|
-| claude-code | 43 | 7 | 0 | **13** | 2026-08-17 + a residual re-drive 2026-08-19, adapter `0.60.0`, `claude` `2.1.233.669` |
-| codex | 33 | 10 | 0 | **20** | 2026-08-17, adapter `1.1.4`, `codex` `0.146.1.359` |
-| kiro-cli | 43 | 18 | 1 | **1** | 2026-08-17/18, a follow-up sweep 2026-08-18, plus a residual re-drive 2026-08-19, `kiro-cli` `2.18.1` |
-| gemini-cli | — | — | — | 63 | never driven; binary not installed |
+| claude-code | 49 | 14 | 0 | **0** | 2026-08-17 · residual re-drive 2026-08-19 · **residual CLOSED 2026-08-23** (13 → 0). Adapter `0.60.0`, `claude` `2.1.233.669` |
+| codex | 47 | 16 | 0 | **0** | 2026-08-17 · **residual CLOSED 2026-08-23** (20 → 0). Adapter `1.1.4`, `codex` `0.146.1.359` |
+| kiro-cli | 43 | 19 | 1 | **0** | 2026-08-17/18 · follow-up 2026-08-18 · re-drive 2026-08-19 · **residual CLOSED 2026-08-23** (1 → 0). `kiro-cli` `2.18.1` |
+| gemini-cli | — | — | — | 63 | never driven; binary not installed. Out of scope by owner decision |
+
+`49+14+0+0`, `47+16+0+0` and `43+19+1+0` each total 63. **All three shipped columns are complete:
+no cell on any of them lacks a runtime observation.**
+
+> **This table was wrong for four weeks, and the correction is the most important thing on this
+> page.** It published `13`, `20` and `1` NOT-EXERCISED cells — 34 in total — long after all three
+> residuals had been **driven and closed on 2026-08-23**. The observations existed the whole time
+> (claude `O35`-`O38`/`O45`/`O51`/`O56`-`O60`/`O64`/`O66`/`O70`/`O75`, codex `C84` and the `G84`-`G103`
+> addendum, kiro `K55`/`K60`/`K63`/`K65`/`K80`/`K85`); nothing propagated them here. Two of the
+> DIVERGED counts moved in the same closure and were also never published: claude `7 → 14`, codex
+> `10 → 16`, kiro `18 → 19` (the kiro row is `Procedural-outcome capture`, re-driven to DIVERGED as
+> `K80`). **A reader who sized this work off the old table sized it off 34 cells that were already
+> measured** — so treat the count in a coverage table as a projection of the ledger, never as the
+> ledger.
 
 Three things a reader must carry into every section below.
 
@@ -82,19 +151,80 @@ scare: `K4`'s enumeration had missed the protocol-delivered surface, and **four 
 it** — the native registry, both skills rows and subagents. All four are corrected below, three of
 them by CALLING the tools rather than re-reading a list (`K57`).
 
-**2. claude-code and codex are not complete columns.** 13 and 20 cells respectively have no
-runtime observation. Their sections list those cells grouped by why, and the summary tables do
-not imply anything about them. claude's residual came down from 22 in a 2026-08-19 re-drive that
-reused the recipes kiro's follow-up sweep had already proven; the nine cells it closed are marked
-with their own observation ids below.
+**2. claude-code and codex ARE complete columns** — corrected 2026-09-19. Both were published here
+as incomplete (13 and 20 undriven cells) for four weeks after the fact. claude's residual fell
+22 → 13 on 2026-08-19 and **13 → 0 on 2026-08-23**; codex's fell **20 → 0** on the same day.
+Closing them cost three recipe corrections worth carrying, because each is a claude-code recipe
+that did **not** port to codex: `cat /nonexistent-…` does not gate on codex (it rewrites the call
+into its own `Read file` tool and self-executes — the reliable seam is that **codex escalates on
+RETRY**, which also means any single-shot probe of a codex gate can read either way, `G91`);
+the prompt-side cells cannot be judged from the persisted transcript at all, because knowledge,
+attachments and persona are **not persisted**, so only the model's echo is decisive and it needs a
+control-first A/B with virgin markers (`G84`); and the empty-turn probe needs a **warm** adapter,
+since a cold codex spawn prepends its own skills-budget warning as assistant text and
+`assistant_text.strip()` is then never empty (`G85`).
 
-**3. ONE kiro cell has no runtime observation**, and the reason changed. The skill-ladder review is
-not gate-less: its condition is a correction signal **or** four tool calls, both drivable, and driving
-it shows the ladder running (and, on a local model with the shipped 60 s HTTP timeout, dying silently
-mid-pass). What blocks the cell is that **no surface attributes a model call to its caller**, so a
-ladder that declines and a ladder that never ran look identical from outside (`G47`, superseding
-`G44`). The other cell once called unreachable — empty-turn auto-retry — was closed by asking the CLI
-for zero characters (`K55`); it was never unreachable, just never attempted.
+**3. NO kiro cell lacks a runtime observation** — corrected 2026-09-19, and this reverses the
+strongest "unreachable" claim this document ever made. Both cells it called unreachable-by-construction
+were driven on 2026-08-23:
+
+- **Empty-turn auto-retry → CONFIRMED (`K55`).** "Producing one requires stream injection" was simply
+  wrong: a prompt demanding zero characters produces an empty turn, the host silently re-queues once,
+  and the second consecutive empty raises the card. **A cell called unreachable stayed shut for three
+  sweeps because nobody tried the cheapest possible input.**
+- **Skill-ladder review → CONFIRMED (`K60`).** A *filed* proposal is unambiguous positive evidence, and
+  indistinguishability only ever bit the **negative** case — so the cell never needed the instrumentation
+  `G44`/`G47` were scoped to build. Two of its three recorded blockers had also already been fixed by
+  code that shipped *before* the re-drive: `70660460` (2026-08-21) added `caller: "skill_ladder"` on the
+  model call and one INFO verdict line per pass, and the "only a transient chip" claim was stale because
+  each filing writes a durable `notifications.jsonl` row (`K63`). **A blocker recorded against a moving
+  codebase expires, and nothing re-checked these for two days.**
+
+Two costs are worth keeping even though the cell closed: kiro-cli opens its ACP sessions **read-only**
+(`allowed_write_paths: []` on 25/25 session files, and PersonalClaw sets none of it), so the gate's
+`tool_calls >= 4` leg cannot be driven with filesystem work and the correction leg is the only reliable
+driver (`K65`); and kiro intermittently exposes **no shell tool at all** — 3 of 5 turns — which can
+silently invalidate a drive (`K85`, cause likely `G81`).
+
+## The 2026-09-19 re-drive — what was re-measured, and what was NOT
+
+The columns above are complete but dated. This section exists so the distinction is impossible to
+miss: **a 63/63 column is not a current column.** Driven as a user on 2026-09-19, on a fresh
+isolated home with its own port, the three agent bundles installed from a local first-party source,
+and the adapters in the per-home `npm --prefix` root.
+
+**Re-measured, and these rows are current:**
+
+| What | Result |
+|---|---|
+| Does an ACP turn still run at all, per provider? | **Yes on all three.** One turn each; every CLI echoed an exact virgin marker (`AAPX-KIRO-2260919-LIVE`, `AAPX-CLAUDE-2260919-LIVE`, `AAPX-CODEX-2260919-LIVE`). kiro's cold turn took 22.1 s |
+| Versions, by the product's own probe | `claude 2.1.277` · `codex 0.154.0` · `kiro-cli 2.22.1` · `gemini` absent (`GET /api/agent-runners?probe=1`) |
+| **CLI/adapter notices rendered as assistant prose** (codex, DIVERGED) | **STILL DIVERGED.** codex's first assistant chunk is again its own `Warning: Skill descriptions were shortened…`, persisted as assistant text ahead of the answer — reproduced on `codex 0.154.0.488` + adapter `1.12.0`, i.e. 8 CLI minors and 11 adapter minors beyond the build that first measured it (`C4`, `C7`, `G23`). This is the one cell in this re-drive carried to a verdict, and the finding is that **neither upgrade fixed it** |
+| kiro's advertised runtime id | **New defect** — `acp:kiro` does not resolve; see the kiro section |
+| Adapter actually in use | **`claude-agent-acp 0.74.0`** and **`codex-acp 1.12.0`**, both resolved from the **global** node install — not from the per-home prefix, which held a pinned `0.60.0` that never ran. Read the running process, not the pin |
+| Adapter provenance | Both rows read `state: "unverified"`. That string is the *tell* for the line above: provisioning (and therefore the integrity digest) only runs when the resolver's last resort would be the `npx -y` fallback, so `unverified` means the pin is probably not what is executing |
+| Host model provider | **None bound.** A plain ACP turn needs none — the external CLI owns the model call — but the background axis refuses with `no model provider resolves for use case 'background'`, the same shape as `C16` |
+
+**NOT re-measured — and this is the larger number.** Of 63 cells per provider, this pass carried
+**one** to a verdict and established the turn-level precondition for all three. **The remaining ~60
+cells per provider still rest on their 2026-08 observations** and are not current fact. Two honest
+reasons, both recorded rather than worked around:
+
+1. **The host was saturated.** Load average sat at 24–33 throughout. A large share of the open cells
+   are *timing*-sensitive by construction — empty-turn auto-retry, pipe-death retry, queue-steering,
+   stopping a turn during a tool call, the in-flight window `O45` needed ≥10 s of measured `running`
+   — and codex alone spawns ~31 descendant processes per session. **An `ACP prompt timed out` on a
+   host at load 30 is a host artifact, not a capability verdict**, and recording it as one would put
+   false DIVERGED rows into a document whose whole value is that its rows are true. These were left
+   undriven on purpose.
+2. **No host model provider was bound**, so the native-axis cells (memory consolidation, auto-nudge
+   re-arm, skill-ladder review) could not be re-driven here at all. Their honest mark for *today* is
+   environment-gated, which is why they are not restated as current.
+
+**The one thing this re-drive does establish beyond its own rows:** the 2026-08 observations were
+not invalidated wholesale by the version jump. All three providers still negotiate and complete a
+turn, and the one DIVERGED cell tested still diverges. That is evidence against a wholesale re-sweep
+being necessary — it is **not** evidence that any specific untested row still holds.
 
 ## Constraints that hold on all three providers
 
@@ -134,10 +264,19 @@ said here rather than generalized — a landed mechanism is not a measured one.
 
 ## claude-code
 
-`claude` `2.1.234.669` through `@agentclientprotocol/claude-agent-acp` `0.62.0`, Zed dialect
-`claude-code`. **The column was measured on adapter `0.60.0` and `claude` `2.1.233.669`, and 22
-of its 63 cells were never driven** — read the two tables below as 41 measured cells, not as a
-complete statement.
+`claude` `2.1.277.866` today, through `@agentclientprotocol/claude-agent-acp` `0.74.0`, Zed dialect
+`claude-code`. **The column was measured on adapter `0.60.0` and `claude` `2.1.233.669`, and it is
+COMPLETE: 63 of 63 cells carry a runtime observation** (49 CONFIRMED / 14 DIVERGED), the last 13
+having been driven on 2026-08-23.
+
+Two corrections to what stood here. It said "22 of its 63 cells were never driven — read the two
+tables below as 41 measured cells": the 22 was already down to 13 by the 2026-08-19 re-drive and to
+**0** by 2026-08-23, and even on its own figure the arithmetic was wrong (`63 − 22 = 41` was
+published while the residual list below it counted 13, i.e. 50 measured). The version line was also
+stale — it named `2.1.234.669`/`0.62.0` as though current while the column's own rows cite
+`2.1.233.669`/`0.60.0`. **Today the CLI is 44 patch builds beyond the column and the adapter is
+fourteen minors beyond it**, so a claude-code row that fails to reproduce has two candidate causes
+and neither can be ruled out without a drive that pins one.
 
 ### At parity
 
@@ -189,12 +328,56 @@ re-driven on claude-code.
 | Session mechanics | Concurrent sessions on one adapter process | Two concurrently-bound sessions held two different adapter PIDs (`O11`); the dialect declares no concurrency support | **Adapter** would have to interleave sessions; the flag stays false until a spike proves it | adapter `0.60.0` |
 | Session mechanics | Persona / agent selection | Discovery returns exactly one agent with `provider_agent: ""` — one base agent per adapter, so the picker has no persona rows to offer, and there is no dead UI (`O2`) | **Adapter / CLI** | adapter `0.60.0` |
 
-### Not yet measured (13 of 63 cells)
+### Not yet measured — NONE. Residual CLOSED 2026-08-23 (13 → 0)
 
-No runtime observation exists for these; they are neither working nor absent here. Grouped by
-what was missing. **Nine of the original 22 were closed on 2026-08-19** by re-driving them with
-the recipes kiro's follow-up sweep had proven — a residual is a missing fixture, not a verdict,
-so it stays open only until someone builds the fixture.
+**Every cell in this column has a runtime observation.** The 13 that stood here were driven on
+2026-08-23 and resolved as **7 CONFIRMED / 6 DIVERGED**; a fourteenth row moved because the drive
+*corrected an existing mark*, which is why the column's DIVERGED count went `7 → 14` rather than
+`7 → 13`. The list below is kept as provenance — it is what was missing, not what is missing.
+
+What closing it cost, because each item is a trap the next column would otherwise rediscover:
+
+- **The "needs a model provider" reason was INVERTED, not stale.** The skill-ladder review is
+  dispatched from a provider-agnostic call site and its gate is *a correction signal OR ≥4 tool
+  calls* — nothing schedule- or threshold-based. Two turns on an `acp:claude-code` session, the
+  second a correction, filed a real `refine` proposal (`O66`). "Needs instrumentation" was also only
+  half right: indistinguishability bites only the **negative** case, so a *filed* proposal marks the
+  cell outright.
+- **`K36`'s `echo AUTOFLOOR-OK` probe does not port to claude-code** — it executes `echo` itself
+  without asking the host, so the probe never reaches the gate. `cat /nonexistent-*` gates reliably
+  and is what `O35`-`O38` used.
+- **Two API mechanics cost real time.** `GET /api/approvals` **never** shows an ACP chat card — it
+  returns `[]` while `pending_approval` is `true`. The working path is `GET /api/chat/sessions/{s}`
+  → the **`permission` message's** `meta.approval_id` → `POST /api/chat/sessions/{s}/approve`, and
+  the verb is the past-tense **`approved`**, not `approve` (until `AAP-3` fixed it, the sibling
+  surface's `approve` silently **DENIED** the tool while returning `200 {"ok": true}` — `G80`). And
+  `POST /api/chat/sessions` takes the session name in **`name`**; a request sending `{"session": …}`
+  has that key silently ignored and gets an auto-generated name. Two later drives reported opposite
+  results purely because they sent different fields.
+- **The timing cells needed a slower turn, not a longer sleep.** `O26` missed the in-flight window
+  by 1.2 s using a tool-latency-slow turn. A turn slow by **output volume** (~98 s of streaming, 644
+  events) plus polling `running` until it had been true for ≥10 s hit the window **1 of 1** attempts
+  with no fixed `sleep` anywhere (`O45`). `O26`'s post-mortem was also incomplete: a perfectly-hit
+  window would *still* have shown `queue: null`, because the sessions payload has **no queue key at
+  all** (`G59`).
+- **One "no entry point" cell was reachable and the precondition was backwards.** Trust and YOLO
+  drove simply by enabling them (`O35`/`O36`) — and **the dev home ships `agent.yolo: true` +
+  `approval_mode: "auto"` persisted**, so a drive on a copy of it measures zero cards for structural
+  reasons unless it flips them FIRST. Dry-run replay and the sandbox wrap are genuine absences, now
+  marked DIVERGED with route- and backend-level evidence rather than left blank (`O64`, `O56`-`O60`).
+
+**What the closure surfaced:** eighteen findings (`G50`-`G67`) — one **P0** (`G52`: the spawned CLI
+persists full transcripts into the operator's real `~/.claude/projects/…`, measured independently by
+two drives, which undermines the incognito guarantee), seven P1, seven P2, three P3. It also
+invalidated two rows of evidence elsewhere: `G51` shows `pending_approval_info: null` is **not** proof
+that no card was raised — which is exactly what `K36` and `K41` cite.
+
+**A methodology note that cost a measurement.** One drive forcing an ACP error killed adapters *by
+name* machine-wide, hitting 10 belonging to four concurrent gateways. Kill only children of your own
+gateway (`pgrep -P <gateway-pid>`). The affected window was identified and the one observation inside
+it discarded.
+
+*Historical provenance — the four groups as they stood before the close:*
 
 1. **Needs a model provider in the sweep home** (~~5~~ **1**): skill-ladder review. The model gap
    itself is gone — the re-drive home resolved both `chat` and `background` to a local model, which
@@ -214,18 +397,27 @@ so it stays open only until someone builds the fixture.
 4. **No as-a-user entry point** (3): dry-run replay, OS sandbox confinement, and trust/YOLO
    auto-approve — the last deliberately left off so the gate itself stayed measurable.
 
-1 + 4 + 5 + 3 = 13, counted from the matrix rows themselves. Re-deriving the grouping this way
-caught two errors in the original 22-cell list that had cancelled out in its total: it counted the
-failure-breaker's *loop half* as a cell (it is a sub-clause of a row `O24` already decided) and it
-omitted *incognito/restricted no-write*, a real unexercised row. That loop half is still worth a
-drive — six consecutive failing tool calls inside a loop, kiro's `K15` shape — but it is not a
-thirteenth cell.
+1 + 4 + 5 + 3 = 13 — the pre-close arithmetic, kept for provenance; **all 13 are now driven.**
+Re-deriving the grouping that way caught two errors in the original 22-cell list that had cancelled
+out in its total: it counted the failure-breaker's *loop half* as a cell (it is a sub-clause of a row
+`O24` already decided) and it omitted *incognito/restricted no-write*, a real unexercised row. That
+loop half is still worth a drive — six consecutive failing tool calls inside a loop, kiro's `K15`
+shape — but it was never a thirteenth cell, and it is the one item on this list that the 2026-08-23
+close did **not** turn into an observation.
 
 ## codex
 
-`codex` `0.146.1.360` through `@agentclientprotocol/codex-acp` `1.1.7`, Zed dialect `codex`.
+`codex` `0.154.0.488` today, through `@agentclientprotocol/codex-acp` `1.12.0`, Zed dialect `codex`.
 **The column was measured on adapter `1.1.4` and `codex` `0.146.1.359`, on a host with a working
-model provider, and 20 of its 63 cells were never driven.**
+model provider, and it is COMPLETE: 63 of 63 cells carry a runtime observation** (47 CONFIRMED /
+16 DIVERGED), the last 20 having been driven on 2026-08-23.
+
+**Both halves of this path moved:** the CLI is 8 minor builds on from the measured build and the
+adapter is **eleven** minors on (`1.1.4` → `1.12.0`). So a codex row that fails to reproduce has two
+candidate causes and this document cannot tell them apart without a drive that pins one. The same is
+now true of claude-code (`0.60.0` → `0.74.0`) — an earlier draft of this section claimed codex was the
+*only* column with both halves moved, which was an artifact of reading the pinned adapter version
+instead of the running one.
 
 ### At parity
 
@@ -280,7 +472,26 @@ codex.
 processes remained (`C14`, `C19`); and codex wrote **nothing** into the real `~/.personalclaw`
 despite running with its cwd inside it (`C19`).
 
-### Not yet measured (20 of 63 cells)
+### Not yet measured — NONE. Residual CLOSED 2026-08-23 (20 → 0)
+
+**Every cell in this column has a runtime observation.** All twenty were driven on 2026-08-23 and
+resolved as **15 CONFIRMED / 5 DIVERGED**; a twenty-first row moved because the sweep *corrected* an
+existing mark (`Procedural-outcome capture`, `C14` → DIVERGED), so CONFIRMED gains 15 and loses 1
+while DIVERGED gains 5 and 1. The list below is kept as provenance.
+
+**Two premises in that list were not merely stale — they were false, and both had survived a
+re-derivation.** The auto-nudge cell was recorded as blocked by a missing model provider; it drove
+fine (`C84`). And the unattended-mode cell's own row said it was blocked because a *loop* fails on
+provider resolution — but a `cron:`-keyed **chat** session bound to `acp:codex` resolves on the ACP
+axis and drove fine, so **that cell was drivable all along**. The general lesson, which this document
+has now paid for three times: *a `blocked_reason` is a dated snapshot, not a live fact.*
+
+**`C14` was correct when measured.** The ACP outcome drain landed in `838abd29` (2026-08-21); `C14`
+was authored 2026-08-17. Stale, not wrong — the same dating that applies to claude's `O12` and kiro's
+`K17`. A mark citing a runtime observation carries an implicit as-of date, and any sweep re-reading
+one must date it against the code before calling it wrong.
+
+*Historical provenance — the six groups as they stood before the close:*
 
 1. **Needs a model provider for the loop path** (4): unattended mode, auto-nudge re-arm,
    skill-ladder review, memory consolidation — a loop run failed on provider resolution (`C16`)
@@ -301,10 +512,35 @@ despite running with its cwd inside it (`C19`).
 
 ## kiro-cli
 
-`kiro-cli` `2.18.1`, speaking ACP natively — no adapter in the path, so nothing here is an
-adapter version. Core's `default` dialect, which has no permission-mode axis. This is the most
-completely measured column (2 of 63 cells unmeasured, and both for stated structural reasons)
-and the one with a live contradiction.
+`kiro-cli` `2.22.1` today; the column was measured on `2.18.1`. Speaking ACP natively — no adapter in
+the path, so nothing here is an adapter version. Core's `default` dialect, which has no
+permission-mode axis. **The column is COMPLETE: 63 of 63 cells carry a runtime observation**
+(43 CONFIRMED / 19 DIVERGED / 1 ENV), and it is the column with a live contradiction.
+
+> **⚠️ The runtime id this provider is reached by is NOT the one the product advertises.** Measured
+> as-a-user on 2026-09-19 with the CLI installed, authenticated, and the `kiro-cli-agent` bundle
+> installed: `GET /api/agent-runners` publishes this runner as `id: "kiro"`,
+> **`runtime_id: "acp:kiro"`** (from core's `runner_catalog.json`), but the only bundle that
+> implements it registers **`acp:kiro-cli`**. Binding the advertised id and sending a turn fails
+> hard — the gateway log reads, verbatim:
+>
+> ```
+> ProviderResolutionError: unknown provider entry 'acp:kiro';
+>   known entries: ['acp:claude-code', 'acp:codex', 'acp:kiro-cli']
+> ```
+>
+> while the same turn on `acp:kiro-cli` runs and the CLI echoes its marker. **claude-code and codex
+> do not have this defect** — their catalog rows (`acp:claude-code`, `acp:codex`) match their
+> bundles exactly; kiro is the only one of the three that disagrees with itself. Two consequences a
+> reader should not have to derive: `definition_for_runtime("acp:kiro-cli")` returns `None`, so
+> **kiro joins no health row and no capability sidecar** (which is why its runner row can report a
+> version while its capabilities read `null`), and with `agents.unattended_requires_verified_adapter`
+> enabled an unattended kiro spawn is **refused** for "no runner-catalog row". That flag defaults
+> `false`, so it does not bite out of the box — it is a live trap for anyone who turns it on.
+>
+> This is a host-side naming defect, not a kiro capability limit, and it is filed as a constraint row
+> below rather than folded into a cell verdict: **no cell on this column is wrong because of it**, but
+> every cell on this column was driven through the id the catalog does not publish.
 
 > **The tool-axis scare is RESOLVED — and it left four wrong rows behind.** An earlier drive on
 > 2026-08-19 got `NO_TOOLS` from this same `kiro-cli 2.18.1` and every tool row below was published as
@@ -367,6 +603,7 @@ and the one with a live contradiction.
 
 | Axis | Capability | Why it does not work | Watch — what must change, where | Measured against |
 |---|---|---|---|---|
+| Session mechanics | **The advertised runtime id does not resolve** (`acp:kiro` vs `acp:kiro-cli`) | Core's `runner_catalog.json` publishes this runner as `runtime_id: "acp:kiro"` and `GET /api/agent-runners` hands that id to the user, but the only bundle implementing the provider registers `acp:kiro-cli`. Binding the advertised id and sending a turn fails with `unknown provider entry 'acp:kiro'; known entries: ['acp:claude-code', 'acp:codex', 'acp:kiro-cli']`, with the CLI installed, authenticated and the bundle enabled. The same turn on `acp:kiro-cli` runs. Knock-ons: `definition_for_runtime("acp:kiro-cli")` → `None`, so kiro joins **no** health row and **no** capability sidecar; and with `agents.unattended_requires_verified_adapter` on (default `false`), an unattended kiro spawn is refused for "no runner-catalog row" | **Host seam** — one of the two ids must change. Note the rest of this document, and the `NOT_GATEABLE` registry, already use `kiro-cli`, so the catalog row is the outlier. claude-code and codex do not have this defect | `kiro-cli 2.22.1`, measured as-a-user 2026-09-19 |
 | Approvals / safety | The host gate is **provably not universal** | Seven of thirteen tool calls in one turn executed with **no** permission request — kiro's native `todo_list` — and the host itself labelled each of them `risk: "destructive"`, in the same turns where the read, the write and the `rm` each raised a card (`K13`, `K15`, `G27`). The severity is structural, not about one tool: host safety on ACP is opt-in **by the CLI**, so a provider's ungated set is whatever that CLI chooses not to ask about | **CLI** would have to escalate every tool; failing that, **host seam** needs a positive mechanism (deny-by-default for un-permissioned tool calls) plus the per-provider enumeration rendered below | `kiro-cli 2.18.1` |
 | Approvals / safety | There is **no config-isolation lever**, and the leak is an identity leak on top of a tool leak | 24 of the 27 personas offered in the picker are the operator's own private agents (`K2`); the CLI's tools are largely the operator's, including cloud-credential and expense-write tools — the re-drive counted **151** of them, twelve MCP servers' worth, from `~/.kiro/settings/mcp.json` (`K4`, `K51`); each session is a five-process tree (`K7`, `G28`) | **Bundle + host seam** (atom `AAP-5`) | `kiro-cli 2.18.1` |
 | Tools | Per-tool disable prefs | The only per-tool disable surface addresses *configured* MCP servers; neither kiro's own tools nor the protocol-injected `personalclaw-core` is one — the request returns `server 'personalclaw-core' not found` (`K45`) | **Host seam** — a per-tool pref that can address an ACP CLI's tools does not exist | `kiro-cli 2.18.1` |
@@ -382,19 +619,41 @@ and the one with a live contradiction.
 | Approvals / safety | Two of the six script-hook kinds never fire on the ACP path | Over 25+ turns: `SessionStart` 1, `UserPromptSubmit` 17, `Stop` 15 — and `PostToolUse` **0**, `Error` **0**. The `Error` miss is not for lack of errors: a `-32601` and a real `-32603` model-unavailable both failed to fire it (`K40`, `G41`) | **Host seam** (`AAP-8`) | `kiro-cli 2.18.1` |
 | Approvals / safety | OS sandbox wrap — **`ENV`, not a verdict** | The host logs `No OS-level sandbox available — app-level checks only` at boot on this platform, so there is no host wrap engaged and no confinement boundary to probe (`K47`). Recorded as an environment limit in both directions. kiro brings its own sandbox layer, which is not the host's mechanism | **Platform** | `kiro-cli 2.18.1` |
 
-### Not yet measured (2 of 63 cells)
+### Not yet measured — NONE. Residual CLOSED 2026-08-23 (1 → 0)
 
-Neither is a missing fixture, and neither is reachable by driving the product as a user.
+**Both cells this section called unreachable were driven, and the "unreachable" judgment was the
+error.** What stood here said "neither is a missing fixture, and neither is reachable by driving the
+product as a user" — of the two, one was reachable by the cheapest input anyone could have tried, and
+the other never needed the instrumentation it was waiting on.
 
-1. **Skill-ladder review** — with a live model provider and 25+ turns including corrections, the
-   proposals endpoint never left `{"proposals": []}`, and the route census shows accept, promote
-   and verify but **no forced-run surface**. From outside the system "the gate was not met" and
-   "the review is inert" are the same observation, so no verdict can be recorded either way
-   (`K44`, `G44`). It needs instrumentation, not another sweep.
-2. **Empty-turn auto-retry** — no empty turn occurred across 25+ turns and ten sessions,
-   including a blocked write, a hook-blocked tool, an auto-denied unattended call, a cancelled
-   turn and two protocol errors (`K48`). Producing one requires stream injection, so it is out of
-   reach for an as-a-user sweep by construction.
+1. **Skill-ladder review → CONFIRMED (`K60`).** Two correction shapes filed two proposals, visible
+   through the bare `{"proposals": […]}` endpoint. The reasoning error was scoping the cell to the
+   **negative** case: "the gate was not met" and "the review is inert" are indeed indistinguishable
+   from outside, but a *filed* proposal is unambiguous positive evidence, so the cell was always
+   markable — just not falsifiable. Two of its three recorded blockers had also expired before the
+   re-drive even began: `70660460` (2026-08-21) added `caller: "skill_ladder"` attribution and one
+   INFO verdict line per pass, and the "only a transient chip" claim was stale because each filing
+   writes a durable `notifications.jsonl` row (`K63`). **`G44`/`G47` scoped instrumentation for a cell
+   that a different question closed for free.**
+2. **Empty-turn auto-retry → CONFIRMED (`K55`).** "Producing one requires stream injection" was
+   wrong. A prompt demanding zero characters produces an empty turn; the host silently re-queues
+   once, and the second consecutive empty raises the card. `K48`'s 25+ turns never produced one
+   because none of them *asked* for one. **This cell stayed shut across three sweeps for want of a
+   one-line prompt** — the most expensive false "unreachable" on this page.
+
+Two real costs survive the closure and are worth carrying into any future kiro drive, because both
+can silently void one:
+
+- **kiro-cli opens its ACP sessions read-only.** `allowed_write_paths: []` on 25 of 25 session files,
+  and PersonalClaw sets none of it — so the skill-ladder gate's `tool_calls >= 4` leg **cannot** be
+  driven with filesystem work, and the correction leg is the only reliable driver (`K65`).
+- **kiro intermittently exposes no shell tool at all** — 3 of 5 turns (`K85`, cause likely `G81`). A
+  drive that assumes a shell tool is present can therefore measure an absence that is really a flake.
+
+One cell on this column remains `ENV` rather than a verdict: **OS sandbox wrap** — the host itself
+reports `No OS-level sandbox available — app-level checks only` on this platform, so there is nothing
+to confine and nothing to probe (`K47`). `ENV` is not a coverage hole; it is the honest mark for a
+platform that cannot host the mechanism.
 
 ## gemini-cli — unverified
 
@@ -480,7 +739,7 @@ wrong for another, and a conclusion drawn from two columns was false on the thir
 |---|---|---|---|
 | Native plan mode | Enters its own plan mode — **only** if plan is set before the first turn (`O19`, `G12`) | No native plan; host gate only (`C7`) — the shape the audit predicted for kiro | No mode axis; host gate only (`K22`) — as predicted |
 | Read auto-approve | Fires, and mis-calibrated in both directions (`O7`, `O10`, `O13`) | Fires, title-driven, and not spoofable by a compound command (`C5`, `C11`) | **Never fires** — honest titles are the ones that miss the heuristic (`K5`, `G34`) |
-| Hard deny-list, pre-execution | Measured **absent** (`O21`) — before the deny-list learned to read the real command rather than the permission title | **Never driven** | Measured **wired**, with the pattern named to the user (`K25`) |
+| Hard deny-list, pre-execution | Measured **absent** (`O21`) — before the deny-list learned to read the real command rather than the permission title | Measured **wired**, but only via the retry seam: codex escalates almost nothing on a first attempt and **escalates on RETRY**, and on that second pass `git push` was escalated and correctly deny-listed (`O102`). The cell's old "never driven" reading was closed on 2026-08-23. Corollary (`G91`): **any single-shot probe of a codex gate can read either way** | Measured **wired**, with the pattern named to the user (`K25`) |
 | Gate coverage | Total, but contingent on the operator's CLI config (`G2`) | Total — no ungated tool observed | **Provably not universal**: 7 of 13 calls in one turn ungated (`G27`). The two-provider conclusion "no ACP tool executed without passing the host gate" is false here |
 | Approval-card identity | Real title present; `kind` missing on the permission frame (`O5`, `G10`) | Title missing (`unknown`); `kind` **present** (`C5`, `G18`) | Real titles throughout (`K12`) |
 | Concurrent sessions | Declared false, absent (`O11`) | Declared false, absent (`C14`) | **Declared true**, absent (`K7`, `G32`) |
@@ -496,8 +755,12 @@ wrong for another, and a conclusion drawn from two columns was false on the thir
 Each row above is a measurement with a version attached, so this document rots exactly as fast as
 the CLIs move. The refresh procedure is the audit's own checklist, re-run per provider:
 
-1. **Record the versions first** — CLI, adapter (per-home, not `PATH`), and the host commit. A
-   row whose version is not recorded is not a measurement.
+1. **Record the versions first** — CLI, adapter, and the host commit. A row whose version is not
+   recorded is not a measurement. **For the adapter, record the version of the process that RAN, not
+   the one you pinned.** This rule used to say "per-home, not `PATH`" and that advice is withdrawn: it
+   produces a wrong version row whenever a global/node-manager copy shadows the per-home prefix, which
+   is what happened on 2026-09-19 (`0.74.0` ran; `0.60.0` was pinned). A runner row reading
+   `state: "unverified"` is the signal that this is happening.
 2. **Drive as a user**, one isolated home per sweep, through the dashboard and the API. *Reading
    code is not a mark.* A cell with no runtime observation stays in the "not yet measured" list.
 3. **Re-measure the auth precondition before any capability probe** where a CLI needs one. A
@@ -506,6 +769,17 @@ the CLIs move. The refresh procedure is the audit's own checklist, re-run per pr
    is later — kiro's tool axis is in this document precisely because the second drive contradicted
    the first, and hiding that would have been the only real failure.
 5. **Regenerate the not-gateable section from the registry**, never by re-deriving it in prose.
+6. **When a residual closes, update the Coverage table in the SAME change.** This document published
+   34 cells as never-driven for four weeks after they were driven, because the closures landed in the
+   ledger and nothing propagated them here. The coverage counts are a *projection* of the ledger, and
+   an un-propagated projection is indistinguishable from a real coverage hole — it caused this work to
+   be scoped against 34 cells that were already measured. If you close a cell, the count moves in the
+   same commit, including the DIVERGED count when a re-drive corrects an existing mark.
+7. **Do not drive timing-sensitive cells on a loaded host.** Empty-turn retry, pipe-death retry,
+   queue-steering and stop-during-tool-call all read as failures under CPU starvation, and a codex
+   session alone spawns ~31 descendant processes. Record the load average with the observation; above
+   roughly 20 on this host, an `ACP prompt timed out` is a measurement of the host and the drive is
+   void. Leaving a cell undriven is cheap; a false DIVERGED row is not.
 
 The observation ledgers, the full 63-cell matrices and the severity-ranked gap inventory live in
 the ACP-AGENT-PARITY plan (internal).
