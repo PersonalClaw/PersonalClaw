@@ -501,6 +501,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
     # cron script whose next move is to reinstall something.
     "tool_disabled": "The tool is disabled on the Tools page and will not be executed.",
+    # A RISK refusal, and deliberately its own code rather than `forbidden` or a reuse of
+    # `tool_disabled`: nothing is switched off and the caller may reach the route — the call
+    # resolved as destructive and arrived without naming that. The client's next move is to
+    # escalate its confirmation and retry, which is a different move from re-enabling a
+    # tool, so it needs a code of its own to branch on. Carries `risk` + `confirm_field` in
+    # `error_extra` so the escalation does not have to parse the sentence (#506).
+    "risk_confirmation_required": (
+        "The call resolves as destructive and did not acknowledge that. Fix: re-send with "
+        '"confirm_risk": "destructive".'
+    ),
     # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
     # a switched-off capability, not a malformed request. 503 rather than 403 to match the
     # sibling refusal on the same route ("no TTS voice selected"), which is also a

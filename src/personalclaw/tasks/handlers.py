@@ -71,32 +71,39 @@ async def api_tasks_list(request: web.Request) -> web.Response:
     # which the `assignee` filter alone cannot express.
     mine = str(request.query.get("mine", "")).strip().lower() in ("1", "true", "yes")
 
+    owner = ""
+    if mine:
+        from personalclaw.identity import current_username
+
+        owner = current_username()
+
+    # The WHOLE matching set, then one window of it — deliberately in that order.
+    # `block_reason` resolves each prerequisite id against the set it is handed, and a
+    # prerequisite that is merely absent counts as satisfied, so deriving it from the page
+    # would answer `is_blocked: false` for a task whose blocker sits on another page. The
+    # window is a presentation concern; blocked-ness is not.
     try:
-        tasks, total = await registry.list_all_tasks(
+        matched, truncated = await registry.collect_tasks(
             status=status,
             assignee=assignee,
             project=project,
             task_list_id=task_list,
             provider_filter=provider,
-            limit=limit,
-            offset=offset,
+            owner=owner,
         )
     except registry.UnknownTaskProvider as e:
+        # An unrecognized `?provider=` is a client error, not "every provider" (#2983).
         return _unknown_provider(e)
-    if mine:
-        from personalclaw.identity import current_username
-
-        owner = current_username()
-        if owner:
-            tasks = [t for t in tasks if t.belongs_to(owner)]
-            # `total` describes the filtered set now; reporting the provider's count
-            # would make the UI show "12 of 40" for a list holding 12.
-            total = len(tasks)
-    task_map = {t.id: t for t in tasks}
+    task_map = {t.id: t for t in matched}
+    page = matched[offset : offset + limit]
     return web.json_response(
         {
-            "tasks": [_with_block_reason(t, task_map) for t in tasks],
-            "total": total,
+            "tasks": [_with_block_reason(t, task_map) for t in page],
+            "total": len(matched),
+            # Whether `total` is the whole truth. A client that needs every task (the DAG,
+            # the prerequisite picker) pages until it has `total` rows; without this flag a
+            # provider-side bound would end that loop looking like completion.
+            "complete": not truncated,
             "limit": limit,
             "offset": offset,
             "owner": _owner_username(),
@@ -233,6 +240,17 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
             dangling = _dangling_parent(item)
             if dangling:
                 errors.append({"index": i, "error": dangling})
+        # The provider rule (#2983) applies to ALL THREE verbs, including DELETE — which is
+        # #2983's headline and the reason this is not scoped to the two write verbs above.
+        # Measured before this line existed: `{"op": "delete", "items": [{"id": t, "provider":
+        # "jira"}]}` answered `200 {"succeeded": 1}` and DESTROYED the native task, while the
+        # single-item `DELETE /api/tasks/{id}?provider=jira` answered 400 and left it alone. A
+        # destructive verb is the worst place to treat an unrecognized scope as "all scopes",
+        # so it is the one that most needs the rule — bulk delete also ignores `provider`
+        # entirely in phase 2, so nothing downstream would have caught the name.
+        unresolvable = _unresolvable_provider(item, op=op)
+        if unresolvable:
+            errors.append({"index": i, "error": unresolvable})
         if op == "create":
             if not isinstance(item, dict) or not str(item.get("title", "")).strip():
                 errors.append({"index": i, "error": "title required"})
@@ -332,6 +350,51 @@ def _dangling_parent(body: object) -> str | None:
     task_list_id = str(body.get("task_list_id") or "").strip()
     if task_list_id and store.get_task_list(task_list_id) is None:
         return f"no task list with id '{task_list_id}'"
+    return None
+
+
+def _unresolvable_provider(body: object, *, op: str) -> str | None:
+    """The reason a bulk item names a ``provider`` this registry cannot resolve (#2983).
+
+    The eight single-item doors resolve ``provider`` inside the registry call and answer
+    :func:`_unknown_provider`. Bulk never resolved it at all: phase 1 validated author,
+    parent, title and id, and phase 2 then *stripped* the key
+    (``{k: v for k, v in item.items() if k != "provider"}``), so a batch naming a provider
+    that does not exist was accepted and written to **native** — the same silent misroute
+    #2983 closed at the single-item doors, still open at the cheapest door for minting many
+    rows. Four merged PRs cite #2983; all four are that eight-door fix, none is this one.
+
+    Applies to all THREE verbs. ``delete`` is #2983's headline and the sharpest case, because
+    bulk delete does not pass ``provider`` to the registry at all: measured, ``{"op":
+    "delete", "items": [{"id": t, "provider": "jira"}]}`` answered ``200 {"succeeded": 1}``
+    and destroyed the NATIVE task, while the single-item ``DELETE
+    /api/tasks/{id}?provider=jira`` answered 400 and left it alone. Treating an unrecognized
+    scope as "every scope" is worst on the verb that cannot be undone.
+
+    Returns the message rather than a response so it joins bulk's validate-all phase beside
+    the parent rule, aborting the WHOLE batch. A bulk endpoint that half-applies is worse
+    than one that refuses: the caller cannot tell which rows landed.
+
+    It resolves through the registry's OWN resolvers rather than re-implementing the
+    membership test, so this verdict cannot drift from the routing phase 2 performs — and so
+    it inherits ``_ensure_native``, without which a first request naming ``native`` on a
+    registry that has not lazily registered it yet would be refused as unknown.
+    """
+    if not isinstance(body, dict) or "provider" not in body:
+        return None
+    name = body.get("provider")
+    if name is not None and not isinstance(name, str):
+        return f"provider must be a string, not {type(name).__name__}"
+    try:
+        # `create` cannot mean "all providers" — falsy is the DEFAULT (native); update and
+        # delete address the holder when unnamed. The same two readings the single-item verbs
+        # take, which is why this defers to their resolvers instead of choosing for them.
+        if op == "create":
+            registry._resolve_one(name)  # noqa: SLF001 — reuse, so the rule cannot diverge
+        else:
+            registry._resolve(name)  # noqa: SLF001 — same
+    except registry.UnknownTaskProvider as exc:
+        return str(exc)
     return None
 
 

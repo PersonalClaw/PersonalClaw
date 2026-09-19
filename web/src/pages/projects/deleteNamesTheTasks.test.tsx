@@ -5,7 +5,9 @@
  *     "Its context directory and task lists are removed — the tasks themselves stay."
  *
  * `tasks/hierarchy_handlers.py` resolves every task scoped to the project and deletes each one —
- * `list_all_tasks(project=…, limit=10_000)` → `delete_task(t.id)` → `native.py`'s `path.unlink()`.
+ * `collect_tasks(project=…)` → `_cascade_delete_tasks` → `delete_task(t.id)` → `native.py`'s
+ * `path.unlink()`. (It was `list_all_tasks(project=…, limit=10_000)` — a window, not the promise the
+ * dialog makes; #485 replaced it with the collection read.)
  * No trash, no soft-delete, no version history; the tombstone stores only an id, so it is a sync
  * breadcrumb and not a recovery path. Titles, descriptions, action plans, exit criteria, research
  * notes, execution notes and comments all go.
@@ -110,7 +112,10 @@ describe('VACUITY: the cascade these dialogs warn about is real', () => {
     // window stops inside the docstring, well before the cascade block.
     const handler = py.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(handler, 'found the delete handler').not.toBe('')
-    expect(handler, 'and the window reached the cascade').toMatch(/list_all_tasks\(project=/)
+    // `collect_tasks`, not the old `list_all_tasks(..., limit=10_000)`: the dialog promises EVERY
+    // task, so a windowed read here would under-delete while the copy claimed completeness (#485).
+    expect(handler, 'and the match reached the cascade').toMatch(/collect_tasks\(project=/)
+    expect(handler, 'through the collection read, not a window').not.toMatch(/list_all_tasks\(/)
     // 🪤 The per-task delete used to be inline here as `delete_task(t.id)`. It moved into
     // `_cascade_delete_tasks`, which the task-list door calls too, so the two cascades are one
     // mechanism instead of two that happen to agree. Following it is safe only because BOTH hops are

@@ -23,6 +23,7 @@
  */
 
 import type { WorkflowNodeState, WorkflowRunDetailData } from '../../lib/api'
+import { readAttention } from './attentionMeta'
 import { byInstancePath } from './instancePathOrder'
 import type { WorkflowLifecycleEvent } from './useWorkflowStream'
 
@@ -168,10 +169,16 @@ export function foldEvent(
       break
 
     case 'workflow_attention':
-    case 'workflow_needs_input':
+    case 'workflow_needs_input': {
       next.attention = (env.ask as Record<string, unknown>) ?? next.attention
-      next = applyRunStatus(next, 'needs_input')
+      // Only an ASK means the run is waiting on input. `_escalate` publishes on this same
+      // channel (#565), and an escalation is the engine giving up — the run is on its way to
+      // FAILED, not waiting for an answer. Flipping to `needs_input` for one showed "Waiting on
+      // you" on a run nobody could answer, until the terminal status arrived and corrected it.
+      const read = readAttention(next.attention)
+      if (read?.kind !== 'escalation') next = applyRunStatus(next, 'needs_input')
       break
+    }
 
     case 'workflow_gate_resolved':
       // The gate is answered, so the run has work again. Clearing attention here (rather
@@ -222,15 +229,27 @@ export function foldEvents(
   return events.reduce((acc, e) => foldEvent(acc, e.event, e.data), vm)
 }
 
+/** Apply a run-level status. **`attention` is deliberately untouched** (#565).
+ *
+ *  This used to null the record on any terminal status, to stop a dead ask card rendering on a
+ *  finished run. That threw away the ESCALATION — written at exactly the moment the run goes
+ *  terminal, and the only account a retries-exhausted run has, since `_finish(status)` passes no
+ *  `error` on that path.
+ *
+ *  Two facts had been sharing one field: "the run is holding something" and "the user can act on
+ *  it". Deleting the first to express the second is what lost the evidence. The second is
+ *  `live`/`needsInput`, which every consumer already gates its ask affordances on, and
+ *  `readAttention` says which KIND of thing is held — so a diagnosis can render where an ask
+ *  must not.
+ *
+ *  It also restores the fold law: `service.status` reads `run.attention` unconditionally, so
+ *  nulling it here made the event path disagree with the snapshot path for the same run. */
 function applyRunStatus(vm: WorkflowViewModel, status: string): WorkflowViewModel {
   return {
     ...vm,
     status,
     live: !TERMINAL_RUN.has(status),
     needsInput: status === 'needs_input',
-    // A terminal run has nothing to answer; leaving attention set would render a dead ask
-    // card on a finished run.
-    attention: TERMINAL_RUN.has(status) ? null : vm.attention,
   }
 }
 

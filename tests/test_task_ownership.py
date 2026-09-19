@@ -9,6 +9,7 @@ counts, "next task" pickers, and the agent's own work selection all flow through
 import asyncio
 
 import pytest
+from fakes import FakeTaskProvider, only_task_provider
 
 from personalclaw.tasks.models import Task
 
@@ -55,12 +56,10 @@ class TestReadyTasksFiltering:
         yield
 
     def _patch(self, monkeypatch, tasks, owner="keyur"):
-        from personalclaw.tasks import registry
-
-        async def _list(**kwargs):
-            return list(tasks), len(tasks)
-
-        monkeypatch.setattr(registry, "list_all_tasks", _list)
+        # Registered as a PROVIDER, not as a stubbed aggregator: the ownership filter these
+        # tests aim at lives inside `collect_tasks`, so replacing the aggregator would test
+        # the fake instead of the funnel.
+        only_task_provider(monkeypatch, FakeTaskProvider(list(tasks)))
         monkeypatch.setattr("personalclaw.identity.current_username", lambda: owner)
 
     def test_foreign_tasks_are_never_the_owners_ready_work(self, monkeypatch):
@@ -133,12 +132,9 @@ class TestListEndpoint:
     def _app(self, tasks, owner="keyur", monkeypatch=None):
         from aiohttp import web
 
-        from personalclaw.tasks import handlers, registry
+        from personalclaw.tasks import handlers
 
-        async def _list(**kwargs):
-            return list(tasks), len(tasks)
-
-        monkeypatch.setattr(registry, "list_all_tasks", _list)
+        only_task_provider(monkeypatch, FakeTaskProvider(list(tasks)))
         monkeypatch.setattr("personalclaw.identity.current_username", lambda: owner)
         app = web.Application()
         app.router.add_get("/api/tasks", handlers.api_tasks_list)

@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **The contradiction judge's typed relations are now stored instead of discarded.**
 - **A notification can now say WHO it is for, and one addressed to somebody else is visible here but fired nowhere here.**
 - **`sharing_policy: shared` knowledge now actually goes somewhere: the provider contract gains its outbound half.**
 - **One install of a knowledge connector can now watch MANY sources: the engine hands `poll` the source row's validated `spec`.**
@@ -29,6 +30,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **A tool's risk level now gates the control that runs it, and "Always for this agent" only promises a saved grant when it will actually save one ([#506](https://github.com/PersonalClaw/PersonalClaw/issues/506), [#541](https://github.com/PersonalClaw/PersonalClaw/issues/541), [#683](https://github.com/PersonalClaw/PersonalClaw/issues/683)).**
 - **⚠️ PERSONALCLAW NOW TRACKS RELEASES, NOT `main` — AND THE UPDATE IT APPLIES IS THE ONE YOU CHOSE.**
 - **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
 - **A release candidate no longer moves `:latest`, a `-beta` tag is no longer published as a stable release, and the moving `:X.Y` / `:beta` image tags the updater pulls now actually exist.**
@@ -48,6 +50,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **An IPv4 address or a date in your prompt reaches the model as itself, not as `[REDACTED_PHONE]`.**
+- **`personalclaw doctor` now reports only what its checks actually established.**
+- **The kiro-cli runner id the product advertised could not be bound, and now it can.**
+- A memory **entity** can be deleted, and the deletion sticks.
 - **The documented `config get > f.json` → edit → `config set --file f.json` loop no longer deletes every provider you have configured.**
 - **`personalclaw config get` no longer prints your provider API keys and Slack tokens, and the fix does not delete them instead.**
 - **Launching a loop from Plan Review no longer wipes every `kind_config` field that screen doesn't render.**
@@ -110,6 +116,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Removed**
 - **A loop deleted while its cockpit is open now says so instead of rendering the loop forever.**
 - A knowledge **intent is now editable and pausable**, which turns three dead controls back on.
+- The inbox no longer offers **Approve / Deny** on a workflow run that already ended.
+- **A widget's Submit button can no longer fail in silence.**
+- Entity **aliases** are now written, so the knowledge graph's deterministic alias pre-pass can actually match one.
+- The **Tasks** page now loads every task instead of the server's default first 50, and says so when it cannot.
+- A project or task-list **name** is now validated the same way on create and update, and is length-capped.
+- The project hub's task-list **count badge** now renders.
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -132,6 +144,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Picking a personality now actually changes the assistant's voice: the chat send path attaches the active personality's persona theme, wiring the frontend half of a persona-injection path whose backend was fully built but read a field no client ever sent.**
 - **An unsaved edit to a markdown memory doc (Preferences / Projects / History) now survives clicking another Studio item.**
 - **Install consent now distinguishes "this app asked for nothing" from "nobody has read its manifest yet", on both surfaces that ask you to consent.**
+- **Code cockpit findings now attribute to tasks: the finding ingest canonicalizes model-authored stage labels ('1 — Write bell_times.py', 'Stage 2/2 — Verify & QA') against the loop's plan at the one write into the ledger, and the cockpit's matcher gains a normalized fallback for already-recorded labels — a 12-cycle blocked loop's entire reasoning trail (including the cycle that diagnosed the blockage) was invisible behind 'No activity yet' on every task.**
+- **The Vocabulary section's promises are now kept on both ends: the composer's mic dictation route was calling the flat transcriber — a function with no bias parameter at all — so the personal lexicon and learned corrections biased only knowledge audio/video ingestion while four copy sites claimed "mic input" too.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

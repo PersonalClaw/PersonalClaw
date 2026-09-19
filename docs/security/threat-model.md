@@ -182,6 +182,15 @@ design, not by omission — stating them keeps the in-scope claims credible.
   boundary — an app backend is its own OS process with its own network stack. See
   [limitations.md](limitations.md). What *is* enforced is the supply-chain gate on
   what you install and the app's gateway-mediated (`api`) reach.
+- **What an installed app's FRONTEND does in the dashboard page.** An app's UI bundle
+  is imported into the dashboard's own origin (no iframe, sharing the host React
+  instance), so it has the host `document`, `localStorage`, the owner's cookie and
+  authenticated same-origin `/api/*` reach. The `api` allowlist binds the app's
+  backend and its SDK client, not its page code: a bare `fetch` from app UI carries no
+  app identity, so `app_permission_middleware` treats it as the owner. Telling the two
+  apart requires a separate origin for app UI, so this is disclosed — at install
+  consent and in [limitations.md](limitations.md) §4 — rather than enforced. The
+  control is the supply-chain gate on what you install.
 
 Each of these has a rationale above; none is an accident. Gaps discovered while
 maintaining this document are routed to the security-hardening track as

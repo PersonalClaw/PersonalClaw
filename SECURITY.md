@@ -84,6 +84,13 @@ hold:
   gateway-enforced boundary — see `src/personalclaw/apps/permissions.py` and the
   threat model's limitations section. Treat installing an app as running a program
   as yourself.
+- **What an installed app's frontend reaches in the dashboard page.** An app's UI
+  bundle is imported into the dashboard's own origin, so it has the host DOM, the
+  owner's session and same-origin `/api/*` access; the `api` allowlist binds the app's
+  backend and its SDK client, not its page code. Disclosed at install consent and in
+  the limitations page (§4), and not separable without a distinct origin for app UI.
+  The supply-chain gate on what you install is the control. A *new* way to reach the
+  host from app UI is not a finding; a way to install an app past that gate is.
 
 ## Governance stability
 

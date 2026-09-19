@@ -297,6 +297,13 @@ _BASELINE_WINDOW = 200_000
 _MAX_BUDGET_MULTIPLE = 5.0
 
 
+#: The two variants the ``widget-instructions`` snippet implements. Density is a FREQUENCY
+#: preference ("how aggressively the agent uses inline widgets"), never a capability switch — both
+#: variants document the `data-action` return channel, because a widget that cannot send data back
+#: while looking interactive is the defect #2263 reported.
+WIDGET_DENSITIES: frozenset[str] = frozenset({"more", "less"})
+
+
 class _MemoryCaps(TypedDict):
     prefs_cap: int
     projects_cap: int
@@ -965,7 +972,14 @@ class ContextBuilder:
             return ""
 
         cfg = AppConfig.load()
-        density = getattr(cfg.dashboard, "widget_density", "more")
+        # NORMALIZED, not passed through: the snippet's conditional knows exactly two values and
+        # renders EMPTY for a third (measured: "more" 2212 chars, "less" 1240, "sideways" 0). The
+        # field is enum-constrained on the edit path, so only a hand-edited config.json can hold
+        # something else — and that would strip the whole block, leaving a model that emits raw
+        # `<widget>` markup into the transcript with no idea the tag exists. An unknown value falls
+        # back to the documented default instead of deleting a capability.
+        raw = str(getattr(cfg.dashboard, "widget_density", "more") or "").strip().lower()
+        density = raw if raw in WIDGET_DENSITIES else "more"
 
         # The widget instructions (both density variants) live in the prompt system
         # as the ``widget-instructions`` snippet; the conditional selects the variant.

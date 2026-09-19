@@ -247,7 +247,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     """
     import tempfile  # noqa: F811
 
-    from personalclaw.transcribe import is_available, transcribe_audio  # noqa: F811
+    from personalclaw.transcribe import is_available, transcribe_audio_detailed  # noqa: F811
     from personalclaw.voice.duplex import VOICE_DISCLAIMER, is_echo
 
     if not await is_available():
@@ -302,7 +302,33 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
                     )
                 f.write(chunk)
 
-        text = await transcribe_audio(tmp)
+        # Lexicon wiring: the mic is a transcription surface like any other, so it
+        # gets the same two Lexicon halves knowledge ingestion has — bias the
+        # decoder toward the user's terms before decoding, and run the
+        # learned-corrections pass after. Both halves are best-effort: a Lexicon
+        # failure must never break dictation.
+        bias_terms: list[str] | None = None
+        try:
+            from personalclaw.lexicon import select_bias_terms  # noqa: F811
+
+            bias_terms = (await select_bias_terms()) or None
+        except Exception:
+            logger.debug("lexicon bias-term selection failed (non-fatal)", exc_info=True)
+
+        result = await transcribe_audio_detailed(tmp, bias_terms=bias_terms)
+        if result is not None and result.segments:
+            try:
+                from personalclaw.lexicon import get_lexicon_service  # noqa: F811
+
+                svc = get_lexicon_service()
+                if svc.store.count_terms() > 0:
+                    svc.correct(result)
+            except Exception:
+                logger.debug("lexicon correction failed (non-fatal)", exc_info=True)
+        text = result.text if result is not None else None
+        # The redaction below MUST stay downstream of correction: correct()
+        # re-derives the flat text from raw segment words, which would undo any
+        # redaction applied further up the transcribe layer.
         if text:
             from personalclaw.security import (  # noqa: F811
                 redact_credentials,
@@ -779,12 +805,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "external_access.rate_burst": {"type": "int", "min": 1, "max": 10000},
     "external_access.rate_concurrent": {"type": "int", "min": 1, "max": 256},
     "external_access.auto_disable_after_breaches": {"type": "int", "min": 0, "max": 10000},
-    "external_access.capture_retention_days": {"type": "int", "min": 0, "max": 3650},
     # The capture surface's two operator knobs. Both are
     # runtime-editable: the pruner reads retention on each curator tick and the
     # streaming client reads the allow-list per forward, so neither needs a restart.
-    # `retention_days` is the nested spelling of `capture_retention_days` above and
-    # `load()` mirrors one resolved value into both, so editing either is coherent.
+    # This is the ONE writable spelling (#2950): `load()` resolves the effective
+    # window from this nested key whenever it is present, and a fresh config.json
+    # always ships it — so the legacy flat `external_access.capture_retention_days`
+    # was dead on arrival as a PATCH target: it wrote the file, `load()` never read
+    # it back, and the panel reported 200 having changed nothing. The flat field
+    # stays on the dataclass as a read-only mirror (older external readers may still
+    # look at it); it is deliberately absent from this allowlist so there is exactly
+    # one name to write.
     "external_access.capture.retention_days": {"type": "int", "min": 0, "max": 3650},
     # Operator-visible by requirement: upstream forwarding must be guarded
     # against an explicit host list rather than hand-rolled unguarded egress, which

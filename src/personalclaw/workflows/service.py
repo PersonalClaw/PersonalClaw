@@ -586,6 +586,20 @@ async def start_run(
             f"missing required input(s): {', '.join(missing)}",
             missing=missing,
         )
+    # Declared TYPES are enforced, for the same reason and at the same door as the required check
+    # above: a mistyped input caught here costs nothing, and caught at node 7 has already paid for
+    # six nodes — or worse, has quietly run with a value the caller never chose. Coerced rather
+    # than merely rejected, because a string is what an HTML form, a shell and a chat planner all
+    # produce for a number; only a value that cannot BE its declared type is refused.
+    from personalclaw.workflows import contracts as contracts_mod
+
+    inputs, type_errors = contracts_mod.coerce_declared_inputs(spec, dict(inputs or {}))
+    if type_errors:
+        return _service_failure(
+            "WF_RUN_INPUT_TYPE",
+            "input(s) do not match their declared type: " + "; ".join(type_errors),
+            input_errors=type_errors,
+        )
     # Declared defaults are APPLIED, not merely documented. Before this they were validated and
     # then ignored: a template declaring `acceptance` with a default and a run that omitted it
     # failed on `binding failed: unresolved reference at 'acceptance'` — so every optional input

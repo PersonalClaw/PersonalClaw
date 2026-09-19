@@ -275,7 +275,7 @@ per-route contract.
 | Method + path | What it does |
 |---|---|
 | `GET /api/tools` | The full tool registry (native + provider + MCP). |
-| `POST /api/tools/invoke` | Invoke a tool directly (owner-only). |
+| `POST /api/tools/invoke` | Invoke a tool directly (owner-only). A call whose *effective* risk resolves as `destructive` is refused with `403 risk_confirmation_required` unless the body names the tier in `confirm_risk`. Read-only invocations downgrade to `safe`, so `bash "ls"` needs nothing. |
 | `POST /api/tools/toggle` · `POST /api/tools/provider-toggle` | Enable/disable a tool / a whole provider's tools. |
 
 ## Config

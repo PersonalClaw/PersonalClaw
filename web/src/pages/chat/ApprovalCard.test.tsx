@@ -132,22 +132,26 @@ describe('ApprovalCard — remember-scope is a closed set that maps to real back
   })
 
   it('states the promise for the selected scope in visible text, and updates it on change', () => {
-    const { container } = render(<ApprovalCard seg={seg()} onAct={() => {}} />)
+    // `grantAgent` supplied because the "This agent" promise is now a function of it (#541):
+    // the card claims "Saved on <name>" only when the backend says the grant will persist, and
+    // says "this chat only" otherwise. The persistable case is the one asserted here; the
+    // degraded case and the absence default are in approvalGrantPromise.test.tsx.
+    const { container } = render(<ApprovalCard seg={seg({ grantAgent: 'researcher' })} onAct={() => {}} />)
     fireEvent.click(scopeTab('This chat'))
     expect(container.textContent).toContain('Every tool in this chat runs without asking')
     // The promise must not claim per-TOOL memory: nothing in the backend remembers a
     // decision for one tool, so no label may imply it (see the ApprovalCard comment).
     expect(container.textContent).not.toMatch(/always for this tool|only this tool|this tool from now on/i)
     fireEvent.click(scopeTab('This agent'))
-    expect(container.textContent).toContain('Saved on this agent')
+    expect(container.textContent).toContain('Saved on researcher')
   })
 
   it('carries the scope into the Allow control\'s accessible name', () => {
-    render(<ApprovalCard seg={seg()} onAct={() => {}} />)
+    render(<ApprovalCard seg={seg({ grantAgent: 'researcher' })} onAct={() => {}} />)
     // A bare "Allow" does not say how far the answer reaches — the name must.
     expect(screen.getByRole('button', { name: /^Allow bash — just this once: Nothing is remembered/ })).toBeTruthy()
     fireEvent.click(scopeTab('This agent'))
-    expect(screen.getByRole('button', { name: /^Allow bash — this agent: Saved on this agent/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Allow bash — this agent: Saved on researcher/ })).toBeTruthy()
   })
 
   it('denies single-shot whatever the scope says, and says so in the name', () => {
@@ -182,8 +186,20 @@ describe('ApprovalCard — the brief describes, it never advocates', () => {
   it('contains no advocacy copy in any zone, at any risk level, under any scope', () => {
     for (const risk of ['safe', 'caution', 'destructive'] as const) {
       const { container, unmount } = render(
-        <ApprovalCard seg={seg({ tool: 'bash', input: 'ls -la', purpose: 'Listing the repo root', risk })} onAct={() => {}} />,
+        <ApprovalCard seg={seg({ tool: 'bash', input: 'ls -la', purpose: 'Listing the repo root', risk, grantAgent: 'researcher' })} onAct={() => {}} />,
       )
+      // A destructive call withholds the two standing-grant scopes until the unlock is ticked
+      // (#506), so the scan ticks it FIRST — otherwise this would silently stop covering the
+      // broad-scope copy on the one tier where it matters most, which is the shape of bug
+      // this whole cluster is about. Every scope in the vocabulary is still scanned at every
+      // tier; the unlock's own label is scanned with them.
+      const unlock = screen.queryByRole('checkbox', { name: /standing grant/i })
+      if (risk === 'destructive') {
+        expect(unlock, 'a destructive call must offer the unlock').toBeTruthy()
+        fireEvent.click(unlock!)
+      } else {
+        expect(unlock, 'the cheaper tiers must not grow a rung').toBeNull()
+      }
       for (const s of REMEMBER_SCOPES) {
         fireEvent.click(scopeTab(s.label))
         const text = readableText(container)

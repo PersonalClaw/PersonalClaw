@@ -4,7 +4,8 @@ import { fvs } from '../../design/fontWeight'
 import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { api, type ToolItem, type ToolInvokeResult } from '../../lib/api'
+import { api, hasApiCode, type ToolItem, type ToolInvokeResult } from '../../lib/api'
+import { confirm, promptInput } from '../../ui/dialog'
 import { schemaProps, typeLabel, SchemaField, buildArgs, useArgs, type JsonSchema } from './schema'
 import { ToolOutput } from './ToolOutput'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -12,7 +13,14 @@ import { BUSY_REASON } from '../../ui/unavailable'
 /** Tool inspector body for the SidePanel: full parameter signature (view) plus
  *  an expandable "Try it" panel that auto-builds an editable input form from the
  *  param schema and invokes the tool for real via /api/tools/invoke, behind a
- *  confirm (every tool reports requires_approval). */
+ *  confirmation that SCALES WITH `tool.risk_level` (see `RunPanel`).
+ *
+ *  This used to read "behind a confirm (every tool reports requires_approval)", which was
+ *  the stated reason the single confirm was considered sufficient and was measurably false:
+ *  30 of 92 tools report `requires_approval: false` (7 of them `caution`), and the run path
+ *  never consulted the flag at all — the confirm was unconditional local state. A parenthetical
+ *  that attributes the safety to a field nothing reads is how the gap stayed invisible, so it
+ *  names the real guard now (#506). */
 export function ToolInspector({ tool, serverStatus }: { tool: ToolItem; serverStatus?: { state: string; detail?: string } }) {
   const { props, required } = schemaProps(tool.parameters)
 
@@ -57,6 +65,40 @@ function ParamRow({ name, schema, required, depth = 0 }: { name: string; schema:
   )
 }
 
+/** The Try-it escalation ladder (#506).
+ *
+ *  `risk_level` was fetched, rendered as a pill two rows above the run controls, and then
+ *  ignored: one warn-toned inline step ran `artifact_list` and `automation_delete_all` with
+ *  the same two clicks, while the same page used a `danger: true` modal to remove an MCP
+ *  server config. The ceremony was inverted from the risk.
+ *
+ *  Each rung costs strictly more than the one below it, and the LOWEST rung costs exactly
+ *  what it always did — a gate that taxes every tool call trains people to click through it,
+ *  which is the failure mode this exists to prevent:
+ *
+ *   | tier        | ceremony                                        | wire            |
+ *   |-------------|-------------------------------------------------|-----------------|
+ *   | safe        | the inline "Confirm & run" step (unchanged)      | —               |
+ *   | caution     | a modal, dismissible, with a named confirm verb  | —               |
+ *   | destructive | a modal that requires TYPING the tool name       | confirm_risk    |
+ *
+ *  An absent tier takes the CAUTION rung, not the safe one: an external MCP tool that
+ *  declares nothing is the least known call on the page, and defaulting the unknown to the
+ *  cheapest path is what a risk ladder is for.
+ *
+ *  Only the destructive rung has backend authority. `POST /api/tools/invoke` refuses an
+ *  effective-destructive call that does not name the tier, so that rung is a wire
+ *  requirement rather than a local boolean; the caution rung is a UI-side escalation only,
+ *  deliberately, because the route cannot gate caution without breaking the cron scripts
+ *  that write through `task_create`/`knowledge_create`. */
+type Rung = 'inline' | 'modal' | 'typed'
+
+function rungFor(risk?: string): Rung {
+  if (risk === 'destructive') return 'typed'
+  if (risk === 'safe') return 'inline'
+  return 'modal'  // caution, and anything undeclared
+}
+
 function RunPanel({ tool }: { tool: ToolItem }) {
   const [open, setOpen] = useState(false)
   const [args, setArgs] = useArgs(tool.parameters)
@@ -65,17 +107,75 @@ function RunPanel({ tool }: { tool: ToolItem }) {
   const [result, setResult] = useState<ToolInvokeResult | null>(null)
   const [formErr, setFormErr] = useState('')
   const { props, required } = schemaProps(tool.parameters)
+  const rung = rungFor(tool.risk_level)
 
   // reset when switching tools
   useEffect(() => { setOpen(false); setResult(null); setConfirming(false); setFormErr('') }, [tool.name])
 
-  async function run() {
+  /** The destructive ceremony: type the tool's own name. Returns true when it was completed.
+   *
+   *  The returned value is re-checked here rather than trusted from the dialog's `validate`:
+   *  the ceremony IS the gate on this surface, so it cannot live only in the host that
+   *  renders it. */
+  async function typedConfirm(): Promise<boolean> {
+    const typed = await promptInput({
+      title: `Run ${tool.name} for real?`,
+      body: `${tool.name} is classified DESTRUCTIVE — it can delete data or execute arbitrary commands on this machine. There is no undo.`,
+      label: `Type ${tool.name} to confirm`,
+      placeholder: tool.name,
+      confirmLabel: `Run ${tool.name}`,
+      required: true,
+      validate: (v) => (v.trim() === tool.name ? null : `Type "${tool.name}" exactly to confirm.`),
+    })
+    return typed?.trim() === tool.name
+  }
+
+  async function invoke(ack?: string): Promise<'ok' | 'needs-ack' | 'failed'> {
     const { args: built, error } = buildArgs(tool.parameters, args)
-    if (error) { setFormErr(error); return }
+    if (error) { setFormErr(error); return 'failed' }
     setFormErr(''); setRunning(true); setResult(null)
-    try { setResult(await api.invokeTool(tool.name, built, tool.provider)) }
-    catch (e) { setResult({ ok: false, error: e instanceof Error ? e.message : 'invoke failed' }) }
-    finally { setRunning(false); setConfirming(false) }
+    try {
+      setResult(await api.invokeTool(tool.name, built, tool.provider, ack))
+      return 'ok'
+    } catch (e) {
+      // The route resolves the EFFECTIVE tier per invocation, which can exceed the DECLARED
+      // tier rendered here — name inference on an undeclared MCP tool, or a shell call whose
+      // command could not be screened. Escalating on the refusal is what keeps the gate from
+      // becoming a dead end: the alternative is the user filling in arguments, confirming,
+      // and collecting a 403 with no control that can satisfy it (#3062 was the same shape).
+      if (!ack && hasApiCode(e, 'risk_confirmation_required')) return 'needs-ack'
+      setResult({ ok: false, error: e instanceof Error ? e.message : 'invoke failed' })
+      return 'failed'
+    } finally { setRunning(false); setConfirming(false) }
+  }
+
+  async function run() {
+    if (await invoke() !== 'needs-ack') return
+    if (!(await typedConfirm())) {
+      setResult({
+        ok: false,
+        error: `${tool.name} resolves as a destructive call for these arguments, so it was not run. Confirm the tool name to run it.`,
+      })
+      return
+    }
+    await invoke('destructive')
+  }
+
+  /** The entry control at every tier — "Run tool" always means the same thing, only what it
+   *  costs to get past it changes. */
+  async function onRunPressed() {
+    if (rung === 'inline') { setConfirming(true); return }
+    if (rung === 'typed') {
+      if (!(await typedConfirm())) return
+      await invoke('destructive')
+      return
+    }
+    const ok = await confirm({
+      title: `Run ${tool.name}?`,
+      body: `This invokes ${tool.name} for real with the arguments above — it is not a dry run.`,
+      confirmLabel: `Run ${tool.name}`,
+    })
+    if (ok) await run()
   }
 
   return (
@@ -106,7 +206,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
               <ShieldAlert size={14} /> Disabled — turn it on in the tools list to run it.
             </p>
           ) : !confirming ? (
-            <Button size="sm" onClick={() => setConfirming(true)} disabled={running} disabledReason={BUSY_REASON}><Play size={15} /> Run tool</Button>
+            <Button size="sm" onClick={onRunPressed} disabled={running} disabledReason={BUSY_REASON}><Play size={15} /> Run tool</Button>
           ) : (
             <div className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
               <div data-type="label-s" className="flex items-center gap-1.5 text-warn mb-2" style={fvs(500)}><AlertTriangle size={14} /> This runs <span className="font-mono">{tool.name}</span> for real.</div>

@@ -942,6 +942,7 @@ async def start_dashboard(
     app.router.add_get(
         "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
     )
+    app.router.add_delete("/api/memory/entities/{entity_id}", handlers.api_memory_entity_delete)
     app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
     app.router.add_get("/api/memory/volunteer-stats", handlers.api_memory_volunteer_stats)
     # The entity topology behind the graph canvas
@@ -2092,8 +2093,18 @@ async def start_dashboard(
 
         Only acts on requests carrying an app identity (``request["app"]`` set
         from an app-scoped token). A path the app didn't declare is rejected
-        403 before the handler runs — the server-side, bypass-proof half of the
-        permission boundary. Owner/dashboard requests (no app identity) pass.
+        403 before the handler runs — the half an app's own BACKEND cannot talk its
+        way past, since its token is the only credential it holds. Owner/dashboard
+        requests (no app identity) pass.
+
+        🪤 That is not a boundary on an app's FRONTEND (#492). An app's UI bundle is
+        imported into the dashboard page itself, so a bare ``fetch`` from it carries
+        the owner's cookie and no app identity, arrives indistinguishable from the
+        dashboard's own request, and passes here by the rule above. Nothing on this
+        side can tell the two apart — separating them needs a distinct ORIGIN for app
+        bundles, which is why this is a disclosed limitation
+        (``docs/security/limitations.md`` §4, surfaced at install consent) rather than
+        a check that could be added here.
 
         The decision itself is ``permissions.app_request_denial``, not inline here:
         this closure cannot be imported, so every test of the boundary had to

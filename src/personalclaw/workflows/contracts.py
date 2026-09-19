@@ -24,7 +24,9 @@ proceed correctly without it; ambiguity that changes no execution path is not.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -158,6 +160,181 @@ def template_types(spec: dict[str, Any]) -> str:
         lines.append(f"  {param.name}{mark}: {param.declared_type},  // {comment}")
     lines.append("}")
     return "\n".join(lines)
+
+
+# ── the declared type contract ──
+#
+# `declared_type` above had three readers and no enforcer: `ParamSpec.to_dict()` ships it to the
+# MCP tool listing, `template_types()` writes it into a prompt, and the launch form printed it as a
+# caption. Nothing checked a caller's value against it, so a template's declared types were
+# documentation — and every CONSUMER of an input rolled its own coercion instead. Measured on
+# `origin/main`, one declared `boolean` given the string `"1"` meant three different things:
+#
+#   knowledge_maintain_provider._truthy("1")            -> True      (its own allowlist)
+#   audit-sweep's gate  `{{inputs.fix}} == true`         -> False     (expression equality)
+#   self-qa's branch    `on: {{inputs.fix_branch_enabled}}` -> NO CASE MATCHED, the run fails
+#
+# One vocabulary at the door replaces all three: every consumer receives a real `bool`, so they
+# cannot disagree, and a value that cannot be a bool is refused before a token is spent.
+
+
+#: What a template's ``inputs[key]["type"]`` may say.
+#:
+#: A type outside this set is an AUTHORING mistake, and a value under it passes through unchecked —
+#: refusing would make a template unrunnable for a reason its user cannot fix, and `template_lint`
+#: is where an author hears about their own spec. This is the one direction the check fails open,
+#: and it fails open on the DECLARATION, never on a value whose declared type we understand.
+DECLARED_TYPES: frozenset[str] = frozenset(
+    {"string", "number", "integer", "boolean", "array", "object"}
+)
+
+#: How much of an offending value an error message may quote. Enough to recognise what you typed,
+#: capped so a pasted payload cannot be reflected back wholesale. Plain inputs are not a secret
+#: store — an inline secret in a spec is refused at save (`WF_DEF_INLINE_SECRET`) and a real one
+#: rides a credential binding — but an input is still caller-controlled text, so it is truncated
+#: rather than echoed whole, and a container is described by its type instead of its contents.
+_ECHO_LIMIT = 40
+
+
+def _as_boolean(value: Any) -> tuple[Any, bool]:
+    from personalclaw.safety_flags import BOOL_FALSE_WORDS, BOOL_TRUE_WORDS
+
+    if isinstance(value, bool):
+        return value, True
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in BOOL_TRUE_WORDS:
+            return True, True
+        if word in BOOL_FALSE_WORDS:
+            return False, True
+    # A number is NOT accepted here even though `strict_bool` accepts it: `1` for a declared
+    # boolean is a caller confusing two types, and the spellings above already cover every way a
+    # form or a shell can say yes.
+    return value, False
+
+
+def _as_number(value: Any) -> tuple[Any, bool]:
+    # `bool` first: it is an `int` subclass, so `True` would otherwise pass as `1`.
+    if isinstance(value, bool):
+        return value, False
+    if isinstance(value, (int, float)):
+        return (value, True) if math.isfinite(value) else (value, False)
+    if not isinstance(value, str):
+        return value, False
+    try:
+        parsed = float(value.strip())
+    except ValueError:
+        return value, False
+    # `float("nan")` and `float("1e400")` both parse. Neither survives JSON, and NaN makes every
+    # comparison downstream false — so they are refused rather than stored.
+    if not math.isfinite(parsed):
+        return value, False
+    return (int(parsed) if parsed.is_integer() else parsed), True
+
+
+def _as_integer(value: Any) -> tuple[Any, bool]:
+    coerced, ok = _as_number(value)
+    if not ok or isinstance(coerced, float):
+        return value, False
+    return int(coerced), True
+
+
+def _as_string(value: Any) -> tuple[Any, bool]:
+    if isinstance(value, str):
+        return value, True
+    # The engine's own rendering (`bindings._stringify`), so the value stored on the run is the
+    # value a binding would have produced — `True` renders as `true`, not Python's `True`.
+    if isinstance(value, bool):
+        return ("true" if value else "false"), True
+    if isinstance(value, (int, float)):
+        return str(value), True
+    # A dict or list under a declared `string` is refused rather than JSON-dumped: dumping it
+    # would hide the caller's mistake behind a value that looks deliberate.
+    return value, False
+
+
+def _as_array(value: Any) -> tuple[Any, bool]:
+    return _as_json_container(value, list)
+
+
+def _as_object(value: Any) -> tuple[Any, bool]:
+    return _as_json_container(value, dict)
+
+
+def _as_json_container(value: Any, want: type) -> tuple[Any, bool]:
+    if isinstance(value, want):
+        return value, True
+    # A JSON string is accepted because that is what a textarea produces: the launch form parses
+    # it before posting, and a CLI caller pipes the same text.
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value, False
+        if isinstance(parsed, want):
+            return parsed, True
+    return value, False
+
+
+#: declared type → coercer. A table rather than a chain of `if`s because this IS the contract: one
+#: row per declared type, and a type with no row is one `DECLARED_TYPES` does not admit.
+_COERCERS: dict[str, Any] = {
+    "string": _as_string,
+    "number": _as_number,
+    "integer": _as_integer,
+    "boolean": _as_boolean,
+    "array": _as_array,
+    "object": _as_object,
+}
+
+
+def _describe(value: Any) -> str:
+    """What went wrong, in the caller's terms — truncated, and never a container's contents."""
+    if isinstance(value, (dict, list)):
+        return f"a {'JSON object' if isinstance(value, dict) else 'JSON array'}"
+    text = repr(value)
+    return text if len(text) <= _ECHO_LIMIT else f"{text[:_ECHO_LIMIT]}…"
+
+
+def coerce_declared_inputs(
+    spec: dict[str, Any], provided: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """A caller's inputs coerced to their declared types, plus the ones that cannot be.
+
+    Returns ``(coerced, errors)``. ``errors`` is EVERY offending key, not the first: a launch form
+    showing one error at a time makes the user submit four times to learn four things.
+
+    Three deliberate pass-throughs, each a different reason:
+
+    * an **undeclared** key — a template whose tree reads `inputs.x` while its declaration block
+      omits `x` is real (`resolve_unfilled_inputs` exists for exactly that drift), so a key with
+      no declaration has no declared type to check;
+    * a declared type outside :data:`DECLARED_TYPES` — see its note;
+    * ``None`` and ``""`` — this system's own "declared but unset" marker, written by
+      `service._with_declared_defaults` for every optional input with no default. Whether a blank
+      value is acceptable is `_missing_required_inputs`' question, not this one; asking it twice is
+      how two checks come to disagree.
+    """
+    declared_raw = spec.get("inputs")
+    declared: dict[str, Any] = declared_raw if isinstance(declared_raw, dict) else {}
+    coerced = dict(provided)
+    errors: list[str] = []
+    for key, value in provided.items():
+        meta = declared.get(key)
+        if not isinstance(meta, dict):
+            continue
+        declared_type = str(meta.get("type", "") or "").strip().lower()
+        coerce = _COERCERS.get(declared_type)
+        if coerce is None:
+            continue
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            continue
+        result, ok = coerce(value)
+        if ok:
+            coerced[key] = result
+        else:
+            errors.append(f"{key}: expected {declared_type}, got {_describe(value)}")
+    return coerced, sorted(errors)
 
 
 # ── the extraction contract (UP-R8) ──

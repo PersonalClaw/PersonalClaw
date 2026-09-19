@@ -140,6 +140,13 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   // entitled to forward actions — see useWidgetActionBridge.ts for the contract.
   useWidgetWire(iframeRef, {
     forwardActions: true,
+    // 🔴 THE ERROR CHANNEL HAD A PRODUCER AND NO CONSUMER HERE. `widget-error` is part of the
+    // documented wire contract and three things in the child post it (the react error boundary, a
+    // script failure, and now a form submit the sandbox cannot deliver) — but this host passed no
+    // `onError`, so `h.onError?.()` dropped every one of them. A widget whose script threw, or whose
+    // Submit could never post, failed in total silence (#2263). `notify` is this file's own form for
+    // a failure the user must see (its save/pin paths use it for the same reason).
+    onError: (message) => notify(message, 'error'),
     onHeight: (h, w) => {
       // No max cap — the frameless inline widget grows to fit its content; the
       // page (chat scroll pane) is the scroll container, not the widget.

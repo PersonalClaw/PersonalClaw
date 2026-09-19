@@ -116,8 +116,43 @@ describe('the external-access controls reach the backend', () => {
     )
     // VACUITY / cross-wiring floor: editing the allow-list must not write a neighbouring cap.
     expect(
+      patchConfig.mock.calls.filter((c) => c[0] === 'external_access.capture.retention_days'),
+    ).toEqual([])
+  })
+
+  it('capture retention PATCHes the NESTED key, and the saved value round-trips back (#2950)', async () => {
+    // The flat `external_access.capture_retention_days` used to be both the rendered value's
+    // source AND the PATCH target — which looked coherent but wasn't. `load()` always prefers
+    // the nested `capture.retention_days` once it exists in config.json (a fresh install ships
+    // it), so a PATCH to the flat name wrote the file and changed nothing `load()` ever read
+    // back: 200 OK, value unchanged on the next GET. This is the same trap
+    // `capture.upstream_allowlist` already avoids — the assertion is on the CALL SITE, and on
+    // the value the panel repaints from after its post-save refetch, not just that a call
+    // happened.
+    externalAccess.mockResolvedValueOnce(STATE).mockResolvedValue({
+      ...STATE,
+      caps: { ...STATE.caps, capture_retention_days: 45 },
+    })
+    render(<ExternalAccessPanel />)
+    await waitFor(() =>
+      expect(screen.getByLabelText('Keep captured sessions for (days)')).toBeTruthy(),
+    )
+    const retention = screen.getByLabelText(
+      'Keep captured sessions for (days)',
+    ) as HTMLInputElement
+    await userEvent.clear(retention)
+    await userEvent.type(retention, '45{Enter}')
+    await waitFor(() =>
+      expect(patchConfig).toHaveBeenCalledWith('external_access.capture.retention_days', 45),
+    )
+    // The legacy flat spelling must never be the PATCH target again.
+    expect(
       patchConfig.mock.calls.filter((c) => c[0] === 'external_access.capture_retention_days'),
     ).toEqual([])
+    // Round-trip: the panel refetches after a save, so 45 is what it repaints from — a
+    // control that only mutated local state, or PATCHed a key `load()` ignores, would still
+    // show the OLD value here.
+    await waitFor(() => expect(retention.value).toBe('45'))
   })
 
   it('removing a host PATCHes the remaining list, and the value round-trips back into the pane', async () => {
@@ -174,7 +209,7 @@ describe('the external-access controls reach the backend', () => {
       'external_access.rate_rps',
       'external_access.rate_concurrent',
       'external_access.auto_disable_after_breaches',
-      'external_access.capture_retention_days',
+      'external_access.capture.retention_days',
     ]
     expect(patchConfig.mock.calls.filter((c) => otherCaps.includes(c[0] as string))).toEqual([])
   })

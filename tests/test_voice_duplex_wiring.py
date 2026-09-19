@@ -160,9 +160,11 @@ class TestTranscribeEchoConsult:
     def _stub_stt(self, monkeypatch):
         monkeypatch.setattr("personalclaw.transcribe.is_available", AsyncMock(return_value=True))
         self.heard = "the deployment finished and everything"
+        from personalclaw.stt.provider import TranscriptResult
+
         monkeypatch.setattr(
-            "personalclaw.transcribe.transcribe_audio",
-            AsyncMock(side_effect=lambda *_a, **_kw: self.heard),
+            "personalclaw.transcribe.transcribe_audio_detailed",
+            AsyncMock(side_effect=lambda *_a, **_kw: TranscriptResult(text=self.heard)),
         )
 
     @pytest.mark.asyncio

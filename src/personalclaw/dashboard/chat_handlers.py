@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -388,26 +389,45 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # Agent routing: if this default-agent chat's message fits an
     # installed specialist, broadcast a non-blocking suggestion the FE renders as a
     # chip. Best-effort — a classifier error must never break the send.
+    #
+    # This broadcast is the EARLIEST frame of a send (it runs before the run task's
+    # first await), which is what made it the one frame a brand-new chat could never
+    # receive: creating the session by sending re-keys the frontend's ChatSession, and
+    # the remount closes its WebSocket while the replacement is still handshaking, so
+    # the frame lands in the reconnect gap and is delivered to nothing (issue 569). So
+    # the same payload also rides the send RESPONSE below — causally after the request,
+    # therefore unraceable. ONE dict feeds both transports so they cannot disagree
+    # about the session (or anything else) the suggestion is for.
+    _routing: dict[str, Any] | None = None
     try:
         from personalclaw.agents.routing import suggest_for_send
 
         _suggestion = suggest_for_send(state, session, message)
         if _suggestion is not None:
-            state.broadcast_ws(
-                "routing_suggestion",
-                {
-                    "session": session.key,
-                    "agent": _suggestion.agent,
-                    "specialty": _suggestion.specialty,
-                    "score": round(_suggestion.score, 3),
-                    "method": _suggestion.method,
-                },
-            )
+            _routing = {
+                "session": session.key,
+                "agent": _suggestion.agent,
+                "specialty": _suggestion.specialty,
+                "score": round(_suggestion.score, 3),
+                "method": _suggestion.method,
+            }
+            state.broadcast_ws("routing_suggestion", _routing)
     except Exception:
         logger.debug("routing suggestion hook failed", exc_info=True)
 
     if ws_mode:
-        return web.json_response({"ok": True, "session": session.key})
+        # Built as a LITERAL at the call site, not assembled into a name above: the wire
+        # envelope census (tests/test_wire_error_envelope_census.py) reads response shapes
+        # statically, and `json_response(_body)` hides this one from it. The suggestion key
+        # is absent rather than null when there is nothing to suggest — the frontend keys
+        # the chip off the field's presence.
+        return web.json_response(
+            {
+                "ok": True,
+                "session": session.key,
+                **({"routing_suggestion": _routing} if _routing is not None else {}),
+            }
+        )
 
     resp = web.StreamResponse()
     resp.content_type = "text/event-stream"
@@ -2711,6 +2731,11 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
             status=400,
         )
     original_action = action
+    # What a `trust_agent` grant actually DID, reported to the client and recorded in the
+    # transcript. `None` for every other verb: a scope that grants nothing has no grant to
+    # describe, and an always-present object with `persisted: false` would read as a failed
+    # grant on an Allow-once (#541/#683).
+    grant: dict[str, object] | None = None
     # Trust: auto-approve remaining tools for this session
     if action == "trust":
         session._trust = True
@@ -2726,33 +2751,42 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         session._trust = True
         state.sessions.set_approval_policy(f"dashboard:{name}", "auto")
         action = "approved"
-        from personalclaw.agents.defaults import is_reserved_agent
+        from personalclaw.agents.defaults import persistable_grant_target
 
+        # The grant target, resolved by the ONE owner that also feeds the card's promise at
+        # prompt time (chat_runner's perm_meta["grant_agent"]). Deciding it here a second
+        # way is what let the card and the write path disagree: the card said "in this chat
+        # and future ones" while this branch's `else` degraded the grant to session scope
+        # and told only the log. Now the outcome is a value, so it can be REPORTED — on the
+        # wire (below), in the transcript row, and in the SEL.
+        agent_name = ""
         try:
             cfg = AppConfig.load()
-            # Resolve the grant target: an empty session.agent means the implicit
-            # default agent — persist to config.default_agent's profile (that IS the
-            # agent running this chat), not nowhere. Reserved system agents keep their
-            # fixed config, so a grant on one degrades to session-scope only.
-            agent_name = (session.agent or "").strip() or cfg.default_agent
-            if agent_name and not is_reserved_agent(agent_name) and agent_name in cfg.agents:
-                prof = cfg.agents[agent_name]
+            target = persistable_grant_target(session.agent or "", cfg)
+            if target:
+                prof = cfg.agents[target]
                 if prof.approval_mode != "auto":
                     prof.approval_mode = "auto"
                     cfg.save()
-                sel().log_api_access(
-                    caller="dashboard:approval",
-                    operation="mode_change:always_for_agent",
-                    outcome="enabled",
-                    resources=f"{name} agent={agent_name}",
-                )
-            else:
-                logger.info(
-                    "trust_agent on non-persistable agent %r — session-scope only",
-                    agent_name or "(none)",
-                )
+                # Set only AFTER the write returned. A failed save is not a persisted
+                # grant, and the report below is read as a statement about the file.
+                agent_name = target
         except Exception:
             logger.warning("Failed to persist always-for-agent grant", exc_info=True)
+        grant = {"scope": "agent", "persisted": bool(agent_name), "agent": agent_name}
+        try:
+            # Best-effort, and OUTSIDE the block above: an audit that raises must not turn a
+            # grant that persisted into one this route reports as session-scope. Both
+            # outcomes get a row — "the user asked for a standing grant and did not get one"
+            # is exactly the event an auditor reconstructing a later ask would look for.
+            sel().log_api_access(
+                caller="dashboard:approval",
+                operation="mode_change:always_for_agent",
+                outcome="enabled" if agent_name else "session_scope_only",
+                resources=f"{name} agent={agent_name or (session.agent or '').strip() or '(default)'}",  # noqa: E501
+            )
+        except Exception:
+            logger.warning("SEL audit failed for always-for-agent grant", exc_info=True)
     # Trust-reads: auto-approve read-only bash commands for this session
     # Defer setting _trust_reads until after the approval future is consumed
     # to prevent the frontend from seeing trust_reads=true while still pending.
@@ -2788,13 +2822,27 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         return web.json_response({"error": "no pending approval"}, status=404)
     resolved = action if action in ("approved", "approved_trust_reads") else "rejected"
     fut.set_result(resolved)
-    # Persist resolved state into the permission message so it survives tab switches
+    # Persist resolved state into the permission message so it survives tab switches.
+    #
+    # The RECORD is not the future's value (#683). `trust_agent` is remapped to "approved"
+    # above because that is what the awaiting tool call must see, and the record used to
+    # inherit that remap — so a standing per-agent grant and a one-off Allow left
+    # byte-identical transcript rows, while their side effects differ by an auto-approval
+    # policy that explains every later silent run. The transcript is the permanent record of
+    # a security decision, so it keeps the verb the user chose.
+    #
+    # THREE outcomes, not two, because the grant has three (#541 + #683): allow-once,
+    # granted-and-persisted, and granted-but-session-scope-only. Collapsing the last two
+    # would re-lose exactly the fact #541 is about — whether "in this chat and future ones"
+    # actually happened. `trust`/`trust_reads` were already preserved and are unchanged.
     if request_id:
-        _mark_permission_resolved(
-            session.messages,
-            request_id,
-            original_action if original_action in ("trust", "trust_reads") else resolved,
-        )
+        if original_action == "trust_agent":
+            record = "trust_agent" if (grant or {}).get("persisted") else "trust_agent_session"
+        elif original_action in ("trust", "trust_reads"):
+            record = original_action
+        else:
+            record = resolved
+        _mark_permission_resolved(session.messages, request_id, record)
     # Broadcast first to ensure frontend is unblocked
     if request_id:
         state.broadcast_ws(
@@ -2811,7 +2859,11 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL audit failed for approval %s", request_id, exc_info=True)
-    return web.json_response({"ok": True})
+    # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
+    # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
+    # learn the grant had degraded to session scope — the promise and the outcome were
+    # unfalsifiable from the outside (#541). Present only when there was a grant.
+    return web.json_response({"ok": True, **({"grant": grant} if grant else {})})
 
 
 MAX_COLOR_INDEX = 20

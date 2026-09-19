@@ -10,6 +10,11 @@ from aiohttp import web
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.request_validation import (
+    RequestValidationError,
+    json_object_body,
+    require_string,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY
@@ -91,13 +96,13 @@ async def api_chat_folders(request: web.Request) -> web.Response:
 async def api_chat_folder_create(request: web.Request) -> web.Response:
     """POST /api/chat/folders — create a project folder."""
     state: DashboardState = request.app["state"]
+    # Shared validator, this module's envelope — see `lexicon/handlers.py` for the reasoning.
+    # This module answers flat in fourteen places and uses `json_error` in none.
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    name = (body.get("name") or "").strip()[:100]
-    if not name:
-        return web.json_response({"error": "name required"}, status=400)
+        body = await json_object_body(request)
+        name = require_string(body, "name")[:100]
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     parent_id = str(body.get("parent_id") or "")
     if not folder_exists(state, parent_id):
         return web.json_response({"error": "parent folder not found"}, status=400)

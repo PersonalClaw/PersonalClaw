@@ -827,6 +827,12 @@ export interface AppCatalogEntry {
    *  none yet, so empty permissions there mean "not known", not "declared none". */
   consentKnown?: boolean
   crons?: AppCronSummary[]
+  /** #492 — does this app ship browser code? Same two field names and meanings as
+   *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
+   *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
+   *  permission block cannot express, so consent has to state it separately. */
+  hasUI?: boolean
+  uiComponents?: string
   // The declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
@@ -913,6 +919,19 @@ export interface AppDepClassification {
  *  "none", or the dialog goes back to promising a removal that will be refused. */
 export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[] }
 export interface AgentDef { name: string }
+/** Agent routing's suggestion payload. The server builds it ONCE
+ *  per send and ships the same object on two transports — the `routing_suggestion` WS
+ *  broadcast and the send response — so the wire type is declared here, with the
+ *  transport, rather than in the chip that renders it. `session` is the server's own
+ *  identity for the chat the suggestion is about; the frontend resolves it against the
+ *  open session in exactly one place (pages/chat/sessionDelivery.ts). */
+export interface RoutingSuggestion {
+  session: string
+  agent: string
+  specialty: string
+  score: number
+  method: string
+}
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
@@ -1237,7 +1256,18 @@ export interface WorkBoard {
   completeness: 'complete' | 'inferred' | 'partial' | 'error'
   attention: number; loadedAt: number
 }
-export interface TaskListItem { id: string; name: string; project_id: string; agent_instructions_template?: string; created_at?: string; updated_at?: string }
+/** The server-side cap on a project or task-list NAME, mirroring `hierarchy.MAX_NAME_LEN`.
+ *  Kept in step by `projectNameCap.test.ts`, which reads the Python constant — a name field
+ *  bounded here but not there (or vice versa) is exactly the drift that let 3000 characters
+ *  persist (#514). */
+export const MAX_NAME_LEN = 200
+export interface TaskListItem {
+  id: string; name: string; project_id: string; agent_instructions_template?: string
+  created_at?: string; updated_at?: string
+  /** Tasks in this list. ABSENT when the count could not be computed — the hub renders the badge
+   *  only for a number, so a missing reading hides it rather than claiming zero. */
+  task_count?: number
+}
 export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[]; blocking_task_titles?: string[]; message?: string }
 export interface TaskItem {
   id: string; title: string; status: string; description?: string
@@ -2923,7 +2953,11 @@ export type KnowledgeType =
   // a label/icon/tone because a search result CAN be one — without it `resolveType` fell through
   // to `note` and every decision in the library read "Note".
   | 'decision'
-export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string }
+// `aliases` are the other surfaces a document used for this entity (handles, initialisms). The
+// backend has always serialized them as a real array (`_serialize_entity`); until #1779 nothing
+// ever WROTE one, so the field was omitted here and the chip could not explain why an item linked
+// to an entity it never names canonically.
+export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string; aliases?: string[] }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
   id: string; title?: string; content?: string; summary?: string
@@ -5296,6 +5330,93 @@ export interface RewindApplyWire {
   preview: RewindPreviewWire
 }
 
+// ── tasks: one window vs the whole set ───────────────────────────────────────────────────────
+//
+// Two different reads, and confusing them is what made the Tasks page quietly wrong. A WINDOW
+// is right for a preview ("the 20 newest open tasks"). Anything that derives a dependency fact
+// — the DAG's edges, the prerequisite picker's candidates, "what depends on this" — needs the
+// COLLECTION, because each of those resolves a prerequisite id against the rows it happens to
+// hold and reads one it cannot find as absent. Asking for no `limit` at all got the server's
+// default of 50 and looked exactly like everything (#485).
+
+export type TaskQuery = {
+  project?: string
+  task_list?: string
+  status?: string
+  limit?: number
+  offset?: number
+  mine?: boolean
+}
+
+export type TaskPage = {
+  tasks: TaskItem[]
+  /** Rows matching the filters — the whole set, not this window. */
+  total: number
+  /** Whether `total` is the whole truth: false when the gateway's own per-provider bound cut
+   *  the match short, which a paging client cannot otherwise tell from exhaustion. */
+  complete: boolean
+  limit: number
+  offset: number
+  owner?: string
+}
+
+export type TaskCollection = {
+  tasks: TaskItem[]
+  total: number
+  /** False when `tasks` is a window after all: either the gateway truncated, or this walk hit
+   *  its own page bound. A caller that renders derived structure owes its reader this. */
+  complete: boolean
+  owner: string
+}
+
+/** Rows one request asks for while collecting. A request-size knob, not a cap. */
+const TASK_PAGE = 500
+/** Pages one collection will walk — 10,000 rows, matching the gateway's own per-provider
+ *  bound. Also the termination guarantee against a server whose `total` it will not serve. */
+const TASK_MAX_PAGES = 20
+
+/** The `/api/tasks` query string. Shared by both reads, so a new filter cannot reach one and
+ *  silently miss the other. */
+function _taskQuery(opts: TaskQuery): string {
+  const qs = new URLSearchParams()
+  if (opts.project) qs.set('project', opts.project)
+  if (opts.task_list) qs.set('task_list', opts.task_list)
+  if (opts.status) qs.set('status', opts.status)
+  // `!= null`, not truthiness: `offset=0` is a real first page, and dropping it would restart
+  // the walk on every iteration.
+  if (opts.limit != null) qs.set('limit', String(opts.limit))
+  if (opts.offset != null) qs.set('offset', String(opts.offset))
+  if (opts.mine) qs.set('mine', '1')
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+/** EVERY task matching the filters, by paging until the server says there is no more. */
+async function _collectTasks(
+  opts: Omit<TaskQuery, 'limit' | 'offset'> = {}
+): Promise<TaskCollection> {
+  const tasks: TaskItem[] = []
+  let total = 0
+  let owner = ''
+  for (let page = 0; ; page++) {
+    const res = await get<TaskPage>(
+      `/api/tasks${_taskQuery({ ...opts, limit: TASK_PAGE, offset: tasks.length })}`
+    )
+    total = res.total
+    owner = res.owner ?? owner
+    tasks.push(...res.tasks)
+    // The gateway stopped short of its own match; pass that on rather than presenting a window
+    // as everything.
+    if (!res.complete) return { tasks, total, complete: false, owner }
+    // Exhausted. The empty-page half is not redundant: it terminates against a server whose
+    // `total` exceeds what it will actually serve.
+    if (res.tasks.length === 0 || tasks.length >= total) {
+      return { tasks, total, complete: true, owner }
+    }
+    if (page + 1 >= TASK_MAX_PAGES) return { tasks, total, complete: false, owner }
+  }
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -5635,6 +5756,10 @@ export const api = {
   memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
   memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }) =>
     post<{ ok: boolean; id: string }>('/api/memory/entities', body),
+  // The entity set used to be create-only. The store has tombstoned entities since the graph
+  // landed, but no route, wrapper or control reached it — so a mistyped entity was permanent,
+  // on a panel that actively proposes NEW ones to accept (#524).
+  memoryEntityDelete: (id: string) => del(`/api/memory/entities/${encodeURIComponent(id)}`),
   memoryEntityBacklinks: (id: string) =>
     get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
   memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
@@ -6145,9 +6270,15 @@ export const api = {
   // "a terse operator voice" while activate() only touched localStorage and CSS.
   // Centralized here so every send path (chat, steer, comment-target) carries it;
   // the server gates on first-turn-of-session and its own closed theme set.
+  //
+  // `routing_suggestion` is the SAME payload the server also broadcasts over WS. It rides
+  // the response because the broadcast is the earliest frame of a send, and a chat created
+  // BY this send remounts ChatSession (closing its socket) before the frame arrives — so
+  // the WS copy is unreachable exactly on a new chat's first message (issue 569). A
+  // response is causally after its request, so this copy cannot be raced.
   sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) => {
     const color_theme = activePersonaTheme()
-    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
+    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean; routing_suggestion?: RoutingSuggestion }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
   },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
@@ -6431,16 +6562,12 @@ export const api = {
   // `mine` narrows to the owner's work (assigned to them, or authored by them and
   // unassigned) — resolved server-side from the configured username. `owner` comes
   // back on every response so rows can be labelled mine vs someone else's.
-  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number; mine?: boolean } = {}) => {
-    const qs = new URLSearchParams()
-    if (opts.project) qs.set('project', opts.project)
-    if (opts.task_list) qs.set('task_list', opts.task_list)
-    if (opts.status) qs.set('status', opts.status)
-    if (opts.limit) qs.set('limit', String(opts.limit))
-    if (opts.mine) qs.set('mine', '1')
-    const s = qs.toString()
-    return get<{ tasks: TaskItem[]; total: number; owner?: string }>(`/api/tasks${s ? `?${s}` : ''}`)
-  },
+  // ONE WINDOW. `total` says how many matched, `complete` whether that total is the whole
+  // truth — so a caller that only wants a preview can still tell what it is not showing.
+  tasks: (opts: TaskQuery = {}) => get<TaskPage>(`/api/tasks${_taskQuery(opts)}`),
+  // THE WHOLE SET, paged. What every dependency-derived surface needs: an edge, a block
+  // reason and a dependents list are all computed by looking an id up in the rows at hand.
+  allTasks: _collectTasks,
   task: (id: string, provider?: string) => get<TaskItem>(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskGraph: (provider?: string) => get<TaskGraphData>(`/api/tasks/graph${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   createTask: (body: Record<string, unknown>) => post<TaskItem>('/api/tasks', body),
@@ -6677,8 +6804,14 @@ export const api = {
   toolsIndex: () => get<{
     tools: ToolItem[]; load_failures?: ToolLoadFailure[]
   }>('/api/tools'),
-  invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
-    post<ToolInvokeResult>('/api/tools/invoke', { tool, arguments: args, provider }),
+  // `confirmRisk` is the caller's acknowledgement of the tier the route resolves (#506): a
+  // call whose EFFECTIVE risk is `destructive` is refused with 403 risk_confirmation_required
+  // unless the body names it. Omitted for safe/caution, which the route does not gate — so
+  // passing it unconditionally would assert a ceremony that never happened.
+  invokeTool: (tool: string, args: Record<string, unknown>, provider?: string, confirmRisk?: string) =>
+    post<ToolInvokeResult>('/api/tools/invoke', {
+      tool, arguments: args, provider, ...(confirmRisk ? { confirm_risk: confirmRisk } : {}),
+    }),
   mcpServers: () => get<McpServer[]>('/api/mcp'),
   toggleMcpServer: (name: string, enabled: boolean) => post('/api/mcp/toggle', { name, enabled }),
   toggleMcpTool: (server: string, tool: string, enabled: boolean) => post('/api/mcp/toggle-tool', { server, tool, enabled }),
@@ -7484,8 +7617,10 @@ export const api = {
   workflowRunNodeInspect: (runId: string, nodeId: string) =>
     get<NodeInspect>(
       `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
+  // `run_status` rides along so a caller can say WHY nothing is answerable: a terminal run and an
+  // already-answered gate both return an empty list, and they are different sentences (#583).
   workflowContinuations: (id: string) =>
-    get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
+    get<{ continuations: WorkflowContinuation[]; run_status?: string }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
   /** The run's workspace review: changed files + the two reintegration verbs. A GET
    *  because reintegration is OFFERED, never performed — there is no companion POST, and that
    *  is the plan's ruling rather than a gap. 404s for an unknown run; a run with no managed

@@ -6,6 +6,7 @@ import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { PartialNotice } from '../../ui/PartialNotice'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { Meter } from '../../ui/Meter'
@@ -105,21 +106,25 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // below then presented as "No tasks" with a create-a-task CTA. Measured with `/api/tasks` at 500
   // and a cold sessionStorage: "No tasks — Break a goal into tracked work…" plus the New-task
   // button, no alert, no retry, told to a user who may have a hundred tasks.
-  const { data: cachedTasks, refresh, error: loadErr } = useQuery('tasks', () => api.tasks().then((d) => d.tasks), { persist: false })
+  //
+  // 🔴 AND `api.allTasks`, NOT `api.tasks`. Sending no `limit` took the server default of 50, and
+  // every view here derives structure from this one array: the DAG resolves each prerequisite id
+  // against the ids it holds, so a task whose blocker was row 51 drew as a clean UNBLOCKED node
+  // rather than a missing one, and the header analysis (`/api/tasks/graph`, unpaginated) stayed
+  // whole-set while the drawing shrank. The collection pages to completeness and reports whether
+  // it got everything; `PartialNotice` below states it when it did not (#485).
+  const { data: collection, refresh, error: loadErr } = useQuery('tasks', () => api.allTasks(), { persist: false })
   const [tasks, setTasks] = useState<TaskItem[] | null>(null)
   // The configured username, so a row can say whether it's mine or someone else's.
   // Only meaningful once a shared provider actually returns other people's work, so
-  // the "Assigned" filter below stays hidden until that happens.
-  const [owner, setOwner] = useState('')
+  // the "Assigned" filter below stays hidden until that happens. It rides on the SAME
+  // response every row came from — the extra `limit: 1` probe request this used to make
+  // existed only because the list call discarded everything but `tasks`.
+  const owner = collection?.owner ?? ''
   // Mine-vs-everyone selection. Local rather than URL-backed: it's a viewing lens on
   // a shared board, not a shareable address (the scope/status filters that ARE worth
   // sharing live in the URL).
   const [assigned, setAssigned] = useState(ASSIGNED_EVERYONE)
-  useEffect(() => {
-    let alive = true
-    api.tasks({ limit: 1 }).then((d) => { if (alive) setOwner(d.owner ?? '') }).catch(() => {})
-    return () => { alive = false }
-  }, [])
   // The "Ready" filter pulls startable tasks from the server (dependency-aware)
   // rather than filtering the loaded list, so it's kept in its own slice.
   const [ready, setReady] = useState<TaskItem[] | null>(null)
@@ -235,7 +240,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   }
   // Hydrate the local mirror whenever fresh cached data lands (initial fetch +
   // every revalidation), preserving the optimistic-update path below.
-  useEffect(() => { if (cachedTasks !== undefined) setTasks(cachedTasks) }, [cachedTasks])
+  useEffect(() => { if (collection !== undefined) setTasks(collection.tasks) }, [collection])
   useEffect(() => { const t = window.setInterval(refresh, 12000); return () => clearInterval(t) }, [refresh])
   useEffect(() => { if (viewProp) localStorage.setItem(VIEW_KEY, viewProp) }, [viewProp])
   useEffect(() => { localStorage.setItem(SORT_KEY, sortBy) }, [sortBy])
@@ -422,12 +427,13 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // the loss: a 20px `RotateCcw` that reads as "start the checklist again", not "discard the record
   // of the last run".
   //
-  // 🪤 AND THE OBVIOUS IMPROVEMENT — naming HOW MANY tasks lose notes — WOULD HAVE LIED. `tasks` here
-  // comes from `api.tasks()` with no `limit`, and the server defaults that to **50**
-  // (`tasks/handlers.py:25`) across the whole account rather than per list. So a client-side count
-  // understates the loss precisely on the large lists where it is biggest, and a warning that
-  // undercounts is worse than one that does not count at all. The body states the consequence
-  // categorically instead — true for every list at every size.
+  // 🪤 AND THE OBVIOUS IMPROVEMENT — naming HOW MANY tasks lose notes — STILL LIES, for a
+  // narrower reason than it used to. It used to be flatly wrong: this array was one 50-row
+  // window across the whole account, so a client-side count understated the loss precisely on
+  // the large lists where it is biggest. The collection read (#485) removes that, but it does
+  // NOT make the count safe: `collection.complete` can be false, and a warning that undercounts
+  // is worse than one that does not count at all. The body states the consequence categorically
+  // instead — true for every list at every size, and independent of completeness.
   async function resetList(list: TaskListItem) {
     if (!(await confirm({
       title: `Reset “${list.name}”?`,
@@ -541,6 +547,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         <div className="flex-1 min-h-0 px-l py-l flex flex-col gap-s">
           <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
             {moveError && <InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError>}
+            <PartialNotice complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
+              what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
           </div>
           <div className="mx-auto h-full min-h-0 w-full" style={{ maxWidth: 'var(--content-width)' }}>
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
@@ -570,6 +578,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           {/* every view (incl. DAG) honors the shell content-width preset */}
           <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
+            <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
+              what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
             {isProjectScope && projectLists.length > 0 && (
               <TaskListBar lists={projectLists} repeatableId={repeatableProject?.id}
                 active={listFilter?.id ?? ''}

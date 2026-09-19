@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import re
 
 import pytest
 
@@ -18,7 +20,13 @@ from personalclaw.guardrails.budgets import (
 )
 from personalclaw.guardrails.failure import BudgetExceededError, FailureMode, SecretLeakBlocked
 from personalclaw.guardrails.model_call import ModelCallGuard
-from personalclaw.guardrails.scan import scan_outbound
+from personalclaw.guardrails.scan import (
+    _NON_PHONE_RES,
+    _PHONE_MIN_DIGITS,
+    _phone_spans,
+    _redact_pii,
+    scan_outbound,
+)
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent, ModelProvider
 
 
@@ -132,6 +140,205 @@ def test_scan_block_refuses():
 def test_scan_unknown_mode_treated_as_warn():
     r = scan_outbound("AKIAIOSFODNN7EXAMPLE", mode="bogus")
     assert not r.blocked  # never a silent hard block on an unknown mode
+
+
+# ── The phone pass, BOTH directions (#3111) ──────────────────────────────────
+#
+# 🔴 Before this block the phone pattern had no test in either direction: nothing asserted that a
+# phone number IS redacted, and nothing asserted that any non-phone survives. The `redact` rail
+# above proves only an email and an AWS key, and the clean-text rails use prose whose longest digit
+# run is far below the pattern's floor — so the pattern's entire behaviour on digits was
+# unobserved. That is how #3111 shipped: under the default `scan_mode=redact` every IPv4 address
+# and ISO date in an outbound prompt reached the model as `[REDACTED_PHONE]`.
+#
+# Numbers below are deliberately UNASSIGNABLE — the NANP `555-01xx` range and the Ofcom/BNetzA
+# drama ranges exist for exactly this. A redaction fixture must never carry a reachable number.
+_REAL_PHONES = (
+    "555-010-4477",
+    "(555) 010-4477",
+    "555.010.4477",  # dotted NANP — the shape a naive "drop `.` from the class" fix would lose
+    "555 010 4477",
+    "+1-555-010-4477",
+    "+1 (555) 010-4477",
+    "+15550104477",
+    "5550104477",
+    "+44 20 7946 0958",
+    "+49 30 901820",
+)
+
+#: Non-phone shapes that must reach the model UNTOUCHED. The first three groups are the grammars
+#: `scan._NON_PHONE_RES` names; `_OTHER_NON_PHONES` share the digits-and-separators form but sit
+#: below the digit floor or outside the candidate class, and are pinned so a future widening of the
+#: candidate has to face them.
+_IPV4 = ("127.0.0.1", "0.0.0.0", "10.0.0.12", "192.168.1.100", "255.255.255.255")
+_ISO_DATES = (
+    "2026-09-19",
+    "2026-09-19 05:33",
+    "2026-09-19 12:30:45",
+    "2026-09-19T05:33:12Z",
+    "2026-09-19T05:33:12.123+01:00",
+)
+_DECIMALS = ("1234.5678", "12345678.90")
+_OTHER_NON_PHONES = ("1.22.333", "2076749c6", "8080", "1,234,567", "10.0.0.0/8")
+_SPARED = _IPV4 + _ISO_DATES + _DECIMALS + _OTHER_NON_PHONES
+
+
+def _digits(text: str) -> str:
+    return "".join(c for c in text if c.isdigit())
+
+
+@pytest.mark.parametrize("phone", _REAL_PHONES)
+def test_a_real_phone_number_is_STILL_redacted(phone):
+    """THE ANTI-REGRESSION HALF. Narrowing the pattern must not let a real number through, so every
+    common way a phone number is written is pinned here — not only the shape a fix was developed
+    against. Trading a corruption for a leak would be a worse bug than #3111."""
+    r = scan_outbound(f"call me on {phone} tomorrow", mode="redact")
+    assert "[REDACTED_PHONE]" in r.text, f"{phone!r} was not redacted at all"
+    assert _digits(phone)[-4:] not in r.text, f"{phone!r} left its subscriber digits in the clear"
+    assert "phone" in r.categories and r.findings >= 1
+
+
+@pytest.mark.parametrize("spared", _SPARED)
+def test_a_non_phone_shape_survives_the_redactor(spared):
+    """THE HALF THAT WAS MISSING. `redact` is the shipped default (`config/safety.py`), so a match
+    here is not cosmetic: the model reads text the prompt never said, and nothing downstream can
+    tell that a substitution happened."""
+    text = f"the gateway reported {spared} in that run"
+    r = scan_outbound(text, mode="redact")
+    assert r.text == text, f"{spared!r} was mangled into {r.text!r}"
+
+
+@pytest.mark.parametrize("spared", _SPARED)
+def test_a_non_phone_shape_is_not_a_FINDING_either(spared):
+    """Not merely unredacted — not a finding at all.
+
+    `_count_pii` feeds `ScanResult.findings`, and `model_call._prescan` raises `SecretLeakBlocked`
+    on `ScanResult.blocked`, so a phantom `phone` finding does not just mislead the guardrail
+    audit: under `scan_mode=block` it REFUSES the call outright. Hardening only the redactor would
+    have left that half live.
+    """
+    for mode in ("warn", "block"):
+        r = scan_outbound(f"the gateway reported {spared} in that run", mode=mode)
+        assert "phone" not in r.categories, f"{spared!r} reported a phantom phone finding"
+        assert r.findings == 0 and not r.blocked
+
+
+@pytest.mark.parametrize("spared", _IPV4 + _ISO_DATES + _DECIMALS)
+@pytest.mark.parametrize("phone", ("555-010-4477", "+1 (555) 010-4477", "555.010.4477"))
+def test_a_phone_BESIDE_a_spared_shape_is_still_redacted(phone, spared):
+    """🪤 The hole a cheaper fix opens, pinned in both orders.
+
+    The candidate class spans whitespace, so `"127.0.0.1 555-010-4477"` is a SINGLE candidate. The
+    obvious implementation — skip any candidate that overlaps a non-phone span — therefore discards
+    the phone number along with the address, and a real number rides out untouched beside every IP
+    or date in the prompt. `_phone_spans` masks the non-phone spans and rescans the remainder
+    instead, so both halves get the answer they deserve.
+    """
+    for text in (f"{spared} {phone}", f"{phone} {spared}", f"{spared} {phone} {spared}"):
+        r = scan_outbound(text, mode="redact")
+        assert _digits(phone)[-4:] not in r.text, f"phone survived beside {spared!r}: {r.text!r}"
+        assert spared in r.text, f"{spared!r} was eaten next to a phone: {r.text!r}"
+
+
+def test_the_MIXED_line_gets_all_four_answers_right():
+    """One line carrying an IPv4 address, an ISO date, a real phone number and a credential.
+
+    Composition order is the risk: the PII pass runs over the output of `redact_credentials` +
+    `redact_exfiltration_urls`, so a change to the phone pass is a change inside a composed
+    pipeline, not an isolated substitution.
+    """
+    text = (
+        "ops@example.com called 555-010-4477 from 192.168.1.100 "
+        "on 2026-09-19 12:30:45 with AKIAIOSFODNN7EXAMPLE"
+    )
+    r = scan_outbound(text, mode="redact")
+    assert "192.168.1.100" in r.text  # the address reaches the model
+    assert "2026-09-19 12:30:45" in r.text  # the whole timestamp, not `[...]:30:45`
+    assert "4477" not in r.text  # the phone number does NOT
+    assert "ops@example.com" not in r.text
+    assert "AKIAIOSFODNN7EXAMPLE" not in r.text
+    assert set(r.categories) == {"credential", "email", "phone"}
+
+
+def test_the_redaction_pass_is_IDEMPOTENT():
+    """The fix must not depend on being applied exactly once.
+
+    `security.redact_credentials` is NOT idempotent over a COMPOSED line, so a second application
+    is a live hazard in this codebase rather than a theoretical one. The PII pass is idempotent by
+    construction: both tags are digit-free and carry no character from the candidate class, so pass
+    two finds no new candidate and re-derives the same spared spans.
+    """
+    for text in (
+        "call 555-010-4477 about 127.0.0.1 on 2026-09-19",
+        "api_key: 555-010-4477",  # the composed-line shape that breaks the credential pass
+        "ops@example.com or 555-010-4477, latency 1234.5678",
+    ):
+        once = _redact_pii(text)
+        assert _redact_pii(once) == once, f"second pass drifted: {once!r}"
+
+
+def test_the_issue_3111_prompt_reaches_the_model_INTACT():
+    """The reported sentence, verbatim. Measured on `a0e67959c` it became
+    `The gateway binds [REDACTED_PHONE] by default.`, and a judge node then answered that it could
+    not compare a placeholder — a metered call spent on a question the guardrail had already made
+    unanswerable, returning an empty conflict list rather than an error."""
+    text = "The gateway binds 127.0.0.1 by default."
+    r = scan_outbound(text, mode="redact")
+    assert r.text == text and r.findings == 0
+
+
+def test_no_span_the_old_pattern_caught_is_released_without_a_named_reason():
+    """THE SAFETY ARGUMENT, as a property rather than a promise.
+
+    The narrowing is only defensible if it discards candidates for a NAMED reason. Over a generated
+    corpus this asserts: every character span the ORIGINAL pattern redacted and this one does not
+    is either inside one of `_NON_PHONE_RES`, or is a residual that the ORIGINAL pattern would not
+    have matched standing alone either (it was only ever caught by borrowing characters from the
+    adjacent non-phone text, and carries too few digits or too short a span to be a phone number
+    this pass targets).
+
+    Measured at 300k strings while writing this: 0 violations, and exactly 1 string where the new
+    pass redacts MORE than the old one — masking can let a surviving match start one character
+    further left, on a `+` whose `(?<!\\d)` was previously blocked by a now-masked digit. That
+    direction widens a redaction, so it is not a leak.
+    """
+    old_pattern = re.compile(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)")
+    rng = random.Random(3111)
+    alphabet = "0123456789.- ()+:Tabc/,"
+
+    def contiguous(positions: set[int]) -> list[tuple[int, int]]:
+        spans, run = [], []
+        for p in sorted(positions):
+            if run and p == run[-1] + 1:
+                run.append(p)
+            else:
+                if run:
+                    spans.append((run[0], run[-1] + 1))
+                run = [p]
+        if run:
+            spans.append((run[0], run[-1] + 1))
+        return spans
+
+    violations = []
+    for _ in range(20_000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 26)))
+        old_cov: set[int] = set()
+        for m in old_pattern.finditer(text):
+            old_cov |= set(range(*m.span()))
+        new_cov: set[int] = set()
+        for start, end in _phone_spans(text):
+            new_cov |= set(range(start, end))
+        named: set[int] = set()
+        for pattern in _NON_PHONE_RES:
+            for m in pattern.finditer(text):
+                named |= set(range(*m.span()))
+        for start, end in contiguous((old_cov - new_cov) - named):
+            fragment = text[start:end]
+            if len(_digits(fragment)) < _PHONE_MIN_DIGITS:
+                continue  # too few digits to be a phone number at all
+            if old_pattern.search(fragment.strip()):
+                violations.append((text, fragment))  # independently matchable → a real release
+    assert not violations, f"released spans a phone number could hide in: {violations[:5]}"
 
 
 # ── Guard integration: budget ────────────────────────────────────────────────

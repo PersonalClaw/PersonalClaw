@@ -1038,6 +1038,166 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,
         help="per-request inbound trace (local; security events also go to the SEL)",
     ),
+    # ── #2217: the stores the static census pinned as debt, each decided at its own
+    # call site. Fifteen of the twenty-one were determinate — the write shape names the
+    # `kind`, and an already-declared store with the SAME shape names the `merge`, so
+    # none of these is a guess. The four still pinned in the census
+    # (`incident.json`, `browse_kill.json`, `push_subscriptions.json`,
+    # `push_relay_tokens.json`) are the ones whose call site genuinely does NOT decide:
+    # each carries "a human stopped this" or "this one physical device", and whether a
+    # RESTORE should re-plant that is a product decision, not a shape reading.
+    StateEntry(
+        id="app_messages",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="app_messages",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="app-to-app broker queues, one JSON per target app (APE-9)",
+    ),
+    StateEntry(
+        id="chat_plans",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="chat_plans",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="plan-mode walkthrough sessions, one JSON per chat (CC-8)",
+    ),
+    # A nested `{"rows": {topic_key: {...}}}` document, NOT a list of id-keyed rows, so
+    # `replace_only` rather than `lww_by_updated_at`: the per-row `updated_at` inside
+    # `rows` is not the row identity the merge engine keys on, and pointing an id-keyed
+    # merge at this shape is exactly the mis-declaration #2217 warns about. It is also
+    # not derived — the raw signals are never stored, only this decayed fold, so the
+    # file IS the authority and a lost copy cannot be rebuilt.
+    StateEntry(
+        id="engagement",
+        kind=KIND_JSON_FILE,
+        path="engagement.json",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-topic engagement weights with half-life decay",
+    ),
+    # A DIRECTORY of `<channel_id>.jsonl` append streams — the same shape as
+    # `cron-history` above, which is why the kind is `jsonl_append` on a directory path
+    # rather than a tree.
+    StateEntry(
+        id="channel_history",
+        kind=KIND_JSONL_APPEND,
+        path="history",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="observe-mode channel message buffers, one JSONL per channel",
+    ),
+    # `inbox/incoming/*.json` is core's drop seam for a local producer (a mail fetcher,
+    # a channel bridge). `incoming/processed/` is where the provider MOVES a file it has
+    # already ingested, so it is spent-fuel rather than state: declared `derived_within`
+    # so the drop directory is backed up without the archive growing every file the
+    # provider ever read. Distinct from the `inbox` ENTRY above, which is `inbox.json`.
+    StateEntry(
+        id="inbox_dropbox",
+        kind=KIND_TREE,
+        path="inbox",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived_within=("incoming/processed",),
+        help="filesystem inbox source: JSON files dropped in inbox/incoming/",
+    ),
+    # One dict of polling cursors plus the user's dismissed/muted sets — a document, not
+    # id-keyed rows, so `replace_only` for the same reason as `engagement.json`. The
+    # dismissed/muted sets are real user decisions, which is why this is declared at all
+    # rather than treated as a cursor cache.
+    StateEntry(
+        id="inbox_state",
+        kind=KIND_JSON_FILE,
+        path="inbox_state.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="inbox polling cursors plus dismissed/muted items",
+    ),
+    StateEntry(
+        id="onboarding",
+        kind=KIND_TREE,
+        path="onboarding",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="onboarding import ledger and staged documents",
+    ),
+    # 🔴 NOT `IGNORED` as export output, which is what `packs/*.pclaw` looks like at a
+    # glance and would have been the wrong call: this directory also holds the INSTALLED
+    # PACKS LEDGER (`packs/installed.json`) and the fingerprint rejections
+    # (`packs/fingerprint_rejections.json`), both authoritative — "which packs are
+    # installed" cannot be rebuilt from anything else. So the store is declared and only
+    # the genuinely rebuildable parts are `derived_within`: the built `.pclaw` archives
+    # (re-exportable from the live stores), the `.installing/` scratch dir, and
+    # `staged/` (re-stageable from the source pack).
+    StateEntry(
+        id="packs",
+        kind=KIND_TREE,
+        path="packs",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        derived_within=("*.pclaw", ".installing", "staged"),
+        help="installed-pack ledger, fingerprint rejections, and built pack archives",
+    ),
+    # A bare JSON LIST of absolute project paths — no ids, so no id-keyed merge can
+    # apply. `config` + `replace_only` follows `project_dir`/`workspace_dir`, the two
+    # other entries that record this machine's filesystem layout.
+    StateEntry(
+        id="recent_projects",
+        kind=KIND_JSON_FILE,
+        path="recent_projects.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="most-recently-opened project directories (capped at 10)",
+    ),
+    # A list of `ReportDefinition` rows each carrying `id` — the same shape as
+    # `triggers.json`, hence the same `json_file` + `union_by_id`.
+    StateEntry(
+        id="research_reports",
+        kind=KIND_JSON_FILE,
+        path="research_reports.json",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="standing research report definitions, cadences and watermarks",
+    ),
+    StateEntry(
+        id="runners",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="runners",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="bring-your-own agent runner definitions, one JSON per runner id",
+    ),
+    # The LEGACY MCP store (`settings/mcp.json`). UT3 made `mcp.json` canonical and
+    # folds this file in on first boot, then empties it — so on a migrated home this is
+    # a husk. Declared rather than ignored for the one window where it still holds the
+    # only copy: a user who upgrades and runs `personalclaw snapshot` BEFORE starting a
+    # gateway has not had the migration run yet, and ignoring the path would drop their
+    # MCP servers out of exactly the backup the release notes told them to take. An
+    # entry for a usually-empty path is harmless; this manifest says so at the top.
+    StateEntry(
+        id="legacy_mcp_settings",
+        kind=KIND_TREE,
+        path="settings",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="legacy settings/mcp.json (folded into mcp.json on first boot)",
+    ),
+    StateEntry(
+        id="sources",
+        kind=KIND_TREE,
+        path="sources",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="watched sources: saved queries, digest cursor and the event stream",
+    ),
+    StateEntry(
+        id="surfaces",
+        kind=KIND_TREE,
+        path="surfaces",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="user-authored surface overlay files",
+    ),
 )
 
 
@@ -1146,6 +1306,45 @@ IGNORED: tuple[str, ...] = (
     # call reaches a stranger's gateway. Ignored rather than declared for the same reason as
     # `machine_id`: it must not travel at all, and it is regenerated on the next bind.
     "gateway.runtime.json",
+    # 🔴 #2217 — the control bridge's discovery file (`inbound.bridge.DISCOVERY_FILENAME`).
+    # The DIRECT twin of `gateway.runtime.json` directly above, and ignored on the identical
+    # argument: it records the OS-assigned ephemeral port this process bound plus the actions
+    # digest, `remove_discovery()` deletes it on shutdown, and `_write_discovery` rewrites it
+    # on the next boot. Restoring it would point an external agent at a port nothing is
+    # listening on — its own comment already says "a stale file pointing at a dead port is
+    # worse than none", which is the whole decision.
+    "control_bridge.json",
+    # 🔴 #2217 — knowledge's maintenance cadence bookkeeping (`knowledge/maintenance.py`):
+    # when each pass last ran, so the tick knows what is stale. Ignored on the same argument
+    # as `doctor` above — regenerated run bookkeeping carrying no unique truth. The worst a
+    # missing copy costs is one maintenance pass running sooner than it needed to; a RESTORED
+    # stale copy is worse, because it claims passes ran that this home never ran.
+    "graph_maintenance.json",
+    # 🔴 #2217 — `session_pid_<pid>.txt`, written per ACP agent PID so an MCP tool can hand
+    # the spawn API its session key (`dashboard/chat_runner.py`, globbed by `mcp_core.py`).
+    # Process-lifetime and pid-keyed, exactly like `session_pids.txt` and `agent_pids.txt`
+    # above, and a restored file names a pid that belongs to some other process on the target
+    # machine. Found by the census only AFTER it learned to read an f-string path: spelled
+    # `config_dir() / f"session_pid_{pid}.txt"`, it had been counted as the unresolved
+    # identifier `f` and therefore never checked, so `audit_home()` reported one unclaimed
+    # path per ACP agent on every real home that had run a chat — the live Doctor probe going
+    # coral for a file nobody had decided about.
+    #
+    # The glob is `session_pid_*` and not `session_pid_*.txt` on purpose: it has to match both
+    # the real on-disk name (`session_pid_4711.txt`) AND the static prefix the census resolves
+    # an f-string path to (`session_pid_`). A `.txt` suffix would cover the first and silently
+    # miss the second, which is the shape of gap this row exists to close.
+    "session_pid_*",
+    # 🔴 #2217 — the autonudge stop sentinel (`dashboard/handlers/autonudge.py`). Normally it
+    # lands in the session's own working directory, but when there is no cwd and no workspace
+    # root it falls back to `config_dir()`, so a home CAN accumulate `.stop-<session>` markers.
+    # A sentinel whose whole meaning is "a stop was requested for this running loop" is
+    # lifetime-scoped scratch in the same family as `locks` and `*.lock` above, and a restored
+    # one would ask a fresh machine to stop a loop that does not exist on it. The SECOND
+    # location the census surfaced only after it learned to follow a home bound to a local name
+    # (`base = config_dir()` … `base / f".stop-{key}"`) — it had been invisible to every
+    # spelling the scan knew.
+    ".stop-*",
 )
 
 

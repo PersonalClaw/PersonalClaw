@@ -306,13 +306,19 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     Internal-only (loopback + X-Internal-Secret): used by zero-token cron
     scripts so a sandboxed subprocess gets the same MCP+native tool surface
     the agent has, without importing the in-process registry. Body:
-    ``{"tool": str, "arguments": dict, "provider"?: str}``. Returns
-    ``{ok, output, error}``.
+    ``{"tool": str, "arguments": dict, "provider"?: str, "confirm_risk"?: str}``.
+    Returns ``{ok, output, error}``.
 
     "The same surface the agent has" includes the user's tool preferences: a tool disabled
     on the Tools page is refused here with ``403 tool_disabled``, exactly as the runtime
     drops it at schema assembly. Core-locked tools and the locked platform provider are
     exempt (``tool_prefs.is_disabled`` handles that), so the primitives stay reachable.
+
+    It also includes the risk tier (#506). A call whose EFFECTIVE risk resolves as
+    ``destructive`` is refused with ``403 risk_confirmation_required`` unless the body
+    names the tier in ``confirm_risk``. ``safe`` and ``caution`` are unchanged, and the
+    per-invocation downgrade keeps a read-only ``bash`` in the free tier — see the gate
+    itself for why the scope stops exactly there.
     """
     from personalclaw.tool_providers.registry import get_provider, list_providers
 
@@ -440,6 +446,62 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
     caller = request.headers.get("X-Session-Key", "") or "internal"
+
+    # The risk GATE (#506). Until this existed, `_risk` was resolved here and spent
+    # entirely on the SEL rows below — `provider.invoke` ran one line later whatever it
+    # said. A risk level that only changes what the audit RECORDS about a call, never
+    # whether the call happens, is an indicator; the taxonomy had no consumer anywhere on
+    # this path that could refuse. So the fix is not a louder warning: it is this refusal.
+    #
+    # Scoped to effective-DESTRUCTIVE on purpose, and the scope is the load-bearing part:
+    #
+    #  · EFFECTIVE, not declared — `resolve_effective_risk` downgrades a read-only
+    #    invocation, so `bash "ls"` stays free and only the call that actually mutates has
+    #    to name itself. Gating on the DECLARED tier would 403 every cron script that
+    #    reads through bash, which is a worse outage than the bug.
+    #  · destructive ONLY — the 26 caution tools include the ones cron scripts write
+    #    through (`task_create`, `knowledge_create`). Requiring an acknowledgement from
+    #    them would break working automations to no security end; caution escalates in the
+    #    UI (a modal instead of an inline step) where the cost lands on a human who is
+    #    already looking at the screen. The ladder's rungs are deliberately unequal.
+    #  · The way out is ONE field, and it must NAME the tier. A truthy `confirm_risk: true`
+    #    would be pasted in once and stop being read; requiring the resolved tier makes the
+    #    caller state what it believes it is doing, and a disagreement fails closed.
+    #    `schedule_script.ScriptContext.call_tool` takes it as a keyword for cron authors.
+    #
+    # What this buys, stated exactly: a destructive tool can no longer be executed by a
+    # DEFAULT-SHAPED request. It is not an authorization boundary — this route is already
+    # loopback + internal-secret, so every caller here is the owner or something the owner
+    # installed. It removes the silent default, and it makes the inspector's ceremony a
+    # wire requirement rather than a local boolean the UI could be bypassed by omitting.
+    if _risk == "destructive" and str(body.get("confirm_risk") or "") != "destructive":
+        try:
+            _sel().log_tool_invocation(
+                session_key=caller,
+                agent="",
+                source="tool_invoke",
+                tool_name=tool_name,
+                tool_kind=provider.name,
+                outcome="denied",
+                error="destructive risk not acknowledged",
+                metadata={"risk": _risk},
+            )
+        except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
+            pass
+        return json_error(
+            "risk_confirmation_required",
+            message=(
+                f"{tool_name!r} resolves as a DESTRUCTIVE call. Re-send with "
+                '"confirm_risk": "destructive" to run it.'
+            ),
+            status=403,
+            # The tier travels in the envelope so a client can escalate to the right
+            # ceremony instead of dead-ending on the message. The inspector reads this to
+            # ask for a typed confirmation on a tool whose DECLARED tier looked lower —
+            # which happens whenever name inference or an absent shell command floors the
+            # effective tier above the declaration.
+            error_extra={"risk": _risk, "confirm_field": "confirm_risk"},
+        )
     try:
         result = await provider.invoke(tool_name, arguments)
     except Exception as exc:

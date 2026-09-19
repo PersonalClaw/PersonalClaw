@@ -438,10 +438,11 @@ class TestEntityExtractor:
 
     def test_extract_caps_content_sent_to_llm(self):
         """A large document's full text must not flood the extraction prompt (context-window
-        blowout → empty graph). extract() sends only the leading _MAX_CHARS to the model."""
+        blowout → empty graph). extract() sends only the leading MAX_EXTRACTION_CHARS to the
+        model."""
         import asyncio
 
-        from personalclaw.knowledge.extractor import _MAX_CHARS
+        from personalclaw.knowledge.extractor import MAX_EXTRACTION_CHARS
 
         sent = {}
 
@@ -451,9 +452,9 @@ class TestEntityExtractor:
                 return '{"entities": [], "relations": [], "category": "document", "summary": ""}'
 
         # Use a sentinel char absent from the prompt template so the count is exact.
-        big = "é" * (_MAX_CHARS * 3)
+        big = "é" * (MAX_EXTRACTION_CHARS * 3)
         asyncio.get_event_loop().run_until_complete(EntityExtractor(pool=_Pool()).extract(big))
-        assert sent["prompt"].count("é") == _MAX_CHARS  # capped, not the full 3× body
+        assert sent["prompt"].count("é") == MAX_EXTRACTION_CHARS  # capped, not the full 3× body
 
     def test_parse_json_response(self):
         ext = EntityExtractor()

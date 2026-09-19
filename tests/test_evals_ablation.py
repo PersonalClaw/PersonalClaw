@@ -361,11 +361,21 @@ def test_the_guard_watches_a_components_declared_spec_files(eval_home):
     with pytest.raises(ablation.LiveStateMutatedError, match="triage.json"):
         with ablation.live_state_unchanged(refs):
             spec.write_text('{"nodes": [1]}\n', encoding="utf-8")
-    # And a use_case_settings file is watched without being declared.
-    ucs = eval_home / "use_case_settings"
-    ucs.mkdir()
+    # And a use-case-settings file is watched without being declared.
+    #
+    # 🔴 #2217 — this seeded a TOP-LEVEL `use_case_settings/`, which is where
+    # `live_state_digest` used to glob and is NOT where anything writes. The only writer is
+    # `providers.use_cases.save_use_case_settings`, which spells it
+    # `extensions/use_case_settings/{use_case}.json`, so `ucs.is_dir()` was false on every real
+    # home and this half of the guard was dead — the test passed because it built the same wrong
+    # path the code read, which is the one way a test can certify a bug. Seeded at the WRITER's
+    # path now, so it fails if the digest ever drifts off it again.
+    ucs = eval_home / "extensions" / "use_case_settings"
+    ucs.mkdir(parents=True)
     (ucs / "chat.json").write_text("{}\n", encoding="utf-8")
-    with pytest.raises(ablation.LiveStateMutatedError, match="use_case_settings/chat.json"):
+    with pytest.raises(
+        ablation.LiveStateMutatedError, match="extensions/use_case_settings/chat.json"
+    ):
         with ablation.live_state_unchanged():
             (ucs / "chat.json").write_text('{"x": 1}\n', encoding="utf-8")
 

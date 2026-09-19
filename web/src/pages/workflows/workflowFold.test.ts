@@ -244,12 +244,41 @@ describe('run-level folding', () => {
     expect(done.live).toBe(false)
   })
 
-  it('a terminal run clears attention so no dead ask card renders', () => {
+  it('a terminal run KEEPS the record, and stops being answerable', () => {
+    // Was "a terminal run clears attention so no dead ask card renders" (#565). The outcome it
+    // named still holds — nothing answerable renders on a finished run — but it is `live` /
+    // `needsInput` that say so, not the deletion of the evidence. Deleting it threw away the
+    // ESCALATION, which the engine writes at exactly the moment the run goes terminal.
     let vm = foldSnapshot(snap())
     vm = foldEvent(vm, 'workflow_attention', ev({ event_id: 'e1', ask: { prompt: 'ok?' } }))
     expect(vm.attention).toEqual({ prompt: 'ok?' })
     vm = foldEvent(vm, 'workflow_run_update', ev({ event_id: 'e2', status: 'complete' }))
-    expect(vm.attention).toBeNull()
+    expect(vm.attention).toEqual({ prompt: 'ok?' })
+    expect(vm.needsInput).toBe(false)
+    expect(vm.live).toBe(false)
+  })
+
+  it('an ESCALATION on the attention channel does not make the run "waiting on you"', () => {
+    // `_escalate` publishes `workflow_attention` (#565), and the arm forced `needs_input` for
+    // anything arriving there. But an escalation is the engine GIVING UP — the run is on its way
+    // to FAILED. The card showed "Waiting on you" on a run nobody could answer, until the
+    // terminal status landed a moment later and corrected it.
+    let vm = foldSnapshot(snap())
+    vm = foldEvent(vm, 'workflow_attention', ev({
+      event_id: 'e1', ask: { kind: 'escalation', reason: 'retries_exhausted', node_id: 'i' },
+    }))
+    expect(vm.attention, 'the record is still folded in').toMatchObject({ kind: 'escalation' })
+    expect(vm.needsInput, 'but the run is not asking for input').toBe(false)
+    expect(vm.status, 'and its status is left to the run-status events').toBe('running')
+  })
+
+  it('a real ASK on the same channel still parks the run', () => {
+    // Vacuity floor for the guard above: gate asks arrive on this channel too, and that IS what
+    // `needs_input` means.
+    let vm = foldSnapshot(snap())
+    vm = foldEvent(vm, 'workflow_attention', ev({ event_id: 'e1', ask: { kind: 'approval', prompt: 'ok?' } }))
+    expect(vm.needsInput).toBe(true)
+    expect(vm.status).toBe('needs_input')
   })
 
   it('gate_resolved clears the ask immediately', () => {

@@ -303,6 +303,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # CLI commands — operator at a terminal.
     "cli_config.py::_config_cmd::os.execvp": "operator: opens $EDITOR on config",
     "cli_doctor.py::_doctor::subprocess.run": "operator: doctor host probes",
+    # Same class as the probes in `_doctor` above, split out into its own helper so the
+    # `git repo:` row can distinguish "git says no" from "git could not answer" (#2907).
+    # Fixed argv (`git -C <dir> rev-parse --is-inside-work-tree`), no shell, check=False,
+    # read-only, bounded by a timeout. The one variable is the project dir, which the
+    # OPERATOR set (`PERSONALCLAW_PROJECT_DIR` or the saved `project_dir` file) and which
+    # `_doctor` has already resolved through `is_dir()`; no agent input reaches this argv.
+    "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": ("operator: doctor work-tree probe"),
     "cli_server.py::_stop::subprocess.check_output": "operator: stop — pid lookup",
     "cli_server.py::_is_personalclaw_process::subprocess.check_output": (
         "operator: pid identity probe"

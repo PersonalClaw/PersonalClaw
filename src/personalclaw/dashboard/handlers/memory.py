@@ -1251,10 +1251,56 @@ async def api_memory_entity_create(request: web.Request) -> web.Response:
     if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
         return web.json_response({"error": "aliases must be a list of strings"}, status=400)
     loop = asyncio.get_event_loop()
+
+    # 🔑 A DECLARATION THAT CANNOT BE HONOURED IS REFUSED, NOT ANSWERED `ok`. `upsert_entity`
+    # matches on name and never changes an existing entity's type — deliberately, so an
+    # automatic re-observation cannot retype the user's entity. The user-facing consequence was
+    # that re-declaring a mistyped entity with the right type returned `{ok: true, id}` and
+    # changed nothing: the person who had just noticed the mistake was told it was fixed. The
+    # type is the one field a re-declaration cannot repair, so this names the existing type and
+    # the recovery (delete, then declare it again) instead of pretending. Same name + same type
+    # stays idempotent — that is what makes re-seeding and alias-merging safe.
+    existing = await loop.run_in_executor(None, lambda: svc.graph_entity_by_name(name))
+    if existing and existing["entity_type"] != entity_type:
+        return web.json_response(
+            {
+                "error": (
+                    f"'{existing['name']}' already exists as a {existing['entity_type']}. "
+                    f"Declaring it again cannot change its type — delete it first to "
+                    f"re-declare it as a {entity_type}."
+                ),
+                "id": existing["id"],
+                "entity_type": existing["entity_type"],
+            },
+            status=409,
+        )
     entity_id = await loop.run_in_executor(
         None, lambda: svc.graph_add_entity(name, entity_type, aliases=aliases)
     )
     return web.json_response({"ok": True, "id": entity_id})
+
+
+async def api_memory_entity_delete(request: web.Request) -> web.Response:
+    """DELETE /api/memory/entities/{entity_id} — remove a hand-declared entity.
+
+    The store has been able to do this since the graph landed (`MemoryGraph.delete_entity`);
+    what was missing was every layer above it, so an entity was create-only and a mistyped one
+    was permanent — while the same panel proposes NEW entities to accept, growing a list that
+    could not shrink.
+
+    404 on an unknown or already-deleted id, matching the sibling memory deletes: answering
+    `200 {ok: false}` for a no-op is how a double-submit or a stale surface reports success for
+    a request that changed nothing.
+    """
+    svc = _get_service(request.app["state"])
+    if not svc.has_graph:
+        return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
+    entity_id = request.match_info.get("entity_id", "")
+    loop = asyncio.get_event_loop()
+    removed = await loop.run_in_executor(None, lambda: svc.graph_delete_entity(entity_id))
+    if not removed:
+        return web.json_response({"error": "no such entity"}, status=404)
+    return web.json_response({"ok": True})
 
 
 async def api_memory_entity_backlinks(request: web.Request) -> web.Response:

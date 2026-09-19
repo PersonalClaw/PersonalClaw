@@ -8,15 +8,29 @@ import type { LucideIcon } from 'lucide-react'
 //
 // The full set the backend persists into a permission row's `resolved`, and who
 // writes it (dashboard/):
-//   approved     — chat_handlers api_chat_session_approve ("Allow once", and the
-//                  remapped "Always for this agent" / one-shot YOLO grants);
-//                  state resolve_approval / Session.mark_permission_resolved
-//   rejected     — the same three writers, on a deny or an unknown action
+//   approved     — chat_handlers api_chat_session_approve ("Allow once" and one-shot YOLO
+//                  grants); state resolve_approval
+//   rejected     — the same writers, on a deny or an unknown action
 //   trust        — api_chat_session_approve ("Allow for this chat"), and api_chat_mode
 //                  bulk-resolving what was pending when the chat's Trust rung is set
+//   trust_agent  — api_chat_session_approve ("Always for this agent"), when the grant was
+//                  PERSISTED onto the bound agent's profile (approval_mode="auto")
+//   trust_agent_session
+//                — the same click, when the grant could NOT persist: a reserved system
+//                  agent (fixed config), a name with no profile, or an ACP-bound chat.
+//                  It trusted this chat and nothing more.
 //   trust_reads  — api_chat_session_approve, read-only-tool grant for this chat
 //   yolo         — api_chat_mode bulk-resolving pending calls under process-global YOLO
-export type ApprovalResolution = 'approved' | 'rejected' | 'trust' | 'trust_reads' | 'yolo'
+//
+// The two `trust_agent*` rows are #683 + #541. The handler used to overwrite the action with
+// `"approved"` before the record was written, so "Always for this agent" and "Allow once"
+// were indistinguishable in the transcript — the standing grant that explains every later
+// silent approval left no trace at the point it was made. `Session.mark_permission_resolved`
+// is gone from this list too: it was a duplicate writer with a `decision="approved"` default
+// and no production callers, deleted in the same change.
+export type ApprovalResolution =
+  | 'approved' | 'rejected' | 'trust' | 'trust_agent' | 'trust_agent_session'
+  | 'trust_reads' | 'yolo'
 
 export interface ApprovalOutcome {
   label: string
@@ -32,6 +46,11 @@ export interface ApprovalOutcome {
 const OUTCOMES: Record<ApprovalResolution, ApprovalOutcome> = {
   approved: { label: 'approved', icon: Check, tone: 'var(--color-ok)' },
   trust: { label: 'auto-approved (trusted for this chat)', icon: Check, tone: 'var(--color-ok)' },
+  // The two outcomes of one click, and the wording is the difference that matters to an
+  // auditor: the first keeps auto-approving chats that have not happened yet, the second
+  // expired with this session. "saved" vs "this chat only" is the whole distinction.
+  trust_agent: { label: 'auto-approved (saved for this agent)', icon: Check, tone: 'var(--color-ok)' },
+  trust_agent_session: { label: 'auto-approved (this agent, this chat only — not saved)', icon: Check, tone: 'var(--color-ok)' },
   trust_reads: { label: 'auto-approved (reads trusted for this chat)', icon: Check, tone: 'var(--color-ok)' },
   yolo: { label: 'auto-approved (YOLO — everywhere)', icon: Check, tone: 'var(--color-ok)' },
   rejected: { label: 'denied', icon: Ban, tone: 'var(--color-on-surface-low)' },

@@ -98,11 +98,15 @@ export function ExternalAccessPanel() {
     'external_access.rate_burst': data?.caps?.rate_burst,
     'external_access.rate_concurrent': data?.caps?.rate_concurrent,
     'external_access.auto_disable_after_breaches': data?.caps?.auto_disable_after_breaches,
-    'external_access.capture_retention_days': data?.caps?.capture_retention_days,
-    // The NESTED spelling, deliberately: it is the only one `_EDITABLE_CONFIG` accepts for
-    // this key, and the flat `capture_retention_days` above is the exception rather than
-    // the rule. Reading a cap under one name and PATCHing it under another is how a
-    // control ends up rendering a value it cannot save.
+    // The NESTED spelling, deliberately (#2950): it is the only one `_EDITABLE_CONFIG`
+    // accepts for this key. The legacy flat `external_access.capture_retention_days` used
+    // to be read here and PATCHed under that same flat name, which LOOKED coherent but
+    // wasn't — `load()` always prefers the nested key once it exists in config.json (a
+    // fresh install ships it), so the flat PATCH wrote the file and changed nothing
+    // effective. Reading a cap under one name and PATCHing it under another is how a
+    // control ends up rendering a value it cannot save — the same trap
+    // `capture.upstream_allowlist` below was already written to avoid.
+    'external_access.capture.retention_days': data?.caps?.capture_retention_days,
     'external_access.capture.upstream_allowlist': data?.caps?.capture_upstream_allowlist,
   }
   const patchCap = (path: string, value: never, onSaved: () => void, label?: string) =>
@@ -256,7 +260,7 @@ export function ExternalAccessPanel() {
             label="Keep captured sessions for (days)"
             hint="Applies to the capture proxy only. It records full prompts, so this is the one limit here that is about privacy rather than load."
             cfg={capsCfg}
-            field="external_access.capture_retention_days"
+            field="external_access.capture.retention_days"
             min={0}
             max={3650}
             patch={patchCap} />

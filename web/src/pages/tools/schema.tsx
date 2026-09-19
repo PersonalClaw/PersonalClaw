@@ -154,7 +154,11 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   } else if (t === 'object' || t === 'array') {
     control = <textarea id={id} data-type="caption" value={typeof value === 'string' ? value : JSON.stringify(value ?? (t === 'array' ? [] : {}), null, 2)} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={t === 'array' ? '[ … ]' : '{ … }'} className={`${base} font-mono resize-y`} />
   } else {
-    control = <input id={id} data-type="body-s" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help?.slice(0, 60) ?? schema.description?.slice(0, 60)} className={base} />
+    // `meta.help` is NOT the placeholder: it is already rendered under the control below, and
+    // using it for both printed the same sentence twice — visible the moment a form whose fields
+    // all carry `help` came through here (the workflow launch form, #327). `description` is the
+    // fallback because a JSON Schema's `description` has no other slot in this layout.
+    control = <input id={id} data-type="body-s" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help ? undefined : schema.description?.slice(0, 60)} className={base} />
   }
   // The boolean Toggle carries its own aria-label; everything else binds the
   // <label> to the control by id (htmlFor). A plain-label span id lets custom
@@ -171,6 +175,48 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
       {meta.help && <p data-type="caption" className="mt-1 text-on-surface-low">{meta.help}</p>}
     </div>
   )
+}
+
+/** The spellings a declared `boolean` accepts from a text field, and the ONE list in `web/` that
+ *  says so. The backend's `safety_flags.BOOL_TRUE_WORDS` / `BOOL_FALSE_WORDS` are the same two sets
+ *  and are the authority — a value this list rejects is sent to the API unchanged, so the door
+ *  reports it rather than the client guessing. Keep them in step if either grows a word. */
+export const BOOL_TRUE_WORDS = ['true', 'yes', 'on', '1', 'y']
+export const BOOL_FALSE_WORDS = ['false', 'no', 'off', '0', 'n']
+
+/** One declared parameter in a shape that is NOT JSON Schema — a flat `{type, required, default,
+ *  help}` record, keyed by name. A workflow definition's `inputs` block is the one in the product;
+ *  it is declared structurally here so this module keeps depending on nothing but its own types. */
+export interface DeclaredParam {
+  type?: string
+  required?: boolean
+  default?: unknown
+  help?: string
+}
+
+/** A flat declared-parameter map, as the JSON Schema this module's renderer speaks.
+ *
+ *  The adapter exists so there is ONE schema-driven renderer, not two. The workflow launch form
+ *  had its own: every declared input rendered as a free-text box whatever its type, so a `boolean`
+ *  and a `number` took arbitrary strings and posted them verbatim (#327) — while the tool inspector
+ *  and the trigger action form, both driven by `SchemaField` below, got a toggle and a spinbutton
+ *  from the same information. A second renderer is how one surface ends up years behind another;
+ *  a shape adapter is six lines and cannot drift. */
+export function declaredInputsSchema(declared: Record<string, DeclaredParam> | undefined): JsonSchema {
+  const properties: Record<string, JsonSchema> = {}
+  const required: string[] = []
+  for (const [name, raw] of Object.entries(declared ?? {})) {
+    const meta = raw ?? {}
+    // `?? undefined` rather than `||`: `false` and `0` are legitimate defaults, and a declared
+    // `null` means "no default" — which is what `seedArgs` reads an absent key as.
+    properties[name] = {
+      type: meta.type || 'string',
+      default: meta.default ?? undefined,
+      ...(meta.help ? { 'x-meta': { help: meta.help } } : {}),
+    }
+    if (meta.required) required.push(name)
+  }
+  return { type: 'object', properties, required }
 }
 
 /** Coerce form values for invoke: parse object/array JSON, drop empty optionals. */

@@ -468,6 +468,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/memory/entities` — declare an entity, then re-link the store.
 - `GET /api/memory/entities/proposals` — the accept queue (§7.1).
 - `POST /api/memory/entities/proposals` — accept or reject a proposed entity.
+- `DELETE /api/memory/entities/{entity_id}` — remove a hand-declared entity.
 - `GET /api/memory/entities/{entity_id}/backlinks` — what mentions this entity.
 - `GET /api/memory/episodic` — paginated list of episodic memories.
 - `GET /api/memory/episodic/search` — search episodic memories.

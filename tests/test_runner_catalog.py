@@ -119,13 +119,54 @@ def test_shipped_catalog_carries_the_four_runner_rows():
     showing an empty Runners section.
     """
     cat = runners.catalog()
-    assert {"claude-code", "codex", "gemini-cli", "kiro"} <= set(cat)
+    assert {"claude-code", "codex", "gemini-cli", "kiro-cli"} <= set(cat)
     names = {d.display_name for d in cat.values()}
-    assert {"Claude Code", "Codex", "Gemini CLI", "Kiro"} <= names
+    assert {"Claude Code", "Codex", "Gemini CLI", "Kiro CLI"} <= names
     for defn in cat.values():
         assert defn.runtime_id.startswith("acp:")
         assert defn.bin_names, f"{defn.id} declares no binary to look for"
         assert defn.source == "builtin"
+
+
+def test_shipped_runtime_ids_are_canonical_never_aliases():
+    """A shipped row must advertise the id a bundle REGISTERS, not an alias of it.
+
+    `AAPX-2`, measured as-a-user 2026-09-19. The kiro row shipped
+    ``runtime_id: "acp:kiro"`` while the only bundle implementing the provider registers
+    ``acp:kiro-cli``, so the id this catalog published through ``GET /api/agent-runners``
+    could not be bound at all::
+
+        ProviderResolutionError: unknown provider entry 'acp:kiro';
+          known entries: ['acp:claude-code', 'acp:codex', 'acp:kiro-cli']
+
+    Why the existing row test did not catch it: it asserts only the ``acp:`` PREFIX, which
+    ``acp:kiro`` satisfies. The prefix is a shape check; being *bindable* is the property
+    that matters, and nothing joined the catalog to any other provider registry.
+
+    ``normalize_provider`` is that join, and it is the honest one to use because it is
+    already the host's canonicalizer: its ``_PROVIDER_ALIASES`` table maps
+    ``"kiro" -> "kiro-cli"``, which is precisely why the permission layer kept working
+    while the provider registry — which has no alias table — refused. So an alias in this
+    column means "one surface compensates for this name and the binding surface does not".
+
+    Asserting canonical-form equality rather than a hardcoded id list keeps this from
+    being an enumerated rail: a NEW row that ships an alias reds without anyone
+    remembering to extend a list.
+    """
+    from personalclaw.acp.permission_authority import normalize_provider
+
+    offenders = {}
+    for defn in runners.catalog().values():
+        assert defn.runtime_id.startswith("acp:"), defn.runtime_id
+        advertised = defn.runtime_id[len("acp:") :]
+        canonical = normalize_provider(defn.runtime_id)
+        if canonical != advertised:
+            offenders[defn.id] = (defn.runtime_id, f"acp:{canonical}")
+    assert not offenders, (
+        "shipped runner rows advertise an ALIAS instead of the canonical provider id "
+        f"a bundle registers — {offenders!r}. Publish the canonical id; do not add an "
+        "alias to the provider registry to make the wrong one resolve."
+    )
 
 
 def test_byo_definition_adds_a_row_and_can_replace_a_shipped_one(tmp_path):

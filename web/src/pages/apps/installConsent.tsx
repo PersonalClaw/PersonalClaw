@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import { trustTierLabel } from '../../lib/trustTier'
-import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, Copy, Check } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, LayoutDashboard, Copy, Check } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -164,9 +164,36 @@ export function consentPermissions(
   return entry.permissions ?? {}
 }
 
-export function ConsentModal({ label, result, busy, permissions, crons, onConfirm, onClose }: {
+/** What browser code this app ships (#492) — the consent fact the permission block
+ *  cannot state, because an app's UI bundle is imported into THIS page and the `api`
+ *  allowlist bounds its backend and its SDK client, not its page code
+ *  (`docs/security/limitations.md` §4).
+ *
+ *  🔑 ONE reading for both wires. The pre-install `AppCatalogEntry` and the installed
+ *  `AppSummary` carry the same two field names for it, so this accepts either and the
+ *  Store card, the install modal, onboarding and the installed-app panel cannot answer
+ *  the question differently — the mistake `consentPermissions` exists to prevent, one
+ *  field along. The two facts stay SEPARATE because a components module is the broader
+ *  one: the shell loads it for an enabled app with no page visit at all.
+ *
+ *  `undefined` in, `undefined` out — and the row then renders nothing. A registry
+ *  POINTER ships `hasUI: false` for the same reason it ships `permissions: {}` (its
+ *  manifest is not read until install), and "no browser code" is a CLAIM, not a
+ *  default, so it must not be made about an app nobody has read. Nothing needs to
+ *  re-check `consentKnown` here: this rides inside `PermissionList`, which every caller
+ *  already gates on the same flag through {@link consentPermissions}. */
+export function consentHostUi(
+  a: Pick<AppCatalogEntry, 'hasUI' | 'uiComponents'> | undefined,
+): { page: boolean; components: boolean } | undefined {
+  if (!a) return undefined
+  return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
+}
+
+export function ConsentModal({ label, result, busy, permissions, hostUi, crons, onConfirm, onClose }: {
   label: string; result: GuardedResult; busy: boolean
   permissions: AppSummary['permissions'] | undefined
+  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
+  hostUi: { page: boolean; components: boolean } | undefined
   crons: AppCronSummary[] | undefined
   onConfirm: () => void; onClose: () => void
 }) {
@@ -215,7 +242,7 @@ export function ConsentModal({ label, result, busy, permissions, crons, onConfir
             store on a schedule". Rendered on a refusal too: a user is owed the reason the
             platform said no, and the grants are why the findings matter. */}
         {permissions
-          ? <PermissionList perms={permissions} />
+          ? <PermissionList perms={permissions} hostUi={hostUi} />
           : (
             <div data-type="body-s" className="text-on-surface-low">
               PersonalClaw could not read this app's declared permissions before installing —
@@ -303,7 +330,48 @@ function networkClaim(network: boolean | undefined): string {
   return network ? 'declared' : 'declared as denied'
 }
 
-export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
+// #492. The bullets and the network row are both about the app's BACKEND reach. An app
+// that ships a UI also gets a second kind of authority the manifest has no field for: its
+// bundle is fetched and `import()`-ed into this very page (`appSdk.loadContributedModule`
+// — no iframe, sharing the host React instance), so its page code holds the host DOM, the
+// owner's session cookie and authenticated same-origin `/api/*` reach. The gateway cannot
+// scope that: `app_permission_middleware` acts on requests carrying an app identity, and a
+// bare `fetch` from app UI carries none, so it arrives as the owner.
+//
+// That makes the consent screen's silence the actual defect (#492): it showed declared
+// permissions, and the thing it showed was not the thing that bounds the UI. Same fix as
+// EI-12 D2 made for `network` — its own advisory row, stated either way, because absence
+// would otherwise read as "the platform confines it". Rendered ONLY when the caller
+// supplies the fact: an omitted `hostUi` leaves the row out rather than asserting "no
+// browser code" about an app nobody has read. `consentHostUiRendered.test.ts` is the rail
+// that keeps every production call site supplying it.
+function HostPageRow({ hostUi }: { hostUi: { page: boolean; components: boolean } }) {
+  const runs = hostUi.page || hostUi.components
+  return (
+    <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+      <LayoutDashboard size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="text-on-surface-low">
+        <span className="text-on-surface">Runs in this dashboard page: {runs ? 'yes' : 'no'}</span>
+        {runs ? (
+          <>
+            {' — advisory only. PersonalClaw loads this app\'s interface into the dashboard itself, '}
+            so its browser code has the same page, the same session and the same /api access you
+            do. The permissions above bound its backend and its SDK calls, not its page code.
+            {hostUi.components && ' Its component module loads as soon as the app is enabled, without you opening its page.'}
+          </>
+        ) : (
+          ' — this app ships no browser code, so nothing of it runs in the dashboard.'
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function PermissionList({ perms, hostUi }: {
+  perms: AppSummary['permissions']
+  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
+  hostUi?: { page: boolean; components: boolean }
+}) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
   if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
@@ -395,6 +463,7 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
           code can reach the network either way. The declaration is disclosure, not containment.
         </div>
       </div>
+      {hostUi && <HostPageRow hostUi={hostUi} />}
     </div>
   )
 }

@@ -29,11 +29,21 @@ function paintSettled(resolved: string): { icon: string | null; text: string } {
   }
 }
 
-// Every value the backend's four writers can persist, and the treatment it must get.
+// Every value the backend's writers can persist, and the treatment it must get.
 // `approved: false` here would mean the transcript claims the tool was blocked.
+//
+// `trust_agent` / `trust_agent_session` are #683's two additions. The handler used to remap
+// "Always for this agent" to `"approved"` before writing the row, so a STANDING per-agent
+// grant and a one-off Allow left byte-identical records — and the grant that explains every
+// later silent approval was invisible at the moment it was made. They are TWO values, not
+// one, because the grant has two outcomes (#541): persisted onto an agent profile, or
+// degraded to session scope because the agent is reserved / has no profile / is ACP-bound.
+// Collapsing them would re-lose exactly the fact #541 is about.
 const CASES: { resolved: ApprovalResolution; approved: boolean; says: string }[] = [
   { resolved: 'approved', approved: true, says: 'approved' },
   { resolved: 'trust', approved: true, says: 'this chat' },
+  { resolved: 'trust_agent', approved: true, says: 'this agent' },
+  { resolved: 'trust_agent_session', approved: true, says: 'this chat only' },
   { resolved: 'trust_reads', approved: true, says: 'reads' },
   { resolved: 'yolo', approved: true, says: 'YOLO' },
   { resolved: 'rejected', approved: false, says: 'denied' },
@@ -53,12 +63,26 @@ describe('approvalOutcome mapping', () => {
     // The whole reason these are not all just "approved": a transcript must show that a
     // call was auto-approved by a standing grant rather than individually confirmed.
     expect(approvalOutcome('approved').label).toBe('approved')
-    for (const r of ['trust', 'trust_reads', 'yolo'] as const) {
+    for (const r of ['trust', 'trust_agent', 'trust_agent_session', 'trust_reads', 'yolo'] as const) {
       expect(approvalOutcome(r).label, r).toContain('auto-approved')
     }
     // ...and each scope is distinguishable from the others, not one shared blurb.
-    const labels = (['approved', 'trust', 'trust_reads', 'yolo'] as const).map((r) => approvalOutcome(r).label)
+    const labels = (['approved', 'trust', 'trust_agent', 'trust_agent_session', 'trust_reads', 'yolo'] as const)
+      .map((r) => approvalOutcome(r).label)
     expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  it('#683: a standing per-agent grant does not read as an individual confirmation', () => {
+    // The defect, stated at the value the handler writes. An auditor asking "why did this run
+    // without asking me?" saw a row identical to one they had confirmed by hand.
+    expect(approvalOutcome('trust_agent').label).not.toBe(approvalOutcome('approved').label)
+    // And the two grant OUTCOMES are told apart, because only one of them reaches future chats.
+    expect(approvalOutcome('trust_agent').label).not.toBe(approvalOutcome('trust_agent_session').label)
+    expect(approvalOutcome('trust_agent_session').label).toMatch(/this chat only/i)
+    // Both are explicitly mapped rather than landing on the unknown-value fallback, which
+    // would render them as a raw `resolved: trust_agent` string.
+    expect(approvalOutcome('trust_agent').label).not.toMatch(/^resolved:/)
+    expect(approvalOutcome('trust_agent_session').label).not.toMatch(/^resolved:/)
   })
 
   it('maps a denial to denied', () => {

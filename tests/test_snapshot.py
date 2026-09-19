@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.durability import inventory as inv
 from personalclaw.snapshot import restore_main, snapshot_main
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -931,6 +932,65 @@ class TestLiveDatabaseSafety:
             conn.close()
 
 
+def test_snapshot_carries_EVERY_declared_store_not_a_list_of_the_ones_we_remembered(
+    tmp_path, monkeypatch
+):
+    """#2217's coverage half, asserted as PARITY over the manifest rather than as a list.
+
+    `TestInventoryGapClosure` below seeds EIGHT named stores, and it has always passed — it
+    could not have failed for a ninth, which is exactly how ~20 declared-nowhere stores went
+    unnoticed under a green suite. The declaration ratchet
+    (`test_durability_inventory_census.py`) proves every home location is DECLARED; this proves
+    the other direction, that a declaration actually produces bytes in the archive. Both
+    together are the property the issue is about: "declared" and "backed up" are the same set.
+
+    Derived from `backup_entries()`, so the next entry someone adds is covered the moment it is
+    declared — no row to remember to add here.
+
+    Skips exactly one class, for a mechanical reason rather than convenience: `sqlite`, because
+    seeding a text file at a `.db` path would be handed to the sqlite backup API, which is a
+    different test's subject (`TestLiveDatabaseSafety`).
+
+    🔴 `kind=tree` does NOT imply a directory on disk. `sel_hmac.key`, `telemetry_salt`,
+    `.local_secret`, `.env` and `.env.pre-keychain` are all declared `tree` and are single files
+    — the kind says "opaque bytes, copy them", not "this is a directory". So the seed shape is
+    decided by what is actually there, and the first version of this test tripped over it
+    (`FileExistsError` on `sel_hmac.key`, which the fake home already writes as a file).
+    """
+    home = tmp_path / "src"
+    _setup_fake_personalclaw(home)
+
+    seeded: dict[str, str] = {}
+    for entry in inv.backup_entries():
+        if entry.kind == inv.KIND_SQLITE:
+            continue
+        dir_kind = entry.kind in (inv.KIND_JSON_ENTITY_DIR, inv.KIND_TREE)
+        if dir_kind and not (home / entry.path).is_file():
+            rel = f"{entry.path}/parity-probe.json"
+        else:  # a single document — the entry's path IS the file
+            rel = entry.path
+        seeded[rel] = f'{{"id": "parity", "entry": "{entry.id}"}}\n'
+
+    for rel, body in seeded.items():
+        path = home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    tarball = _make_snapshot(home, tmp_path / "out")
+    extract = tmp_path / "x"
+    with tarfile.open(str(tarball)) as tar:
+        tar.extractall(extract)
+    snap = next(extract.glob("personalclaw-snapshot-*"))
+
+    assert len(seeded) >= 60, f"only {len(seeded)} stores seeded — the projection went empty"
+    missing = sorted(rel for rel in seeded if not (snap / rel).is_file())
+    assert not missing, (
+        "these stores are DECLARED in the durability inventory but `personalclaw snapshot` "
+        f"produced no bytes for them, so a restore comes back without them: {missing}"
+    )
+
+
 class TestInventoryGapClosure:
     """The nine stores that used to be in NEITHER the snapshot nor the export."""
 
@@ -1586,6 +1646,12 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
         # directory-per-tile store would be the wrong shape, and the tree copy already gives
         # entity-level union.
         "dashboard_tiles",
+        # #2217's observe-mode channel buffers. A DIRECTORY of `<channel_id>.jsonl` on disk
+        # (`channel_history.py`), so it joins `crashes`/`sessions`/`dashboard_tiles` on the
+        # generic per-file tree pass rather than wanting a line-dedup executor. The per-channel
+        # file is the merge unit, and the buffer is bounded by both an entry cap and a TTL, so a
+        # channel restored whole is the right granularity.
+        "history",
     }, "a new NON-DERIVED append_dedup entry appeared — give it an executor, not copy-if-missing"
 
     # Named explicitly rather than derived from the path: `cron-history`'s executor is

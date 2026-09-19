@@ -139,7 +139,19 @@ def parse_cls_meta(cls_val: str) -> dict | None:
 
 
 def _mark_permission_resolved(messages: list[dict], request_id: str, decision: str) -> None:
-    """Persist a resolved decision into a permission message's cls JSON."""
+    """Persist a resolved decision into a permission message's cls JSON.
+
+    The ONE writer of ``cls["resolved"]``. A near-identical ``Session.mark_permission_resolved``
+    method sat beside it until #683 — same role filter, same ``request_id`` match, same
+    assignment — with two differences that both cut the wrong way: it defaulted
+    ``decision="approved"``, so a caller that forgot the argument silently recorded consent
+    on a field that is the permanent record of a security decision, and it walked
+    ``self.messages`` FORWARD where this walks ``reversed``, so on a session holding two
+    permission rows for one ``request_id`` the two names resolved different rows. It had
+    zero production callers (only tests, which is what made it read as live) and is deleted
+    rather than kept as a wrapper: ``decision`` is positional and required here precisely so
+    that no writer of this field can decline to name it.
+    """
     for msg in reversed(messages):
         if msg.get("role") == "permission":
             try:
@@ -560,19 +572,6 @@ class _ChatSession:
         self._pending.clear()
         self.event.clear()
         return out
-
-    def mark_permission_resolved(self, approval_id: str, decision: str = "approved") -> None:
-        """Update stored permission message cls JSON with resolved flag."""
-        for m in self.messages:
-            if m.get("role") == "permission":
-                try:
-                    cls_data = json.loads(m.get("cls", ""))
-                    if isinstance(cls_data, dict) and cls_data.get("request_id") == approval_id:
-                        cls_data["resolved"] = decision
-                        m["cls"] = json.dumps(cls_data)
-                        return
-                except (json.JSONDecodeError, TypeError):
-                    pass
 
     # ── Queue helpers (dict-based queue items) ──
 

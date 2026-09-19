@@ -20,6 +20,8 @@ import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
 import { revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
+import { readAttention } from './attentionMeta'
+import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
 import { WorkspacePanel } from './WorkspacePanel'
@@ -222,6 +224,15 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
   // for a preference nobody links to.
   const [view, setView] = useState<'list' | 'graph'>('list')
 
+  // What the engine knew when it gave up (#565). `run.attention` is polymorphic — a gate ask
+  // while the run waits, an escalation once it gives up — so it is read through the one
+  // discriminator rather than by guessing a field name here. Not status-gated: an escalation
+  // makes the run terminal today, and gating on that would hide the record if it ever did not.
+  const escalation = useMemo(() => {
+    const read = readAttention(run?.attention)
+    return read?.kind === 'escalation' ? read : null
+  }, [run])
+
   // The graph's Approve/Deny reads the continuations this view ALREADY fetches on every refetch —
   // no second request. A `waiting` node is only ANSWERABLE when a live resume token exists for it:
   // a `wait` node is parked on the clock, and offering approval on one would ask the user to answer
@@ -379,6 +390,12 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
             {run.error && (
               <p data-type="body-s" className="text-danger">{run.error}</p>
             )}
+
+            {/* Beneath the error line, because it explains the same failure in more depth — and
+                on a run that exhausted its retries the line above is EMPTY, which is the whole
+                defect: `_finish(status)` takes no `error` on that path, so the escalation was
+                the only account and nothing read it. */}
+            {escalation && <EscalationPanel read={escalation} runError={run.error ?? ''} />}
 
             <div data-type="caption" className="flex flex-wrap items-center gap-l text-on-surface-low">
               <span>run <span className="font-mono">{run.run_id}</span></span>

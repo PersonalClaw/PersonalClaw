@@ -830,9 +830,14 @@ def test_retention_is_clamped(_isolated_home):
 def test_both_retention_spellings_resolve_to_one_value(_isolated_home):
     """The legacy flat key and the nested field can never disagree.
 
-    The shipped ExternalAccessPanel control writes `capture_retention_days`; the pruner
-    reads `capture.retention_days`. If those resolved independently the shipped control
-    would be inert against the pruner — a wired-but-wrong control.
+    Before #2950, the shipped ExternalAccessPanel control wrote the flat
+    `capture_retention_days`; the pruner reads the nested `capture.retention_days`. Since
+    those resolved independently — `load()` preferred the nested key whenever it was
+    present, and a fresh config.json always ships it — the shipped control was inert
+    against the pruner: a PATCH to the flat key wrote the file and changed nothing `load()`
+    ever read back. The PATCH allowlist now exposes only the nested spelling; the flat field
+    stays on the dataclass as a read-only mirror for any external reader still using it,
+    which is what this test pins.
     """
     from personalclaw.config.loader import AppConfig
 

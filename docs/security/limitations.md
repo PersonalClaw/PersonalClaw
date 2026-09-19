@@ -117,11 +117,65 @@ scan → consent → install, with `dangerous` terminal) is the control that vet
 What an app cannot do is silently change the version of a library the gateway
 depends on.
 
+## 4. An app's frontend bundle runs in the dashboard's own page
+
+An app with a UI ships an ESM bundle. The host **fetches it, rewrites its bare
+import specifiers to host-provided blob shims, and `import()`s the result into the
+dashboard page** (`web/src/app/appSdk.tsx::loadContributedModule`), then mounts its
+exported `mount` function in the host React tree
+(`web/src/pages/apps/ContributedPage.tsx`, via `createRoot`). There is no iframe on
+that path — `grep -c iframe` over `web/src/pages/apps/*.tsx` is `0` in every file.
+The architecture doc states the posture plainly:
+
+> **The gate is a declaration, not a sandbox.** … a contributed page already runs in
+> the host React tree (`ContributedPage` mounts it with `createRoot`, no iframe) with
+> the host `window`, so an undeclared app is not *prevented* from reaching the same
+> components. What the block buys is legibility.
+> — [`docs/architecture/app-platform.md`](../architecture/app-platform.md)
+
+So an installed app's UI code has the dashboard's `document`, its `localStorage`, the
+owner's session cookie, and authenticated same-origin reach to every `/api/*` route —
+the same authority the dashboard itself has. Sharing the host's single React instance
+is what the rewrite exists to do, and it is what makes this same-origin by
+construction.
+
+**What is enforced:** every call an app makes through the SDK client
+(`createAppApi` / `useAppApi`) carries a short-lived app-scoped token, and
+`app_permission_middleware` refuses a path the manifest did not declare — 403 + a
+Security Event Log row, before the handler runs. An app's **backend** holds no other
+credential, so for it that allowlist (and the closed `OWNER_ONLY_API_PATHS` registry
+in §2) is a real boundary.
+
+**What is not enforced:** the bundle is under no obligation to use that client. A bare
+`fetch('/api/…')` from app UI code carries the owner's cookie and *no* app identity, so
+`app_permission_middleware` — which acts only on requests that carry one — passes it as
+an owner request. That reaches the owner-only surfaces too: the terminal, the credential
+store, the audit log. The manifest's `api` allowlist therefore bounds the app's backend
+and its SDK calls, **not** its page code. `ui.components` (the `generative-component`
+capability) is loaded by the shell for every *enabled* declaring app, so that module runs
+without the user ever opening the app's page.
+
+This is not closable from the server side: a same-origin request from an app's bundle is
+indistinguishable from the dashboard's own. It needs a distinct **origin** for app UI. A
+`sandbox` attribute alone cannot deliver it while the bundle shares the host's React
+instance, and for the same reason `ChatEmbed`'s frame
+(`allow-scripts allow-same-origin`) is not an isolation boundary either — it is a
+separate document, not a separate origin.
+
+**What this means for you:** an installed app's UI is host code, so treat installing a
+UI-bearing app the way you would treat running any program as yourself — the
+supply-chain gate (quarantine → scan → consent → install, with `dangerous` terminal) is
+the control that vets it. Install consent says so at the moment you decide: an app that
+ships a UI carries an advisory row naming the host-page reach, beside the permissions
+the gateway does enforce. An app that ships no UI runs no code in your browser at all,
+and the same row says that too.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
 documentation is recorded as a candidate for the security-hardening track — never
 patched inline in a docs change. Every item above has a named future direction
 (extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
-#2; out-of-process providers for the residual half of #3). This page will shrink as
+#2; out-of-process providers for the residual half of #3; a distinct origin for app
+UI, with the SDK crossing it as a message channel, for #4). This page will shrink as
 those land.

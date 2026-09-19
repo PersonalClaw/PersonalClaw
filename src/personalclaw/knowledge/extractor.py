@@ -25,7 +25,11 @@ EXTRACTION_TIMEOUT = 180.0
 # the caller turns into an empty graph) or running needlessly slow/costly. Entities live
 # mostly in the leading sections (title/abstract/key content), so the head is what matters.
 # Matches InsightsExtractor's 12000-char cap so both enrichment LLM calls see the same slice.
-_MAX_CHARS = 12000
+#
+# Public because it is the model's EVIDENCE WINDOW, not merely a prompt-size detail: the
+# pipeline writer grounds an extracted entity's aliases against the same slice, so a surface the
+# model was never shown cannot be accepted as one the document uses.
+MAX_EXTRACTION_CHARS = 12000
 
 
 def _empty_result() -> dict:
@@ -53,7 +57,7 @@ class EntityExtractor:
         if not self._pool or not chunk.strip():
             return _empty_result()
         try:
-            prompt = _extraction_prompt(chunk[:_MAX_CHARS])
+            prompt = _extraction_prompt(chunk[:MAX_EXTRACTION_CHARS])
             response = await self._pool.send(prompt, timeout=EXTRACTION_TIMEOUT)
             return self._parse_response(response)
         except WorkerError:
@@ -66,7 +70,7 @@ class EntityExtractor:
         if not self._pool or not chunks:
             return [_empty_result() for _ in chunks]
         non_empty_indices = [i for i, c in enumerate(chunks) if c.strip()]
-        prompts = [_extraction_prompt(chunks[i][:_MAX_CHARS]) for i in non_empty_indices]
+        prompts = [_extraction_prompt(chunks[i][:MAX_EXTRACTION_CHARS]) for i in non_empty_indices]
         try:
             responses = await self._pool.send_batch(prompts, timeout=EXTRACTION_TIMEOUT)
             results = [_empty_result() for _ in chunks]

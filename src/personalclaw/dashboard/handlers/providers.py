@@ -21,6 +21,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import RequestValidationError, require_string
 
 logger = logging.getLogger(__name__)
 
@@ -823,13 +824,16 @@ async def api_provider_create(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    name = body.get("name", "").strip()
-    ptype = body.get("type", "").strip()
+    # Shared validator, this module's envelope — see `lexicon/handlers.py`. This module answers
+    # flat in thirty-one places (including this door's own four) and uses `json_error` in none,
+    # so a nested refusal for `name` alone would be the odd one out inside one endpoint.
+    try:
+        name = require_string(body, "name")
+        ptype = require_string(body, "type")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     model = body.get("model", "")
     options = body.get("options", {})
-
-    if not name or not ptype:
-        return web.json_response({"error": "name and type are required"}, status=400)
 
     # A provider type is valid iff SOME installed model app registered it — either
     # an inference factory (register_type) or a discovery catalog (register_catalog).

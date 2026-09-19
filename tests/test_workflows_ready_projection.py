@@ -440,12 +440,13 @@ class TestReadyTasksIsRanked:
         yield
 
     def _run(self, monkeypatch, tasks):
+        from fakes import FakeTaskProvider, only_task_provider
+
         from personalclaw.tasks import registry
 
-        async def _list(**kwargs):
-            return list(tasks), len(tasks)
-
-        monkeypatch.setattr(registry, "list_all_tasks", _list)
+        # A registered provider rather than a stubbed aggregator, so the projection under test
+        # runs over the real collection path (paging, filters, sort) — see tests/fakes.py.
+        only_task_provider(monkeypatch, FakeTaskProvider(list(tasks)))
         monkeypatch.setattr("personalclaw.identity.current_username", lambda: "")
         return [t.id for t in asyncio.run(registry.ready_tasks())]
 

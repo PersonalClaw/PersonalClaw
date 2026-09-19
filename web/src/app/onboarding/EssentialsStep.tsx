@@ -9,7 +9,7 @@ import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
-import { ConsentModal, PermissionList, CronConsentList, consentPermissions } from '../../pages/apps/installConsent'
+import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
 
@@ -279,7 +279,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
       {guarded.blocked && pendingRef.current && (
         <ConsentModal label={pendingRef.current.displayName || pendingRef.current.name}
           result={guarded.blocked} busy={guarded.busy}
-          permissions={consentPermissions(pendingRef.current)} crons={pendingRef.current.crons}
+          permissions={consentPermissions(pendingRef.current)}
+          hostUi={consentHostUi(pendingRef.current)} crons={pendingRef.current.crons}
           onConfirm={confirmInstall} onClose={() => guarded.reset()} />
       )}
     </div>
@@ -315,8 +316,22 @@ function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
 
       {open && !installed && (
         <div className="mt-3 flex flex-col gap-m border-t border-outline-variant pt-3">
-          {entry.permissions && Object.keys(entry.permissions).length > 0 && (
-            <PermissionList perms={entry.permissions} />
+          {/* Keyed on consentKnown, exactly as the Store panel is (issue 614): this card
+           *  still carried the hide-when-empty gate that issue removed there, so an app
+           *  declaring nothing rendered no disclosure at all — and issue 492's host-page
+           *  row lives inside `PermissionList`, which is precisely the app that most
+           *  needs it (declares no permission, still runs in this page once its UI
+           *  mounts). The docstring above promises the Store's components verbatim; this
+           *  is what keeps that true. (Continuation lines lead with `*`: `tokenLint`
+           *  skips only lines that start with a comment marker, so an unmarked JSX
+           *  comment line is linted as code — and `#492` parses as a 3-digit hex.) */}
+          {entry.consentKnown ? (
+            <PermissionList perms={entry.permissions ?? {}} hostUi={consentHostUi(entry)} />
+          ) : (
+            <div data-type="body-s" className="text-on-surface-low">
+              Permissions: not known yet — this is a registry listing, and its manifest is
+              read at install. The consent gate runs then, before anything is granted.
+            </div>
           )}
           {(entry.crons ?? []).length > 0 && <CronConsentList crons={entry.crons!} />}
           <div className="flex items-start gap-2 text-on-surface-low" data-type="body-s">

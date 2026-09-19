@@ -446,6 +446,41 @@ def default_agent_name(cfg: Any) -> str:
     return name or DEFAULT_NATIVE_AGENT_NAME
 
 
+def persistable_grant_target(session_agent: str, cfg: Any) -> str:
+    """The agent a standing "Always for this agent" grant would persist to, or ``""``.
+
+    ONE owner for a question that has to be answered in three places and agree in all
+    three (#541): the card's promise at prompt time, the profile write at decision time,
+    and the transcript row that records which of the two happened. It used to be answered
+    only by the write path — inline, in an ``if`` whose ``else`` branch was a
+    ``logger.info`` — so the card promised *"in this chat and future ones"* for a grant
+    that expired with the session, and nothing on the wire could tell the difference.
+
+    ``""`` (not ``None``) for "nothing to persist to", because every caller renders or
+    reports it and an empty name is the falsy form they already handle.
+
+    Three inputs, two of which look like the same case and are not:
+
+    * An **empty** ``session_agent`` means the implicit default agent, which IS the agent
+      running the chat — so the grant persists to ``cfg.default_agent``'s profile rather
+      than nowhere.
+    * A **reserved** agent (``is_reserved_agent``) keeps its fixed config by design, so a
+      grant on one is session-scope only. Not a bug to fix by writing anyway: the
+      reserved-config contract is deliberate, which is why the *card* is what changes.
+    * A name with **no profile** in ``cfg.agents`` (an ACP-bound chat resolves here, since
+      ACP sets ``acp_provider``/``acp_provider_agent`` and never ``session.agent``) has no
+      editable profile to write, so likewise session-scope only.
+    """
+    try:
+        agents = getattr(cfg, "agents", {}) or {}
+        name = (session_agent or "").strip() or (getattr(cfg, "default_agent", "") or "")
+    except Exception:  # noqa: BLE001 — a malformed config degrades to "cannot persist"
+        return ""
+    if not name or is_reserved_agent(name) or name not in agents:
+        return ""
+    return name
+
+
 def normalize_agent_name(agent: str | None) -> str:
     """Canonicalize an agent identifier to a stable scope key.
 

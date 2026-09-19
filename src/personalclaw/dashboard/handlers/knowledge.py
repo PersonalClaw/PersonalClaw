@@ -26,7 +26,12 @@ from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbn
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
-from personalclaw.request_validation import json_object_body, require_string, string_field
+from personalclaw.request_validation import (
+    RequestValidationError,
+    json_object_body,
+    require_string,
+    string_field,
+)
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -3266,11 +3271,16 @@ async def create_watched_source(request: web.Request) -> web.Response:
     """
     from personalclaw.knowledge_providers.base import ENRICHMENTS
 
-    body = await request.json()
-    name = str(body.get("name") or "").strip()
-    provider_name = str(body.get("provider") or "").strip()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
+    # Shared validator, this door's envelope. This module answers flat in ninety-nine places
+    # against three `json_error`s, and this handler's own eight refusals are all flat — so a
+    # nested answer for `name` would mean one endpoint replying in two shapes depending on which
+    # field the caller got wrong. The rules are still the shared ones; only the wrapper is local.
+    try:
+        body = await json_object_body(request)
+        name = require_string(body, "name")
+        provider_name = string_field(body, "provider")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     provider = next((p for p in _source_providers() if p.name == provider_name), None)
     if provider is None:
         known = ", ".join(sorted(p.name for p in _source_providers())) or "none registered"
@@ -3301,7 +3311,18 @@ async def create_watched_source(request: web.Request) -> web.Response:
             },
             status=400,
         )
-    spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
+    # Bound to a local before the isinstance check: called twice, the narrowing applies to two
+    # separate reads and the value handed on stays unnarrowed (the typed body reader is what makes
+    # that visible — `request.json()` returned a bare `Any`, which hid it).
+    raw_spec = body.get("spec")
+    spec = raw_spec if isinstance(raw_spec, dict) else {}
+    raw_budget = body.get("budget")
+    # Keeps the original fallback semantics — an absent OR falsy interval takes the provider's —
+    # while narrowing the optional away, which the typed body reader now requires.
+    raw_interval = body.get("poll_interval_secs")
+    poll_interval = (
+        int(raw_interval) if raw_interval else int(getattr(provider, "poll_interval_seconds", 3600))
+    )
     err = _validated_spec(provider, spec)
     if err:
         return web.json_response({"error": err}, status=400)
@@ -3313,10 +3334,8 @@ async def create_watched_source(request: web.Request) -> web.Response:
         kind=str(body.get("kind") or descriptor["kind"]),
         spec=spec,
         enrichment=enrichment,
-        poll_interval_secs=int(
-            body.get("poll_interval_secs") or getattr(provider, "poll_interval_seconds", 3600)
-        ),
-        budget=body.get("budget") if isinstance(body.get("budget"), dict) else {},
+        poll_interval_secs=poll_interval,
+        budget=raw_budget if isinstance(raw_budget, dict) else {},
         item_type=item_type,
     )
     _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
@@ -3344,14 +3363,20 @@ async def update_watched_source(request: web.Request) -> web.Response:
     current = store.get_source(source_id)
     if current is None:
         return web.json_response({"error": "not found"}, status=404)
-    body = await request.json()
+    # Shared validator, this door's envelope — as in `create_watched_source` above. The update
+    # twin re-asks exactly what the create door asks, which is the asymmetry that let a value the
+    # POST refused persist through the PATCH (#2992/#456).
+    try:
+        body = await json_object_body(request)
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
 
     fields: dict = {}
     if "name" in body:
-        name = str(body.get("name") or "").strip()
-        if not name:
-            return web.json_response({"error": "name cannot be empty"}, status=400)
-        fields["name"] = name
+        try:
+            fields["name"] = require_string(body, "name")
+        except RequestValidationError as exc:
+            return web.json_response({"error": exc.message}, status=exc.status)
     if "enabled" in body:
         fields["enabled"] = bool(body["enabled"])
     if "enrichment" in body:

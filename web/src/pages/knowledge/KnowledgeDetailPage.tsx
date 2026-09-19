@@ -346,6 +346,18 @@ export function HighlightsSection({ annotations, onRemove }: {
   )
 }
 
+/** An entity chip's tooltip: its type, plus the other surfaces the document used for it.
+ *
+ *  A pre-pass link fires on an ALIAS — a document that only ever writes "SPRW" still gets a
+ *  "Sparrow" chip, and without the aliases the chip is the one place that looks wrong. Wording
+ *  and shape mirror the memory studio's entity list (`MemoryPanel`), so the same fact reads the
+ *  same way in both surfaces. */
+export function entityChipTitle(e: { entity_type?: string; aliases?: string[] }): string | undefined {
+  const also = (e.aliases ?? []).filter((a) => a.trim())
+  const parts = [e.entity_type, also.length ? `also ${also.join(', ')}` : ''].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
+}
+
 /** The entities extracted from the item, as chips. */
 export function EntitiesSection({ entities }: { entities: NonNullable<KnowledgeItem['entities']> }) {
   if (entities.length === 0) return null
@@ -353,7 +365,7 @@ export function EntitiesSection({ entities }: { entities: NonNullable<KnowledgeI
     <Section label={`Entities · ${entities.length}`} icon={Network}>
       <div className="flex flex-wrap gap-1.5">
         {entities.slice(0, 60).map((e) => (
-          <span key={e.id} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
+          <span key={e.id} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var" title={entityChipTitle(e)}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
         ))}
         <MoreRow total={entities.length} shown={60} className="px-1" />
       </div>

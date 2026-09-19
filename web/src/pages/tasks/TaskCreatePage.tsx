@@ -4,9 +4,14 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
-import { api, type TaskItem } from '../../lib/api'
+import { api, type TaskCollection, type TaskItem } from '../../lib/api'
+import { PartialNotice } from '../../ui/PartialNotice'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm'
+
+/** A failed read is empty AND complete: the picker offers nothing, and must not claim it is
+ *  hiding candidates it never heard about. */
+const EMPTY_TASKS: TaskCollection = { tasks: [], total: 0, complete: true, owner: '' }
 
 /** Dedicated full-page create flow (not the sidebar, per the directive). The
  *  same TaskForm the edit panel uses, laid out at content width with a sticky
@@ -15,7 +20,11 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
   // A cheap cached snapshot for the dependency picker — NOT the list page's 'tasks'
   // key (that's persist:false for live status); a separate persisted key is fine here.
-  const { data: allTasks = [] } = useQuery<TaskItem[]>('tasks-all', () => api.tasks().then((d) => d.tasks).catch(() => []), { persist: true })
+  // `allTasks`, not `tasks()`: the picker's whole job is to offer EVERY candidate, and the
+  // unlimited call took the server's default 50 — so past that you could not select an
+  // existing task as a prerequisite at all, with nothing saying the list was partial (#485).
+  const { data: collection } = useQuery('tasks-all', () => api.allTasks().catch(() => EMPTY_TASKS), { persist: true })
+  const allTasks = collection?.tasks ?? []
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
@@ -43,6 +52,9 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          <PartialNotice className="mb-l" complete={collection?.complete ?? true} shown={allTasks.length}
+            total={collection?.total ?? 0} what="tasks"
+            detail="a prerequisite outside this window cannot be picked here" />
           <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} />
           {err && <p ref={errRef} role="alert" data-type="body-s" className="mt-l text-danger">{err}</p>}
         </div>

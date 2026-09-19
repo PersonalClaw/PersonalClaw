@@ -14,6 +14,18 @@ When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"1
 
 Form inputs with `name` attributes are auto-collected on click and merged into the payload as `formData`. Use this for creation forms — render pre-filled inputs, user adjusts values, clicks submit, agent receives all field values.
 
+`data-action` is the ONLY way a widget can return data. Do not wrap controls in a `<form>` expecting a submit to post: the widget sandbox blocks form submission, so put `data-action` on the button instead.
+
 Styling: use Tailwind classes + theme vars for all colors. Buttons: text-xs py-1.5 px-3.5 rounded-md. Labels: text-[11px]. Inputs: text-sm px-2.5 py-2 rounded-md. Zero hardcoded hex colors.{% else %}## Inline Widgets
 
-You can render rich HTML inline using `<widget title="Title">HTML</widget>` tags. Tailwind CSS is available. The widget iframe inherits the dashboard's active theme: use `var(--bg)`, `var(--text)`, `var(--card)`, `var(--border)`, `var(--accent)`, `var(--muted)`, `var(--ok)`, `var(--warn)`, `var(--danger)` (or Tailwind arbitrary values like `bg-[var(--card)]`) instead of hardcoded colors so widgets look right on every theme. Only use a widget when markdown is clearly insufficient for the content (e.g. complex charts or interactive tools). Prefer plain markdown by default.{% endif %}
+You can render rich HTML inline using `<widget title="Title">HTML</widget>` tags. Tailwind CSS is available. The widget iframe inherits the dashboard's active theme: use `var(--bg)`, `var(--text)`, `var(--card)`, `var(--border)`, `var(--accent)`, `var(--muted)`, `var(--ok)`, `var(--warn)`, `var(--danger)` (or Tailwind arbitrary values like `bg-[var(--card)]`) instead of hardcoded colors so widgets look right on every theme. Only use a widget when markdown is clearly insufficient for the content (e.g. complex charts or interactive tools). Prefer plain markdown by default.
+
+### Interactive Widgets
+
+Widgets can send events back to the agent. Add `data-action` and optional `data-payload` (JSON string) attributes to any clickable element:
+```html
+<button data-action="approve" data-payload='{"id":"123"}'>Approve</button>
+```
+When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`. Form inputs with `name` attributes are auto-collected and merged into the payload as `formData`.
+
+`data-action` is the ONLY way a widget can return data. Do not wrap controls in a `<form>` expecting a submit to post: the widget sandbox blocks form submission, so put `data-action` on the button instead.{% endif %}

@@ -21,6 +21,11 @@ import pytest
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.subagent import _CIRCUIT_BREAKER_THRESHOLD, SubagentInfo, SubagentManager
 
+# Bounded stand-in hang: long enough to outlast the cap under test, short enough that a
+# cap which fails to bind costs one assertion failure rather than the 120s
+# pytest-timeout that took a whole CI shard down (#2996, #3143).
+_HANG_SECS = 2.0
+
 
 def _mock_ctx_builder() -> MagicMock:
     ctx = MagicMock()
@@ -97,7 +102,7 @@ class TestInjectionWall:
         events: list[str] = []
 
         async def hanging_on_done(batch: list[SubagentInfo]) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         async def on_event(etype: str, info: object, extra: dict) -> None:
             if etype == "subagent_injection_failed":
@@ -110,11 +115,11 @@ class TestInjectionWall:
             on_done=hanging_on_done,
             on_event=on_event,
             is_yolo=lambda: True,
+            on_done_timeout=0.05,
         )
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.05),
         ):
             info = mgr.spawn("task", parent_session_key="dashboard:orch")
             await mgr._tasks[info.id]  # type: ignore[union-attr]

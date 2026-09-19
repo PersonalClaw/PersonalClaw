@@ -106,7 +106,25 @@ describe('coerceInputs', () => {
     expect(coerceInputs({ fix: 'yes' }, p)).toEqual({ fix: true })
     expect(coerceInputs({ fix: '1' }, p)).toEqual({ fix: true })
     expect(coerceInputs({ fix: 'no' }, p)).toEqual({ fix: false })
+    expect(coerceInputs({ fix: 'off' }, p)).toEqual({ fix: false })
     expect(coerceInputs({ fix: '' }, p)).toEqual({})  // optional + empty → dropped
+  })
+
+  it('passes an unrecognised boolean word through verbatim, like the number branch (#327)', () => {
+    // It used to become a silent `false`: a user typing something that meant "on" got "off" with
+    // nothing said, and the value was indistinguishable from a deliberate no. Now the door refuses
+    // it by name (`WF_RUN_INPUT_TYPE`) — the same posture the number branch above already took.
+    const p = { fix: P({ type: 'boolean' }) }
+    expect(coerceInputs({ fix: 'banana' }, p)).toEqual({ fix: 'banana' })
+    expect(coerceInputs({ fix: 'yeah' }, p)).toEqual({ fix: 'yeah' })
+  })
+
+  it('a blank REQUIRED number stays blank instead of becoming a confident 0 (#327)', () => {
+    // `Number('') === 0` and `Number.isFinite(0)` is true, so the old switch posted `0` for a field
+    // the user never filled — a threshold silently set to zero. Blankness belongs to the required
+    // check, which is what reports it.
+    expect(coerceInputs({ rounds: '' }, { rounds: P({ type: 'number', required: true }) }))
+      .toEqual({ rounds: '' })
   })
 
   it('DROPS an empty optional answer rather than sending ""', () => {

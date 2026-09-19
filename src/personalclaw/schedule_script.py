@@ -179,10 +179,26 @@ class ScriptContext:
         body.update(kwargs)
         return _post("/api/send-message", body)
 
-    def call_tool(self, tool, arguments=None, provider=""):
-        """Invoke a tool through PersonalClaw's Tool entity. Returns the result dict."""
-        return _post("/api/tools/invoke",
-                     {"tool": tool, "arguments": arguments or {}, "provider": provider})
+    def call_tool(self, tool, arguments=None, provider="", confirm_risk=""):
+        """Invoke a tool through PersonalClaw's Tool entity. Returns the result dict.
+
+        A call whose EFFECTIVE risk resolves as destructive is refused with 403
+        risk_confirmation_required unless it names the tier (#506). Pass
+        confirm_risk="destructive" to run one deliberately:
+
+            ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
+                          confirm_risk="destructive")
+
+        Reads are unaffected — a read-only shell command resolves SAFE, so
+        ctx.call_tool("bash", {"command": "ls"}) needs nothing. The keyword is the
+        acknowledgement made legible at the call site: an unattended script that deletes
+        things says so where an auditor reads it, and a script that never thought about it
+        fails closed instead of deleting.
+        """
+        body = {"tool": tool, "arguments": arguments or {}, "provider": provider}
+        if confirm_risk:
+            body["confirm_risk"] = confirm_risk
+        return _post("/api/tools/invoke", body)
 
 
 def _emit(d):

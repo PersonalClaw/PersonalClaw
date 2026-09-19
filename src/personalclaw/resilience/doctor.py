@@ -1165,56 +1165,74 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     not exist. ``ok=False`` for exactly that mismatch — nothing was lost and nothing landed
     in a weaker location, but the operator asked for something they did not get.
 
-    Also reports the ``.env`` mode when dotenv is the active backend, because 0600 is the
-    floor the fallback promises. Read-only: the probe never repairs the mode (the next
-    ``load_credentials()`` does) and never reads a secret VALUE — only names, modes, states.
+    Also reports the ``.env`` mode when dotenv is the active backend — the mode it READ,
+    which is a different claim from the 0600 the fallback promises. ``detail`` used to render
+    ``mode or '0600'``, so a fresh install with no ``.env`` and no credentials reported
+    "credentials stored in .env at mode 0600" while its own evidence carried ``env_mode: ""``
+    (#2922). The file's absence is now in the evidence (``env_exists``) instead of being left
+    to be inferred, and the sentence never states a mode nothing measured.
+
+    Read-only: the probe never repairs the mode (the next ``load_credentials()`` does) and
+    never reads a secret VALUE — only names, modes, states.
     """
     from personalclaw.config.credentials import (
-        credential_backend,
         credential_backend_warning,
+        credential_store_state,
         keychain_available,
-        requested_credential_backend,
     )
-    from personalclaw.config.loader import env_path
 
-    def _facts() -> dict[str, Any]:
-        ep = env_path()
-        mode = ""
-        with contextlib.suppress(OSError):
-            if ep.exists():
-                mode = format(ep.stat().st_mode & 0o777, "04o")
-        return {
-            "backend": credential_backend(),
-            "requested": requested_credential_backend(),
-            "keychain_available": keychain_available(),
-            "warning": credential_backend_warning(),
-            "env_mode": mode,
-        }
+    def _facts() -> tuple[Any, str, bool]:
+        # All three in the one thread hop — each touches the filesystem or the OS secret
+        # service, and the warning must describe the same backend resolution the state does.
+        return credential_store_state(), credential_backend_warning(), keychain_available()
 
-    facts = await asyncio.to_thread(_facts)
-    evidence = {k: v for k, v in facts.items() if k != "warning"}
+    state, warning, keychain = await asyncio.to_thread(_facts)
+    evidence: dict[str, Any] = {
+        "backend": state.backend,
+        "requested": state.requested,
+        "keychain_available": keychain,
+        "env_exists": state.env_exists,
+        "env_mode": state.env_mode,
+        "env_readable": state.env_readable,
+    }
 
-    if facts["warning"]:
-        return ProbeResult(ok=False, detail=facts["warning"], evidence=evidence)
+    if warning:
+        return ProbeResult(ok=False, detail=warning, evidence=evidence)
 
-    if facts["backend"] == "keychain":
+    if state.backend == "keychain":
         return ProbeResult(
             ok=True, detail="credentials stored in the OS keychain (keyring)", evidence=evidence
         )
 
-    mode = facts["env_mode"]
-    if mode and int(mode, 8) & 0o077:
+    if not state.env_readable:
+        return ProbeResult(
+            ok=True,
+            detail="the .env credential file could not be inspected, so its mode is unknown",
+            evidence=evidence,
+        )
+
+    if not state.env_exists:
+        return ProbeResult(
+            ok=True,
+            detail=(
+                "no credentials stored yet — there is no .env file; the dotenv backend "
+                "creates it at mode 0600 on the first write"
+            ),
+            evidence=evidence,
+        )
+
+    if state.env_group_or_world_readable:
         return ProbeResult(
             ok=False,
             detail=(
-                f"credential file .env is mode {mode} — group/world readable; "
+                f"credential file .env is mode {state.env_mode} — group/world readable; "
                 "it is repaired to 0600 on the next credential read"
             ),
             evidence=evidence,
         )
     return ProbeResult(
         ok=True,
-        detail=f"credentials stored in .env at mode {mode or '0600'}",
+        detail=f"credentials stored in .env at mode {state.env_mode}",
         evidence=evidence,
     )
 
