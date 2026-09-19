@@ -436,6 +436,68 @@ export async function expectRouteScreenshot(page: Page, name: string): Promise<v
   })
 }
 
+/** Refuse to compare pixels against a gateway a SIBLING SPEC has already written to.
+ *
+ *  🪤 THE VISUAL RAIL'S PRECONDITION IS THE WHOLE GATEWAY, NOT THE ROUTE. `e2e/README.md` states
+ *  the invariant the 40 goldens were captured under — "data-backed routes still render their
+ *  EMPTY state — the gateway's home is fresh — which is a valid baseline: we guard *chrome*, not
+ *  data". That holds for the home at BOOT, and `playwright.config.ts` wipes it per run. It does
+ *  NOT hold for the whole run: `a11y.spec.ts`, `chat.spec.ts` and `sessionMap.spec.ts` drive REAL
+ *  scripted turns through `driveScriptedTurns`, into the ONE gateway every spec shares, and a turn
+ *  writes flywheel state on two independent paths —
+ *    · `src/personalclaw/context.py:211` records an allocation sample for EVERY ambient render, so
+ *      `utilization.mean` stops being null ("no ambient render recorded yet" → "52% used"); and
+ *    · `src/personalclaw/workflows/controller.py:4530` calls `run_end.capture()` at run end, so
+ *      `capture.passes` stops being 0 ("1 of 1 pass clean").
+ *  `#/learning` reads both back through `GET /api/learning/health` (`HealthPanel.tsx`), so its
+ *  golden renders "not measured yet — nothing has run" before any turn and live numbers after one.
+ *  With `fullyParallel`, WHICH of the two a mixed run captures is decided by the worker schedule —
+ *  so one committed golden is simultaneously correct and wrong depending on the command that ran.
+ *
+ *  Measured 2026-09-19 on Darwin at 1-min load 7.06: `npm run e2e:visual` is 40/40 zero-diff. A run
+ *  that also contains the turn-driving specs reds `learning-light`/`learning-dark` at ~14,900 px,
+ *  with the golden showing the empty flywheel and the actual showing live values. Raising
+ *  `maxDiffPixelRatio` could never address that — the two renderings are different CONTENT, not
+ *  sub-pixel noise — and neither could re-capturing, which only moves the same race to the other
+ *  side.
+ *
+ *  So the rail asserts its precondition instead of silently recording whichever side won the race.
+ *  The failure names the INVOCATION, because the invocation is the bug. */
+export async function assertPristineFlywheel(page: Page): Promise<void> {
+  // 🪤 FAIL-OPEN ON THE READ, DELIBERATELY, AND ONLY ON THE READ. This is a PRECONDITION check on
+  // a local rail, not a product assertion: what it protects — a golden captured under a different
+  // gateway state than it is verified against — is already structurally prevented by `e2e` and
+  // `e2e:update` each running this spec as their own invocation. The check is the backstop for a
+  // direct `playwright test`, so a backstop that can itself red 40 goldens (a throwing request, an
+  // endpoint outage, a shape change) would be strictly worse than the bug it guards. An unreadable
+  // signal therefore yields to the golden it was protecting: `#/learning` renders a broken read as
+  // that page's own `LoadError` and must red THERE, naming the outage, rather than failing the 38
+  // goldens that never touch this endpoint. 404 is the ordinary case — `learning is disabled`
+  // (`dashboard/handlers/learning.py::_enabled`) — and an install with no flywheel has no flywheel
+  // state to contaminate, so it is pristine by definition rather than undetermined.
+  //
+  // What is NOT fail-open is the comparison below: once the signal is READ, a contaminated gateway
+  // is a hard failure. That split is the whole point — an unknown is not the same claim as a known
+  // dirty, and collapsing the two is how this defect survived a green run in the first place.
+  let health: { composite?: { measured?: number } }
+  try {
+    const res = await page.request.get('/api/learning/health?days=7')
+    if (!res.ok()) return
+    health = (await res.json()) as { composite?: { measured?: number } }
+  } catch {
+    return
+  }
+  expect(
+    health.composite?.measured ?? 0,
+    'the flywheel already holds captured state, so this gateway is NOT the fresh home the 40\n' +
+      'goldens were captured against: a sibling spec (a11y / chat / sessionMap) has driven a real\n' +
+      'scripted turn through the gateway every spec shares. `#/learning` would be compared in its\n' +
+      'POPULATED rendering against a golden captured EMPTY, and the diff would name the page\n' +
+      'instead of the run. Give the visual rail its own invocation — `npm run e2e:visual` to\n' +
+      'verify, `npm run e2e:update` to recapture; `npm run e2e` already does exactly that.',
+  ).toBe(0)
+}
+
 /** Drive ONE real scripted chat turn and return with the transcript settled.
  *
  *  Shared because two specs need a STARTED session rather than the empty `#/chat` route:
