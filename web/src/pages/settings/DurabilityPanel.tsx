@@ -302,7 +302,7 @@ function TimeTravelSection({ cfg, setCfg }: {
           {timeline.data && timeline.data.entries.length > 0 && (
             <ul className="mt-3 flex list-none flex-col gap-3 p-0">
               {timeline.data.entries.map((entry, i) => (
-                <li key={entry.sha} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
+                <li key={entry.sha} className="border-outline-variant border-t pt-3 first:border-t-0 first:pt-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(550)}>
                       {entry.subject}
@@ -575,7 +575,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
         </Row>
 
         {status && (
-          <div className="border-t border-outline-var py-3">
+          <div className="border-t border-outline-variant py-3">
             <div data-type="caption" className="mb-2 text-on-surface-low">
               {status.enabled
                 ? 'Last run of each job:'
@@ -589,7 +589,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-outline-var py-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-outline-variant py-3">
           <span data-type="body-s" className="mr-1 text-on-surface-var">Run now:</span>
           <RunButton label="Export" icon={HardDriveDownload} busy={running === 'export'}
             disabled={!!running} onClick={() => run('export', 'Export')} />
@@ -637,7 +637,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
           onCommit={(n, l) => patch('keep_monthly', n, undefined, l)} />
 
         {pruneCount > 0 && (
-          <div data-type="body-s" className="border-t border-outline-var py-3 text-on-surface-low">
+          <div data-type="body-s" className="border-t border-outline-variant py-3 text-on-surface-low">
             {pruneCount} of {snaps?.archives.length ?? 0} snapshots would be removed by the
             settings above on the next pass. They are struck through in the archive below.
           </div>
@@ -716,7 +716,7 @@ function ArchiveSection({ snaps, onChanged }: {
         ) : (
           <ul className="flex list-none flex-col gap-3 p-0">
             {snaps.archives.map((a) => (
-              <li key={a.id} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
+              <li key={a.id} className="border-outline-variant border-t pt-3 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span data-type="label-s" className={`min-w-0 flex-1 truncate ${a.retained ? 'text-on-surface' : 'text-on-surface-low line-through'}`} style={fvs(500)}>
                     {a.name}
@@ -803,12 +803,12 @@ function SyncSection({ cfg, setCfg, status, transports }: {
         {/* A failed provider read is NOT "none installed" — those two need different words,
             because one is a reason to install something and the other is a reason to retry. */}
         {!transports.ok ? (
-          <div data-type="body-s" className="border-t border-outline-var py-3" style={{ color: 'var(--color-error)' }}>
+          <div data-type="body-s" className="border-t border-outline-variant py-3" style={{ color: 'var(--color-error)' }}>
             The installed transports could not be read ({transports.error}). Reload to try
             again — this is not the same as having none installed.
           </div>
         ) : enabledTransports.length === 0 ? (
-          <div data-type="body-s" className="border-t border-outline-var py-3 text-on-surface-low">
+          <div data-type="body-s" className="border-t border-outline-variant py-3 text-on-surface-low">
             No sync transport is installed and enabled yet. Install one from the Store (git-sync
             keeps a human-readable history in a repo you own; dir-sync uses any folder that
             already syncs itself), then enable it under Settings → Providers, where its own
@@ -845,7 +845,7 @@ function SyncSection({ cfg, setCfg, status, transports }: {
         </Row>
 
         {status?.sync && (
-          <div className="border-t border-outline-var py-3">
+          <div className="border-t border-outline-variant py-3">
             <div className="flex flex-col gap-1.5">
               <JobLine label="Last sync" when={status.sync.last_run} due={status.sync.due} />
               <div data-type="body-s" className="flex items-baseline justify-between gap-3">
@@ -987,7 +987,7 @@ function ConflictsSection({ read, onChanged }: {
         ) : (
           <ul className="flex list-none flex-col gap-3 p-0">
             {pending.map((c) => (
-              <li key={c.id} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
+              <li key={c.id} className="border-outline-variant border-t pt-3 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(550)}>
                     {c.entity_id}

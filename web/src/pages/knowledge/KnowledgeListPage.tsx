@@ -1028,8 +1028,36 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
                 title="This intent is not evaluated against new items, and Run gathers nothing while it is paused.">Paused</span>}
               {it.propose_skill && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis">proposes skill</span>}
             </div>
-            <div data-type="caption" className="truncate text-on-surface-low">
-              {(it.outcome_count ?? 0) > 0 ? `${it.outcome_count} gathered` : 'nothing gathered yet'}
+            {/* 🔴 "nothing gathered yet" WAS A VERDICT THIS ROW HAD NOT EARNED (issue 266). An
+                intent only evaluates items saved AFTER it exists, so a freshly-created one says
+                this even when the library is already full of matches — and the one-click backfill
+                that fixes it, `Run on existing items`, lives a level down in the detail panel.
+                Neither the row nor the new-intent form mentioned it, so the reasonable conclusion
+                was "intent matching doesn't work" and the feature got abandoned. Measured in the
+                report: the same intent went from "nothing gathered yet" to "2 gathered" with
+                structured field extraction the moment Run was found.
+                The empty half now names the CAUSE (forward-only) and points at the affordance,
+                which is the shape the detail panel's own empty state already had — *"Nothing
+                gathered yet. Save items relevant to this intent, or run it on what you already
+                have."* The row was the only surface still stating a conclusion instead.
+                `title` because this line `truncate`s: at 390px the sentence is cut, and this app's
+                idiom for a truncating element is to carry the full text there (the same fix the
+                goal above it got). The count branch keeps the bare number — it IS established.
+
+                🪤 AND THE HINT IS WITHHELD WHILE PAUSED, or this fix would commit the same error it
+                removes. `Run on existing items` is enabled on a paused intent and SUCCEEDS — it just
+                evaluates nothing (measured on a live gateway: paused answers `{evaluated: 0}` over
+                the same five items enabled answers `{evaluated: 5}` for). Pointing a user at it here
+                would promise a backfill that gathers nothing. The `Paused` badge beside this line
+                already carries that consequence in its own `title`, and the detail panel states it
+                above the button, so the paused row keeps the bare text and adds no promise. */}
+            <div data-type="caption" className="truncate text-on-surface-low"
+              title={(it.outcome_count ?? 0) > 0 || !on ? undefined
+                : 'This intent only evaluates items saved after it was created. Open it and use “Run on existing items” to scan what you already saved.'}>
+              {(it.outcome_count ?? 0) > 0
+                ? `${it.outcome_count} gathered`
+                : on ? 'nothing gathered yet — open to run it on items you already saved'
+                : 'nothing gathered yet'}
               {(it.enabled_for?.length ?? 0) > 0 && ` · ${it.enabled_for!.join('/')}`}
             </div>
           </div>

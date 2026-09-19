@@ -1109,7 +1109,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
               // see deps) — parity with the artifact tab's "Open" affordance.
               return onOpenTask ? (
                 <button key={t.id} type="button" onClick={() => onOpenTask(t.id)}
-                  data-type="body-s" className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left hover:bg-surface-2 transition-colors"
+                  data-type="body-s" className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left hover:bg-surface-high transition-colors"
                   title="Open task">
                   {box}{label}{status}
                   <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
