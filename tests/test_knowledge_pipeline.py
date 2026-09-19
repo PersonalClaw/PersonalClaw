@@ -544,20 +544,15 @@ def test_runner_synthesizes_descriptor_for_textless_image(store, tmp_path):
     iid = store.create_typed_item(item_type="image", title="pic.png", content="")
     store.update_item(iid, file_path=str(img), file_size=img.stat().st_size)
     store.db.commit()
-    # No insights_pool/embedder → ocr+vision skip; exif (pure-python) runs.
-    #
-    # `NODE_REGISTRY` is process-global and the executor tests above register `("ocr","stub")`
-    # / `("vision","stub")` into it, so with a backend-substitution executor those leaked
-    # stubs would RUN here and this test's premise ("no model → skipped") would be false
-    # without saying so. Drop them and assert the premise, so the degradation being tested is
-    # the real one. Each executor test registers its own stubs immediately before use, so
-    # removing them here cannot affect any other test.
-    from personalclaw.knowledge.pipeline.registry import NODE_REGISTRY, resolve_runnable
+    # No insights_pool/embedder → ocr+vision skip; exif (pure-python) runs. The premise is
+    # asserted rather than assumed, so a runnable backend can never be what satisfied this.
+    # (Keeping the registry free of the executor tests' `("ocr","stub")` / `("vision","stub")`
+    # entries is conftest's `_restore_pipeline_node_registry`, not this test's job — it used to
+    # pop them here, which only worked while the registering test ran earlier on the SAME
+    # worker and let the stubs escape into other files when it did not.)
+    from personalclaw.knowledge.pipeline.registry import resolve_runnable
 
     for node_type in ("ocr", "vision"):
-        # Only the test stubs are dropped — core's own backends stay registered, so this
-        # leaves the registry as a real install has it rather than emptied.
-        NODE_REGISTRY.pop((node_type, "stub"), None)
         assert (
             resolve_runnable(node_type, "vision-llm") is None
         ), f"a {node_type} backend is runnable here, so this is not the no-model case"
