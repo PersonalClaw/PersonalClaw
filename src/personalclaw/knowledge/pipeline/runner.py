@@ -12,6 +12,7 @@ in Task B (#47) and degrade gracefully (skipped when their use-case has no model
 
 from __future__ import annotations
 
+import json
 import logging
 
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
@@ -685,6 +686,64 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
         store.db.commit()
 
 
+def _grounded_aliases(ent: dict, content: str, name: str) -> list[str]:
+    """The alias surfaces from one extracted entity that the item's own text actually uses.
+
+    The extraction prompt asks for aliases because the store's alias column has four readers
+    and, before this, no writer: the deterministic mention pre-pass
+    (`alias_prepass.build_index`), `find_entity`'s alias fallback, the memory graph's
+    `seed_from_knowledge`, and the STT lexicon's `rebuild_from_graph`. All four indexed
+    canonical names only, so a document that wrote an entity by its handle or its initialism
+    linked nothing, resolved to nothing, and was never boosted in transcription.
+
+    **Grounded, not volunteered.** A model asked for aliases will also invent them, and an
+    invented surface is not a harmless extra: `find_entity` resolves BY alias, so one bad
+    alias silently folds a future distinct entity into this one. So the model's answer is
+    treated as a *proposal* and only surfaces that literally occur in this item's text are
+    kept — the same standard the pre-pass holds a mention to.
+
+    The occurrence test is `AliasIndex` itself, not a substring scan, so "appears in the text"
+    means exactly what "is a mention" means everywhere else: word-boundary token matching,
+    with the index's own `MIN_ALIAS_TOKEN_LEN` floor rejecting the ambiguous short forms
+    ("AI", "ML") for free rather than in a second rule that could drift from the first.
+
+    Scanned over the model's own evidence window (`MAX_EXTRACTION_CHARS`), not the whole
+    document. That is the tighter reading of "grounded" — a surface found only in text the
+    model never saw did not come from the model's reading of the document — and it bounds the
+    cost, since each entity gets its own index pass so that one entity's long alias cannot
+    consume the tokens another's shorter one needed.
+    """
+    from personalclaw.knowledge.extractor import MAX_EXTRACTION_CHARS
+    from personalclaw.memory_graph import AliasIndex
+
+    raw = ent.get("aliases")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    index = AliasIndex()
+    candidates: list[str] = []
+    seen = {(name or "").strip().lower()}
+    for entry in raw:
+        if isinstance(entry, (dict, list, tuple, set)):
+            continue
+        surface = str(entry or "").strip()
+        if not surface or surface.lower() in seen:
+            continue
+        seen.add(surface.lower())
+        # The surface is its own id: `find` then reports which candidates the text contains.
+        if index.add(surface, surface):
+            candidates.append(surface)
+    if not candidates:
+        return []
+    try:
+        present = {mention.entity_id for mention in index.find(content[:MAX_EXTRACTION_CHARS])}
+    except Exception:  # noqa: BLE001 — a matcher failure means "no aliases", never a lost item
+        logger.debug("alias grounding failed for %s", name, exc_info=True)
+        return []
+    return [surface for surface in candidates if surface in present]
+
+
 async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
     """Link + extract entities for the item, writing to the entity graph.
 
@@ -746,16 +805,31 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
         #
         # Snapshotting (name, context) survives that deletion because a name can be re-found
         # or re-created, whereas an id cannot.
-        prepass_links: list[tuple[str, str, str]] = []
+        #
+        # The ALIASES travel in the snapshot for the same reason the name does. They are the
+        # very surfaces the pre-pass matched on, and the entity carrying them is exactly the
+        # one this clear is liable to delete — restoring the row without them would let a
+        # re-ingest silently erase the alias that made the link, so the SECOND re-ingest would
+        # find nothing to match. Established surfaces are not a re-run's to drop.
+        prepass_links: list[tuple[str, str, str, list[str]]] = []
         try:
             for row in store.db.execute(
-                "SELECT m.entity_id, e.name, e.entity_type, m.context "
+                "SELECT m.entity_id, e.name, e.entity_type, e.aliases, m.context "
                 "FROM mentions m JOIN entities e ON e.id = m.entity_id "
                 "WHERE m.item_id = ?",
                 (item_id,),
             ).fetchall():
+                try:
+                    carried = json.loads(row["aliases"] or "[]")
+                except (TypeError, ValueError):
+                    carried = []
                 prepass_links.append(
-                    (row["name"], row["entity_type"] or "concept", row["context"] or "")
+                    (
+                        row["name"],
+                        row["entity_type"] or "concept",
+                        row["context"] or "",
+                        carried if isinstance(carried, list) else [],
+                    )
                 )
         except Exception:
             logger.debug("alias pre-pass snapshot failed for %s", item_id, exc_info=True)
@@ -764,10 +838,14 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
 
         # Restore. `find_entity` first, because the extractor may be about to re-create the
         # same entity and two rows for one name is worse than a lost link.
-        for name, etype, context in prepass_links:
+        for name, etype, context, carried in prepass_links:
             try:
                 existing = store.find_entity(name)
-                eid = existing["id"] if existing else store.add_entity(name=name, entity_type=etype)
+                if existing:
+                    eid = existing["id"]
+                    store.merge_entity_aliases(eid, carried)
+                else:
+                    eid = store.add_entity(name=name, entity_type=etype, aliases=carried)
                 store.add_mention(item_id, eid, context=context or None)
             except Exception:
                 logger.debug("alias re-link failed for %s → %r", item_id, name, exc_info=True)
@@ -776,17 +854,23 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
             name = (ent.get("name") or "").strip()
             if not name:
                 continue
+            aliases = _grounded_aliases(ent, content, name)
             existing = store.find_entity(name)
             if existing:
                 eid = existing["id"]
                 # An entity first extracted without a description can gain one from a
-                # later, richer mention (no-op if it already has one).
+                # later, richer mention (no-op if it already has one). Aliases enrich the
+                # same way and for the same reason — after the first ingest the entity
+                # always exists, so a create-only alias write would never learn the
+                # spelling THIS document introduced.
                 store.backfill_entity_description(eid, ent.get("description"))
+                store.merge_entity_aliases(eid, aliases)
             else:
                 eid = store.add_entity(
                     name=name,
                     entity_type=ent.get("type", "concept"),
                     description=ent.get("description"),
+                    aliases=aliases,
                 )
             entity_map[name] = eid
             store.add_mention(item_id, eid, context=ent.get("description"))

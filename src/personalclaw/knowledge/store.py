@@ -154,6 +154,51 @@ def _clean_tag_names(tags) -> list[str]:
     return out
 
 
+#: Alias surfaces kept per entity. Bounded for the same reason `MAX_MENTIONS_PER_ITEM` is:
+#: the surfaces are fed to a trie that every ingest walks, and to the STT lexicon's phonetic
+#: key set, so an entity that accumulated fifty spellings would cost every later item. Matches
+#: the ceiling the memory-side alias editor already imposes (`MemoryPanel`'s ChipInput `max`).
+MAX_ENTITY_ALIASES = 10
+
+
+def _clean_alias_surfaces(
+    aliases, *, name: str = "", existing: "list[str] | None" = None
+) -> list[str]:
+    """Caller-supplied alias surfaces → the surfaces to store.
+
+    One funnel for every write path, exactly as `_clean_tag_names` is for tags: strings only,
+    stripped, blanks dropped, case-insensitive duplicates collapsed (first-seen spelling
+    wins), the entity's own *name* dropped because it is already the canonical surface every
+    reader indexes, and the whole set capped at `MAX_ENTITY_ALIASES`.
+
+    Deliberately does NOT apply a minimum-length or word-shape rule. `AliasIndex.add` already
+    refuses a single token shorter than `MIN_ALIAS_TOKEN_LEN`, and it is the reader that knows
+    which surfaces it can match — duplicating that floor here would give one rule two owners
+    and let them drift. A 2-character alias is simply never indexed for mention matching while
+    remaining available to `find_entity`.
+
+    *existing* lets a second writer union into what an entity already carries without
+    re-implementing the dedupe; the cap applies to the union.
+    """
+    out: list[str] = list(existing or [])
+    seen = {s.lower() for s in out}
+    skip = (name or "").strip().lower()
+    if skip:
+        seen.add(skip)
+    if isinstance(aliases, str):  # a lone surface, not a list of characters
+        aliases = [aliases]
+    for entry in aliases or []:
+        if isinstance(entry, (dict, list, tuple, set)):
+            continue
+        surface = str(entry or "").strip()
+        low = surface.lower()
+        if not surface or low in seen:
+            continue
+        seen.add(low)
+        out.append(surface)
+    return out[:MAX_ENTITY_ALIASES]
+
+
 def _fts_tags(names: list[str]) -> str:
     """The value indexed in the FTS `tags` column: names joined by spaces.
 
@@ -4272,7 +4317,15 @@ class KnowledgeStore:
         self.db.execute(
             "INSERT INTO entities (id, name, entity_type, description, aliases, created_at, updated_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (eid, name, entity_type, description, json.dumps(aliases or []), now, now),
+            (
+                eid,
+                name,
+                entity_type,
+                description,
+                json.dumps(_clean_alias_surfaces(aliases, name=name)),
+                now,
+                now,
+            ),
         )
         self.graph.add_node(eid, name=name, entity_type=entity_type)
         self.db.commit()
@@ -4296,6 +4349,45 @@ class KnowledgeStore:
         )
         self.db.commit()
         return True
+
+    def merge_entity_aliases(self, entity_id: str, aliases) -> int:
+        """Union *aliases* into an entity's existing surface set. Returns how many are new.
+
+        The counterpart of `backfill_entity_description` for the alias column, and needed for
+        the same reason: after the first ingest an entity ALREADY EXISTS, so a writer that only
+        sets aliases at creation time can never learn the spelling a later document introduces.
+        Unlike a description, alias sets compose — a second surface does not compete with the
+        first — so this unions rather than filling only-when-empty.
+
+        Never removes: an alias the user or an earlier document established is not the current
+        document's to retract. Removal is an editing operation and belongs to an editing
+        surface, which the knowledge store deliberately does not have for entities.
+        """
+        row = self.db.execute(
+            "SELECT name, aliases FROM entities WHERE id = ?", (entity_id,)
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            current = json.loads(row["aliases"] or "[]")
+        except (TypeError, ValueError):
+            current = []
+        if not isinstance(current, list):
+            current = []
+        current = [str(a) for a in current if str(a or "").strip()]
+        merged = _clean_alias_surfaces(aliases, name=row["name"] or "", existing=current)
+        # `_clean_alias_surfaces` only ever APPENDS to *existing* and then applies the cap, so
+        # a merged set no longer than the current one means nothing new got in — and writing it
+        # would be the one way this method could shrink an already-full set, which its contract
+        # forbids. Both cases are the same no-op.
+        if len(merged) <= len(current):
+            return 0
+        self.db.execute(
+            "UPDATE entities SET aliases = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(merged), datetime.now().isoformat(), entity_id),
+        )
+        self.db.commit()
+        return len(merged) - len(current)
 
     def find_entity(self, name):
         row = self.db.execute("SELECT * FROM entities WHERE name = ?", (name,)).fetchone()
