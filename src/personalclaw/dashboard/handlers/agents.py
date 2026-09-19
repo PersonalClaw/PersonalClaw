@@ -19,6 +19,7 @@ from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import json_object_body, string_field
 
 
 def config_dir() -> Path:
@@ -1127,13 +1128,8 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
             logger.warning("SEL logging failed", exc_info=True)
         return web.json_response({"error": "authentication required"}, status=401)
     name = request.match_info["name"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
-    content = body.get("content", "").strip()
+    body = await json_object_body(request)
+    content = string_field(body, "content")
     from personalclaw.agent_metadata import delete, save  # noqa: F811
 
     if not content:

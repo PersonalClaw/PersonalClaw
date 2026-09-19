@@ -156,13 +156,29 @@ describe('the dialog body is TRUE of the handler', () => {
     // so a second caller cannot skip the consent by not knowing about it.
     expect((impl.match(/if not confirm:/g) ?? []).length, 'migrate AND rollback').toBe(2)
     const h = py('dashboard/handlers/security_credentials.py')
-    expect((h.match(/if not await _confirmed\(request\):/g) ?? []).length).toBe(2)
+    // #2923 deleted this module's `_confirmed` wrapper in both directions — it read the body
+    // itself AND decided what consent meant. Each door now asks both questions of their one
+    // owner in a single line, so the gate is spelled inline rather than behind a local helper.
+    // Still counted, because TWO doors is the assertion: a rail that matched one spelling
+    // anywhere would go green with the rollback door ungated.
+    expect(
+      (h.match(/if not confirm_granted\(await json_object_body\(request\)\):/g) ?? []).length,
+      'migrate AND rollback',
+    ).toBe(2)
     // The predicate itself lives in `safety_flags` — every destructive door shares one, so a
     // second door cannot re-derive a looser spelling (that is what `test_confirm_gate_parity.py`
     // bans). Follow the delegation rather than re-asserting inlined text here, and assert the
     // strictness where it is actually written: consent is the JSON literal `true`, so a body of
     // `{"confirm": "false"}` — or no dict at all — is a refusal.
-    expect(h, 'this door reads the shared predicate').toContain('return confirm_granted(body)')
+    expect(h, 'this door reads the shared predicate').toContain(
+      'from personalclaw.safety_flags import confirm_granted',
+    )
+    // And the body it hands that predicate comes from the ONE reader, which refuses a malformed
+    // body outright instead of the old wrapper's silent `False` — that reported a broken JSON
+    // payload as `confirmation_required`, telling the caller to add a flag it had already sent.
+    expect(h, 'the body comes from the one reader').toContain(
+      'from personalclaw.request_validation import json_object_body',
+    )
     const flags = py('safety_flags.py')
     const granted = flags.slice(flags.indexOf('def confirm_granted('))
     expect(granted, 'a malformed body is a NO, never a yes')

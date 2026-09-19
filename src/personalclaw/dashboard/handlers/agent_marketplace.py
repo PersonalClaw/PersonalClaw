@@ -25,6 +25,7 @@ from aiohttp import web
 
 from personalclaw.agents.marketplace import AgentDefinition, get_default_agent_registry
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.sel import sel as _sel_fn
 
 logger = logging.getLogger(__name__)
@@ -96,9 +97,7 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    name = str(body.get("name", "")).strip()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
+    name = require_string(body, "name")
 
     marketplace_name = body.pop("marketplace", _DEFAULT_MARKETPLACE)
     try:
@@ -110,12 +109,12 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
 
     defn = AgentDefinition(
         name=name,
-        description=str(body.get("description", "")),
-        model=str(body.get("model", "")),
-        system_prompt=str(body.get("system_prompt", "")),
+        description=string_field(body, "description"),
+        model=string_field(body, "model"),
+        system_prompt=string_field(body, "system_prompt", strip=False),
         skills=list(body.get("skills") or []),
-        provider_entry=str(body.get("provider_entry", "")),
-        provider=str(body.get("provider", "")),
+        provider_entry=string_field(body, "provider_entry"),
+        provider=string_field(body, "provider"),
         mcp_servers=dict(body.get("mcp_servers") or {}),
         source="local",
     )
@@ -246,10 +245,7 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
     if defn is None:
         return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
 
-    try:
-        body: dict[str, Any] = await request.json()
-    except Exception:
-        body = {}
+    body: dict[str, Any] = await json_object_body(request)
 
     test_prompt = (
         str(body.get("prompt", "")).strip() or "Hello! Please introduce yourself in one sentence."

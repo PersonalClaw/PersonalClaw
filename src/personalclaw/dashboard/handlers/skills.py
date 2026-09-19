@@ -18,6 +18,7 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import json_object_body
 from personalclaw.skills.marketplace import DEFAULT_SKILLS_INSTALL_PATH
 
 logger = logging.getLogger(__name__)
@@ -795,10 +796,7 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
     from personalclaw.skills import proposals
 
     pid = request.match_info.get("id", "")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     body = body if isinstance(body, dict) else {}
     try:
         result = proposals.accept(

@@ -36,6 +36,17 @@ def _make_request(user="testuser", session_id="abc123", registry=None, cfg=None)
     request.match_info = MagicMock()
     request.match_info.get = lambda k, default="": session_id if k == "session_id" else default
     request.remote = "127.0.0.1"
+
+    # An awaitable `json()`, because the create handler reads through
+    # `request_validation.json_object_body`, which awaits it unconditionally. A bare
+    # `MagicMock` attribute is not awaitable and raised `TypeError` inside the reader; that
+    # went unnoticed only while the handler wrapped its read in `except Exception: pass`,
+    # so this double was resting on the very swallow #2923 is about. `{}` is what the shared
+    # reader returns for a request carrying no body, which is what these cases send.
+    async def _json():
+        return {}
+
+    request.json = _json
     return request
 
 

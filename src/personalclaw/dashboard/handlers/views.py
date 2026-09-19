@@ -11,16 +11,15 @@ import logging
 from aiohttp import web
 
 from personalclaw.dashboard import views_store as store
+from personalclaw.request_validation import (
+    MISSING,
+    json_object_body,
+    optional_string,
+    require_string,
+    string_field,
+)
 
 logger = logging.getLogger(__name__)
-
-
-async def _json_body(request: web.Request) -> dict:
-    try:
-        body = await request.json()
-    except Exception:
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 async def api_genui_library(request: web.Request) -> web.Response:
@@ -41,12 +40,11 @@ async def api_dashboard_views(request: web.Request) -> web.Response:
     POST /api/dashboard/views {name, icon?} — create a user view (presets are code-only).
     """
     if request.method == "POST":
-        body = await _json_body(request)
-        name = str(body.get("name", "")).strip()
-        if not name:
-            return web.json_response({"error": "name is required"}, status=400)
+        body = await json_object_body(request)
+        name = require_string(body, "name")
+        icon = string_field(body, "icon")
         try:
-            view = store.create_view(name, icon=(str(body["icon"]) if body.get("icon") else None))
+            view = store.create_view(name, icon=icon or None)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
         from dataclasses import asdict
@@ -70,7 +68,13 @@ async def api_dashboard_view_detail(request: web.Request) -> web.Response:
         return web.json_response({"view": asdict(view)})
 
     if request.method == "PUT":
-        body = await _json_body(request)
+        body = await json_object_body(request)
+        # The create door's rule, re-asked (#2992). Absent = leave the name alone;
+        # present-and-unusable is the same 400 the POST answers, rather than a 200 that
+        # silently changed nothing or stored the string "None".
+        name = optional_string(body, "name")
+        if name is not MISSING:
+            body["name"] = name
         try:
             view = store.update_view(view_id, body)
         except store.PresetLockedError as exc:
@@ -99,7 +103,7 @@ async def api_dashboard_view_tiles(request: web.Request) -> web.Response:
     view's overlay (the locked core composition is never touched).
     """
     view_id = request.match_info["view_id"]
-    body = await _json_body(request)
+    body = await json_object_body(request)
     slug = str(body.get("slug", "")).strip()
     if not slug:
         return web.json_response({"error": "slug is required"}, status=400)
@@ -124,7 +128,7 @@ async def api_dashboard_view_tile_binding(request: web.Request) -> web.Response:
     refresh-on-button.
     """
     view_id = request.match_info["view_id"]
-    body = await _json_body(request)
+    body = await json_object_body(request)
     ref = str(body.get("ref", "")).strip()
     if not ref:
         return web.json_response(
@@ -162,7 +166,7 @@ async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
             )
         return web.json_response({"row": tile_refresh.last_row(view_id, ref)})
 
-    body = await _json_body(request)
+    body = await json_object_body(request)
     ref = str(body.get("ref", "")).strip()
     if not ref:
         return web.json_response(
@@ -188,7 +192,7 @@ async def api_dashboard_view_tile_action(request: web.Request) -> web.Response:
     from personalclaw.dashboard import tile_actions
 
     view_id = request.match_info["view_id"]
-    body = await _json_body(request)
+    body = await json_object_body(request)
     ref = str(body.get("ref", "")).strip()
     if not ref:
         return web.json_response(
@@ -213,7 +217,7 @@ async def api_dashboard_view_tile_resolve(request: web.Request) -> web.Response:
     ``keep: false`` removes the tile (dismiss a proposal, or unpin a user tile).
     """
     view_id = request.match_info["view_id"]
-    body = await _json_body(request)
+    body = await json_object_body(request)
     ref = str(body.get("ref", "")).strip()
     if not ref:
         return web.json_response({"error": "ref is required"}, status=400)

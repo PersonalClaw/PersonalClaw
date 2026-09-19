@@ -30,6 +30,7 @@ from aiohttp import web
 
 from personalclaw.browse.mirror import broadcast_kill
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 
 #: The two answers a human may give a pending grant. A closed set, matched against the path segment,
@@ -109,10 +110,7 @@ async def api_browse_kill(request: web.Request) -> web.Response:
     """
     from personalclaw.browse import killswitch
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     reason = str(body.get("reason", "")) if isinstance(body, dict) else ""
     kill = killswitch.engage(reason)
     broadcast_kill(kill, state=request.app.get("state"))
@@ -129,10 +127,7 @@ async def api_browse_kill_release(request: web.Request) -> web.Response:
     """
     from personalclaw.browse import killswitch
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return json_error(
             "confirmation_required", message='release requires {"confirm": true}', status=400

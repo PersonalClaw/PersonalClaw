@@ -47,6 +47,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -116,17 +117,6 @@ def _sel_log(operation: str, resources: str) -> None:
         )
     except Exception:
         logger.debug("research-report SEL audit failed", exc_info=True)
-
-
-async def _body(request: web.Request) -> tuple[dict[str, Any] | None, web.Response | None]:
-    """Parse a JSON object body, or return the 400 that says why it is not one."""
-    try:
-        raw = await request.json()
-    except Exception:
-        return None, json_error("invalid_json", message="invalid JSON", status=400)
-    if not isinstance(raw, dict):
-        return None, json_error("invalid_json", message="JSON body must be an object", status=400)
-    return raw, None
 
 
 # Every integer check below spells out `isinstance(x, bool)` alongside `isinstance(x, int)`:
@@ -310,9 +300,7 @@ async def api_report_create(request: web.Request) -> web.Response:
     rr = _reports_module()
     if rr is None:
         return _unavailable()
-    body, error = await _body(request)
-    if error is not None or body is None:
-        return error or json_error("invalid_json", message="invalid JSON", status=400)
+    body = await json_object_body(request)
     fields, error = _fields(body, _policies(rr), required=True)
     if error is not None or fields is None:
         return error or json_error("invalid_request", message="invalid request", status=400)
@@ -335,9 +323,7 @@ async def api_report_update(request: web.Request) -> web.Response:
     existing = rr.get_report(report_id)
     if existing is None:
         return json_error("not_found", message="not found", status=404)
-    body, error = await _body(request)
-    if error is not None or body is None:
-        return error or json_error("invalid_json", message="invalid JSON", status=400)
+    body = await json_object_body(request)
     fields, error = _fields(body, _policies(rr), required=False)
     if error is not None or fields is None:
         return error or json_error("invalid_request", message="invalid request", status=400)

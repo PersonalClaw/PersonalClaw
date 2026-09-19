@@ -38,12 +38,18 @@ def _request(body=None):
     req.get = lambda k, default=None: "testuser" if k == "user" else default
     req.remote = "127.0.0.1"
     req.body_exists = body is not None
-    if body is not None:
 
-        async def _json():
-            return body
+    # `json()` is defined even for the no-body case, and that is not cosmetic. The handler
+    # reads through `request_validation.json_object_body`, which awaits `request.json()`
+    # unconditionally; a bare `MagicMock` attribute is not awaitable, so leaving it unset
+    # made the double raise `TypeError` from inside the reader. That USED to pass only
+    # because the handler wrapped the read in `except Exception: pass` — i.e. this double
+    # was being propped up by the swallow that #2923 is about. An absent body is spelled as
+    # the empty object the reader itself returns for one.
+    async def _json():
+        return {} if body is None else body
 
-        req.json = _json
+    req.json = _json
     return req
 
 

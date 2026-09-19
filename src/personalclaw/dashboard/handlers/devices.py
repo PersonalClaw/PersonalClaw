@@ -56,6 +56,7 @@ from personalclaw.dashboard.token_auth import (
     revoke_nonce,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -120,14 +121,6 @@ def _audit(
         logger.debug("SEL audit failed for %s", operation, exc_info=True)
 
 
-async def _body(request: web.Request) -> dict[str, Any]:
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 — a malformed body is an empty body, not a 500
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
 def _pair_base_url(request: web.Request) -> str:
     """The origin a device should be pointed at.
 
@@ -169,7 +162,7 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
 
     from personalclaw.auth import pairing
 
-    body = await _body(request)
+    body = await json_object_body(request)
     label = sanitize_device_name(body.get("label", ""))
 
     code, expires_at = pairing.issue_code(label=label)
@@ -253,7 +246,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
 
     from personalclaw.auth import pairing
 
-    body = await _body(request)
+    body = await json_object_body(request)
     code = str(body.get("code") or "")
     # `device_name` is OPTIONAL (C2 (b)): omitted, the gateway derives one, so a client with
     # nothing but a code can still pair.

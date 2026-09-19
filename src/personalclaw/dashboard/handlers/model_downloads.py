@@ -18,6 +18,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
@@ -245,10 +246,7 @@ async def api_model_download_cleanup(request: web.Request) -> web.Response:
     cache root and unlinks them best-effort per file, returning what actually went."""
     import os
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return web.json_response({"error": "confirm:true required"}, status=400)
 
@@ -378,10 +376,7 @@ async def api_models_unload(request: web.Request) -> web.Response:
     """
     from personalclaw.local_models.residency import unload_provider
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     provider = str((body or {}).get("provider", "")) if isinstance(body, dict) else ""
     if not provider:
         return web.json_response({"error": "Missing 'provider'"}, status=400)
@@ -771,10 +766,7 @@ async def api_local_model_selftest(request: web.Request) -> web.Response:
     if provider is None:
         return web.json_response({"error": f"Unknown provider {provider_name!r}"}, status=404)
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     model = str(body.get("model", "")) if isinstance(body, dict) else ""
     caps = capabilities_for(provider_name)
     timeout = _selftest_timeout_s()

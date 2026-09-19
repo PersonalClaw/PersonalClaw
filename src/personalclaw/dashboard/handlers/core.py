@@ -16,6 +16,7 @@ from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
 from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
 
@@ -342,14 +343,8 @@ async def api_sel_rotate(request: web.Request) -> web.Response:
     Recovers from a broken HMAC chain. The previous log file is renamed with
     a UTC timestamp suffix unless ``{"archive": false}`` is sent.
     """
-    archive = True
-    if request.can_read_body:
-        try:
-            body = await request.json()
-            if isinstance(body, dict) and body.get("archive") is False:
-                archive = False
-        except Exception:
-            pass
+    body = await json_object_body(request)
+    archive = body.get("archive") is not False
     result = _sel().rotate(archive=archive)
     return web.json_response(result)
 
@@ -1454,10 +1449,7 @@ async def api_incident(request: web.Request) -> web.Response:
             {"active": st.active, "reason": st.reason, "started_at": st.started_at}
         )
     # POST — activate.
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     reason = str(body.get("reason", "")) if isinstance(body, dict) else ""
     st = _incident.activate(reason)
     return web.json_response(
@@ -1473,10 +1465,7 @@ async def api_incident_resume(request: web.Request) -> web.Response:
     """
     from personalclaw.guardrails import incident as _incident
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return web.json_response({"error": 'resume requires {"confirm": true}'}, status=400)
     st = _incident.resume()
@@ -1495,10 +1484,7 @@ async def api_project_trust(request: web.Request) -> web.Response:
 
     if request.method == "GET":
         return web.json_response({"projects": _pt._read_store()})
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     directory = str(body.get("dir", "") or "").strip()

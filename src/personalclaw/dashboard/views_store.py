@@ -380,8 +380,11 @@ def update_view(view_id: str, patch: dict) -> DashboardView:
     data = _read_disk()
     for v in data["views"]:
         if v.get("id") == view_id:
-            if "name" in patch and str(patch["name"]).strip():
-                v["name"] = str(patch["name"]).strip()
+            # No coercion and no truthiness test: the handler has already established
+            # that a present `name` is a non-blank `str` (#2992). `str(patch["name"])`
+            # here is what turned `null` into the four-character name "None".
+            if "name" in patch:
+                v["name"] = patch["name"]
             if "icon" in patch:
                 v["icon"] = str(patch["icon"]) if patch["icon"] else None
             if "nav_pinned" in patch:

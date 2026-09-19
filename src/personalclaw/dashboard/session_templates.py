@@ -136,7 +136,7 @@ def validate(fields: dict[str, Any]) -> tuple[dict[str, Any], str]:
         raw = fields.get(key, "")
         if raw is None:
             raw = ""
-        if not isinstance(raw, (str, int, float)):
+        if not isinstance(raw, str):
             return {}, f"{key} must be a string"
         clean[key] = str(raw).strip()
 

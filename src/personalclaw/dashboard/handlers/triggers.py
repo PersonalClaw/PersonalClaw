@@ -31,6 +31,7 @@ from aiohttp import web
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 
@@ -1359,10 +1360,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         row = store.get(raw)
         if row is None:
             return web.json_response({"error": "not found"}, status=404)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await json_object_body(request)
         want = body.get("enabled") if isinstance(body, dict) else None
         paused = row.trigger.enabled if want is None else (not bool(want))
         result = T.set_paused(store, trigger_id=raw, paused=paused)
@@ -1384,10 +1382,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         trigger = next((t for t in store.load() if t.id == raw), None)
         if trigger is None:
             return web.json_response({"error": "not found"}, status=404)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await json_object_body(request)
         want = body.get("enabled") if isinstance(body, dict) else None
         trigger.enabled = (not trigger.enabled) if want is None else bool(want)
         # An exhausted trigger (`fire_count >= max_fires`) self-retired. Re-enabling it without
@@ -1398,10 +1393,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         store.upsert(trigger)
         return web.json_response({"ok": True, "trigger": _serialize_event(trigger)})
     # schedule
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     enabled = body.get("enabled")
     # 🔴 §6's write re-point (S101): the store owns the row. Routed through `tools.set_paused`, which
     # already refuses to enable a row that failed to parse (S87) and reports WHY — so the API and a
@@ -1686,11 +1678,8 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
 
     dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")
     if not dry_run:
-        try:
-            body = await request.json()
-            dry_run = bool(body.get("dry_run", False)) if isinstance(body, dict) else False
-        except Exception:
-            dry_run = False
+        body = await json_object_body(request)
+        dry_run = bool(body.get("dry_run", False))
 
     if dry_run:
         # Reuse tools.run for the gate plan — the API and the chat tool report identically.
@@ -1931,10 +1920,7 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
     from personalclaw.triggers import pull_on_view as _view
 
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     surface = str((body or {}).get("surface", "") or "").strip() if isinstance(body, dict) else ""
     if not surface:
         return web.json_response({"refreshed": [], "served_cache": []})
@@ -1976,10 +1962,7 @@ async def _run_event(raw: str, request: web.Request) -> web.Response:
     trigger = next((t for t in store.load() if t.id == raw), None)
     if trigger is None:
         return web.json_response({"error": "not found"}, status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     body = body if isinstance(body, dict) else {}
     key = sanitize_string(str(body.get("key", "") or "manual"))[:500]
     value = sanitize_string(str(body.get("value", "") or "manual fire"))[:10000]
@@ -2029,10 +2012,7 @@ async def api_trigger_test(request: web.Request) -> web.Response:
     hook = _hook_store(state).get(raw)
     if not hook:
         return web.json_response({"error": "not found"}, status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     context = sanitize_string(body.get("context", "test"))[:10000]
     # A rehearsal, not a fire (#609): gates all hold and the action really executes,
     # but the payload is tagged and the hook's real run_count/last_run/last_status
