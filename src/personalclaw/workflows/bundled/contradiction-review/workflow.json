@@ -70,7 +70,12 @@
             "title": "{{inputs.title}}",
             "content": "{{inputs.statement}}",
             "kind": "fact",
-            "mode": "upsert"
+            "mode": "upsert",
+            "claims": [
+              {
+                "statement": "{{inputs.statement}}"
+              }
+            ]
           }
         }
       },
