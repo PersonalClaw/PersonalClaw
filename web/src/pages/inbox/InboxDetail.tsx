@@ -7,7 +7,8 @@ import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented, FieldError } from '../../ui/forms'
-import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
+import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
+import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
@@ -269,10 +270,13 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const [gone, setGone] = useState(false)
+  // What the decision DID, once it has been made. The accept response's `{name, version}` used to
+  // be discarded, so a successful install said nothing at all — see `act()`.
+  const [done, setDone] = useState('')
 
   useEffect(() => {
     let alive = true
-    setErr(''); setGone(false); setDetail(null)
+    setErr(''); setGone(false); setDetail(null); setDone('')
     api.skillProposalDetail(pid)
       .then((d) => { if (alive) setDetail(d) })
       // A 404 means it was already answered elsewhere (the skills page, or another tab).
@@ -281,21 +285,56 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
     return () => { alive = false }
   }, [pid])
 
+  // ── A DECISION HAS TO SAY WHAT IT DID (#283) ───────────────────────────────────────────────
+  //
+  // This modelled only `busy` and `err`, so a successful install was indistinguishable from
+  // having clicked nothing: the `{ok, name, version}` payload was thrown away, no confirmation
+  // appeared, and — because the buttons were gated on `!!busy` alone — Install stayed clickable.
+  // The second click reached the endpoint, which 409s (the first accept consumed the proposal),
+  // and the raw `no proposal '<id>'` landed in the error slot below. One success state fixes all
+  // of it: the confirmation names the skill, and it REPLACES the buttons, so the re-click that
+  // produced the 409 is not merely discouraged, it is unreachable.
+  //
+  // The inbox item's own status needs no client-side nudge — the server moves it to a terminal
+  // status on the way out (`skills/proposals.py:_resolve_inbox_item`, called by `accept()` and
+  // `reject()`), and `onChanged()` re-reads the item, so the row stops claiming attention.
   async function act(kind: 'accept' | 'reject') {
     setBusy(kind); setErr('')
     try {
-      if (kind === 'accept') await api.acceptSkillProposal(pid)
-      else await api.rejectSkillProposal(pid)
+      if (kind === 'accept') {
+        const r = await api.acceptSkillProposal(pid)
+        setDone(acceptedLabel(r.name, r.version))
+      } else {
+        await api.rejectSkillProposal(pid)
+        setDone('Rejected')
+      }
       // The decision lands here but the COLLECTION is read on two other surfaces — the Skills page's
       // "Proposals (N)" badge and its proposals list. `onChanged()` only refreshes this inbox item, so
       // both of those kept describing a proposal that no longer needs deciding.
       invalidateKeys('skill-proposals', true)
       onChanged()
     } catch (e) {
+      // Answered somewhere else between load and click (the Skills page, another tab): accept 409s
+      // and reject 404s. That is the same stale row the load path already names, so it reads as
+      // "already answered" rather than leaking the server's sentence into the error slot.
+      if (e instanceof ApiError && (e.status === 409 || e.status === 404)) { setGone(true); return }
       setErr(e instanceof Error ? e.message : `${kind} failed`)
     } finally { setBusy(null) }
   }
 
+  // Our OWN decision first: it is the more specific account of the same terminal state, and the
+  // only one that can name the skill. (`gone` is set by the load effect, which keys on `[pid]` and
+  // does not re-run after `act()`, so in practice only one of the two is ever set.)
+  if (done) {
+    return (
+      <Section label="Proposal">
+        <p data-type="body-s" className="flex flex-wrap items-center gap-1.5 text-on-surface-low">
+          <Check size={14} style={{ color: 'var(--color-ok)' }} /> {done}
+          {' '}<TextLink onClick={() => navigate('skills')}>Open Skills</TextLink>
+        </p>
+      </Section>
+    )
+  }
   if (gone) {
     return (
       <Section label="Proposal">
