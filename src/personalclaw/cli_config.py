@@ -107,10 +107,26 @@ def _config_cmd(args: argparse.Namespace) -> None:
                         resources=exc.resources or f"{key}={value}",
                     )
                     sys.exit(1)
-            if not _dict_set(d, key, parsed):
+            # The MODEL dict answers "is this a real key?" — every section is materialised
+            # there, so a leaf the operator has never written still resolves.
+            if _dict_get(d, key) is _MISSING:
                 print(f"❌ Unknown key: {key}", file=sys.stderr)
                 sys.exit(1)
-            atomic_write(config_path(), json.dumps(d, indent=2) + "\n")
+            # 🔴 …but the write lands on the RAW document, not on `d`. `d` is
+            # `AppConfig.to_dict()`, a fixed literal of the 40-odd sections the loader models,
+            # and serialising it over config.json OMITTED every top-level key that literal
+            # does not name: `providers`, `use_cases`, `slack`, `meta`. `providers` is the
+            # canonical store for model-provider instances and, for `openai_compatible`, the
+            # only copy of an API key entered in the dashboard — so one
+            # `config set agent.log_level DEBUG` destroyed ten instances and their keys, and
+            # printed ✅ (#951). The blocks were not emptied, they were never serialised.
+            #
+            # Read → apply one field → write the merged document is what the dashboard PATCH
+            # already does. Doing it here too is what makes the two write paths agree; the
+            # divergence is why the API got fixed while the CLI stayed destructive.
+            doc = _config_doc_to_merge_into()
+            _dict_put(doc, key, parsed)
+            atomic_write(config_path(), json.dumps(doc, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set",
@@ -168,20 +184,72 @@ def _dict_get(d: dict, key: str) -> object:
     return cur
 
 
-def _dict_set(d: dict, key: str, value: object) -> bool:
-    """Set a value in a nested dict using dot-separated key. Returns False if parent missing."""
+def _dict_put(d: dict, key: str, value: object) -> None:
+    """Set a dot-separated key in `d`, creating the objects the path needs on the way.
+
+    Deliberately NOT the "refuse a missing parent" setter this replaced. That refusal was the
+    Unknown-key check, and it belongs on `AppConfig.to_dict()`, where every section is
+    materialised — not on the raw config.json, where a section the operator has never touched
+    is legitimately absent. Conflating the two is what forced the write to serialise the model
+    dict, which is what deleted `providers` (#951). The caller has already resolved `key`
+    against the model, so the path is known-good by the time it gets here.
+    """
     parts = key.split(".")
     cur = d
     for p in parts[:-1]:
-        if not isinstance(cur, dict) or p not in cur:
-            return False
-        cur = cur[p]
-    if not isinstance(cur, dict):
-        return False
-    if parts[-1] not in cur:
-        return False
+        nxt = cur.get(p)
+        if not isinstance(nxt, dict):
+            # The model says this path is an object, so whatever non-object the file holds
+            # here is not config the loader could read. Same call the dashboard PATCH makes.
+            nxt = {}
+            cur[p] = nxt
+        cur = nxt
     cur[parts[-1]] = value
-    return True
+
+
+def _config_doc_to_merge_into() -> dict:
+    """The existing config.json, as the base a single-key write merges into.
+
+    Merging only preserves the unmodeled blocks if the existing document was actually READ, so
+    a failed read must refuse rather than fall through: serialising a base that never saw
+    `providers` deletes it just as surely as serialising the model dict did. Absent is safe to
+    write over; unreadable is not. This is the rule `AppConfig.save()` already enforces with
+    ``ConfigPreserveError``, stated here for the CLI's exit-code contract.
+
+    An EMPTY file is `absent` by that rule, not `unreadable` — zero bytes hold no block a
+    write could destroy, and refusing would leave a config truncated by a crashed write or a
+    bare `touch` permanently unwritable, which is a dead end rather than a protection.
+    """
+    p = config_path()
+    if not p.exists():
+        return {}
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(
+            f"❌ refusing to write {p}: it exists but could not be read, so the "
+            f"providers/use_cases/slack blocks it may hold cannot be preserved ({exc})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not raw.strip():
+        return {}
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(
+            f"❌ refusing to write {p}: it exists but is not valid JSON, so the "
+            f"providers/use_cases/slack blocks it may hold cannot be preserved ({exc})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not isinstance(doc, dict):
+        print(
+            f"❌ refusing to write {p}: it holds {type(doc).__name__}, not an object",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return doc
 
 
 def _parse_value(raw: str) -> object:

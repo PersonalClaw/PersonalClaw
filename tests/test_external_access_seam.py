@@ -257,8 +257,8 @@ class TestPatchRefusals:
 
 class TestTheSecondWritePath:
     """`personalclaw config set` is a SECOND write path, and it does not consult
-    `_EDITABLE_CONFIG` — `cli_config._dict_set` walks `AppConfig.to_dict()` and writes
-    any leaf that exists there. So "absent from the PATCH allowlist" is not the same
+    `_EDITABLE_CONFIG` — `cli_config` resolves the dotted key against `AppConfig.to_dict()`
+    and writes any leaf that exists there. So "absent from the PATCH allowlist" is not the same
     claim as "unwritable", and measuring only the PATCH endpoint would leave the
     stronger claim untested. Measured, not assumed:
 
