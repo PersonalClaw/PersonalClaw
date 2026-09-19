@@ -2284,6 +2284,31 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const node = turnNodes.current.get(coord)
     node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
+  /** A drawer row's coordinate, parked between the tap and the drawer finishing its exit.
+   *
+   *  🔴 THE ORDER IS THE WHOLE FIX, AND JUMPING FIRST WAS A REAL DEFECT. The mobile drawer is a
+   *  docked `SidePanel` flex SIBLING of this column, so while it is open the transcript is
+   *  squeezed to the 32px `EDGE_PEEK` sliver (measured at a 390px viewport: panel 358, column
+   *  32). `scrollIntoView` resolves a target offset against the layout it is called in — so
+   *  `jumpToTurn(coord); setMapOpen(false)` computed an offset for a 32px-wide transcript and
+   *  then immediately re-flowed it to 390px, where the retained `scrollTop` means something
+   *  else entirely. Measured: tapping the oldest row left turn 1 at viewport ratio 0, i.e. the
+   *  tap navigated nowhere, which is the one thing SSM-10's row exists to do.
+   *
+   *  So the tap now only RECORDS where it wants to go, and the scroll runs from the
+   *  `AnimatePresence` `onExitComplete` below — the first moment the panel is out of the DOM and
+   *  the transcript's width is final. `onExitComplete` rather than a `requestAnimationFrame` or a
+   *  timeout because the exit is a spring on `width` (`ui/SidePanel`): its duration is not a
+   *  number this file can know, and under `prefers-reduced-motion` it is zero. Framer's callback
+   *  is the only signal that means "the layout has stopped moving" in both cases.
+   */
+  const pendingMapJump = useRef<number | null>(null)
+  /** Run the parked jump, if a row tap (and not the panel's own close button) armed one. */
+  function runPendingMapJump() {
+    const coord = pendingMapJump.current
+    pendingMapJump.current = null
+    if (coord !== null) jumpToTurn(coord)
+  }
 
   // Kill EVERY running subagent of this chat's fan-out in one click (WF2WOR-8 C1.4).
   // Optimistically mark the running cards done; the subagent_done WS events reconcile.
@@ -3194,12 +3219,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             updated holds identically in both forms.
 
             A tap jumps AND closes: the drawer covers the transcript at this width, so a jump the
-            user cannot see is not a jump. */}
-        <AnimatePresence>
+            user cannot see is not a jump. It closes FIRST and scrolls after — see
+            `pendingMapJump`, where the order is the difference between a tap that navigates and
+            one that resolves an offset in a 32px-wide transcript and lands nowhere. */}
+        <AnimatePresence onExitComplete={runPendingMapJump}>
           {mapOpen && isMobile && started && (
             <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
               fillHeight onClose={() => setMapOpen(false)}>
-              <SessionMapDrawer marks={sessionMarks} onJumpTo={(coord) => { jumpToTurn(coord); setMapOpen(false) }} />
+              <SessionMapDrawer marks={sessionMarks}
+                onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
             </SidePanel>
           )}
         </AnimatePresence>

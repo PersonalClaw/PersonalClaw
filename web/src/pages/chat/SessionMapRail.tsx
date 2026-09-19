@@ -81,6 +81,25 @@ import { physics } from '../../design/motion'
  *    sit a few px apart a 24px VERTICAL band would swallow the marks above and below — the
  *    stolen-target defect that file records twice. Recorded, not rounded up, exactly as
  *    `SidePanel`'s 15px is.
+ *  · 🔴 AND THE BAND HAS TO CLEAR `NavRail`'s, which is why this rail carries a fixed `ml-4`. The
+ *    rail mounts flush against the shell's content-column edge, and `ui/NavRail`'s resize splitter
+ *    sits on the other side of exactly that seam wearing the SAME `.hit-24-x` band plus `z-10`.
+ *    Measured at 1280x420 on a 196px nav: splitter box 192-196, so its band spans 182-206; the
+ *    rail sat at 196-212 with its ticks centred on 204. `document.elementFromPoint` at every
+ *    tick's own centre returned the SPLITTER — 6 of 6 — so EVERY mark was un-clickable by pointer
+ *    at the default nav width, on every desktop viewport (the seam does not move with width). That
+ *    is the atom's whole point inverted: SSM-11 exists to make the map reachable, and the mouse
+ *    could not reach a single tick. The two 24px bands stop overlapping once a tick's centre is
+ *    24px clear of the nav edge, i.e. at `ml-4` + the rail's own 8px half-width = 220 (band
+ *    208-232, clear of 206). Verified the same way it was found: all 6 ticks now hit-test to
+ *    themselves.
+ *    🪤 FIXED `ml-4`, NOT the t-shirt `ml-l`, and this is the part that would rot silently. The
+ *    clearance is owed to `--hit-min`, a FIXED 24px WCAG 2.2 SC 2.5.8 floor — but `--spacing-l`
+ *    is `16px * var(--space-scale)`, and `--space-scale` is a user density preference that
+ *    `tokens.css` drops to 0.8 and 0.68. On the compact densities `ml-l` would be 12.8px and
+ *    10.9px against a 14px requirement, so the stolen target would come back for exactly the
+ *    users who chose tighter spacing, invisibly. Tailwind's numeric scale is not re-mapped here
+ *    (no `--spacing:` override), so `ml-4` is a real 16px at every density.
  *  · NO `outline-none`: the mark takes the global `:focus-visible` ring (`tokens.css` — 2px opaque
  *    `--color-primary`, no alpha, `focusRingContrast.test.ts`) rather than minting a local one.
  *  · The HALO is the rail's one animation (§A.5's hover-enlarge) and it runs on `physics.snappy`, a
@@ -220,7 +239,9 @@ function SessionMapRailBody({ marks, turnNodes, scrollRef, onJumpTo }: SessionMa
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
         setAnnouncement('')
       }}
-      className="relative flex h-full w-4 shrink-0 justify-center"
+      // `ml-4` is the clearance that keeps this rail's pressable band off `ui/NavRail`'s splitter
+      // band — load-bearing, measured, and deliberately NOT a density-scaled token. See §A.8.
+      className="relative ml-4 flex h-full w-4 shrink-0 justify-center"
     >
       {/* The chrome spine — a hairline in the rail tone. Decorative: the marks are the targets. */}
       <div
