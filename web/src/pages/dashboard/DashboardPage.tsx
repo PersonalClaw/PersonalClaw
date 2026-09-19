@@ -251,6 +251,13 @@ export function DashboardPage(route: RouteProps) {
 function SystemRailIsland(route: RouteProps) {
   return (
     <div
+      // The e2e visual-regression harness's MASK hook (`e2e/helpers.ts`,
+      // `expectRouteScreenshot`). Every metric `SystemHealth` renders here is a live host
+      // read — uptime, cpu%, mem, net rx/tx, load average — which legitimately differs
+      // between two screenshots of an unchanged tree, so the harness excludes this region
+      // from the pixel diff. By NAME rather than by CSS class: the classes above are
+      // styling and change when the design does, while identity should not.
+      data-testid="system-rail-island"
       className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
       style={{ maxWidth: 'var(--content-width)' }}
     >

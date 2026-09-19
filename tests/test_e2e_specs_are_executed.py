@@ -2,7 +2,7 @@
 
 `web/e2e/` holds three specs. Only `a11y.spec.ts` was named by a workflow. `pwa.spec.ts` —
 the proof that the service worker never serves an authenticated `/api` response from
-cache, which is a data-leak control — and `visual.spec.ts` with its 32 committed baselines
+cache, which is a data-leak control — and `visual.spec.ts` with its 40 committed baselines
 ran in no automated gate at all. A suite nobody executes is not a slower suite; it is a
 suite whose failures nobody will ever see, and its green history is what makes that
 invisible.
@@ -13,7 +13,7 @@ This rail closes the gap in the only way that is honest about the constraint:
   build on a private port, so it is platform-neutral. Verified before wiring — 3 passed in
   48s locally — rather than added on the assumption that a spec in the tree works.
 * **`visual.spec.ts` cannot run yet, and the reason is mechanical, not editorial.**
-  `playwright.config.ts` sets `snapshotPathTemplate` with `{platform}`, and all 32 committed
+  `playwright.config.ts` sets `snapshotPathTemplate` with `{platform}`, and all 40 committed
   baselines are `-darwin`. A Linux CI job would find zero baselines and fail on every route
   on its first run. Producing `-linux` baselines requires a Linux run, which is the thing
   that does not exist yet.
@@ -43,7 +43,7 @@ _WORKFLOWS = _ROOT / ".github" / "workflows"
 #: sentence someone typed, not a file nobody noticed.
 LOCAL_ONLY: dict[str, str] = {
     "visual.spec.ts": (
-        "All 32 baselines are platform-qualified `-darwin` (playwright.config.ts's "
+        "All 40 baselines are platform-qualified `-darwin` (playwright.config.ts's "
         "`snapshotPathTemplate` includes `{platform}`), so a Linux runner has no baseline to "
         "compare against and would fail every route on its first run. Wiring this job "
         "requires committing `-linux` baselines, which requires a Linux run — see "
