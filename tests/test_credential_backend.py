@@ -383,6 +383,10 @@ def test_doctor_reports_the_env_fallback_and_not_the_request(
     from personalclaw.cli_doctor import _doctor_credentials
 
     monkeypatch.setenv(CREDENTIAL_BACKEND_ENV, "keychain")
+    # A credential is stored FIRST so the `.env 0600` this asserts is a mode the row read
+    # off a real file. Without the write there is no `.env`, and the row asserting 0600
+    # anyway was #2922 — see `test_doctor_reports_only_what_it_established.py`.
+    save_credential(_KEY, "in-the-env-file")
     issues = _doctor_credentials()
     out = capsys.readouterr().out
 

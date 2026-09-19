@@ -50,6 +50,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Literal
 
 from personalclaw.config import loader as _loader
@@ -176,6 +177,71 @@ def credential_backend_warning() -> str:
             "credentials stay in .env at mode 0600 (never plaintext elsewhere)"
         )
     return ""
+
+
+@dataclass(frozen=True)
+class CredentialStoreState:
+    """What an inspection of the credential store OBSERVED — never what it promises.
+
+    ``env_mode`` is the mode that was actually read off the file, so it is empty unless
+    ``env_exists`` is true. When ``env_readable`` is false the file could not be inspected
+    at all and NOTHING else here is established about it — absent and unreadable are
+    different observations, and a caller must not render either as a mode.
+    """
+
+    backend: CredentialBackend
+    requested: CredentialBackend
+    env_path: str
+    env_exists: bool
+    env_mode: str
+    env_readable: bool
+
+    @property
+    def env_group_or_world_readable(self) -> bool:
+        """True only when a mode was READ and it grants group/other any bit."""
+        return bool(self.env_mode) and bool(int(self.env_mode, 8) & 0o077)
+
+
+def credential_store_state() -> CredentialStoreState:
+    """Inspect the credential store and report only what the inspection established (#2922).
+
+    Both doctor surfaces render from this one function — ``cli_doctor``'s ``credentials:``
+    row and the ``security.credential_backend`` probe — for the same reason
+    :func:`credential_backend_warning` is shared: two surfaces that each re-derive the same
+    facts eventually disagree about them.
+
+    🔴 **THE DISTINCTION THIS TYPE EXISTS FOR.** 0600 is the mode the ``.env`` fallback
+    PROMISES, and both surfaces used to print it as though they had measured it — the CLI
+    row hardcoded the literal without stat-ing anything, and the probe rendered
+    ``mode or '0600'``. So a fresh install with no credentials and no ``.env`` reported
+    "credentials stored in .env at mode 0600" and named a path that did not exist, and a
+    ``.env`` sitting at 0640 reported 0600 as well. Reporting the promise as an observation
+    is the defect; separating ``env_exists`` / ``env_readable`` from ``env_mode`` is what
+    makes it unstatable.
+
+    Reads no secret VALUE and repairs nothing — the next ``load_credentials()`` owns the
+    0600 repair, and a diagnostic that silently changed permissions would be reporting on
+    its own side effect.
+    """
+    ep = _loader.env_path()
+    exists = False
+    mode = ""
+    readable = True
+    try:
+        exists = ep.exists()
+        if exists:
+            mode = format(ep.stat().st_mode & 0o777, "04o")
+    except OSError:
+        logger.debug("credential file state could not be read", exc_info=True)
+        exists, mode, readable = False, "", False
+    return CredentialStoreState(
+        backend=credential_backend(),
+        requested=requested_credential_backend(),
+        env_path=str(ep),
+        env_exists=exists,
+        env_mode=mode,
+        env_readable=readable,
+    )
 
 
 def _keychain_index() -> list[str]:
