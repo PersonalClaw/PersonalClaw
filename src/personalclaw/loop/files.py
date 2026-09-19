@@ -324,6 +324,39 @@ def _read_raw_finding_files(loop_id: str) -> list[dict]:
     return out
 
 
+_STAGE_DECOR_RE = re.compile(r"^\s*(stage\s*)?\d+(\s*/\s*\d+)?\s*[—:\-–]\s*", re.IGNORECASE)
+
+
+def _canonical_stage(label: str, plan: list) -> str | None:
+    """Resolve a finding's stage label to the plan phase it names, or None.
+
+    The `stage` field on a worker finding is UNCONSTRAINED MODEL OUTPUT — observed in
+    three shapes on one loop ('1 — Write bell_times.py', '2 — Verify & QA',
+    'Stage 2/2 — Verify & QA'), none equal to a phase's stage id or title, so every
+    downstream exact-match attribution failed silently (issue 642: a 12-cycle blocked
+    loop whose entire reasoning trail was invisible). The PLAN is the authority: match
+    exact id/title first, then with the numeric decoration stripped and case folded.
+    Returns the phase's canonical key (stage id, else title) — the value the engine
+    itself keys phases by.
+    """
+    want = label.strip()
+    if not want:
+        return None
+    norm = _STAGE_DECOR_RE.sub("", want).strip().lower()
+    for exact in (True, False):
+        for p in plan:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("stage", "")).strip()
+            title = str(p.get("title", "")).strip()
+            if exact:
+                if want in (pid, title) and (pid or title):
+                    return pid or title
+            elif norm and norm in (pid.lower(), title.lower()):
+                return pid or title
+    return None
+
+
 def record_cycle_findings(loop_id: str) -> int:
     """Ingest any worker finding files not yet on the ledger, as `step_started`/`step_completed`.
 
@@ -343,11 +376,25 @@ def record_cycle_findings(loop_id: str) -> int:
         if e.get("kind") == STEP_COMPLETED
     }
     journal = LoopJournal.open(loop_id)
+    # Canonicalize model-authored stage labels against the plan ONCE, at the single
+    # write into the durable store — every projection then matches by construction
+    # (the raw label survives as stage_label for display/debugging). Function-local
+    # import for the same reason the GC's row edge is: a module-level one would close
+    # a cycle with store.py's module-level import of this module.
+    from personalclaw.loop import store as _row_store
+
+    loop = _row_store.get(loop_id)
+    plan = list(loop.plan or []) if loop else []
     filed = 0
     for finding in raw:
         src = str(finding.get("_source_file") or "")
         if src and src in already:
             continue
+        stage_raw = finding.get("stage")
+        if plan and isinstance(stage_raw, str) and stage_raw.strip():
+            canon = _canonical_stage(stage_raw, plan)
+            if canon and canon != stage_raw:
+                finding = {**finding, "stage": canon, "stage_label": stage_raw}
         cycle_val = finding.get("cycle")
         try:
             cycle = int(cycle_val)  # type: ignore[arg-type]

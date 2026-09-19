@@ -58,6 +58,14 @@ import { BUSY_REASON } from '../../ui/unavailable'
 
 const EMPTY_ARTIFACTS = new Set<string>()
 
+/** Strip a model-authored stage decoration — '1 — ', 'Stage 2/2 — ', '3: ' — down to
+ *  the bare title, case-folded (issue 642). Mirrors the ingest-side canonicalizer in
+ *  loop/files.py (_STAGE_DECOR_RE): the ingest stamps NEW findings with the plan's
+ *  canonical stage; this normalize keeps already-ledgered legacy labels attributable. */
+export function normalizeStageLabel(s: string): string {
+  return s.replace(/^\s*(stage\s*)?\d+(\s*\/\s*\d+)?\s*[—:\-–]\s*/i, '').trim().toLowerCase()
+}
+
 // The Code cockpit is a code-shaped view-model over the unified Loop (kind=code).
 // The wire format is the unified Loop (entry_stage/project_kind/verify_command/
 // test_command/queued_task_ids under kind_config; the stage list as `plan`, per-stage
@@ -1311,10 +1319,15 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
   const tasksByStage: Record<string, TaskItem[]> = {}
   for (const s of stages) tasksByStage[stageKey(s)] = (links[stageKey(s)] && tasksByList[links[stageKey(s)]]) || []
   // A sequential-mode cycle finding has no task_id; its `stage` field may carry the
-  // stage id ("implementation") OR the stage title ("Implement greet.py …") depending
-  // on how it was recorded — resolve either to the stage's task list.
+  // stage id ("implementation"), the stage title, OR a model-decorated label like
+  // '1 — Write bell_times.py' / 'Stage 2/2 — Verify & QA' (issue 642: the field is
+  // unconstrained model output, and exact equality attributed ZERO of a 12-cycle
+  // loop's findings). The ingest now canonicalizes new findings server-side; the
+  // normalized fallback here keeps every already-ledgered legacy label attributable.
   const stageTasksFor = (fstage: string): TaskItem[] => {
     const s = stages.find((sg) => sg.stage === fstage || sg.title === fstage)
+      ?? stages.find((sg) => normalizeStageLabel(sg.title) === normalizeStageLabel(fstage)
+        || normalizeStageLabel(sg.stage ?? '') === normalizeStageLabel(fstage))
     return s ? (tasksByStage[stageKey(s)] || []) : []
   }
   for (const f of (project.findings ?? [])) {
