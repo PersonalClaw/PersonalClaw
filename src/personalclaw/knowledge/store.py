@@ -2167,29 +2167,43 @@ class KnowledgeStore:
 
         The store had no writer for `item_relations` at all — the only one was raw SQL
         inside an action provider — so a verb that wanted to link a split-off child back to
-        its parent had no seam that also validated the vocabulary. Refuses a self-edge and
-        an unknown `relation_type` (`semantics.RELATION_TYPES`) rather than storing a row no
-        reader has a rendering for.
+        its parent had no seam that also validated the vocabulary.
+
+        Validation is `semantics.validate_relation`'s, not a second copy of it. That function
+        was built and unit-tested with ZERO callers while this method re-implemented the two
+        checks it already owned (self-edge, closed `RELATION_TYPES`) and silently skipped the
+        two it did not: an unknown `provenance` was stored verbatim, and `confidence` was
+        written unclamped — so `provenance: "vibes"` at `confidence: 7.0` was a storable row.
+        One validator, one place the vocabulary is enforced. What stays HERE is the part only
+        the store can do: both endpoints must be real rows, because a model-proposed `target`
+        can name an item that does not exist and the foreign key would refuse it anyway —
+        silently, mid-transaction, which reads exactly like a write that worked.
         """
         from personalclaw.knowledge import semantics
 
-        if not source_item_id or not target_item_id or source_item_id == target_item_id:
-            return False
-        if relation_type not in semantics.RELATION_TYPES:
+        relation, _refusal = semantics.validate_relation(
+            source_item_id,
+            target_item_id,
+            relation_type,
+            provenance=provenance,
+            confidence=confidence,
+        )
+        if relation is None:
             return False
         for iid in (source_item_id, target_item_id):
             if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone() is None:
                 return False
+        row = relation.to_dict()
         self.db.execute(
             "INSERT OR REPLACE INTO item_relations (source_item_id, target_item_id, "
             "relation_type, confidence, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (
-                source_item_id,
-                target_item_id,
-                relation_type,
-                float(confidence),
-                str(provenance or "extracted"),
-                datetime.now().isoformat(),
+                row["source_item_id"],
+                row["target_item_id"],
+                row["relation_type"],
+                row["confidence"],
+                row["provenance"],
+                row["created_at"],
             ),
         )
         self.db.commit()

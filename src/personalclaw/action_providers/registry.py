@@ -224,6 +224,20 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeRetrieveActionProvider())
+    if "knowledge-relate" not in _providers:
+        # KNOWLEDGE-SYNTHESIS §3.2 (WF2KNO-10): the write-back for the MODEL tier's typed
+        # edges. `knowledge-persist` beside it can only write the two verbs the deterministic
+        # ladder can derive; the structural three are what a judging node proposes, and its
+        # answer previously reached a display string and nothing else. Added to
+        # ALLOWED_HOOK_PROVIDERS, to `triggers/screen.py`'s write-capable set, to
+        # `guardrails.rungs`' `action.knowledge_write` class and to `ownership.py`'s
+        # LEARNING_PROVIDERS in the SAME commit — a provider in one set but not the others is
+        # the mismatch that makes a template validate, save, and then fail to run.
+        from personalclaw.action_providers.knowledge_relate_provider import (
+            KnowledgeRelateActionProvider,
+        )
+
+        register_action_provider(KnowledgeRelateActionProvider())
     if "artifact_inspect" not in _providers:
         # WORKFLOWS-V2 WV-11: the read half of output-offloading — pulls a `{{nodes.x.artifact}}`
         # body on demand, confined to the run's own `artifacts/`. Added to

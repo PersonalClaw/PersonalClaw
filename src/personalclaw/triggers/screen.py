@@ -448,6 +448,13 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "run-workflow",  # a whole workflow run
         "knowledge-persist",  # writes the knowledge store
         "knowledge-consolidate",  # `apply: true` writes the consolidation
+        # WF2KNO-10: writes typed item relations, and the edges it writes were PROPOSED BY A
+        # MODEL over stored claims that can have come from a web page. The write is narrow by
+        # construction (closed five-verb vocabulary, both endpoints must be real rows,
+        # confidence clamped below 1.0, no free text stored), but "narrow" is not "read-only":
+        # it mutates the store unattended, so it belongs on the side of this table that needs
+        # an explicit opt-in.
+        "knowledge-relate",
         "artifact-update",  # mutates an artifact
         "render-report",  # writes the spec artifact + its derived export
         "notification-digest",  # writes an inbox item
