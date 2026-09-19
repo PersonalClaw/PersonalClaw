@@ -138,13 +138,11 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
     if not folder:
         return web.json_response({"error": "not found"}, status=404)
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if "name" in body:
-        new_name = str(body["name"]).strip()[:100]
-        if not new_name:
-            return web.json_response({"error": "name required"}, status=400)
+        body = await json_object_body(request)
+        new_name = require_string(body, "name")[:100] if "name" in body else None
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
+    if new_name is not None:
         folder["name"] = new_name
     if "collapsed" in body:
         folder["collapsed"] = bool(body["collapsed"])
