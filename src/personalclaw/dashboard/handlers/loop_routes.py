@@ -361,8 +361,10 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
     settled (grill's headline advantage, previously unreachable — the pipeline had no
     caller). Like classify, it only COMPUTES: the FE folds the answered phases into the
     task text + persists ``{grill_phases, phase_answers}`` into ``kind_config`` at
-    launch (a pre-launch ``update_spec`` replaces ``kind_config`` wholesale, so
-    persisting here would be clobbered anyway — one write path, no dual state)."""
+    launch — nothing is SETTLED until the user has answered, so there is one write path
+    and no dual state. (It used to also be true that persisting here would be clobbered,
+    because the launch PUT replaced ``kind_config`` wholesale; that write is a merge now,
+    see :func:`_merge_kind_config`, and the reason above is the one that still holds.)"""
     cid = request.match_info["id"]
     loop = store.get(cid)
     if loop is None:
@@ -555,9 +557,66 @@ def _persist_grill_decisions(body: dict, state: Any) -> int:
         return 0
 
 
+def _merge_kind_config(body: dict, existing: Loop) -> dict:
+    """The spec to validate + persist for a PUT, with ``kind_config`` merged OVER the
+    stored config instead of replacing it.
+
+    Every other field on this route is already a patch: a key absent from the body is
+    left alone, which is why a name-only or workspace_dir-only PUT works. ``kind_config``
+    was the one exception, because it is a single JSON column (``store._DICT_COLS``) that
+    ``update_spec`` writes with one ``json.dumps`` — so "patch at the top level" stopped
+    being "patch at the leaf" for the one field that holds every kind-specific value.
+
+    A caller only ever knows its OWN keys. Plan Review renders five or six goal-shaped
+    ones, and research loops route through that goal-shaped screen
+    (``LoopsSection.tsx`` excludes only ``design``), so writing its object as the whole
+    column destroyed everything the screen never shows: a research loop's subtopics,
+    output template and manner, primary deliverable and breadth/depth budget — plus the
+    ``granularity`` dial, whose loss silently re-enables value-based self-stop on a loop
+    the user set to run ``forever`` (``granularity.dial_for`` falls back to
+    ``balanced`` on a missing key). All of it authored during a multi-step intake, all of
+    it gone at the one click a user cannot undo (#411).
+
+    The request was already being SCREENED as a patch — ``validation.spec_edit_errors``
+    merges the body's ``kind_config`` over the stored one "so a partial patch is judged in
+    context" — so the two halves of one request disagreed: checked as a patch, written as
+    a replacement. Merging here makes the write match the check.
+
+    An explicit ``None`` DELETES a key. That is load-bearing, not decorative: it is how a
+    caller clears a field it owns, and without it a merge is the same swallowed write in
+    reverse. ``instrument.py`` resolves ``kind_config["verify_command"]`` as the reproduce
+    anchor and hands it to a fresh judge pass without re-reading ``goal_type``, so a goal
+    the user switched away from ``verifiable`` must be able to drop the command it no
+    longer runs on. A ``None`` and an absent key already read identically to every
+    consumer (all of them ``cfg.get(...)``), so delete mints no new state.
+
+    Merging on the SERVER rather than in the browser is not a preference. ``get_redacted``
+    passes ``kind_config`` through ``files._redact_value``, so the config a client holds is
+    a REDACTED view; a client that spread its own copy back into the write would persist
+    redaction placeholders over the user's real values, turning a dropped field into a
+    corrupted one. Only the server has the unredacted config to merge against.
+
+    This is the route's contract, not the store's: ``store.update_spec`` still replaces the
+    column, and its in-process callers (``plan_walkthrough``, ``kinds/sdlc``) already merge
+    explicitly before calling it. There is one merge per layer, not a dual path.
+    """
+    patch = body.get("kind_config")
+    if not isinstance(patch, dict):
+        return body
+    merged = dict(existing.kind_config or {})
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return {**body, "kind_config": merged}
+
+
 async def api_loop_update(request: web.Request) -> web.Response:
     """PUT /api/loops/{id} — edit a pre-launch spec, or a name-only rename in any
-    state (frozen spec → 409 unless it's just a name)."""
+    state (frozen spec → 409 unless it's just a name). ``kind_config`` is a PATCH
+    merged over the stored config (see :func:`_merge_kind_config`), so a caller never
+    destroys a kind-specific field it doesn't render."""
     cid = request.match_info["id"]
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -565,18 +624,29 @@ async def api_loop_update(request: web.Request) -> web.Response:
     existing = store.get(cid)
     if existing is None:
         return web.json_response({"error": "Not found"}, status=404)
+    spec = _merge_kind_config(body, existing)
     # Re-screen a spec edit before persisting — mirrors the create gate so an edit
     # can't smuggle in a destructive verify/test command or a sensitive workspace
     # that create rejects. A name-only patch skips this (nothing security-relevant).
-    if set(body) - {"name"}:
+    #
+    # Screens ``spec``, i.e. exactly what the store will write: "validated" and
+    # "persisted" must be the same object or the gate is judging a request that is not
+    # going to be made. That is also why ``existing_kind_config`` is the merged config
+    # and not the stored one — ``spec_edit_errors`` merges again over whatever it is
+    # given, and re-merging the STORED config would resurrect a key this patch deletes,
+    # screening a command that is on its way out.
+    if set(spec) - {"name"}:
+        effective_cfg = spec.get("kind_config")
+        if not isinstance(effective_cfg, dict):
+            effective_cfg = existing.kind_config or {}
         edit_errs = validation.spec_edit_errors(
-            body, kind=existing.kind, existing_kind_config=existing.kind_config or {}
+            spec, kind=existing.kind, existing_kind_config=effective_cfg
         )
         if edit_errs:
             return web.json_response(
                 {"error": " · ".join(edit_errs), "errors": edit_errs}, status=400
             )
-    updated = store.update_spec(cid, body)
+    updated = store.update_spec(cid, spec)
     if updated is not None:
         # The grill SAVE seam (`grill.SaveFn`). `api_loop_grill_tree` deliberately passes
         # ``save=None`` because nothing is settled at GENERATION time — the user has not answered
@@ -584,6 +654,10 @@ async def api_loop_update(request: web.Request) -> web.Response:
         # it here rather than in the generator is what makes the pipeline's memory-check real —
         # `check_memory` recalls prior decisions, and until now no pass ever WROTE one, so the
         # "don't re-ask what the user already settled" promise had nothing to read.
+        # Reads ``body``, not the merged ``spec``: a SETTLED decision is one the user just
+        # answered, and the merge carries forward the phases/answers of every earlier write,
+        # so feeding it the merged config would re-harden the same decisions on every
+        # subsequent edit of the same loop.
         _persist_grill_decisions(body, request.app["state"])
     if updated is None:
         # spec frozen — allow a name-only patch via rename
