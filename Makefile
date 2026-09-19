@@ -31,7 +31,7 @@ PYI_BUNDLE_DIR  := dist/personalclaw-backend
 .PHONY: help format lint test test-e2e test-visual build clean harness-validate gates \
         mutation-check \
         serve serve-fresh serve-web \
-        web-build backend-build pyinstaller \
+        web-build spa-check backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
         docker-build docker-up docker-down docker-logs docker-deploy \
         dev-up dev-down
@@ -191,6 +191,11 @@ web-build:
 	mkdir -p $(PKG)/static
 	rm -rf $(PKG)/static/dist
 	ln -s ../../../$(WEB_DIR)/dist $(PKG)/static/dist
+	$(PYTHON) scripts/spa_dist_freshness.py stamp
+
+## spa-check: fail when the built SPA is older than the checked-out web/ sources
+spa-check:
+	$(PYTHON) scripts/spa_dist_freshness.py check
 
 ## pyinstaller: build a standalone backend bundle in dist/personalclaw-backend/
 pyinstaller: web-build
