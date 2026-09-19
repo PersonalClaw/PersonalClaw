@@ -7,6 +7,7 @@ import struct
 from collections import defaultdict
 
 from personalclaw.sqlite_compat import sqlite3
+from personalclaw.vector_stores.registry import active_provider as active_vector_store
 
 from .embedder import floats_to_bytes
 from .embedding_fingerprint import FRESH_PREDICATE, active_fingerprint
@@ -582,6 +583,16 @@ class HybridRetriever:
         the streamed exact scan above: slower on a large library, identical in what it returns,
         announced once at INFO and reported by the Doctor.
 
+        **KBVS-1: the chunk arm can be served by the user's OWN vector store.** When exactly
+        one ``vector_store`` provider app is enabled, that backend replaces ``vec0`` as the
+        chunk arm's candidate generator *and* supplies the similarity — core keeps the floor,
+        the MAX roll-up, the liveness/freshness join and the rank hand-off to RRF, so the fused
+        arm's shape is unchanged and the calibrated floor keeps its meaning. With nothing bound
+        (the default) the branch is not taken and this method is the sqlite-vec/FTS5/graph path
+        exactly as before. A bound backend that errors contributes nothing and logs at WARNING
+        rather than silently falling back to the local index. Contract + rationale:
+        ``vector_stores/base.py``.
+
         ``chunk_locators`` is an optional sink: when supplied, it is filled with
         ``item_id -> {"section", "line_start", "line_end"}`` for every item whose winning
         signal was a chunk, so ``search`` can cite the passage that actually matched. It is
@@ -601,6 +612,25 @@ class HybridRetriever:
         best: dict[str, float] = {}
         best_loc: dict[str, dict] = {}
 
+        def _roll_up(item_id: str, sim: float, locator: dict | None) -> float:
+            """Apply the floor and the MAX roll-up for one already-computed similarity.
+
+            Split out of :func:`_consider` so the EXTERNAL vector-store arm (KBVS-1), which
+            gets its similarity from the backend instead of computing one, shares this exact
+            floor and this exact roll-up. The backend owns the cosine; core owns everything
+            that turns a similarity into an item's rank, and there is one implementation of
+            that regardless of which arm produced the number.
+            """
+            if sim < _VECTOR_MIN_SIMILARITY:
+                return sim
+            if sim > best.get(item_id, -1.0):
+                best[item_id] = sim
+                if locator is None:
+                    best_loc.pop(item_id, None)
+                else:
+                    best_loc[item_id] = locator
+            return sim
+
         def _consider(item_id: str, blob, locator: dict | None) -> float | None:
             """Score one vector into the roll-up. Returns the similarity, or ``None`` when the
             vector is unscoreable (dimension guard). The value is returned — not just applied —
@@ -619,15 +649,7 @@ class HybridRetriever:
             # Floor: drop near-orthogonal noise so precise keyword/tag queries aren't
             # polluted by weak semantic neighbors. Applied per vector, before the roll-up,
             # so a weak chunk can never become an item's cited passage.
-            if sim < _VECTOR_MIN_SIMILARITY:
-                return sim
-            if sim > best.get(item_id, -1.0):
-                best[item_id] = sim
-                if locator is None:
-                    best_loc.pop(item_id, None)
-                else:
-                    best_loc[item_id] = locator
-            return sim
+            return _roll_up(item_id, sim, locator)
 
         # KL-11: sqlite-vec narrows both arms to a candidate set instead of reading every
         # BLOB. It is a CANDIDATE GENERATOR only — `_consider` above still does the scoring,
@@ -672,8 +694,102 @@ class HybridRetriever:
                 },
             )
 
-        ann_served = False
-        if index is not None:
+        def _live_chunk_rows(chunk_ids: list[str]) -> dict:
+            """The live, active, in-scope chunk rows for *chunk_ids*, keyed by chunk id.
+
+            The one join both candidate-generated chunk arms use, so the archived filter, the
+            ``status = 'active'`` filter and RET-4's fingerprint-freshness filter cannot fork
+            between the local ``vec0`` index and an external store. A candidate absent from the
+            result is a harmless extra: the generator still lists a chunk the live table no
+            longer offers.
+            """
+            placeholders = ",".join("?" * len(chunk_ids))
+            return {
+                row["chunk_id"]: row
+                for row in self.store.db.execute(
+                    chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
+                    f"WHERE c.id IN ({placeholders}) "  # noqa: S608 (placeholders only)
+                    "AND c.embedding IS NOT NULL AND i.status = 'active' "
+                    f"{chunk_archived} {fresh_clause}",
+                    (*chunk_ids, *fresh_params),
+                )
+            }
+
+        # ── KBVS-1: the EXTERNAL chunk arm ────────────────────────────────────────────
+        # When the user has bound their own vector store (one enabled `vector_store` provider
+        # app), it — not `vec0` — answers the chunk half of this arm. It is the only arm that
+        # moves: the whole-item vector arm below, the FTS5 arm and the graph arm are untouched,
+        # and with nothing bound `external` is None and not one statement of the local path
+        # changes.
+        #
+        # Unlike `vec0`, the backend supplies the SIMILARITY as well as the candidates — that is
+        # the point of aiming search at Qdrant/pgvector/Chroma. Core still owns the floor, the
+        # MAX roll-up (`_roll_up`, shared with `_consider`), the liveness join above and the
+        # rank hand-off, so the only thing delegated is the distance computation.
+        #
+        # A bound-but-broken backend contributes NOTHING and says so at WARNING. It deliberately
+        # does NOT fall through to `vec0`: answering out of a shadow local index while the store
+        # the user aimed at is unreachable is silent-wrong-recall, and the remaining arms
+        # (whole-item vector, FTS5, graph) already keep the search alive — degradation, not a
+        # substitution. See `vector_stores/base.py`.
+        external = active_vector_store()
+        external_served = False
+        if external is not None:
+            external_served = True
+            k = max(1, limit) * _ANN_OVERFETCH
+            seen_ext: set[str] = set()
+            for _ in range(_ANN_MAX_ATTEMPTS):
+                try:
+                    hits = external.query(query_vec, k=k)
+                except Exception as exc:  # noqa: BLE001 - a backend must never break a search
+                    logger.warning(
+                        "knowledge vector search: external vector store %r failed (%s) — the "
+                        "chunk arm contributes nothing for this query; keyword, graph and "
+                        "whole-item vector results are unaffected.",
+                        getattr(external, "name", "?"),
+                        exc,
+                    )
+                    break
+                fresh_hits = [h for h in hits if h.chunk_id not in seen_ext]
+                seen_ext.update(h.chunk_id for h in fresh_hits)
+                reached_floor = False
+                # Locals are named apart from the vec0 walk's `batch`/`sim` below on purpose:
+                # both walks live in this one function body, so reusing those names would pin
+                # their inferred types to this arm's (list[VectorHit], float) and make the vec0
+                # walk's own assignments a type error.
+                for start in range(0, len(fresh_hits), _ID_BATCH):
+                    hit_batch = fresh_hits[start : start + _ID_BATCH]
+                    ext_rows = _live_chunk_rows([h.chunk_id for h in hit_batch])
+                    for hit in hit_batch:
+                        ext_row = ext_rows.get(hit.chunk_id)
+                        if ext_row is None:
+                            continue
+                        # The parent item and the locator come from the LOCAL row, never from
+                        # the backend's payload, so a store whose payload has drifted cannot
+                        # mis-attribute a hit or cite the wrong passage.
+                        ext_sim = _roll_up(
+                            ext_row["item_id"],
+                            hit.similarity,
+                            {
+                                "section": ext_row["section"],
+                                "line_start": ext_row["line_start"],
+                                "line_end": ext_row["line_end"],
+                            },
+                        )
+                        # Same completeness argument as the vec0 walk: hits arrive in descending
+                        # similarity, so the first one under the floor proves every later hit —
+                        # including every hit this k did not return — is under it too.
+                        if ext_sim < _VECTOR_MIN_SIMILARITY:
+                            reached_floor = True
+                            break
+                    if reached_floor:
+                        break
+                if reached_floor or len(best) >= limit or len(hits) < k:
+                    break
+                k *= _ANN_ESCALATION_FACTOR
+
+        ann_served = external_served
+        if index is not None and not external_served:
             k = max(1, limit) * _ANN_OVERFETCH
             seen: set[str] = set()  # never re-score a candidate a smaller k already returned
             for _ in range(_ANN_MAX_ATTEMPTS):
@@ -696,20 +812,10 @@ class HybridRetriever:
                 reached_floor = False
                 for start in range(0, len(fresh), _ID_BATCH):
                     batch = fresh[start : start + _ID_BATCH]
-                    placeholders = ",".join("?" * len(batch))
                     # Keyed by chunk id, because `IN (...)` returns rows in STORAGE order and
                     # the stop rule is only sound while candidates are walked in the index's
                     # cosine order.
-                    rows_by_id = {
-                        row["chunk_id"]: row
-                        for row in self.store.db.execute(
-                            chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
-                            f"WHERE c.id IN ({placeholders}) "  # noqa: S608 (placeholders only)
-                            "AND c.embedding IS NOT NULL AND i.status = 'active' "
-                            f"{chunk_archived} {fresh_clause}",
-                            (*batch, *fresh_params),
-                        )
-                    }
+                    rows_by_id = _live_chunk_rows(batch)
                     for chunk_id in batch:
                         row = rows_by_id.get(chunk_id)
                         if row is None:

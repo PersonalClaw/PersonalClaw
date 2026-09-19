@@ -66,6 +66,21 @@ implements it. What matters here is where the boundary sits inside each family:
   graceful skip when neither can. The true-type gate every engine must pass its input
   through (`ocr/filetype.py`) is core's, not each bundle's: a magic-number table copied per
   bundle is a table that drifts per bundle.
+- **Vector-store backends** register through `vector_stores/`
+  (`VectorStoreProvider`, re-exported by `sdk/vector_store.py`) and let knowledge
+  chunk-vector search run against a store the user owns — Qdrant, pgvector, Chroma. Core
+  ships **no** vector-store client and holds no core exception for one: a Qdrant or Chroma
+  REST dialect is one vendor's API, not a de-facto multi-vendor protocol in the
+  `/v1/chat/completions` sense, so the judgment in the table above lands the whole client
+  in the bundle. What core keeps is everything that turns a similarity into a rank — the
+  `_VECTOR_MIN_SIMILARITY` floor, the max roll-up to the parent document, the
+  archived/active liveness filter and RRF fusion — so a backend can move where the
+  nearest-neighbour work happens without being able to change what a search means. An
+  empty registry is the normal state: with nothing bound, retrieval is the bundled
+  `sqlite-vec`/FTS5/graph path unchanged. Enabling exactly one such app IS the binding
+  (there is no second config field naming it, so enablement and "which store is knowledge
+  searching" cannot disagree), and two enabled at once is refused rather than
+  arbitrated — see `vector_stores/base.py` for the fail-soft-never-substitute rule.
 - **Channel apps** own the vendor transport and delivery both ways.
   `slack-channel` is the completed reference — see
   [inbox-channels.md](inbox-channels.md) and
