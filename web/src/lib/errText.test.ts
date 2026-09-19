@@ -228,8 +228,27 @@ describe('the envelope this extracts is the one the backend declares', () => {
 
   it('a real handler pairs a code with a human sentence', () => {
     // The concrete case from the PR: a malformed workflow body used to surface as "HTTP 400".
-    expect(py('workflows/handlers.py')).toMatch(
-      /\{"error": \{"code": "invalid_request", "message": "invalid JSON body"\}\}/,
+    // The route still answers a code + a sentence, but it no longer SPELLS the envelope: #2923
+    // moved the malformed-body refusal out of thirteen private readers into one, so the pairing
+    // now has to be read along the delegation. Pin both ends — asserting only the call would
+    // pass against a reader that answered a bare status, and asserting only the reader would
+    // pass while this route quietly kept its own copy.
+    expect(py('workflows/handlers.py'), 'the route delegates the read').toMatch(
+      /from personalclaw\.request_validation import json_object_body/,
+    )
+    expect(py('workflows/handlers.py'), 'and actually calls it').toMatch(
+      /body = await json_object_body\(request\)/,
+    )
+    const reader = py('request_validation.py')
+    expect(reader, 'the reader pairs a code with a human sentence, not a bare status').toMatch(
+      /RequestValidationError\(\s*"invalid_json", "The request body is not valid JSON\."\s*\)/,
+    )
+    expect(reader, 'and the sentence names what arrived when the body is the wrong shape').toMatch(
+      /"invalid_body",\s*\n\s*f"The request body must be a JSON object, not \{_type_name\(raw\)\}\."/,
+    )
+    // …and the pair reaches the wire through the one emitter, in the shape asserted above.
+    expect(reader, 'served through json_error, so the envelope is the declared one').toMatch(
+      /return json_error\(self\.code, message=self\.message, status=self\.status\)/,
     )
   })
 })

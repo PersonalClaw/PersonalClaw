@@ -705,15 +705,18 @@ async def api_inbox_open(request: web.Request) -> web.Response:
 async def api_inbox_favorite(request: web.Request) -> web.Response:
     """POST /api/inbox/{id}/favorite {favorited: bool} — set the favorite flag + record a
     strong positive engagement signal when turning it ON. Persisted on the item so the
-    star survives a reload; the signal feeds the ranking multiplier (when enabled)."""
+    star survives a reload; the signal feeds the ranking multiplier (when enabled).
+
+    An ABSENT body still means "favorite it" — that default is what the route is for, and
+    ``json_object_body`` hands absence back as ``{}``. What is gone is the older tolerance
+    of a body that is present and NOT an object (``5``, ``null``, ``[]``, ``"text"``): that
+    read as "favorite it" too, so a caller whose serialiser broke was told 200 and given a
+    write it never asked for. It is now the shared ``invalid_body`` 400 — still never a 500,
+    which is what that tolerance was protecting."""
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     item_id = request.match_info["id"]
     body = await json_object_body(request)
-    if not isinstance(body, dict):
-        # Same tolerance as an unparseable body above: favoriting has a sensible default,
-        # so a junk body means "favorite it" rather than an error.
-        body = {}
     favorited = bool(body.get("favorited", True))
     item = inbox.items.get(item_id)
     if item is None:
@@ -1089,7 +1092,7 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     edited = None
     if request.can_read_body:
         body = await json_object_body(request)
-        if isinstance(body, dict) and isinstance(body.get("proposal"), dict):
+        if isinstance(body.get("proposal"), dict):
             edited = dict(body["proposal"])
 
     installer = None

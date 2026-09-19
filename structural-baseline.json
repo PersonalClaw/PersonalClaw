@@ -55,12 +55,6 @@
           "durable-write:api_file_write"
         ]
       },
-      "src/personalclaw/dashboard/handlers/routing.py": {
-        "count": 1,
-        "sites": [
-          "http-error-envelope-helper:_bad"
-        ]
-      },
       "src/personalclaw/eval/judge.py": {
         "count": 1,
         "sites": [
@@ -205,11 +199,11 @@
     "totals": {
       "by_family": {
         "durable-write": 5,
-        "http-error-envelope-helper": 4,
+        "http-error-envelope-helper": 3,
         "verdict-type": 23
       },
-      "files": 29,
-      "sites": 32
+      "files": 28,
+      "sites": 31
     }
   },
   "structural-import-direction": {
