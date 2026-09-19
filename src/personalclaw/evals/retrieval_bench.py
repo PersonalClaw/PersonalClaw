@@ -49,7 +49,7 @@ import hashlib
 import json
 import logging
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
@@ -114,12 +114,29 @@ MASK_SEP = "+"
 #: "cell had no arm_mask coordinate" in ``aggregate_by`` — two very different facts.
 MASK_NONE = "none"
 
+#: The relevance-reranker's row (KBVS-2) — deliberately NOT a member of :data:`ARMS`.
+#: The three RRF arms are parallel retrieval SOURCES that :func:`ablation_masks` can mask
+#: independently pre-fusion; the reranker is a STAGE that runs after all three have
+#: already been fused, so "leave it out" / "run it alone" answer no question RRF's
+#: ablation shape asks. It rides :func:`build_table`'s existing generic bucketing
+#: instead — any mask name present in the scored rows becomes a row — so it publishes
+#: as one more line in the SAME table without widening :data:`ARMS` or touching
+#: :func:`contributions`' leave-one-out arithmetic, which stays exactly the 3-arm
+#: question it has always been.
+RERANK_MASK = "rerank"
+
 # ── why a metric is absent ───────────────────────────────────────────────────
 REASON_OK = ""
 #: Nothing was retrieved: P@k is ``0/0`` and undefined. NOT a zero, NOT a one.
 REASON_NO_CANDIDATES = "no_candidates"
 #: The qrels declare no relevant id for this query: R@k is ``0/0`` and undefined.
 REASON_NO_RELEVANT = "no_relevant"
+#: The reranker never got a usable model response for this query (no model bound, a
+#: timeout, or a response that parsed to nothing) — :data:`RERANK_MASK`'s row must read
+#: "not measured" for it, never as the un-reranked fallback's own P@k/R@k pretending to
+#: be a measurement of the reranker. Distinct from :data:`REASON_NO_CANDIDATES`: the
+#: fallback DID retrieve candidates, it just never got reordered.
+REASON_RERANK_UNAVAILABLE = "rerank_unavailable"
 
 # ── the dark-ship verdict (§5.3) ─────────────────────────────────────────────
 ARM_ENABLE = "enable"
@@ -813,6 +830,45 @@ def knowledge_retriever(knowledge_store) -> Retriever:
     return _search
 
 
+#: ``(query, k) -> (ranked ids, did the reranker actually run)``. Knowledge-only —
+#: :data:`RERANK_MASK` measures :class:`~personalclaw.knowledge.retrieval.HybridRetriever`'s
+#: stage, which memory's ``rank_semantic`` does not have.
+RerankRetriever = Callable[[str, int], "tuple[list[str], bool]"]
+
+
+def rerank_retriever(knowledge_store) -> RerankRetriever:
+    """The knowledge store's reranked retriever, FORCED on regardless of live config.
+
+    The bench's job is to MEASURE whether reranking earns its keep on this corpus, not
+    to respect whatever ``config.json`` currently says — production callers get that
+    respect through :meth:`HybridRetriever.search`'s own ``rerank=None`` default, this
+    one always passes ``rerank=True``. Shares the embedder-binding idiom with
+    :func:`knowledge_retriever` (same reason: a bare ``HybridRetriever(store)`` would
+    leave the vector arm dead and misattribute the silence to the arm), and reports
+    back whether the model call actually executed
+    (:attr:`~personalclaw.knowledge.retrieval.HybridRetriever.last_rerank_executed`) so
+    the caller can tell a real measurement apart from a silent fail-open fallback to the
+    un-reranked order.
+    """
+    from personalclaw.knowledge import get_knowledge_embedder
+    from personalclaw.knowledge import retrieval as knowledge_retrieval
+
+    try:
+        unified = get_knowledge_embedder()
+        embedder = unified.embed if unified and unified.is_available() else None
+    except Exception:  # noqa: BLE001 - no embedder is a reported dead arm, not a crash
+        logger.debug("rerank bench: knowledge embedder unavailable", exc_info=True)
+        embedder = None
+    retriever = knowledge_retrieval.HybridRetriever(knowledge_store, embedder=embedder)
+
+    def _search(query: str, k: int) -> "tuple[list[str], bool]":
+        hits = retriever.search(query, limit=k, arms=ARMS, rerank=True)
+        ids = [str(h.get("id", "")) for h in hits if h.get("id")]
+        return ids, bool(retriever.last_rerank_executed)
+
+    return _search
+
+
 def memory_retriever(memory_store) -> Retriever:
     """Adapt :meth:`~personalclaw.vector_memory.VectorMemoryStore.rank_semantic`.
 
@@ -1324,6 +1380,35 @@ def run_retrieval_bench(
                             artifact_ref=str(bench_dir),
                         )
                     )
+
+            # The relevance-reranker row (KBVS-2) — measured on EVERY knowledge run,
+            # independent of the ARMS ablation above and of whatever `knowledge.rerank_enabled`
+            # currently says: the whole point of the bench is to decide that setting, not to
+            # honour it. Not folded into `cells`/`aggregates` — those feed the matrix's
+            # pass/fail verdict over the 3-arm ablation, a different question from "does one
+            # more stage on top of the full arm mask earn its keep" — but IS folded into
+            # `scores`, so `build_table` (already generic over any mask name present) publishes
+            # it as one more row in the SAME table `table.json`/`table.tsv` render, with zero
+            # changes to the CLI or the dashboard handler, both of which iterate `result.table`
+            # generically. Knowledge-only: memory's `rank_semantic` has no rerank stage.
+            if store_kind == STORE_KNOWLEDGE:
+                rerank_search = rerank_retriever(handle)
+                for query in benchmark.queries:
+                    retrieved_ids, executed = rerank_search(query.query, k)
+                    rerank_score = score_query(query, retrieved_ids, mask=RERANK_MASK, k=k)
+                    if not executed:
+                        # Candidates WERE retrieved (the un-reranked fallback), but the
+                        # reranker itself never got a usable response — this must read as
+                        # "not measured", never as the fallback's own P@k pretending to be a
+                        # measurement of the reranker (the exact "a live call plus a
+                        # right-looking artifact hides a zero-importer path" shape).
+                        rerank_score = replace(
+                            rerank_score,
+                            precision=None,
+                            recall=None,
+                            reason=REASON_RERANK_UNAVAILABLE,
+                        )
+                    scores.append(rerank_score)
 
         _assert_mask_applied(scores)
         table = build_table(scores, k=k)

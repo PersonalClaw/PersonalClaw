@@ -104,6 +104,20 @@ ARM_QUALIFICATION: dict[str, str] = {
     ),
 }
 
+# ── relevance rerank stage (KBVS-2) ───────────────────────────────────────────
+# A stage AFTER `_rrf_fuse`, not a fourth arm fed INTO it: RRF fuses RANKS from
+# retrieval sources queried in parallel, and a rerank call needs the candidates
+# already assembled to judge them — it cannot be one more list handed to the same
+# fusion. It rides the existing model USE-CASE seam (`providers.use_cases`) rather
+# than a new one: reranking is exactly the "explicit one-shot judgment call" that
+# axis's own docstring already names, and the removal doctrine
+# (`summarization`/`planning` were pulled for having no real consumer) is a standing
+# warning against minting an axis for just this one feature.
+_RERANK_USE_CASE = "reasoning"
+#: Default candidate window when `knowledge.rerank_candidates` is unset/unreadable —
+#: mirrors the dataclass default in `config.loader.KnowledgeConfig`.
+_RERANK_DEFAULT_CANDIDATES = 20
+
 
 class HybridRetriever:
     """FTS5 keyword + graph traversal + optional vector search, fused with RRF."""
@@ -112,6 +126,12 @@ class HybridRetriever:
         """store: KnowledgeStore instance. embedder: optional callable(str) -> list[float]."""
         self.store = store
         self.embedder = embedder
+        #: Whether the MOST RECENT `search()` call that requested reranking actually got
+        #: a usable model response (as opposed to falling back to the un-reranked RRF
+        #: order). Read by the retrieval bench (KBVS-2) to tell "the reranker ran and
+        #: matched the baseline" apart from "the reranker never ran" — two very
+        #: different facts a plain P@k number cannot distinguish on its own.
+        self.last_rerank_executed = False
 
     def search(
         self,
@@ -120,6 +140,7 @@ class HybridRetriever:
         *,
         include_archived: bool = False,
         arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
+        rerank: "bool | None" = None,
     ) -> list[dict]:
         """Hybrid search with RRF fusion. Returns [{id, title, summary, content, score, source, match_type}].  # noqa: E501
 
@@ -134,6 +155,14 @@ class HybridRetriever:
         measures the arm's absence rather than its cost. An empty mask is legal and
         returns ``[]``: that is the harness's control cell, and a control that came back
         with hits is how you learn the mask was not applied.
+
+        ``rerank`` (KBVS-2) controls the post-fusion relevance stage. ``None`` — every
+        production caller — reads ``knowledge.rerank_enabled`` (off by default).
+        ``True``/``False`` FORCE the stage on or off regardless of config: the
+        retrieval bench's own knob, so it can measure the reranked arm on every run
+        independent of whatever is currently configured. See
+        :attr:`last_rerank_executed` for whether a forced/enabled call actually got a
+        usable model response.
         """
         active = ARMS if arms is None else tuple(a for a in ARMS if a in set(arms))
         over = limit * 2
@@ -194,6 +223,16 @@ class HybridRetriever:
             return (score, updated)
 
         fused.sort(key=_sort_key, reverse=True)
+
+        # Relevance rerank (KBVS-2), OFF unless configured or forced by the caller. This
+        # REORDERS the already-fused list — it never drops a candidate, so it does not
+        # reintroduce the post-fusion relevance CUT the module block comment above rules
+        # out; a rerank score is a different question ("which of these already-vouched-for
+        # candidates is most relevant") than a cut threshold ("is this candidate good
+        # enough to keep").
+        self.last_rerank_executed = False
+        if fused and self._rerank_wanted(rerank):
+            fused = self._apply_rerank(query, fused, items_cache, limit=limit)
 
         # No post-fusion relevance cut — `limit` is the only cap. Everything still here was
         # already vouched for by the arm that retrieved it (`ARM_QUALIFICATION`), on that arm's
@@ -267,6 +306,121 @@ class HybridRetriever:
             include_archived=include_archived
         )
         return SearchOutcome(results=results, degradations=degradations_from(rows))
+
+    def _rerank_wanted(self, rerank: "bool | None") -> bool:
+        """Resolve the effective on/off for THIS call.
+
+        ``None`` (every production caller) reads the live config — off unless an
+        operator turned it on. ``True``/``False`` FORCE the stage regardless of config:
+        the retrieval bench's own knob (KBVS-2), so it can measure the reranked arm on
+        every run independent of whatever ``config.json`` currently says, and a test can
+        force it on deterministically.
+        """
+        if rerank is not None:
+            return rerank
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            return bool(AppConfig.load().knowledge.rerank_enabled)
+        except Exception:  # noqa: BLE001 - unreadable config means OFF, the shipped default
+            logger.debug("rerank: config unavailable, defaulting to off", exc_info=True)
+            return False
+
+    def _apply_rerank(
+        self,
+        query: str,
+        fused: "list[tuple[str, float]]",
+        items_cache: "dict[str, dict]",
+        *,
+        limit: int,
+    ) -> "list[tuple[str, float]]":
+        """Re-score the top candidates by relevance, after RRF has already ranked them.
+
+        Only the WINDOW (at least ``limit``, else the configured candidate count) is
+        sent to the model — the tail beyond it keeps its RRF order untouched and is
+        appended back as-is. Fails OPEN on any model/parse trouble (:meth:`_rerank_score`
+        returning ``None``): reranking is a relevance stage, not a security control, so
+        an outage must degrade to "unreranked" rather than break the search (the
+        fail-open/closed convention, core ``AGENTS.md`` "Shared conventions").
+        """
+        candidates_n = _RERANK_DEFAULT_CANDIDATES
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            candidates_n = (
+                int(AppConfig.load().knowledge.rerank_candidates) or _RERANK_DEFAULT_CANDIDATES
+            )
+        except Exception:  # noqa: BLE001 - an unreadable config keeps the module default
+            logger.debug(
+                "rerank: candidate-window config unavailable, using default", exc_info=True
+            )
+        window_n = min(len(fused), max(int(limit), max(1, candidates_n)))
+        window, tail = fused[:window_n], fused[window_n:]
+
+        scored = self._rerank_score(query, window, items_cache)
+        if scored is None:
+            return fused
+        self.last_rerank_executed = True
+        reordered = sorted(scored, key=lambda pair: pair[1], reverse=True)
+        return reordered + tail
+
+    def _rerank_score(
+        self,
+        query: str,
+        window: "list[tuple[str, float]]",
+        items_cache: "dict[str, dict]",
+    ) -> "list[tuple[str, float]] | None":
+        """Ask the bound model to relevance-score ``window``'s items. ``None`` on failure.
+
+        ``None`` covers a model/transport failure AND a degenerate-but-successful
+        response (empty text, or valid JSON that names none of the candidates) — a
+        thinking model on a small output budget returns empty content, and constrained
+        decoding can return a valid-but-empty document; both must read as "the call did
+        not usefully happen", never as "every candidate scored zero".
+        """
+        ids = [iid for iid, _ in window]
+        if not ids:
+            return None
+        lines = []
+        for rank, (iid, _score) in enumerate(window, start=1):
+            item = items_cache.get(iid) or {}
+            title = str(item.get("title") or "")[:200]
+            snippet = str(item.get("summary") or item.get("content") or "")[:400]
+            lines.append(f'{rank}. id="{iid}"\ntitle: {title}\nsnippet: {snippet}')
+        prompt = (
+            "Rate how relevant each candidate document is to the search query, on a "
+            "0-10 scale (10 = directly answers the query, 0 = unrelated). Respond with "
+            'ONLY a JSON array, one entry per candidate: [{"id": "<id>", "relevance": '
+            "<0-10>}, ...]. Score EVERY candidate listed below, using its id exactly as "
+            f"given.\n\nQuery: {query}\n\nCandidates:\n" + "\n\n".join(lines)
+        )
+        try:
+            raw = _run_rerank_prompt(prompt)
+        except Exception:  # noqa: BLE001 - a model/transport failure falls back, never raises
+            logger.debug("rerank: model call failed", exc_info=True)
+            return None
+        if not isinstance(raw, list) or not raw:
+            return None
+        valid_ids = set(ids)
+        relevance: dict[str, float] = {}
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            iid = str(entry.get("id", ""))
+            if iid not in valid_ids:
+                continue
+            try:
+                relevance[iid] = float(entry.get("relevance", 0))
+            except (TypeError, ValueError):
+                continue
+        if not relevance:
+            return None
+        # A candidate the model never mentioned keeps a floor BELOW the lowest scored
+        # one, not a manufactured 0.0 — the model may have simply omitted a weak
+        # candidate from its list, and that omission must not outrank one it explicitly
+        # rated 0/10.
+        fallback_floor = min(relevance.values()) - 1.0
+        return [(iid, relevance.get(iid, fallback_floor)) for iid in ids]
 
     def _keyword_search(
         self, query: str, limit: int = 20, *, include_archived: bool = False
@@ -648,6 +802,41 @@ class HybridRetriever:
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
         return dot / (norm_a * norm_b)
+
+
+def _run_rerank_prompt(prompt: str) -> "list | None":
+    """Bridge the async model-use-case seam into this synchronous call path.
+
+    Every :meth:`HybridRetriever.search` caller today is synchronous (dashboard
+    handlers, the ``knowledge_search`` agent tool, action providers) — making
+    ``search`` itself async would ripple into every one of them, well past this
+    atom's scope. Mirrors ``triggers/web_poll.py::_await_maybe``: ``asyncio.run`` when
+    nothing already owns this thread's event loop, else a worker thread, so a caller
+    that DOES hold a running loop (an async test, an async caller added later) can
+    never deadlock on itself.
+
+    Returns the parsed JSON array, or ``None`` when the response was empty or did not
+    parse as one — :func:`personalclaw.llm_helpers.parse_llm_json_list` already treats
+    an empty string as unparseable, which is what a thinking model on a too-small
+    output budget returns.
+    """
+    import asyncio
+
+    from personalclaw.llm_helpers import one_shot_completion, parse_llm_json_list
+
+    async def _call() -> str:
+        return await one_shot_completion(prompt, use_case=_RERANK_USE_CASE, output_type=list)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        text = asyncio.run(_call())
+    else:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            text = pool.submit(asyncio.run, _call()).result(timeout=90)
+    return parse_llm_json_list(text)
 
 
 def _bytes_to_floats(blob: bytes) -> list[float]:
