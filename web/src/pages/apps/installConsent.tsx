@@ -5,7 +5,7 @@ import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Te
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport } from '../../lib/api'
+import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport, AppCatalogEntry } from '../../lib/api'
 import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
 import { copyText } from '../../app/clipboard'
 
@@ -142,7 +142,28 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
 // mechanism. A comment asking four callers to remember is what failed here; a required
 // prop makes forgetting a type error. Pass `undefined` when the grants genuinely are not
 // known yet (a registry pointer's manifest is not fetched until install) and the modal says
-// so out loud, which is a different and honest disclosure — never silence.
+// so out loud, which is a different and honest disclosure — never silence. Derive that
+// `undefined` with `consentPermissions` — a catalog row can never be trusted to express it,
+// because the wire ships `permissions: {}` for BOTH cases.
+
+/** The grants to disclose for *entry*, or `undefined` when they are NOT KNOWN YET.
+ *
+ *  🔑 The catalog's `permissions` alone cannot answer this, and reading it as if it could
+ *  is the bug this closes. `CatalogEntry.to_dict` is `asdict`, so **every** row ships a
+ *  `permissions` object — `{}` both for a scanned manifest that declares nothing and for
+ *  a registry POINTER whose manifest is not fetched until install. `{}` is truthy in JS,
+ *  so the modal's `permissions ? … : …` guard took the pointer down the known branch and
+ *  asserted "None — this app is granted no gateway capability" about an app nobody had
+ *  read. `consentKnown` is the one authority for the distinction (it is False only at the
+ *  pointer builder), and this helper is the single place the four consent call sites
+ *  consult it, so the two cases cannot diverge per caller again. */
+export function consentPermissions(
+  entry: Pick<AppCatalogEntry, 'permissions' | 'consentKnown'> | undefined,
+): AppSummary['permissions'] | undefined {
+  if (!entry?.consentKnown) return undefined
+  return entry.permissions ?? {}
+}
+
 export function ConsentModal({ label, result, busy, permissions, crons, onConfirm, onClose }: {
   label: string; result: GuardedResult; busy: boolean
   permissions: AppSummary['permissions'] | undefined

@@ -58,6 +58,10 @@ const entry: AppCatalogEntry = {
   name: 'reporter', displayName: 'Reporter', description: 'reports', version: '1.0.0',
   icon: '', author: 'acme', source: SOURCE, sourceKind: 'git',
   isProvider: false, providerType: '', tags: [],
+  // A git-SCANNED row, so its manifest was read — `_scan_git_source` sets this. Without
+  // it the fixture models a registry pointer, and consent correctly downgrades to "could
+  // not read this app's declared permissions".
+  consentKnown: true,
   permissions: { api: ['/api/knowledge'], cron: true, agent: true, network: false },
   crons: [{ name: 'nightly-digest', cron_expr: '23 * * * *', cadence: 'At 23 minutes past the hour', agent: 'researcher', message: 'summarise the day' }],
 }
