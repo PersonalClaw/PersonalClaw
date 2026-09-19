@@ -23,11 +23,18 @@ function capLabel(key: string): string {
   return words.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(' ')
 }
 
-/** Doctor — tiered, read-only health probes (PLATFORM-RESILIENCE §1). Runs every
- *  capability probe and groups the results into cards. The doctrine is honored in
- *  the copy: a failed CAPABILITY is a degraded row, never a "gateway broken" claim —
- *  only a core-tier failure says the gateway itself needs attention. Nothing here
- *  changes any state; fixes (§2) and simulators (§3) land in later sessions. */
+/** Doctor — tiered health probes (PLATFORM-RESILIENCE §1). Runs every capability probe and groups
+ *  the results into cards. The doctrine is honored in the copy: a failed CAPABILITY is a degraded
+ *  row, never a "gateway broken" claim — only a core-tier failure says the gateway itself needs
+ *  attention.
+ *
+ *  PROBING is read-only. The panel is not, and has not been since §2's fixes and §3's simulators
+ *  landed: `FixButton` applies a confirm-gated, SEL-audited repair and `RemediationSection` runs
+ *  the maintenance engine behind its own confirm. The header hint names both, because a promise
+ *  that outlives the code it described is how issue 537 happened — this docstring's own closing
+ *  clause ("Nothing here changes any state; fixes (§2) and simulators (§3) land in later
+ *  sessions") was the same claim one layer up, still describing a panel that shipped two sessions
+ *  ago. */
 export function DoctorPanel() {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [busy, setBusy] = useState(false)
@@ -46,9 +53,28 @@ export function DoctorPanel() {
 
   return (
     <div>
+      {/* 🔴 THIS SENTENCE DENIED MUTATIONS THE SAME PANEL EXPLAINS (issue 537). It opened
+          "Read-only health probes" and closed with a blanket no-change promise, while the file
+          rendered a failed probe's Fix (`api.doctorFixApply` — symlinks, stale locks, stale
+          bindings) and Maintenance → Run now (`api.doctorRemediationRun` — embedding re-index,
+          orphan prune, skill aging), with a dry-run description of what Run now WOULD do a few
+          lines above its own button.
+
+          CORRECTED, NOT MADE TRUE. The remediation engine is PLATFORM-RESILIENCE §2's shipped
+          deliverable; deleting a working feature to rescue a sentence is the wrong direction.
+          Scoped in `DiagnosticsPanel`'s shape — the read-only claim survives, attached to the
+          PROBING it is actually true of, and each exception is named by the label on the control
+          the reader will meet, so the sentence can be checked against the screen rather than
+          believed.
+
+          🪤 EACH CLAUSE IS RE-MEASURED AGAINST THIS FILE, NOT INHERITED. Both controls confirm
+          today — `FixButton`'s "Apply this fix?" and `RemediationSection`'s "Run maintenance" —
+          so the hint says so of both. An earlier draft of this fix asserted that Run now does
+          NOT confirm, which was true of the panel when it was written and is false of the panel
+          now; shipping it would have replaced one stale promise with another. */}
       <PanelHeader
         title="Doctor"
-        hint="Read-only health probes across every subsystem — memory, channels, local models, app backends, the SPA symlink, and model-provider breakers. A degraded capability never means the gateway is down; only a core failure does. Nothing here changes anything on your machine."
+        hint="Health probes across every subsystem — memory, channels, local models, app backends, the SPA symlink, and model-provider breakers. A degraded capability never means the gateway is down; only a core failure does. Probing changes nothing on your machine; the two controls that do are a failed probe's Fix, which confirms first and is written to the security audit, and Maintenance → Run now, which also confirms and lists its exact plan above the button."
       />
 
       <div className="mb-l flex items-center justify-between gap-l">
