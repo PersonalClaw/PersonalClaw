@@ -927,7 +927,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'doctor', group: 'System', label: 'Doctor', icon: Stethoscope, size: 'sm',
-    description: 'Read-only health probes across every subsystem — memory, channels, models, apps, the SPA symlink.',
+    // 🔴 SAME FALSE PROMISE AS THE PANEL'S OWN HEADER (issue 537), one surface EARLIER. This said
+    // "Read-only health probes", and the hub tile is what a user reads BEFORE opening the panel —
+    // so fixing only `DoctorPanel`'s hint would have left the claim standing on the surface that
+    // sets the expectation. The panel repairs state through a failed probe's Fix and Maintenance →
+    // Run now; "read-only" is true of the PROBING and of nothing else here.
+    description: 'Health probes across every subsystem — memory, channels, models, apps, the SPA symlink — plus the confirm-gated repairs a failed probe offers.',
     useSearchText() {
       const { data: d } = useDoctor()
       const failed = d ? Object.entries(d.capabilities).filter(([, c]) => !c.ok).map(([k]) => k).join(' ') : ''
