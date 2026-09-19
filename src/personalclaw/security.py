@@ -1415,6 +1415,15 @@ UNTRUSTED_CLOSE = "</untrusted_content>"
 #: a matcher silently looking for the old name.
 _OPEN_TAG_RE = re.compile(re.escape(UNTRUSTED_OPEN[:-1]) + r"(?:\s[^>]*)?>", re.IGNORECASE)
 
+#: EITHER fence marker in ANY form — bare, attributed, or self-closing — for the body-escaping half
+#: of `fence_untrusted`. Group 1 is the optional `/` of a close tag and group 2 is whatever followed
+#: the tag name, so the substitution can escape the brackets while keeping the text legible.
+#:
+#: 🔴 Deliberately NOT derived from `_OPEN_TAG_RE`: that one answers "is this already fenced?", where
+#: matching only the OPEN tag is correct. Escaping a body has to catch both, and an attributed CLOSE
+#: (`</untrusted_content >`) is the one that ends a span early.
+_UNTRUSTED_TAG_RE = re.compile(r"<(/?)untrusted_content((?:\s[^>]*)?/?)>", re.IGNORECASE)
+
 
 def is_fenced(text: str) -> bool:
     """Whether ``text`` already carries an untrusted-content fence (attributed or bare).
@@ -1548,8 +1557,16 @@ def fence_untrusted(
     # and smuggle instructions after it. Escape the tag's angle brackets (HTML-style) —
     # human-legible, and crucially adds NO invisible/zero-width chars (which the
     # memory-write scanner would flag if this fenced text were later persisted).
-    safe = text.replace("<untrusted_content>", "&lt;untrusted_content&gt;").replace(
-        "</untrusted_content>", "&lt;/untrusted_content&gt;"
+    #
+    # 🔴 ANY form of the tag, not the two bare spellings (#3112). The two literal replaces this
+    # used to be missed an ATTRIBUTED tag: measured, a crafted claim carrying
+    # `<untrusted_content source=knowledge>` came through a fenced span verbatim, so the model read
+    # a span it had no way to tell from the real wrapper this function emits two lines below —
+    # and a body that re-opens the fence is how a crafted close marker is made to look balanced.
+    # The regex also covers `</untrusted_content bar>` and a self-closing `<untrusted_content/>`.
+    # It only ever escapes MORE than before, so no previously-neutralised shape is released.
+    safe = _UNTRUSTED_TAG_RE.sub(
+        lambda m: f"&lt;{m.group(1)}untrusted_content{m.group(2)}&gt;", text
     )
     safe = strip_role_tokens(safe)
     attrs = "".join(

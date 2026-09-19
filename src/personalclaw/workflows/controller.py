@@ -3252,7 +3252,15 @@ class RunController:
                 provider=result.provider,
                 cost_usd=result.cost_usd,
                 degraded_reason=result.degraded_reason,
+                # The prompt the PROVIDER received, with the fact of a substitution beside it
+                # (#3166). `result.resolved_prompt` is post-scan since the dispatcher reads it back
+                # from `guardrails.wire`, so what gets persisted is what the redactor produced —
+                # the record and the wire agree. Nothing re-scans here: `redact_credentials` is not
+                # idempotent over a composed line, so a second pass at the recording seam could
+                # garble the very text it was meant to protect.
                 resolved_prompt_ref=self._store_prompt(item.path, result.resolved_prompt),
+                resolved_prompt_redacted=result.prompt_redacted,
+                resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
             )
             self._project_task(item, inst, result)

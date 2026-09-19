@@ -962,12 +962,21 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
     is the sole caller today.
 
     SECRETS ABSENT is the contract. The service read returns persisted values verbatim, and
-    the resolved prompt in particular is stored UN-redacted (`_store_prompt` writes through
-    `store.write_output`, not the redacting journal path). So every reconstructability field
-    is routed through `journal.redact` — the SAME recursive redactor the journal writer uses,
-    reused rather than re-derived so the two cannot drift — before it leaves the process. A
-    credential that reached this endpoint would be a credential shipped to a browser, a bug
-    report, and (via the drawer) a screenshot.
+    the resolved prompt in particular is stored UN-redacted by the JOURNAL (`_store_prompt`
+    writes through `store.write_output`, not the redacting journal path). So every
+    reconstructability field is routed through `journal.redact` — the SAME recursive redactor the
+    journal writer uses, reused rather than re-derived so the two cannot drift — before it leaves
+    the process. A credential that reached this endpoint would be a credential shipped to a
+    browser, a bug report, and (via the drawer) a screenshot.
+
+    This stays load-bearing after #3166. That change made the persisted prompt the POST-OUTBOUND-
+    SCAN text, which is a different guarantee: the outbound scan only substitutes when the run's
+    `scan_mode` is `redact`, it is forced to `warn` for local providers, and it never runs at all
+    on a node whose completion was injected. `journal.redact` is the unconditional one.
+
+    `resolved_prompt_redacted` / `resolved_prompt_scan` are deliberately NOT in the redacted set:
+    they are a bool and a list of finding CLASS names, carrying no matched value, and running a
+    credential redactor over the word "credential" would only garble the explanation.
     """
     from personalclaw.workflows import journal
 

@@ -855,11 +855,17 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     terminal state is a 409 (`WF_NODE_NOT_TERMINAL` — retry as the run advances), and neither
     is a server fault.
 
-    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored raw
-    by the controller (`_store_prompt` writes through `store.write_output`, which does NOT
-    redact), so this dict is NOT safe to emit as-is. Redaction is the HTTP surface's job
-    (WF2-A2 secrets contract); keeping the read un-redacted mirrors `output()`/`status()`,
-    which also hand back stored state verbatim to their one in-process caller.
+    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored by the
+    controller through `store.write_output`, which does NOT run the journal's redactor, so this
+    dict is NOT safe to emit as-is. Redaction is the HTTP surface's job (WF2-A2 secrets contract);
+    keeping the read un-redacted mirrors `output()`/`status()`, which also hand back stored state
+    verbatim to their one in-process caller.
+
+    Since #3166 the stored prompt is the text the PROVIDER received rather than the text the node
+    composed, and `resolved_prompt_redacted` / `resolved_prompt_scan` say whether the outbound
+    secret/PII scan substituted anything on the way out. That is a narrower guarantee than the
+    HTTP redaction, not a replacement for it: the outbound scan only substitutes in `redact` mode,
+    is forced to `warn` for local providers, and does not run for an injected completion.
     """
     from personalclaw.workflows.bindings import node_deps
 
@@ -911,9 +917,16 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     # `<path>::prompt`. Inline when small; a ref past the inline boundary, so a megabyte prompt
     # does not ride in every inspect response. The ref is the one step_completed already recorded.
     prompt_ref = ""
+    prompt_redacted = False
+    prompt_scan: list[str] = []
     for e in node_events:
         if e.get("kind") == journal_mod.STEP_COMPLETED and e.get("resolved_prompt_ref"):
             prompt_ref = str(e["resolved_prompt_ref"])
+            # Why the stored prompt may not be verbatim (#3166). Read from the SAME row as the
+            # ref so the body and the explanation cannot disagree: a redaction badge sourced from
+            # anywhere else could say "altered" about a prompt this ref does not point at.
+            prompt_redacted = bool(e.get("resolved_prompt_redacted", False))
+            prompt_scan = [str(c) for c in (e.get("resolved_prompt_scan") or [])]
             break
     stored_prompt = store.read_output(run_id, f"{target}::prompt")
     resolved_prompt: Any
@@ -974,6 +987,11 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         instance_path=target,
         state=inst.state.value,
         resolved_prompt=resolved_prompt,
+        # "This prompt is what the model saw, and here is why it differs from the template"
+        # (#3166). Without these two the stored body is ambiguous: a reader cannot tell a
+        # substituted prompt from one whose author typed `[REDACTED_EMAIL]` themselves.
+        resolved_prompt_redacted=prompt_redacted,
+        resolved_prompt_scan=prompt_scan,
         resolved_inputs=resolved_inputs,
         output=output_field,
         # The retry records for this node — empty for a node that succeeded first try, since
