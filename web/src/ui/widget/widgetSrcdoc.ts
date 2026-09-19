@@ -78,11 +78,10 @@ export const HOST_SCRIPT_SOURCE = `(function(){
   new ResizeObserver(report).observe(document.body);
   window.addEventListener('load', function(){ setTimeout(report, 100); });
   report();
-  document.addEventListener('click', function(e){
-    if (!e.isTrusted) return;
-    var el = e.target.closest('[data-action]');
-    if (!el) return;
-    e.preventDefault();
+  // ONE payload rule, called from the click path and the form-submit path below. It used to
+  // live inline in the click handler; a second copy for submit is the thing most likely to
+  // disagree about what a widget sent.
+  function send(el){
     var action = el.dataset.action;
     var payload = {};
     try { payload = JSON.parse(el.dataset.payload || '{}'); } catch(x){}
@@ -97,6 +96,37 @@ export const HOST_SCRIPT_SOURCE = `(function(){
     });
     if (Object.keys(formData).length) payload.formData = formData;
     parent.postMessage({type:'widget-action', action:action, payload:payload}, '*');
+  }
+  document.addEventListener('click', function(e){
+    if (!e.isTrusted) return;
+    var el = e.target.closest('[data-action]');
+    if (!el) return;
+    e.preventDefault();
+    send(el);
+  });
+  // 🔴 A FORM SUBMIT USED TO VANISH. The frame is sandboxed \`allow-scripts\` with no
+  // \`allow-forms\`, so the browser blocks a real submit and reports it only to the frame's own
+  // console — the user sees a Submit button that does nothing at all, and the agent that wrote
+  // the widget never learns why. Measured in the field twice, months apart (#2263): the agent
+  // ended up telling the user to copy 200 lines of text out of the widget and paste them into
+  // chat.
+  //
+  // Submit is unambiguous intent to send data, so it is claimed rather than left to the
+  // browser:
+  //   · a form carrying a \`[data-action]\` (its submitter, or any inside it) SENDS through the
+  //     documented channel — which also makes Enter-in-a-text-field work, where before only a
+  //     mouse click on that same button did;
+  //   · a form with no action anywhere is a widget that cannot possibly deliver, so it says so
+  //     through \`widget-error\` instead of failing mute.
+  document.addEventListener('submit', function(e){
+    if (!e.isTrusted) return;
+    e.preventDefault();
+    var form = e.target;
+    var el = (e.submitter && e.submitter.closest && e.submitter.closest('[data-action]'))
+      || (form.matches && form.matches('[data-action]') ? form : null)
+      || (form.querySelector && form.querySelector('[data-action]'));
+    if (el) { send(el); return; }
+    parent.postMessage({type:'widget-error', message:'This widget cannot submit: a widget sends data with data-action on the button (form submission is blocked in the widget sandbox).'}, '*');
   });
 })();`
 
