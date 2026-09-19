@@ -535,20 +535,29 @@ class TestStateMetaAndPermissions:
         )
         assert session.messages[-1]["meta"]["tool_call_id"] == "tc-1"
 
+    # Repointed at the module-level `_mark_permission_resolved` (#683). These two called
+    # `Session.mark_permission_resolved`, a duplicate implementation with NO production
+    # callers and a `decision="approved"` default — and the fact that the suite exercised it
+    # is what made it read as a live writer. The behaviour asserted is unchanged; it is now
+    # asserted of the function the route actually calls.
     def test_mark_permission_resolved(self):
         import json
+
+        from personalclaw.dashboard.state import _mark_permission_resolved
 
         session = _make_session()
         cls_data = json.dumps({"request_id": "req-42"})
         session.append("permission", "tool_x", cls_data, broadcast=False)
-        session.mark_permission_resolved("req-42", "rejected")
+        _mark_permission_resolved(session.messages, "req-42", "rejected")
         updated = json.loads(session.messages[-1]["cls"])
         assert updated["resolved"] == "rejected"
 
     def test_mark_permission_resolved_not_found(self):
+        from personalclaw.dashboard.state import _mark_permission_resolved
+
         session = _make_session()
         # Should not raise
-        session.mark_permission_resolved("nonexistent", "approved")
+        _mark_permission_resolved(session.messages, "nonexistent", "approved")
 
     def test_parse_cls_meta_normalizes_request_id(self):
         meta = parse_cls_meta('{"request_id": "req-1", "tool_input": "x"}')

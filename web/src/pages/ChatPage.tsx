@@ -1172,7 +1172,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         patchLastAssistant((segs) => {
           const id = String(d.id ?? '')
           if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
-          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(d.is_read_only) })
+          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(d.is_read_only), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
           return segs
         })
         break

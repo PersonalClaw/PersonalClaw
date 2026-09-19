@@ -54,6 +54,13 @@ export interface ApprovalSegment {
   // from the wire by `readOnlyCommandOf`. Tri-state: absent means the call runs no
   // shell, which must stay distinct from `false` ("screened, and it mutates"). #2821.
   readOnlyCommand?: boolean
+  // The agent a "This agent" grant would be SAVED ON, resolved by the backend
+  // (`agents.defaults.persistable_grant_target`) at the moment the prompt was raised.
+  // Empty or absent means the grant cannot persist — a reserved system agent, a name with no
+  // profile, or an ACP-bound chat — so the card must not promise future chats (#541). Absence
+  // is deliberately read as "cannot", never as "can": under-claiming a persistence is the
+  // only safe direction for a promise, and over-claiming it is the bug this field fixes.
+  grantAgent?: string
   // The settled outcome, as the backend persisted it. Typed as the raw wire `string`
   // (not the ApprovalResolution union) because a session persisted by another build
   // can carry an outcome this one doesn't know — approvalOutcome() maps the known set
@@ -359,7 +366,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; is_read_only?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -504,7 +511,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const resolved = m.meta?.resolved || undefined
       // `is_read_only` has been in this meta since #443 and was read by nothing until
       // #2821. Decoded, never cast: on this path it is the legacy `"1"`/`""` string.
-      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), resolved })
+      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: m.content })
