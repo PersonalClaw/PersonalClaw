@@ -671,10 +671,11 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                     "name": name,
                     **dataclasses.asdict(prof),
                     "reserved": is_reserved_agent(name),
+                    # A reserved agent is model-only: everything but its model is
+                    # locked. That narrowing is enforced by the client off `reserved`
+                    # alone (`AgentDetail.tsx` → `isReservedAgent`), so there is no
+                    # separate model-editability field on the wire to disagree with it.
                     "editable": not is_reserved_agent(name),
-                    # Reserved agents are locked EXCEPT their model (swappable when
-                    # the user changes active models). Non-reserved → fully editable.
-                    "model_editable": True,
                 }
             )
         # PATCH/DELETE on config-defined agents goes through the dedicated
@@ -894,7 +895,6 @@ async def api_personalclaw_agents(request: web.Request) -> web.Response:
             **dataclasses.asdict(agent_cfg),
             "reserved": is_reserved_agent(name),
             "editable": not is_reserved_agent(name),
-            "model_editable": True,
         }
         for name, agent_cfg in cfg.agents.items()
     ]

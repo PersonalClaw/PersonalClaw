@@ -10,9 +10,23 @@ export interface KindMeta { key: ScheduleKind; label: string; icon: LucideIcon; 
 export const KINDS: KindMeta[] = [
   { key: 'every', label: 'Interval', icon: Repeat, tone: 'var(--color-info)', hint: 'Run every N minutes/hours/days.' },
   { key: 'cron', label: 'Cron', icon: CalendarClock, tone: 'var(--color-primary)', hint: 'Five-field cron expression (min hour dom month dow).' },
-  { key: 'at', label: 'One-shot', icon: Calendar, tone: 'var(--color-warn)', hint: 'Fire once at a specific date & time.', soon: true },
+  // NOT `soon`: the create handler persists `at` (`{kind:'at', delete_after_run:true}`) as soon as
+  // the form sends epoch seconds instead of the raw `datetime-local` string, which it now does
+  // (issue 530). A "Soon" tag over a control that works is the same class of lie as the dead-end.
+  { key: 'at', label: 'One-shot', icon: Calendar, tone: 'var(--color-warn)', hint: 'Fire once at a specific date & time.' },
 ]
 export function kindMeta(k?: ScheduleKind): KindMeta { return KINDS.find((x) => x.key === k) ?? KINDS[0] }
+
+/** Is a draft's WHEN axis complete enough to submit?
+ *
+ *  One question, one answer, read by both create surfaces (`ScheduleForm`'s page and
+ *  `TriggerCreatePage`) so they cannot disagree about whether One-shot is submittable. Only the
+ *  `at` kind can be incomplete: `every` always has a number and `cron` is validated by its own
+ *  field, while an untouched `datetime-local` is the empty string — and submitting that omits `at`
+ *  entirely, which the handler answers with a bare "every, cron, or at required" (issue 530). */
+export function scheduleWhenMet(kind: ScheduleKind, at: string): boolean {
+  return kind !== 'at' || epochSeconds(at) !== undefined
+}
 
 // ── execution mode (agent / script / command) ──
 export interface ModeMeta { key: ScheduleExecMode; label: string; icon: LucideIcon; tone: string; hint: string; soon?: boolean }

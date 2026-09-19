@@ -403,7 +403,12 @@ class TestApiTerminalList:
             mock_sel.return_value.log_api_access = MagicMock()
             resp = await terminal.api_terminal_list(req)
         body = json.loads(resp.body)
-        assert body == {"enabled": True, "sessions": []}
+        # `persist_available` rides on every list response — the HOST fact the client needs so its
+        # persistence promise stops being derived from the config flag alone (issue 545). Asserted
+        # by key, not by value, because whether tmux is installed is a property of the test host.
+        assert set(body) == {"enabled", "persist_available", "sessions"}
+        assert body["enabled"] is True
+        assert body["sessions"] == []
 
     @pytest.mark.asyncio
     async def test_lists_sessions_with_details(self):

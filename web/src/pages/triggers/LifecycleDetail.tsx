@@ -34,11 +34,16 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   const [err, setErr] = useState('')
   const [testOut, setTestOut] = useState<string | null>(null)
 
-  useEffect(() => {
+  // ONE restore path, shared by the mount/switch effect and Cancel. Cancel must run it too:
+  // the effect below keys on `hook.id`, so re-opening the SAME trigger fires no reset and an
+  // abandoned draft would otherwise be handed to the next edit session (issue 510).
+  function restoreDraft() {
     setName(hook.name); setEvent(hook.event); setMatcher(hook.matcher)
     setProvider(hook.provider); setConfig(hook.provider_config ?? {})
-    setTestOut(null)
-  }, [hook.id])
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on identity, not on the draft
+  useEffect(() => { restoreDraft(); setTestOut(null) }, [hook.id])
 
   const catalog = useTriggerVariables()
   const em = lifecycleEventMeta(catalog, event)
@@ -97,7 +102,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
         <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
         {err && <FieldError>{err}</FieldError>}
         <FormFooter>
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          <Button variant="ghost" size="sm" onClick={() => { restoreDraft(); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !name.trim()}
             disabledReason={!name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>

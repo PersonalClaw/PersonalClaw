@@ -1152,7 +1152,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'feedback', group: 'System', label: 'AI feedback', icon: ThumbsUp, size: 'sm',
-    description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing stops surfacing.',
+    description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing asks to be reviewed.',
     useSearchText() {
       const { data } = useFeedbackProducers()
       const rows = data?.producers ?? []
@@ -1166,7 +1166,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined} stale={isStalePaint}>
           {rows.length === 0
-            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
                 <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {rated.length ? `${rated.length} rated` : 'collecting verdicts'}

@@ -6715,7 +6715,10 @@ export const api = {
   // terminal (PTY)
   createTerminal: (cwd?: string, sandbox?: string) => post<{ session_id: string; shell?: string; cwd?: string; sandbox?: string }>('/api/terminal/sessions', { ...(cwd ? { cwd } : {}), ...(sandbox ? { sandbox } : {}) }),
   sandboxProviders: () => get<{ providers: Array<{ name: string; display_name: string; available: boolean }> }>('/api/sandbox/providers'),
-  terminalSessions: () => get<{ enabled?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
+  // `persist_available` = a tmux binary exists on the HOST. Optional because an older backend does
+  // not send it, and absent must mean "no capability claim" rather than a default either way — the
+  // persistence promise is only true when the config flag AND this are both on (issue 545).
+  terminalSessions: () => get<{ enabled?: boolean; persist_available?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
   deleteTerminal: (id: string) => del(`/api/terminal/sessions/${encodeURIComponent(id)}`),
 
   // lifecycle triggers (projected onto the legacy HookItem shape the shared
