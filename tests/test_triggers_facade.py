@@ -475,7 +475,15 @@ def test_event_history_is_honest_about_having_none(state, event_store):
 
 
 def test_lifecycle_history_says_why_it_is_empty(state):
-    req = _req("GET", "/api/triggers/lifecycle:x/history", state, match_info={"id": "lifecycle:x"})
+    # The hook must EXIST for the "no run store" answer to be the honest one (#2940): this branch
+    # used to give it for any id, so a deleted or mistyped hook read as a real one that keeps no
+    # records. Creating the hook keeps this rail about the REASON, which is what it tests; the
+    # ghost-id case is asserted in `tests/test_parent_resource_validation.py`.
+    hook = state._hook_store.create(
+        {"name": "h", "event": "Stop", "provider": "bash", "provider_config": {"command": "x"}}
+    )
+    tid = f"lifecycle:{hook.id}"
+    req = _req("GET", f"/api/triggers/{tid}/history", state, match_info={"id": tid})
     body = _body(_run(T.api_trigger_history(req)))
     assert body["supported"] is False and "no run store" in body["reason"]
 

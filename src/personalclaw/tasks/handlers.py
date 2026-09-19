@@ -525,10 +525,23 @@ async def api_tasks_delete(request: web.Request) -> web.Response:
 
 
 async def api_tasks_comments_get(request: web.Request) -> web.Response:
-    """GET /api/tasks/{task_id}/comments"""
+    """GET /api/tasks/{task_id}/comments
+
+    Resolves the PARENT task before reading anything under it (#2940). ``get_comments`` answers
+    ``[]`` for a task no provider holds, which is byte-identical to a real task with no comments —
+    so a mistyped or deleted id read as "that task exists and has nothing on it". This route is
+    ``agent_callable``, so the caller believing that is an LLM.
+
+    The refusal is the POST sibling's, verbatim: the two are registered a few lines apart on the
+    SAME path, the write already resolved the task and 404'd, and the read did not. That sibling's
+    own comment argues the principle — answering success when the caller's intent cannot be
+    honored means "an honest client would never learn". An empty list is that same lie in a read.
+    """
     task_id = request.match_info["task_id"]
     provider = request.query.get("provider")
     try:
+        if await registry.get_task(task_id, provider_name=provider) is None:
+            return web.json_response({"error": "task not found"}, status=404)
         comments = await registry.get_comments(task_id, provider_name=provider)
     except registry.UnknownTaskProvider as e:
         return _unknown_provider(e)

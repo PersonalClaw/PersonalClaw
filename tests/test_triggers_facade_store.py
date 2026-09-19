@@ -13,6 +13,7 @@ the schedule/event backends onto the store — those legacy paths are untouched 
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -1595,6 +1596,20 @@ def test_the_name_map_survives_an_unreadable_legacy_service(home, state):
 # ── 🔴 §6's run-record re-point (S105) ──
 
 
+def _register_schedule_trigger(home, trigger_id="clock:nightly", *, name="nightly"):
+    """A real schedule row in ``TriggerStore``, so a history read has a parent to resolve (#2940).
+
+    ``ScheduleRunStore`` is keyed by a plain job id and answers for any id, so a run appended
+    without this row is an ORPHAN — history for a trigger that does not exist. The handler now
+    refuses that, exactly as its ``DELETE`` sibling always has.
+    """
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(id=trigger_id, name=name, kind="schedule", enabled=True, spec={"cron": "0 3 * * *"})
+    )
+
+
 def _append_run(home, *, job_id="clock:nightly", run_id="r1", status="ok", summary="s"):
     from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
 
@@ -1664,6 +1679,12 @@ def test_a_broken_run_store_does_not_break_the_serializer(home, state, monkeypat
 
 
 def test_per_trigger_history_reads_the_store(home, state):
+    # The trigger ROW is now a precondition, not an assumption: `/history` resolves its parent in
+    # `TriggerStore` before reading runs (#2940), the same lookup `DELETE /api/triggers/{id}`
+    # performs. Run records are keyed by a plain job id in `ScheduleRunStore` and answered for ANY
+    # id, so without the row this drove a nonexistent trigger's history. The assertions below —
+    # that the RUNS come from the store, with the service's method deleted — are unchanged.
+    _register_schedule_trigger(home, "clock:nightly")
     _append_run(home)
     del state.crons.list_runs
     resp = _run(
@@ -1826,11 +1847,21 @@ async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_LIFECYCLE_trigger_still_says_unsupported_and_says_WHY():
+async def test_a_LIFECYCLE_trigger_still_says_unsupported_and_says_WHY(monkeypatch):
     """The honest answer is preserved for the kind it was actually about: a lifecycle trigger runs
     inline with the agent loop and keeps no run store. A bare `{"runs": []}` would render as "this
-    ran and kept no record", which is a different and false claim."""
-    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history")
+    ran and kept no record", which is a different and false claim.
+
+    The hook now has to EXIST for that answer to be given (#2940) — "this kind keeps no run store"
+    and "there is no such trigger" are different facts, and this branch used to give the first
+    answer for any id at all. Registering the hook is the precondition that keeps this rail about
+    what it was always about; the assertions are unchanged, and the ghost case is asserted
+    separately in ``tests/test_parent_resource_validation.py``.
+    """
+    monkeypatch.setattr(T, "_hook_store", lambda _state: SimpleNamespace(get=lambda _id: object()))
+    # The LIFECYCLE branch now resolves its hook, so it reads `app["state"]` the way the EVENT
+    # branch above already does — a bare `make_mocked_request` has no app state and would 500.
+    req = _req("GET", "/api/triggers/lifecycle:on_start/history", SimpleNamespace())
     req.match_info["id"] = "lifecycle:on_start"
     payload = json.loads((await T.api_trigger_history(req)).body.decode())
     assert payload["supported"] is False
@@ -1842,12 +1873,22 @@ async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason()
     """No catch-all branch exists, and that is correct: `_split_id` defaults an unknown prefix
     to `schedule` (a bare id IS a schedule id, for backwards compatibility), so a third branch
     would be unreachable. Driven rather than assumed — my first draft added that branch and
-    this test proved it dead."""
+    this test proved it dead.
+
+    The OBSERVABLE moved with #2940 and the intent did not. `mystery:x` is not a trigger, so the
+    schedule branch now refuses it rather than answering an empty history; what this rail exists to
+    prove is unchanged and is asserted below — that the request reached the SCHEDULE branch and was
+    not handed a fabricated `supported: false` by a catch-all. The old `{"runs": [], "total": 0}`
+    was the very indistinguishability #2940 filed: it read as "this trigger exists and never ran".
+    """
     req = make_mocked_request("GET", "/api/triggers/mystery:x/history")
     req.match_info["id"] = "mystery:x"
-    payload = json.loads((await T.api_trigger_history(req)).body.decode())
-    assert payload == {"runs": [], "total": 0}, "an unknown prefix reads as an empty schedule"
+    resp = await T.api_trigger_history(req)
+    payload = json.loads(resp.body.decode())
+    assert resp.status == 404, "an unknown prefix is resolved as a schedule id, and refused"
+    assert payload == {"error": "not found"}, "the SCHEDULE branch's own refusal, verbatim"
     assert "supported" not in payload, "no fabricated unsupported answer"
+    assert "reason" not in payload, "no fabricated reason from a catch-all branch"
 
 
 # ── 🔴 the list handed out a run_id the detail route denied (S167) ──

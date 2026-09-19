@@ -982,6 +982,13 @@ async def api_artifact_versions(request: web.Request) -> web.Response:
         return web.json_response({"error": "unknown provider"}, status=400)
     slug = request.match_info["slug"]
     try:
+        # The PARENT artifact first (#2940). `list_versions` answers `[]` for a slug that was
+        # never stored, which is indistinguishable from a real artifact whose history was
+        # trimmed — while `GET`/`DELETE /api/artifacts/{slug}` on the same slug 404 "not found".
+        # Resolved through the provider's own `get`, so a provider that stores versions
+        # separately cannot disagree with itself about whether the artifact exists.
+        if prov.get(slug) is None:
+            return web.json_response({"error": "not found"}, status=404)
         versions = prov.list_versions(slug)
     except ValueError:
         return web.json_response({"error": "invalid slug"}, status=400)

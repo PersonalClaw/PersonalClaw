@@ -287,6 +287,12 @@ def _door_app() -> web.Application:
     )
 
     app = web.Application()
+    # `api_session_agents_list` resolves the parent session before listing results (#2940), and
+    # reads it off `app["state"]` the way its three neighbours in `handlers/core.py` already do —
+    # the gateway always sets that key. A synthetic door app must supply it or the handler 500s on
+    # a KeyError, which would have this rail reporting a fault as though it were the read under
+    # test. An empty state means "no such session", which is the 404 the parametrisation allows.
+    app["state"] = type("_State", (), {"conversation_log": None, "_sessions": {}})()
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", api_chat_tool_result)
     app.router.add_get("/api/sessions/{id}/agents", api_session_agents_list)
     app.router.add_get("/api/sessions/{id}/agents/{agent_id}", api_session_agent_result)

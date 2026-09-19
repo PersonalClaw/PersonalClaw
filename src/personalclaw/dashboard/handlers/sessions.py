@@ -187,11 +187,7 @@ async def api_session_detail(request: web.Request) -> web.Response:
     if not state.conversation_log:
         return web.json_response([])
     messages = state.conversation_log.read_messages(key)
-    if (
-        not messages
-        and not state.conversation_log.has_session(key)
-        and _live_session_key(state, key) is None
-    ):
+    if not messages and not _session_exists(state, key):
         # A missing session must be distinguishable from a real session with no
         # messages yet: a polling client would otherwise read a mistyped or
         # deleted key's emptiness as truth. A LIVE session whose file has not
@@ -220,6 +216,25 @@ async def api_session_delete(request: web.Request) -> web.Response:
     # `agent_callable` LLM path). Match the GET sibling twenty lines up, which 404s the
     # same id on purpose for the same reason.
     return json_error("session_not_found", status=404)
+
+
+def _session_exists(state: DashboardState, key: str) -> bool:
+    """Whether *key* resolves to a persisted or currently-live dashboard session.
+
+    The existence half of ``api_session_detail``'s invariant, extracted so the sub-resource reads
+    under ``/api/sessions/{id}`` can ask the SAME question (#2940). It was written down once, in
+    one handler's comment, and the routes underneath that handler never got it — which is exactly
+    how ten sub-resource reads shipped answering a well-formed empty body for a parent that does
+    not exist. A predicate two callers share cannot drift the way two copies of it would.
+
+    Read-only by construction: it consults the already-loaded ``DashboardState`` and the
+    conversation log, and never touches ``config_dir()`` — a validation check on a READ path must
+    not create the home it is validating against.
+    """
+    conversation_log = getattr(state, "conversation_log", None)
+    return bool(conversation_log and conversation_log.has_session(key)) or (
+        _live_session_key(state, key) is not None
+    )
 
 
 def _live_session_key(state: DashboardState, key: str) -> str | None:

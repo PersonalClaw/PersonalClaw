@@ -2105,6 +2105,11 @@ async def api_trigger_history(request: web.Request) -> web.Response:
             }
         )
     if kind == _LIFECYCLE:
+        # The EVENT branch above resolves its trigger; this one did not, so `supported: false`
+        # was returned for ANY lifecycle id including one that is not a hook at all (#2940).
+        # "This kind keeps no run store" and "there is no such trigger" are different answers.
+        if _hook_store(request.app["state"]).get(raw) is None:
+            return web.json_response({"error": "not found"}, status=404)
         return web.json_response(
             {
                 "runs": [],
@@ -2113,6 +2118,17 @@ async def api_trigger_history(request: web.Request) -> web.Response:
                 "reason": "lifecycle triggers run inline with the agent loop and keep no run store",
             }
         )
+    # Resolve the PARENT trigger before reading its runs (#2940). `ScheduleRunStore` is keyed by a
+    # plain job id and answers `{"runs": [], "total": 0}` for ANY id, so a mistyped or deleted
+    # trigger read as one that exists and has never run — while `DELETE /api/triggers/{id}` on the
+    # same id 404s off exactly this lookup. Covers the remaining two kinds: `schedule`, which a
+    # bare id defaults to, and `store`, which shares the row store and falls through to here.
+    #
+    # Placed BEFORE the limit/offset parse to match the EVENT branch above, which resolves its
+    # trigger without parsing either: the id addresses the resource, so a bogus trigger is a 404
+    # whatever the paging says.
+    if _trigger_store().get(raw) is None:
+        return web.json_response({"error": "not found"}, status=404)
     try:
         limit = max(1, min(int(request.query.get("limit", "10")), 100))
         offset = max(0, int(request.query.get("offset", "0")))

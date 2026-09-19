@@ -2683,6 +2683,12 @@ async def list_item_relations(request: web.Request) -> web.Response:
     if not item_id:
         return web.json_response({"error": "item id required"}, status=400)
     store = _store(request)
+    # The PARENT item first (#2940). The two edge queries below are keyed by item id and match
+    # nothing for an id that is not an item, so a mistyped or deleted id answered
+    # `200 {"outbound": [], "inbound": []}` — identical to a real item with no edges, while
+    # `DELETE /api/knowledge/items/{id}` on the same id 404s "not found".
+    if store.get_item(item_id) is None:
+        return web.json_response({"error": "item not found"}, status=404)
     out: dict[str, list[dict]] = {"outbound": [], "inbound": []}
     try:
         for direction, sql in (

@@ -16,6 +16,7 @@ from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
 from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
+from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
@@ -1605,8 +1606,18 @@ async def api_token_local(request: web.Request) -> web.Response:
 
 
 async def api_session_agents_list(request: web.Request) -> web.Response:
-    """GET /api/sessions/{id}/agents — list sub-agent results for a session."""
+    """GET /api/sessions/{id}/agents — list sub-agent results for a session.
+
+    Resolves the PARENT session first (#2940), with the same predicate and the same
+    ``session_not_found`` code ``GET /api/sessions/{key}`` already answers: ``list_results``
+    returns ``[]`` for any id whose workspace directory is absent, so a mistyped or deleted
+    session read as a real one that has run no sub-agents.
+    """
+    from personalclaw.dashboard.handlers.sessions import _session_exists
+
     session_id = request.match_info["id"]
+    if not _session_exists(request.app["state"], session_id):
+        return json_error("session_not_found", status=404)
     from personalclaw.session_workspace import list_results  # noqa: F811
 
     results = list_results(session_id)

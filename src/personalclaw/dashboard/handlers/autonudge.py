@@ -10,6 +10,7 @@ from aiohttp import web
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import workspace_root
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path
 from personalclaw.sel import sel
 from personalclaw.triggers.nudge import get_instance as _autonudge_get
@@ -58,9 +59,20 @@ async def api_autonudge_list(request: web.Request) -> web.Response:
 
 
 async def api_autonudge_get(request: web.Request) -> web.Response:
-    """GET /api/autonudge/{session_name} — loop bound to this session (or null)."""
+    """GET /api/autonudge/{session_name} — loop bound to this session (or null).
+
+    Resolves the PARENT session first (#2940). ``get_by_session`` answers ``None`` for a session
+    that does not exist, which this rendered as ``{"enabled": true, "loop": null}`` — identical to
+    a real session with no loop bound, while ``DELETE /api/autonudge/{loop_id}`` 404s an id it
+    cannot find. Checked BEFORE the ``svc is None`` branch: whether the nudge service happens to
+    be running is a different fact from whether the session the caller named exists.
+    """
+    from personalclaw.dashboard.handlers.sessions import _session_exists
+
     svc = _autonudge_get()
     session_name = request.match_info["session_name"]
+    if not _session_exists(request.app["state"], session_name):
+        return json_error("session_not_found", status=404)
     if svc is None:
         return web.json_response({"enabled": False, "loop": None})
     loop = svc.get_by_session(session_name)

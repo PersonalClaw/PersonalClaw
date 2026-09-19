@@ -157,6 +157,26 @@ def _reply(body: dict[str, Any], *, status: int = 200) -> web.Response:
     return _ok(body, status=status) if body.get("ok") else _fail(body)
 
 
+async def _parent_def_refusal(name: str) -> web.Response | None:
+    """The refusal for a request scoped to a template that does not exist, else ``None`` (#2940).
+
+    A request scoped to a parent must establish that the parent exists before it reads anything
+    underneath it. Three sub-resource reads under ``/api/workflows/{name}`` did not, and each
+    answered a well-formed EMPTY body for a name that is not a template at all —
+    ``{"runs": [], "total": 0}``, ``{"a": 0, "b": 0, "ops": []}`` and a zero-sample trajectory.
+    Measured: those were byte-identical to a real bundled template with no runs apart from the
+    echoed name, while ``GET /api/workflows/{name}`` on the same id answered 404. All three are
+    ``agent_callable``, so an agent that mistyped or reused a deleted name was told the template
+    exists and is idle.
+
+    Resolves through the family's OWN resolver and returns its OWN envelope, so there is no new
+    error code and no second dialect: ``WF_DEF_NOT_FOUND`` is already in :data:`_STATUS_MAP`. It is
+    one extra definition lookup on a read, which is the honest price of the read being truthful.
+    """
+    found = await service.get_def(name)
+    return None if found.get("ok") else _reply(found)
+
+
 def _guard(request: web.Request, operation: str) -> web.Response | None:
     """Refuse a mutation from a restricted session, and audit either way.
 
@@ -230,7 +250,11 @@ async def api_template_trajectory(request: web.Request) -> web.Response:
     pure read over ledgers already on disk; the run projection at `/runs/{run_id}/introspect` shows
     the same signal for one run in the context of its siblings.
     """
-    return _reply(service.template_trajectory(request.match_info.get("name", "")))
+    name = request.match_info.get("name", "")
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
+    return _reply(service.template_trajectory(name))
 
 
 async def api_def_save(request: web.Request) -> web.Response:
@@ -501,6 +525,13 @@ async def api_def_version_diff(request: web.Request) -> web.Response:
     from personalclaw.workflows import versions
 
     name = request.match_info.get("name", "")
+    # The parent FIRST, before the query is parsed (#2940's "Suggested fix" wording): the name
+    # addresses the resource, so a bogus template is a 404 whatever `a`/`b` say. Validating the
+    # query first would answer 400 "a/b must be integers" for a template that does not exist,
+    # which sends the caller to fix the wrong half of their request.
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
     try:
         a = int(request.query.get("a", "0"))
         b = int(request.query.get("b", "0"))
@@ -548,6 +579,9 @@ async def api_def_ledger(request: web.Request) -> web.Response:
     from personalclaw.workflows import journal
 
     name = request.match_info.get("name", "")
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
     try:
         limit = max(1, min(int(request.query.get("limit", "20")), 100))
     except ValueError:
