@@ -25,13 +25,38 @@ def config_path() -> Path:
 _MISSING = object()
 
 
+def _merged_view(cfg: AppConfig) -> dict:
+    """*cfg* as a dict, plus every top-level key of the on-disk file it does not model.
+
+    READ-ONLY companion to the write paths' merge. An unreadable config.json degrades to the
+    model view here rather than refusing: `AppConfig.load()` has already handled that file
+    (warned and fallen back to defaults), and a `config get` that errors on a corrupt file tells
+    the operator less than one that shows what the loader actually resolved. That is the opposite
+    of the write case, where a failed read means the damage is unknowable — see
+    :func:`personalclaw.config.loader.read_config_for_merge`.
+    """
+    d = cfg.to_dict()
+    try:
+        existing = config_loader.read_config_for_merge(config_path())
+    except config_loader.ConfigPreserveError:
+        return d
+    return config_loader.merge_unmodeled_top_keys(d, existing)
+
+
 def _config_cmd(args: argparse.Namespace) -> None:
     """Get or set config values."""
     action = getattr(args, "config_action", None)
     if action == "get":
 
         cfg = AppConfig.load()
-        d = cfg.to_dict()
+        # 🔴 The MERGED view, not the model snapshot. `to_dict()` names only the ~40 sections the
+        # dataclass models, so a bare `config get providers` answered "❌ Unknown key" for a block
+        # sitting in the file — and `config get` with no key printed a document missing it, which
+        # made the documented `config get > f.json` → edit → `config set --file f.json` loop a
+        # provider-deleting round-trip. #3103 fixed the `config set <key> <value>` write and left
+        # both of these, so the round-trip still deleted `providers` at ✅ exit 0 (#951). A display
+        # path must show what the file holds.
+        d = _merged_view(cfg)
         key = getattr(args, "key", None)
         sel().log_api_access(
             caller="cli",
@@ -65,7 +90,32 @@ def _config_cmd(args: argparse.Namespace) -> None:
             except (json.JSONDecodeError, OSError) as e:
                 print(f"❌ Invalid JSON: {e}", file=sys.stderr)
                 sys.exit(1)
-            atomic_write(config_path(), json.dumps(data, indent=2) + "\n")
+            if not isinstance(data, dict):
+                print("❌ Invalid JSON: config must be a JSON object", file=sys.stderr)
+                sys.exit(1)
+            p = config_path()
+            # Same merge as `set <key> <value>`, for the same reason and then one more: `config
+            # get` could not even PRINT the unmodeled blocks, so the file an operator hands back
+            # here is SYSTEMATICALLY missing them. Replacing the document wholesale would delete
+            # `providers[]` by omission on the one path whose whole purpose is restoring a config
+            # the operator believes is complete (#951).
+            try:
+                data = config_loader.merge_unmodeled_top_keys(
+                    data, config_loader.read_config_for_merge(p)
+                )
+            except config_loader.ConfigPreserveError as exc:
+                # Refusing beats writing blind: a config whose content cannot be read is exactly
+                # the case where we cannot know what the write would destroy.
+                print(f"❌ {exc}", file=sys.stderr)
+                sel().log_api_access(
+                    caller="cli",
+                    operation="config_set_file",
+                    outcome="error",
+                    source="cli",
+                    resources=str(fp),
+                )
+                sys.exit(1)
+            atomic_write(p, json.dumps(data, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set_file",
@@ -124,9 +174,23 @@ def _config_cmd(args: argparse.Namespace) -> None:
             # Read → apply one field → write the merged document is what the dashboard PATCH
             # already does. Doing it here too is what makes the two write paths agree; the
             # divergence is why the API got fixed while the CLI stayed destructive.
-            doc = _config_doc_to_merge_into()
+            p = config_path()
+            try:
+                doc = config_loader.read_config_for_merge(p)
+            except config_loader.ConfigPreserveError as exc:
+                # Absent is safe to write over, unreadable is not — the rule `AppConfig.save()`
+                # already enforces, now stated once in the loader and shared by all three writes.
+                print(f"❌ {exc}", file=sys.stderr)
+                sel().log_api_access(
+                    caller="cli",
+                    operation="config_set",
+                    outcome="error",
+                    source="cli",
+                    resources=f"{key}={value}",
+                )
+                sys.exit(1)
             _dict_put(doc, key, parsed)
-            atomic_write(config_path(), json.dumps(doc, indent=2) + "\n")
+            atomic_write(p, json.dumps(doc, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set",
@@ -205,51 +269,6 @@ def _dict_put(d: dict, key: str, value: object) -> None:
             cur[p] = nxt
         cur = nxt
     cur[parts[-1]] = value
-
-
-def _config_doc_to_merge_into() -> dict:
-    """The existing config.json, as the base a single-key write merges into.
-
-    Merging only preserves the unmodeled blocks if the existing document was actually READ, so
-    a failed read must refuse rather than fall through: serialising a base that never saw
-    `providers` deletes it just as surely as serialising the model dict did. Absent is safe to
-    write over; unreadable is not. This is the rule `AppConfig.save()` already enforces with
-    ``ConfigPreserveError``, stated here for the CLI's exit-code contract.
-
-    An EMPTY file is `absent` by that rule, not `unreadable` — zero bytes hold no block a
-    write could destroy, and refusing would leave a config truncated by a crashed write or a
-    bare `touch` permanently unwritable, which is a dead end rather than a protection.
-    """
-    p = config_path()
-    if not p.exists():
-        return {}
-    try:
-        raw = p.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(
-            f"❌ refusing to write {p}: it exists but could not be read, so the "
-            f"providers/use_cases/slack blocks it may hold cannot be preserved ({exc})",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if not raw.strip():
-        return {}
-    try:
-        doc = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(
-            f"❌ refusing to write {p}: it exists but is not valid JSON, so the "
-            f"providers/use_cases/slack blocks it may hold cannot be preserved ({exc})",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if not isinstance(doc, dict):
-        print(
-            f"❌ refusing to write {p}: it holds {type(doc).__name__}, not an object",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return doc
 
 
 def _parse_value(raw: str) -> object:

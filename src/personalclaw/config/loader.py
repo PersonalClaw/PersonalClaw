@@ -36,7 +36,7 @@ import re as _re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from personalclaw.config.coercion import (
     _expose_flag,
@@ -2992,13 +2992,86 @@ class UpdatesConfig:
 
 
 class ConfigPreserveError(RuntimeError):
-    """`AppConfig.save()` could not read the existing config, so it refused to write.
+    """A config write could not read the existing config, so it refused to write.
 
-    Raised INSTEAD of silently dropping the `providers` / `use_cases` / `slack` blocks that live
-    outside `to_dict()`. A caller seeing this should surface it: the user's stored provider
-    credentials are intact on disk, and the save simply did not happen. Retrying once the file is
-    readable is the correct recovery — writing anyway is what destroyed them before.
+    Raised INSTEAD of silently dropping the top-level blocks that live outside `to_dict()`
+    (`providers`, `use_cases`, `slack`, `meta`, …). A caller seeing this should surface it: the
+    user's stored provider credentials are intact on disk, and the write simply did not happen.
+    Retrying once the file is readable is the correct recovery — writing anyway is what destroyed
+    them before.
     """
+
+
+def read_config_for_merge(path: Path) -> dict[str, Any]:
+    """The existing config document, as the base a write merges its unmodeled keys out of.
+
+    🔴 ABSENT IS SAFE TO WRITE OVER; UNREADABLE IS NOT. Merging only preserves a block if the
+    existing document was genuinely READ, so a failed read must refuse rather than fall through:
+    serialising a base that never saw `providers` deletes it just as surely as serialising the
+    model dict did (#951). This read used to be wrapped in `except Exception: pass`, and that
+    swallow is what let a permission blip or a concurrent write caught mid-flush delete every
+    configured model provider and every stored API key.
+
+    An EMPTY file is `absent` by that rule, not `unreadable`. Zero bytes hold no block a write
+    could destroy, and refusing would leave a config truncated by a crashed write or a bare
+    `touch` permanently unwritable — a dead end rather than a protection. The refusal exists for
+    a file whose CONTENT cannot be known, which is a different thing from a file that has none.
+
+    One reader, because there were two and they disagreed on the exit contract: `AppConfig.save()`
+    raised :class:`ConfigPreserveError` while the CLI printed and exited 1 from its own copy. A
+    second spelling of "can I safely overwrite this?" is the same class of bug as the two
+    hand-written preserve lists this module used to carry.
+    """
+    if not path.exists():
+        return {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigPreserveError(
+            f"refusing to write config: {path} exists but could not be read, so the "
+            f"unmodeled top-level blocks it holds cannot be preserved ({exc})"
+        ) from exc
+    if not raw.strip():
+        return {}
+    try:
+        existing = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigPreserveError(
+            f"refusing to write config: {path} exists but is not valid JSON, so the "
+            f"unmodeled top-level blocks it holds cannot be preserved ({exc})"
+        ) from exc
+    if not isinstance(existing, dict):
+        raise ConfigPreserveError(
+            f"refusing to write config: {path} holds {type(existing).__name__}, not an object"
+        )
+    return existing
+
+
+def merge_unmodeled_top_keys(doc: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    """*doc*, plus every top-level key of *existing* that *doc* does not already carry.
+
+    🔴 PRESERVATION IS DERIVED, NOT ENUMERATED. `AppConfig.save()` carried a hand-written
+    copy-forward list — `("providers", "use_cases", "slack")` — so a FOURTH unmodeled top-level
+    block would be dropped by every write until somebody remembered to add it to the tuple. That
+    is the same shape of bug as the one it was written to fix, just waiting for a new key: the
+    list has to be maintained in lockstep with a set it does not reference.
+
+    Asking "what did this write already serialise?" needs no list. Anything the serialised
+    document does not name is, by definition, a key this write cannot speak for, so it is copied
+    forward unchanged. `providers` is the one that matters — it is the canonical store for
+    provider instances and, for `openai_compatible`, the only copy of an API key entered in the
+    dashboard — but the rule is general, which is the point.
+
+    Shallow on purpose. A top-level key is either modelled by the dataclass (in which case the
+    write owns it wholesale) or opaque app-owned data core does not parse (in which case merging
+    INTO it would be core inventing a shape for data it does not understand). There is no third
+    case, so there is no deep merge to get wrong.
+    """
+    merged = dict(doc)
+    for key, value in existing.items():
+        if key not in merged:
+            merged[key] = value
+    return merged
 
 
 @dataclass
@@ -4384,9 +4457,13 @@ class AppConfig:
 
         Stamps a ``meta`` block with the current version and timestamp
         so we can tell which build last touched the file.
-        Preserves ``providers``/``use_cases`` blocks (and a legacy ``slack`` block
-        awaiting the slack-channel app's one-time migration) from the existing file
-        so opaque app-owned data is never lost on write-back.
+
+        Every top-level key the serialised document does not name is copied forward from the
+        existing file, so opaque app-owned data (``providers``, ``use_cases``, the legacy
+        ``slack`` block awaiting the channel app's one-time migration, and anything added next)
+        is never lost on write-back. That is DERIVED from what this write serialises rather than
+        enumerated — the hand-written ``("providers", "use_cases", "slack")`` tuple this replaced
+        would have dropped a fourth block silently (#951).
         """
         from datetime import datetime, timezone
 
@@ -4397,53 +4474,15 @@ class AppConfig:
             "lastTouchedAt": datetime.now(timezone.utc).isoformat(),
         }
         d = {"meta": meta, **self.to_dict()}
-        # Preserve opaque blocks that live outside to_dict(). "slack" is
-        # app-owned data core doesn't parse — kept intact until the channel app's
-        # migrate_from_core() lifts it into the app store and deletes it.
+        # Preserve every top-level key this write does not itself serialise — `providers`,
+        # `use_cases`, and `slack` (app-owned data core doesn't parse, kept intact until the
+        # channel app's `migrate_from_core()` lifts it into the app store and deletes it), plus
+        # whatever arrives next. `read_config_for_merge` refuses on an unreadable file rather
+        # than writing blind; see its docstring for why the swallow it replaced was data loss.
+        # `meta` is stamped above and so is already in `d`, which is what keeps this write
+        # authoritative over the one key it does own.
         p = config_path()
-        if p.exists():
-            # 🔴 THIS READ IS LOAD-BEARING AND MUST NOT FAIL SILENTLY. It used to be wrapped in
-            # `except Exception: pass`, so a config.json that existed but could not be read or
-            # parsed — a permission blip, a concurrent write caught mid-flush and therefore
-            # momentarily invalid JSON — fell through to the `atomic_write` below with the three
-            # preserved keys ABSENT. That write then succeeded, deleting `providers` and
-            # `use_cases`: every configured model provider and every stored provider API key,
-            # on a path that every settings toggle in the app goes through.
-            #
-            # The swallow was reasonable-looking ("preservation is best-effort") and wrong in the
-            # one case that matters: a FAILED read is exactly when you cannot know what you are
-            # about to overwrite. Absent is safe to write over; unreadable is not.
-            try:
-                raw = p.read_text(encoding="utf-8")
-            except OSError as exc:
-                raise ConfigPreserveError(
-                    f"refusing to save config: {p} exists but could not be read, so the "
-                    f"providers/use_cases/slack blocks it holds cannot be preserved ({exc})"
-                ) from exc
-            # An EMPTY file is `absent` by this guard's own rule, not `unreadable`. Zero bytes
-            # hold no providers/use_cases/slack block, so there is nothing a write could
-            # destroy — and refusing here would be a dead end rather than a protection: a
-            # config truncated to nothing (a crashed write, a full disk, a bare `touch`) could
-            # never be saved again, with no recovery path in the product at all. The refusal
-            # exists for a file whose CONTENT cannot be known, which is a different thing from
-            # a file that has none.
-            if not raw.strip():
-                existing: object = {}
-            else:
-                try:
-                    existing = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    raise ConfigPreserveError(
-                        f"refusing to save config: {p} exists but could not be read, so the "
-                        f"providers/use_cases/slack blocks it holds cannot be preserved ({exc})"
-                    ) from exc
-            if not isinstance(existing, dict):
-                raise ConfigPreserveError(
-                    f"refusing to save config: {p} holds {type(existing).__name__}, not an object"
-                )
-            for key in ("providers", "use_cases", "slack"):
-                if key in existing:
-                    d[key] = existing[key]
+        d = merge_unmodeled_top_keys(d, read_config_for_merge(p))
         p.parent.mkdir(parents=True, exist_ok=True)
         from personalclaw.atomic_write import atomic_write
 
