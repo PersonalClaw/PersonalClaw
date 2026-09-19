@@ -11,7 +11,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
 
@@ -1237,10 +1237,8 @@ async def api_memory_entity_create(request: web.Request) -> web.Response:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
         return web.json_response({"error": "body must be JSON"}, status=400)
-    name = str(body.get("name", "") or "").strip()
+    name = require_string(body, "name")
     entity_type = str(body.get("entity_type", "") or "").strip().lower()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
     from personalclaw.memory_graph import ENTITY_TYPES
 
     if entity_type not in ENTITY_TYPES:
@@ -1328,10 +1326,8 @@ async def api_memory_entity_proposals(request: web.Request) -> web.Response:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
         return web.json_response({"error": "body must be JSON"}, status=400)
-    name = str(body.get("name", "") or "").strip()
+    name = require_string(body, "name")
     action = str(body.get("action", "") or "").strip().lower()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
     loop = asyncio.get_event_loop()
     if action == "reject":
         ok = await loop.run_in_executor(None, lambda: svc.graph_reject_proposal(name))

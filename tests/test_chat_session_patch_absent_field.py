@@ -52,8 +52,18 @@ def _state(session: _ChatSession) -> DashboardState:
 
 def _app(state: DashboardState) -> web.Application:
     from personalclaw.dashboard import chat, session_bulk
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application()
+    # The boundary belongs here because this rail asserts a WIRE STATUS, and on the real gateway
+    # that status is produced here rather than in the handler. `server.py` installs
+    # `request_boundary_middleware()` across `/api`, so a route reading its body through
+    # `personalclaw.request_validation` raises `RequestValidationError` and the boundary serves the
+    # field-naming 400 — which is the entire reason adoption is one line per site instead of a
+    # `try`/`except` each. A bare app therefore does not model the gateway: it lets the refusal
+    # propagate and aiohttp answers its bare `500 text/plain`, so this parity rail would fail the
+    # first route to adopt the validator. `tests/chat_test_helpers.py::_api_app` makes the same
+    # point for the four builders there.
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app["state"] = state
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
     app.router.add_patch(

@@ -24,6 +24,7 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import require_string
 from personalclaw.security import (
     is_sensitive_path,
     is_system_path,
@@ -2349,7 +2350,7 @@ async def api_file_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
     parent_raw = str(body.get("path", "")).strip()
-    name = str(body.get("name", "")).strip()
+    name = require_string(body, "name")
     kind = str(body.get("kind", "file")).strip().lower()
     content = body.get("content", "")
     if kind not in ("file", "dir"):
