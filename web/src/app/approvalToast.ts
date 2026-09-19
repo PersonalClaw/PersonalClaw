@@ -1,4 +1,5 @@
 import { blastRadiusLine, deriveBlastRadius, type ApprovalRisk } from '../pages/chat/approvalMeta'
+import { approvalDestination } from './approvalDestination'
 
 /** OU-8 — the COMPACT form of the approval brief.
  *
@@ -33,5 +34,9 @@ export function approvalToastMessage(input: {
     deriveBlastRadius({ tool: input.tool, risk: input.risk, readOnlyCommand: input.readOnlyCommand }),
   )
   const touches = line ? ` (${line})` : ''
-  return `${input.who} needs approval to run ${input.tool}${touches} — open ${input.session} to respond.`
+  // WHERE TO ANSWER comes from `approvalDestination`, not from the raw session key. The key is
+  // openable prose only for a chat; a workflow stage's `workflow:<run>:<node>` named a 404 and
+  // sent the one person who was notified nowhere (#258). Same call the nudge builds its LINK
+  // from, so the sentence cannot name one place while the link goes to another.
+  return `${input.who} needs approval to run ${input.tool}${touches} — open ${approvalDestination(input.session).label} to respond.`
 }
