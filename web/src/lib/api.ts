@@ -827,6 +827,12 @@ export interface AppCatalogEntry {
    *  none yet, so empty permissions there mean "not known", not "declared none". */
   consentKnown?: boolean
   crons?: AppCronSummary[]
+  /** #492 — does this app ship browser code? Same two field names and meanings as
+   *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
+   *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
+   *  permission block cannot express, so consent has to state it separately. */
+  hasUI?: boolean
+  uiComponents?: string
   // APE-4: the declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.

@@ -150,7 +150,17 @@ export interface AppApiClient {
  *  React render context needed. This is the primitive; pass the app identity
  *  (the `ctx` your mount function receives). An app's own backend
  *  (`/apps/<name>/api/*`) is always reachable; any other path must be declared
- *  or the call throws (and the gateway rejects it too — A5). */
+ *  or the call throws (and the gateway rejects it too — A5).
+ *
+ *  🪤 The scope binds THIS CLIENT, not the app (#492). `app_permission_middleware`
+ *  acts only on a request carrying an app identity, which is the `Bearer` token
+ *  `appAuthHeaders` attaches — so the 403 is real for every call made through here.
+ *  A bundle is under no obligation to come through here: it runs in the host page
+ *  (loadContributedModule), so a bare `fetch('/api/…')` carries the owner's cookie,
+ *  reaches the gateway with no app identity, and is treated as the owner. That is
+ *  disclosed at install consent and in `docs/security/limitations.md` §4; it is not
+ *  closable from this side, because a same-origin request from an app bundle is
+ *  indistinguishable from the dashboard's own. */
 export function createAppApi(app: AppContext): AppApiClient {
   function allowed(path: string): boolean {
     // Match on the pathname only — the server-side check (permissions middleware)
@@ -419,10 +429,24 @@ export function useChatLauncher() {
 }
 
 /** Embed a live PClaw chat session inside a contributed app's own UI (A8).
- *  Renders the host chat route in a sandboxed iframe — full isolation, the app
- *  never touches the chat internals. Resumes `session` if given, else starts a
- *  fresh session optionally seeded with `prompt`. Inherits the host theme via
- *  the same-origin route. */
+ *  Renders the host chat route in an iframe: a separate DOCUMENT with its own React
+ *  root, so the app composes the chat surface without reaching into its internals.
+ *  Resumes `session` if given, else starts a fresh session optionally seeded with
+ *  `prompt`. Inherits the host theme via the same-origin route.
+ *
+ *  🪤 NOT an isolation boundary, and must never be described as one (#492). The frame
+ *  is same-origin by construction — `src` is built from `location.origin` below, and
+ *  `allow-same-origin` is on the sandbox because the chat route needs the host's own
+ *  session to render at all. `allow-scripts` + `allow-same-origin` together let the
+ *  framed document reach its parent and clear its own sandbox attribute, so the pair
+ *  buys no origin separation. Nor could it here: the embedding app's bundle ALREADY
+ *  runs in this page (see loadContributedModule — the host origin, the host `window`),
+ *  so it can reach the frame's `contentDocument` directly whatever this attribute
+ *  says. What the sandbox does buy is the deny-by-default residue — no top-level
+ *  navigation, no popups, no downloads, no pointer lock — which is defence in depth
+ *  over a route that renders app-supplied query state, not containment of the app.
+ *  Real UI isolation needs a distinct ORIGIN for app bundles; see
+ *  `docs/security/limitations.md` §4. */
 export function ChatEmbed(props: {
   session?: string
   prompt?: string
@@ -443,6 +467,10 @@ export function ChatEmbed(props: {
     title: 'PersonalClaw chat',
     className,
     style: { border: 'none', width: '100%', height: '100%', ...style },
+    // `allow-same-origin` is REQUIRED (the chat route reads the host session) and is
+    // exactly why this is not an isolation boundary — see the 🪤 above. Kept for the
+    // deny-by-default residue only: dropping it would break the embed, and widening it
+    // would give away the one thing the attribute still denies.
     sandbox: 'allow-scripts allow-same-origin allow-forms',
   })
 }

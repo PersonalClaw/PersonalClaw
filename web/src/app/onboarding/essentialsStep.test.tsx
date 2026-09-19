@@ -60,6 +60,13 @@ function entry(over: Partial<AppCatalogEntry> & { name: string }): AppCatalogEnt
     displayName: over.name, description: 'desc', version: '1.0.0',
     icon: '', author: 'PersonalClaw', source: `/apps/${over.name}`, sourceKind: 'local',
     isProvider: true, providerType: 'model', tags: [], providerCapabilities: ['chat'],
+    // `consentKnown` is what the real wire always carries for a dir-scanned manifest
+    // (`CatalogEntry.to_dict` is `asdict`, and the three manifest-backed builders set it
+    // True) — omitting it here made the fixture a shape the backend never sends, and the
+    // card's disclosure gate keys on exactly this flag (issue 614, extended to this card
+    // by #492). A fixture that cannot reach the branch under test passes for the wrong
+    // reason.
+    consentKnown: true,
     permissions: {}, crons: [], ...over,
   }
 }

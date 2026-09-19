@@ -45,7 +45,7 @@ import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The install-consent surface is shared with the first-run essential-apps step.
-import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions } from './installConsent'
+import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** An install held at the consent gate. `entry` is the catalog row the install came
@@ -504,7 +504,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     // remoteApps/gitApps carry a `pointer` (repo[#sub]) that install uses instead of source.
     for (const e of catalogApps(catalog)) {
       if (installedNames.has(e.name) || byName.has(e.name)) continue
-      byName.set(e.name, { ...e, installed: false, enabled: false, hasUI: false, native: false })
+      // #492: `hasUI` comes off the WIRE, it is not a placeholder. This read
+      // `hasUI: false` — safe while the field existed only for installed apps ("we cannot
+      // know yet"), and a fabricated answer the moment the catalog started carrying it:
+      // measured live, the Store detail panel for `minutes` (which declares a UI page)
+      // said "Runs in this dashboard page: no". A disclosure handed a hard-coded value is
+      // worse than no disclosure, so the overlay now only sets what it actually knows.
+      byName.set(e.name, { ...e, installed: false, enabled: false, hasUI: Boolean(e.hasUI), native: false })
     }
     return [...byName.values()]
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -845,6 +851,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
           result={guarded.blocked}
           busy={guarded.busy}
           permissions={consentPermissions(pending.entry)}
+          hostUi={consentHostUi(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1001,6 +1008,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
           result={guarded.blocked}
           busy={guarded.busy}
           permissions={consentPermissions(pending.entry)}
+          hostUi={consentHostUi(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1499,7 +1507,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
           </div>
         )}
 
-        <PermissionList perms={app.permissions} />
+        <PermissionList perms={app.permissions} hostUi={consentHostUi(app)} />
 
         {app.hasBackend && (
           <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
@@ -1666,7 +1674,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           silence), while a registry pointer — whose manifest isn't fetched until install —
           says the permissions aren't known YET rather than pretending they're none. */}
       {item.consentKnown ? (
-        <PermissionList perms={item.permissions ?? {}} />
+        <PermissionList perms={item.permissions ?? {}} hostUi={consentHostUi(item)} />
       ) : (
         <div data-type="body-s" className="text-on-surface-low">
           Permissions: not known yet — this is a registry listing, and its manifest is
@@ -1690,7 +1698,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
       {consent && guarded.blocked && (
         <ConsentModal label={item.displayName} result={guarded.blocked} busy={guarded.busy}
-          permissions={consentPermissions(item)} crons={item.crons}
+          permissions={consentPermissions(item)} hostUi={consentHostUi(item)} crons={item.crons}
           onConfirm={async () => { const r = await guarded.confirmInstall(); if (r?.ok) { setConsent(null); onInstalled() } }}
           onClose={() => { setConsent(null); guarded.reset() }} />
       )}
