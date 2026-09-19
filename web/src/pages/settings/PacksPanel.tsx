@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackUpdateRec } from '../../lib/api'
+import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackTriggersDeployRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -347,6 +348,7 @@ function ConnectorLine({ c }: { c: InstalledPackRec['connectors'][number] }) {
 export function PackRow({ pack }: { pack: InstalledPackRec }) {
   const [busy, setBusy] = useState(false)
   const [update, setUpdate] = useState<PackUpdateRec | null>(null)
+  const [triggersDeployed, setTriggersDeployed] = useState<PackTriggersDeployRec | null>(null)
   // Dry-run FIRST, always. The interesting output of an update is the skip list — which of
   // your edited copies it would leave alone — and applying before seeing that is exactly the
   // mistake the pack_owned rule exists to prevent.
@@ -382,6 +384,19 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
       notify(`Couldn't start setup: ${String((e as Error)?.message || e)}`, 'error')
     }).finally(() => setBusy(false))
   }
+  // Add the pack's staged triggers to Automations — DISABLED, always. Pack install lands a
+  // pack's triggers staged-and-disabled (a pack must never arm automation); this makes them
+  // visible in Automations for the user to arm one at a time. The result line says so honestly
+  // rather than implying anything started running.
+  const deployTriggers = () => {
+    setBusy(true)
+    api.packTriggersDeploy(pack.name).then((r) => {
+      setTriggersDeployed(r)
+    }).catch((e) => notify(`Couldn't add triggers to Automations: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
+  // Staged-and-disabled on install; the control appears only while there is something to add.
+  const stagedTriggers = pack.staged_triggers?.length ?? 0
   // What the pack actually put on this machine ("skill:cfo-report", "trigger:month-end", …).
   // The ledger exists to answer that without re-deriving it, and the row never showed it: an
   // installed pack was a name and a version, with no way to see what it brought.
@@ -399,12 +414,34 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
           {pack.setup_pending && (
             <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={finishSetup}>Finish setup</Button>
           )}
+          {/* Only when the pack actually staged triggers. Disabled-on-deploy is the whole point,
+              so the label says "Add to Automations", never "Enable" — the user arms them there. */}
+          {stagedTriggers > 0 && (
+            <Button variant="ghost" size="sm" loading={busy} loadingLabel="Adding…" onClick={deployTriggers}>
+              Add triggers to Automations
+            </Button>
+          )}
           <Button variant="ghost" size="sm" loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
             Check for update
           </Button>
         </div>
       </Row>
       {update && <UpdatePreview update={update} busy={busy} onApply={applyUpdate} />}
+      {/* Honest result: the triggers are in Automations but DISABLED — the line names the count
+          and points at where to arm them, and never says "enabled". */}
+      {triggersDeployed && (
+        <div data-type="caption" className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-on-surface-low">
+          <span>
+            Added {triggersDeployed.deployed.length} trigger{triggersDeployed.deployed.length === 1 ? '' : 's'} to{' '}
+            <TextLink href="#/triggers" ink="emphasis">Automations</TextLink> (disabled) — review and enable each in Automations.
+          </span>
+          {triggersDeployed.skipped.length > 0 && (
+            <span className="text-warn">
+              {triggersDeployed.skipped.length} staged trigger{triggersDeployed.skipped.length === 1 ? ' was' : 's were'} too broken to add: {triggersDeployed.skipped.join(', ')}.
+            </span>
+          )}
+        </div>
+      )}
       {/* Every fact this block can show joins its gate. Gating on components/connectors alone
           would hide a pack that has only a setup id and an install date — the same
           activity-vs-existence mistake the MCP pool tile made. */}

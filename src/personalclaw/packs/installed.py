@@ -69,6 +69,12 @@ class InstalledPack:
     #: The staged roster's rows (§4.2), so the pack detail surface can show the whole team
     #: (and which tier each member is in) without re-reading the staging area.
     roster: list[dict[str, Any]] = field(default_factory=list)
+    #: The ids of the pack's staged triggers (§3.1, AP-7) — installed DISABLED under
+    #: ``packs/staged/<pack>/triggers/`` and never armed on install. Recorded here so the pack
+    #: detail surface can offer "Add triggers to Automations" without re-reading the staging area
+    #: (the sibling of ``roster`` for the trigger enable path :func:`packs.triggers.deploy_triggers`
+    #: serves). A deploy makes them visible in Automations, still disabled, for the user to arm.
+    staged_triggers: list[str] = field(default_factory=list)
     #: The manifest's ``pack_owned`` path patterns as installed (§1). Recorded here rather than
     #: re-read from an archive, because an UPDATE must decide overwrite-vs-skip against what
     #: the INSTALLED pack claimed to own — a new archive could widen its own ownership and
@@ -140,6 +146,7 @@ def load_installed(home: Path | None = None) -> list[InstalledPack]:
                     if isinstance(rec.get("bound"), dict)
                 },
                 roster=[r for r in rec.get("roster", []) if isinstance(r, dict)],
+                staged_triggers=[str(t) for t in rec.get("staged_triggers", [])],
                 pack_owned=[str(p) for p in rec.get("pack_owned", [])],
                 component_locks={
                     str(ref): {str(k): str(v) for k, v in lock.items()}

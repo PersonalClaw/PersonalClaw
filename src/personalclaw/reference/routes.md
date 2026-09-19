@@ -580,6 +580,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/packs/{name}/bindings` — Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read.
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
+- `POST /api/packs/{name}/triggers/deploy` — Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
 - `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/proactive/digest` — §5.1's card, assembled from the last digest run.
 - `POST /api/proactive/digest/reply` — one tap or one typed reply. Body ``{run_id, text}``.
