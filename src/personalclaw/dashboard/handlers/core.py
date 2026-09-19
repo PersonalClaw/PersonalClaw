@@ -607,7 +607,6 @@ def _scratchpad_path_sanitizer(value: str) -> str:
 _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.approval_mode": {"type": "enum", "values": ["auto", "interactive", "trust_reads"]},
     "agent.yolo": {"type": "bool"},
-    "agent.sandbox": {"type": "enum", "values": ["auto", "off"]},
     "agent.soft_stop_budget_secs": {"type": "float", "min": 0.5, "max": 60.0},
     "agent.max_subagents": {"type": "int", "min": 0, "max": 16},
     "agent.subagent_max_turns": {"type": "int", "min": 1, "max": 200},

@@ -1061,13 +1061,22 @@ class LoopWatchdog:
             # projects it the same way. Do not re-add a write here.
             count = len(findings)
 
-            # Seed/refresh liveness on first observation or after a (re)start.
+            # Seed/refresh liveness on first observation or after a (re)start. The liveness
+            # clock (`_last_activity`) and the progress baseline (`_last_count`) are two
+            # different concerns that used to share this branch: it adopted `count` as the
+            # baseline and `continue`d, so a finding already on disk at the first poll was
+            # absorbed and never credited — and the per-cycle hook below (which owns the
+            # SDLC/design stage advance) never fired for it. The baseline is seeded at 0 on
+            # genuine first sight and left alone across a re-seed, so a fast first cycle is
+            # credited and a Pause→Resume does not re-credit work that already ran its hook.
             if cid not in self._last_count or self._last_activity.get(cid, 0.0) < (
                 loop.started_at or 0.0
             ):
-                self._last_count[cid] = count
+                self._last_count.setdefault(cid, 0)
                 self._last_activity[cid] = time.time()
-                continue
+                if count <= self._last_count[cid]:
+                    # Nothing uncredited — this poll is the pure seed it always was.
+                    continue
 
             if count > self._last_count[cid]:
                 # 3. New finding — progress.

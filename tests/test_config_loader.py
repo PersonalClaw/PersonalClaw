@@ -47,7 +47,6 @@ logger = logging.getLogger("personalclaw.config.loader")
 #: while asserting the loader was wrong. The flag lets the filter model the real contract instead.
 _ENUM_FIELDS: list[tuple[str, str, list[str], bool]] = [
     ("agent", "approval_mode", ["auto", "interactive", "trust_reads"], False),
-    ("agent", "sandbox", ["auto", "off"], False),
     ("agent", "log_level", ["DEBUG", "INFO", "WARNING", "ERROR"], True),
 ]
 
@@ -204,7 +203,6 @@ _agent_config_st = st.builds(
     # agent). Generate only non-migrated runtime values so the round-trip tests
     # serialization, not the one-shot legacy migration (covered separately).
     provider=st.sampled_from(["native", "acp:claude-code", "acp:test-cli"]),
-    sandbox=st.sampled_from(["auto", "off"]),
     soft_stop_budget_secs=st.floats(min_value=0.5, max_value=60.0),
 )
 
@@ -290,7 +288,6 @@ class TestConfigLoaderProperties:
         # Compare agent fields
         assert loaded.agent.approval_mode == config.agent.approval_mode
         assert loaded.agent.provider == config.agent.provider
-        assert loaded.agent.sandbox == config.agent.sandbox
 
         # Compare session
         assert loaded.session.timeout_secs == config.session.timeout_secs

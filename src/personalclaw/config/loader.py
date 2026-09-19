@@ -459,10 +459,6 @@ class AgentConfig:
             "mirroring the per-agent AgentProfile.provider field.",
         ),
     )
-    sandbox: str = field(
-        default="auto",
-        metadata=_meta("Sandbox", "Sandbox mode for ACP provider.", enum=["auto", "off"]),
-    )
     yolo: bool = field(
         default=False,
         metadata=_meta("YOLO Mode", "Skip tool approval confirmations."),
@@ -3461,7 +3457,6 @@ class AppConfig:
                 # AgentConfig.provider's field default). A config with no explicit
                 # agent.provider is native, NOT the legacy "acp" — ACP is opt-in.
                 provider=agent_data.get("provider", "native"),
-                sandbox=agent_data.get("sandbox", "auto"),
                 yolo=agent_data.get("yolo", False),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
                 # Defaults ON (PROMPT-CACHE-SUBSTRATE §C6): caching is semantically

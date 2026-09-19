@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -328,6 +329,105 @@ _registry_cache: dict[str, tuple[float, list["RegistryPointer"]]] = {}
 _GIT_SCAN_TTL_SECS = 300.0  # 5 minutes
 _git_scan_cache: dict[str, tuple[float, list["CatalogEntry"]]] = {}
 
+# ── Bounding the catalog build (#408) ──
+#
+# The per-git-process timeouts below (60/30/90s) bound ONE clone; they never bounded the
+# sum, and they do not bound the DNS/TCP connect underneath — which is where a blackholed
+# address spends its time. One unreachable source therefore cost the Store 135s to open.
+# So the whole build gets a wall-clock budget: every source loop stops when it is spent,
+# and every git call is handed only the time that is actually left. A source that is cut
+# off is REPORTED (``unavailableSources`` on the wire) rather than silently dropped —
+# degrading quietly would just replace a slow Store with an inexplicably empty one.
+#
+# TWO bounds, because a single total is not enough. Measured on a seeded home with one
+# blackholed source added:
+#
+# * A total alone, clamped to "whatever is left", lets ONE dead source swallow the entire
+#   budget in a single connect — at a 45s total every load cost the full 45s and the healthy
+#   first-party source came back as ``reason: "budget"`` with zero apps.
+# * A total set BELOW a healthy configuration's legitimate cost cuts good sources instead:
+#   the shipped first-party source alone needs ~20s to shallow-clone and scan its 65 apps.
+#
+# So the total is set above a healthy configuration's cost, and no single source may consume
+# more than its own ceiling — which sits above a legitimate clone but well below the total.
+# One unreachable source therefore costs its ceiling ONCE and leaves the rest of the budget
+# for sources that can answer. The repeat cost is owned by the failure backoff below: after
+# the first load a dead source is skipped without a clone at all.
+_CATALOG_BUDGET_SECS = 60.0
+_CATALOG_PER_SOURCE_SECS = 25.0
+
+# A failing registry fetch used to be deliberately uncached ("a blip shouldn't poison the
+# catalog"), which meant a PERMANENTLY bad source re-paid its full timeout on every single
+# load, forever. The honest distinction is between "blipped once" and "has failed N times
+# in a row": cache the failure, and back it off geometrically from a short base up to the
+# success TTL. Never longer — a source that comes back is always retried, so this is a
+# backoff and not a death sentence.
+_REGISTRY_FAIL_BASE_SECS = 60.0
+_REGISTRY_FAIL_MAX_SECS = _REGISTRY_TTL_SECS
+# source string → (last_failure_at_epoch, consecutive_failures)
+_registry_failures: dict[str, tuple[float, int]] = {}
+
+
+def _budget_remaining(deadline: float | None) -> float | None:
+    """Seconds of catalog budget left, or ``None`` when the caller set no deadline
+    (``available_catalog`` always does; a direct caller may legitimately not)."""
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def _budget_spent(deadline: float | None) -> bool:
+    """Whether the build must stop touching the network."""
+    remaining = _budget_remaining(deadline)
+    return remaining is not None and remaining <= 0.0
+
+
+def _git_timeout(cap: float, deadline: float | None) -> float:
+    """The timeout for one git call: its own cap, clamped to BOTH the remaining budget and
+    the per-source ceiling.
+
+    Clamping matters as much as stopping between sources — otherwise the first bad source
+    burns its full 60/90s cap. Clamping to the remainder alone is not enough either: that
+    hands one blackholed source the whole rest of the budget, which is how a 45s total
+    produced a 45s load with zero apps. Never below 1s, so a nearly-spent budget fails fast
+    instead of passing git a zero timeout."""
+    bounded = min(cap, _CATALOG_PER_SOURCE_SECS)
+    remaining = _budget_remaining(deadline)
+    return bounded if remaining is None else max(1.0, min(bounded, remaining))
+
+
+def _scan_order(sources: list[str]) -> list[str]:
+    """*sources*, with known-failing ones last — otherwise stable.
+
+    A shared budget spends itself in iteration order, so a dead source listed FIRST starves
+    the healthy ones behind it: measured on a seeded home, adding one blackholed URL pushed
+    the real first-party source into ``reason: "budget"`` and the Store's first open showed
+    none of its apps. Trying the sources that answered last time first spends the budget on
+    the ones most likely to produce cards. Purely an ordering hint — every source is still
+    attempted, and one that recovers loses its penalty as soon as its record clears."""
+    return sorted(sources, key=lambda u: 1 if u in _registry_failures else 0)
+
+
+def _registry_backoff_secs(source: str) -> float:
+    """How long *source* is currently backed off for. 0 when it has no failure record."""
+    rec = _registry_failures.get(source)
+    if rec is None:
+        return 0.0
+    _at, consecutive = rec
+    return min(_REGISTRY_FAIL_BASE_SECS * (2 ** max(0, consecutive - 1)), _REGISTRY_FAIL_MAX_SECS)
+
+
+def _registry_backed_off(source: str, *, now: float) -> bool:
+    rec = _registry_failures.get(source)
+    if rec is None:
+        return False
+    return (now - rec[0]) < _registry_backoff_secs(source)
+
+
+def _note_registry_failure(source: str, *, now: float) -> None:
+    _at, consecutive = _registry_failures.get(source, (0.0, 0))
+    _registry_failures[source] = (now, consecutive + 1)
+
 
 @dataclass
 class RegistryPointer:
@@ -391,11 +491,14 @@ def _parse_registry(text: str) -> list[RegistryPointer]:
     return out
 
 
-def _read_git_registry(url: str) -> str | None:
+def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None:
     """Fetch ONLY ``app-registry.json`` from a git source, cheaply — a shallow
     treeless clone (blob:none, depth 1) then read the one file, no full checkout of
     every app. Returns the file text, "" if the source has no index, or None on a
-    git/timeout error (caller falls back to clone-then-scan). Never raises."""
+    git/timeout error (caller falls back to clone-then-scan). Never raises.
+
+    ``deadline`` (a ``time.monotonic()`` instant) clamps each git call to the catalog
+    budget that is actually left — the per-call caps below bound one clone, not the sum."""
     import subprocess
     import tempfile
 
@@ -405,7 +508,7 @@ def _read_git_registry(url: str) -> str | None:
             ["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--", url, tmp],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=_git_timeout(60, deadline),
         )
         if proc.returncode != 0:
             logger.debug(
@@ -417,7 +520,7 @@ def _read_git_registry(url: str) -> str | None:
             ["git", "-C", tmp, "show", f"HEAD:{_REGISTRY_FILENAME}"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=_git_timeout(30, deadline),
         )
         # A source with no registry index → git exits non-zero on the missing path.
         return show.stdout if show.returncode == 0 else ""
@@ -430,19 +533,29 @@ def _read_git_registry(url: str) -> str | None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _fetch_registry_index(source: str, *, is_git: bool, now: float) -> list[RegistryPointer] | None:
+def _fetch_registry_index(
+    source: str, *, is_git: bool, now: float, deadline: float | None = None
+) -> list[RegistryPointer] | None:
     """Return a source's registry-index pointers, cached ~1h. None = the source has
     NO usable index (caller keeps the clone-then-scan / dir-scan path). Never raises.
 
-    ``now`` (epoch secs) is injected so the TTL is deterministic in tests."""
+    ``now`` (epoch secs) is injected so the TTL is deterministic in tests; ``deadline``
+    (a ``time.monotonic()`` instant) is the catalog-wide budget."""
     cached = _registry_cache.get(source)
     if cached is not None and (now - cached[0]) < _REGISTRY_TTL_SECS:
         return cached[1] or None
     text: str | None
     if is_git:
-        text = _read_git_registry(source)
+        # A source inside its failure-backoff window is skipped WITHOUT a clone — this is
+        # the whole repeat cost of #408. It is a window, not a verdict: once it elapses the
+        # source is tried again, so a repo that went away and came back recovers by itself.
+        if _registry_backed_off(source, now=now):
+            return None
+        text = _read_git_registry(source, deadline=deadline)
         if text is None:
-            return None  # transient git error → don't cache; fall back this round
+            _note_registry_failure(source, now=now)
+            return None  # git error → backed off above; fall back to clone-then-scan
+        _registry_failures.pop(source, None)  # answered → the streak resets
     else:
         p = Path(source).expanduser() / _REGISTRY_FILENAME
         try:
@@ -474,7 +587,21 @@ def _pointer_to_entry(source: str, p: RegistryPointer, *, is_git: bool) -> Catal
     )
 
 
-def _scan_registries(*, now: float) -> list[CatalogEntry]:
+def _mark_unavailable(sink: list[dict[str, str]] | None, source: str, reason: str) -> None:
+    """Record that *source* did not contribute this round, de-duped by source.
+
+    A build that quietly returns fewer apps is the same silent-wrong the original bug was
+    (a spinner that never explains itself); naming the source is what lets the Store say
+    "1 source unavailable — <url>" so the user can remove it."""
+    if sink is None:
+        return
+    if not any(u["source"] == source for u in sink):
+        sink.append({"source": source, "reason": reason})
+
+
+def _scan_registries(
+    *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
+) -> list[CatalogEntry]:
     """Enumerate apps from every configured source's registry index (git + local),
     as install cards — WITHOUT cloning each app. Sources with no index contribute
     nothing here (their apps still surface via the existing git-URL list / local
@@ -485,13 +612,27 @@ def _scan_registries(*, now: float) -> list[CatalogEntry]:
     only knew about its own two loops — and because the git loop runs first and shared
     that set, a REMOTE pointer silently dropped the LOCAL pointer for the same name
     (#2528 finding 2), the exact opposite of the promise. Enumeration and precedence are
-    separate jobs now: this one lists everything it can see, and the resolver decides."""
+    separate jobs now: this one lists everything it can see, and the resolver decides.
+
+    ``deadline`` is the catalog-wide wall-clock budget (#408): the git loop below stops
+    when it is spent rather than paying one timeout per remaining source, and appends what
+    it skipped to ``unavailable`` so the Store can name the source at fault. Local sources
+    are a cheap on-disk read, so they are never budget-gated."""
     out: list[CatalogEntry] = []
-    for url in list_git_sources():
-        for p in _fetch_registry_index(url, is_git=True, now=now) or []:
+    for url in _scan_order(list_git_sources()):
+        if _budget_spent(deadline):
+            _mark_unavailable(unavailable, url, "budget")
+            continue
+        backed_off = _registry_backed_off(url, now=now)
+        for p in _fetch_registry_index(url, is_git=True, now=now, deadline=deadline) or []:
             out.append(_pointer_to_entry(url, p, is_git=True))
+        # Report a source whose index we could not read THIS round. A source with no index
+        # at all is not a failure (it falls through to the subdir scan), so only an actual
+        # failure record counts — including one we just inherited from a previous round.
+        if backed_off or url in _registry_failures:
+            _mark_unavailable(unavailable, url, "unreachable")
     for root in list_local_sources():
-        for p in _fetch_registry_index(root, is_git=False, now=now) or []:
+        for p in _fetch_registry_index(root, is_git=False, now=now, deadline=deadline) or []:
             out.append(_pointer_to_entry(root, p, is_git=False))
     return out
 
@@ -507,7 +648,7 @@ def _scan_registries(*, now: float) -> list[CatalogEntry]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
+def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> list[CatalogEntry]:
     """Shallow-clone a git source, scan immediate subdirs for ``app.json``,
     and return installable CatalogEntry objects (with ``pointer=url#subdir``).
 
@@ -536,7 +677,7 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
             ["git", "clone", "--depth", "1", "--", url, tmp],
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=_git_timeout(90, deadline),
         )
         if proc.returncode != 0:
             logger.debug(
@@ -615,16 +756,32 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
     return entries
 
 
-def _scan_git_sources(*, now: float) -> list[CatalogEntry]:
+def _scan_git_sources(
+    *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
+) -> list[CatalogEntry]:
     """Scan all configured git sources that lack a registry index, returning
     discovered multi-app subdirectory entries. Sources WITH a registry index
     are skipped (already handled by ``_scan_registries``).
 
     Enumeration only — :func:`resolve_catalog_entries` owns install-state and
-    name-collision filtering."""
+    name-collision filtering.
+
+    Budget-gated for the same reason as :func:`_scan_registries` (#408) — and it has to be
+    the same gate: bounding one of these two loops and not the other leaves the Store just
+    as slow, because a bad source is walked by BOTH on a cold load."""
     out: list[CatalogEntry] = []
-    for url in list_git_sources():
-        out.extend(_scan_git_source(url, now=now))
+    for url in _scan_order(list_git_sources()):
+        if _budget_spent(deadline):
+            _mark_unavailable(unavailable, url, "budget")
+            continue
+        entries = _scan_git_source(url, now=now, deadline=deadline)
+        if not entries and _git_scan_cache.get(url, (0.0, None))[1] == []:
+            # An empty scan is ambiguous: a source with an index or a root app.json
+            # legitimately contributes nothing here. Only flag one the registry pass also
+            # failed on, so a healthy single-app repo is never reported as unavailable.
+            if url in _registry_failures:
+                _mark_unavailable(unavailable, url, "unreachable")
+        out.extend(entries)
     return out
 
 
@@ -1407,16 +1564,27 @@ def available_catalog() -> dict[str, Any]:
     contract the Store's card, its detail panel, its consent modal and the onboarding
     step all depend on: with no name in two lists, no consumer can resolve a collision
     differently from another (#2528).
-    """
-    import time
 
+    The two network scanners share ONE wall-clock budget (``_CATALOG_BUDGET_SECS``, #408).
+    Per-git-process timeouts bounded a single clone and never the sum, so one blackholed
+    source cost 135s to open the Store; the budget bounds the whole build and the sources
+    it could not reach are named in ``unavailableSources`` rather than quietly dropped.
+    """
     now = time.time()
+    deadline = time.monotonic() + _CATALOG_BUDGET_SECS
+    unavailable: list[dict[str, str]] = []
     # Scanned in precedence order for readability; the resolver, not this order, is what
     # decides a collision.
     bundled_entries = available_bundled()
     local_entries = _scan_local_sources()
-    registry_entries = _scan_registries(now=now)
-    git_entries = _scan_git_sources(now=now)
+    registry_entries = _scan_registries(now=now, deadline=deadline, unavailable=unavailable)
+    git_entries = _scan_git_sources(now=now, deadline=deadline, unavailable=unavailable)
+    if unavailable:
+        logger.info(
+            "Store catalog: %d source(s) unavailable this build: %s",
+            len(unavailable),
+            ", ".join(f"{u['source']} ({u['reason']})" for u in unavailable),
+        )
     winners = resolve_catalog_entries(
         [*bundled_entries, *local_entries, *registry_entries, *git_entries]
     )
@@ -1454,4 +1622,9 @@ def available_catalog() -> dict[str, Any]:
         # `file://` source or a local dir contributes nothing, so this is empty exactly
         # when opening the Store reaches nothing off-machine.
         "networkSources": network_source_hosts(),
+        # Sources that contributed nothing THIS build because they were unreachable or the
+        # scan budget ran out (#408). The information used to be discarded, which is why a
+        # single typo'd source read as "the Store is broken" rather than "remove that one".
+        # ``reason`` is "unreachable" (git failed → backed off) or "budget" (cut off).
+        "unavailableSources": unavailable,
     }
