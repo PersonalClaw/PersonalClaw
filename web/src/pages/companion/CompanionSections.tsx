@@ -10,6 +10,7 @@ import {
   type TaskStatus, type UnifiedLoopStatus,
 } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
+import { isOpenStatus } from '../../lib/attentionLanes'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
@@ -289,7 +290,7 @@ export function TasksSection() {
 // notion of "dealt with" is minted here, and no reply/draft path: composing a reply is
 // a desk job, deciding whether something still needs one is not.
 export function InboxSection() {
-  const query = useQuery<InboxItem[]>('inbox-companion', () => api.inboxPending())
+  const query = useQuery<InboxItem[]>('inbox-companion', () => api.inboxOpen())
   const { act, view, busy } = useCompanionAction<{ status: InboxItem['status'] }>(query.data)
 
   const resolve = (i: InboxItem, status: 'handled' | 'dismissed', verb: string) =>
@@ -298,8 +299,12 @@ export function InboxSection() {
   return (
     <Section id="companion-inbox" icon={Inbox} title="Inbox" what="inbox items" query={query}
       empty={{ title: 'Inbox clear', hint: 'Messages and requests waiting on you appear here.' }}>
+      {/* Filtered on the OPTIMISTIC row (`view`), so a row the user just resolved leaves the list
+          before the refetch. The predicate is the shared `isOpenStatus` — comparing to `'pending'`
+          made this list a tenth definition of "open" and hid every row the user had already opened
+          on the desk, on the one surface whose entire job is resolving them (issue 493). */}
       {(items) => items
-        .filter((raw) => view(raw.id, raw).status === 'pending')
+        .filter((raw) => isOpenStatus(view(raw.id, raw).status))
         .map((raw) => {
           const i = view(raw.id, raw)
           const working = busy.has(i.id)

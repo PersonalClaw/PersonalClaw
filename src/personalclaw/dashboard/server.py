@@ -1503,7 +1503,9 @@ async def start_dashboard(
 
     # Inbox
     app.router.add_get("/api/inbox", handlers_inbox.api_inbox_list)
-    app.router.add_get("/api/inbox/pending", handlers_inbox.api_inbox_pending)
+    # The open COLLECTION. Distinct from `POST /api/inbox/{id}/open` below (the per-row engagement
+    # signal), which is why the handler is `api_inbox_open_list` — the two names collided.
+    app.router.add_get("/api/inbox/open", handlers_inbox.api_inbox_open_list)
     app.router.add_get("/api/inbox/kinds", handlers_inbox.api_inbox_kinds)
     # TSE2-3 — the owner census behind the shared inbox's per-owner filter chips. A literal
     # segment, registered beside `kinds` and before any dynamic `{id}` route, for the same

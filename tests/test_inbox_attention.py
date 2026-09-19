@@ -463,14 +463,18 @@ async def test_an_item_with_no_kind_counts_as_a_message(store):
 
 
 @pytest.mark.asyncio
-async def test_pending_endpoint_also_filters(store):
+async def test_open_endpoint_also_filters(store):
     from personalclaw.dashboard import handlers_inbox as h
 
     _seed(store)
     req, _ = _api_request(store, query={"kind": "needs_input"})
-    got = await _payload(await h.api_inbox_pending(req))
-    # Only the PENDING needs_input — the SEEN one is not "needs attention now".
-    assert len(got) == 1 and got[0]["status"] == "pending"
+    got = await _payload(await h.api_inbox_open_list(req))
+    # 🔴 BOTH needs_input rows, and the SEEN one is the point. This was `api_inbox_pending` and
+    # asserted the SEEN row was excluded because it "is not attention needed now" — but the three
+    # surfaces this endpoint feeds (Mission Control's lanes, the Action Center, the companion) all
+    # define seen as open, so a glance in the inbox deleted the row from the dashboard. The kind
+    # filter still applies, which is what this test is actually about (issue 493).
+    assert sorted(i["status"] for i in got) == ["pending", "seen"]
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,7 @@ function mockApi(over: Record<string, unknown>) {
     ...(await orig<Record<string, unknown>>()),
     api: {
       approvals: () => Promise.resolve([]),
-      inboxPending: () => Promise.resolve([]),
+      inboxOpen: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [] }),
       uLoops: () => Promise.resolve([]),
       readyTasks: () => Promise.resolve([]),
@@ -59,7 +59,7 @@ const route = { sub: '', navigate: () => {}, navEpoch: 0, setQuery: () => {}, qu
 
 /** Every read held open — nothing has been read, and nothing has failed. */
 const ALL_PENDING = {
-  approvals: pending, inboxPending: pending, skillProposals: pending, uLoops: pending,
+  approvals: pending, inboxOpen: pending, skillProposals: pending, uLoops: pending,
   readyTasks: pending, notifications: pending, triggersHistory: pending,
 }
 
@@ -131,7 +131,7 @@ describe('a widget does not deliver its verdict before the read', () => {
     // a rejected lane would never be marked, so this widget would sit on the skeleton forever and the
     // failure row + Retry it already had would become unreachable — trading a wrong verdict for a
     // silent hang, on the queue that carries tool approvals.
-    mockApi({ approvals: boom, inboxPending: boom, skillProposals: boom })
+    mockApi({ approvals: boom, inboxOpen: boom, skillProposals: boom })
     await mount('action')
     await waitFor(() => expect(screen.getAllByText(/Retry/i).length).toBeGreaterThan(0))
     expect(screen.queryByText(/All clear/)).toBeNull()
@@ -189,7 +189,7 @@ describe('the signal itself', () => {
     // Asserted structurally as well as behaviourally: `.then(...).catch(...)` would satisfy the DOM
     // tests for the pending case while leaving a failed lane on its skeleton forever.
     for (const [call, slice] of [
-      ['approvals', 'approvals'], ['inboxPending', 'inbox'], ['skillProposals', 'proposals'],
+      ['approvals', 'approvals'], ['inboxOpen', 'inbox'], ['skillProposals', 'proposals'],
       ['uLoops', 'loops'], ['readyTasks', 'tasks'], ['notifications', 'notifications'],
       ['triggersHistory', 'schedule'],
     ]) {

@@ -137,7 +137,7 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
   const [items, approvals, sessions] = await Promise.all([
-    api.inboxPending(),
+    api.inboxOpen(),
     api.approvals(),
     api.chatSessions(),
   ])

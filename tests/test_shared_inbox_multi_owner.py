@@ -9,7 +9,7 @@ Three obligations, and each has a known-true AND a known-false assertion so neit
 
 1. **The listing shows every owner; the counters show one.** A store holding items from two
    owners renders BOTH through ``GET /api/inbox`` (hiding foreign rows would orphan every
-   surface that deep-links to one), yet ``my_pending_count`` counts ONLY the local owner's —
+   surface that deep-links to one), yet ``my_open_count`` counts ONLY the local owner's —
    mirroring TSE2-1's "my runs" exclusion. This is the atom's non-cheatable bar and it
    CANNOT RUN on pre-plan code: ``InboxItem`` had no ``owner_username`` to set.
 2. **Per-owner filtering uses a different predicate from the counter, deliberately.**
@@ -149,8 +149,12 @@ async def test_a_two_owner_store_renders_both_but_my_items_counts_only_mine(
 
     # …but "my items" excludes the foreign one. 3 in the shared inbox, 2 mine (the owner's
     # own + the unattributed legacy row), never 3 and never 1.
-    assert status["pending_count"] == 3  # shared total, unscoped
-    assert status["my_pending_count"] == 2  # known-true: mine + legacy counted
+    # `open_count` / `my_open_count`, both PENDING|SEEN: this pair used to be PENDING-only, and
+    # issue 493 moved the shared half to the one open definition. The owner-scoped half had to
+    # move with it — a PENDING owner-count beside an OPEN shared total is the same two-counts
+    # disagreement, just inside "N of M are yours".
+    assert status["open_count"] == 3  # shared total, unscoped
+    assert status["my_open_count"] == 2  # known-true: mine + legacy counted
     assert status["my_total_count"] == 2
     assert status["owner"] == OWNER
     # known-false: the foreign item is NOT in the owner's count. Asserted as a set of ids
@@ -172,8 +176,8 @@ async def test_a_solo_install_with_no_username_counts_everything(tmp_path: Path)
     with patch.object(h, "_current_owner", return_value=""):
         status = await _payload(await h.api_inbox_status(_request(store)))
 
-    assert status["pending_count"] == 2
-    assert status["my_pending_count"] == 2  # nothing is foreign when there is no owner
+    assert status["open_count"] == 2
+    assert status["my_open_count"] == 2  # nothing is foreign when there is no owner
     assert status["owner"] == ""
 
 

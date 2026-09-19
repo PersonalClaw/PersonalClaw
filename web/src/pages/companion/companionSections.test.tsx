@@ -30,7 +30,7 @@ const uLoopAction = vi.fn()
 const uLoopNudge = vi.fn()
 const tasks = vi.fn()
 const updateTask = vi.fn()
-const inboxPending = vi.fn()
+const inboxOpen = vi.fn()
 const updateInboxItem = vi.fn()
 const notifications = vi.fn()
 const ackNotification = vi.fn()
@@ -49,7 +49,7 @@ vi.mock('../../lib/api', async (orig) => {
       uLoopNudge: (id: string, text: string) => uLoopNudge(id, text),
       tasks: (opts: Record<string, unknown>) => tasks(opts),
       updateTask: (id: string, body: Record<string, unknown>) => updateTask(id, body),
-      inboxPending: () => inboxPending(),
+      inboxOpen: () => inboxOpen(),
       updateInboxItem: (id: string, body: Record<string, unknown>) => updateInboxItem(id, body),
       notifications: () => notifications(),
       ackNotification: (ts: string) => ackNotification(ts),
@@ -128,7 +128,7 @@ function fakeTasks(initial: TaskItem[]) {
 
 function fakeInbox(initial: InboxItem[]) {
   let store = initial
-  inboxPending.mockImplementation(() =>
+  inboxOpen.mockImplementation(() =>
     Promise.resolve(store.filter((i) => i.status === 'pending').map((i) => ({ ...i }))))
   updateInboxItem.mockImplementation((id: string, body: Record<string, unknown>) => {
     store = store.map((i) => (i.id === id ? { ...i, ...body } : i))
@@ -149,7 +149,7 @@ function fakeFeed(initial: NotificationItem[]) {
 }
 
 beforeEach(() => {
-  for (const fn of [uLoops, uLoopAction, uLoopNudge, tasks, updateTask, inboxPending, updateInboxItem, notifications, ackNotification, approvals]) fn.mockReset()
+  for (const fn of [uLoops, uLoopAction, uLoopNudge, tasks, updateTask, inboxOpen, updateInboxItem, notifications, ackNotification, approvals]) fn.mockReset()
   // COLD cache per test. A warm entry paints instantly, which makes `data === undefined`
   // unreachable and quietly disables every load-branch assertion in this file.
   for (const k of KEYS) invalidateKeys(k)
@@ -351,7 +351,7 @@ describe('the Inbox section — resolve through plan 42\'s own lifecycle', () =>
     // `MC-3`'s bug, generalized: an optimistic hide that is never reconciled leaves a row the
     // backend is still serving hidden FOREVER. On an attention surface that is not a cosmetic
     // glitch — it is work the user believes they dealt with and never did.
-    inboxPending.mockImplementation(() => Promise.resolve([item()]))
+    inboxOpen.mockImplementation(() => Promise.resolve([item()]))
     updateInboxItem.mockResolvedValue({})
     render(<InboxSection />)
 
@@ -371,14 +371,14 @@ describe('the Inbox section — resolve through plan 42\'s own lifecycle', () =>
   })
 
   it('announces a failed fetch instead of claiming the inbox is clear', async () => {
-    inboxPending.mockRejectedValue(new Error('inbox unreachable'))
+    inboxOpen.mockRejectedValue(new Error('inbox unreachable'))
     render(<InboxSection />)
     expect((await screen.findByRole('alert')).textContent).toContain('inbox unreachable')
     expect(screen.queryByText('Inbox clear')).toBeNull()
   })
 
   it('says how much it is NOT showing rather than truncating in silence', async () => {
-    inboxPending.mockImplementation(() => Promise.resolve(
+    inboxOpen.mockImplementation(() => Promise.resolve(
       Array.from({ length: 9 }, (_, i) => item({ id: `ib-${i}`, sender_name: `Sender ${i}` }))))
     render(<InboxSection />)
     expect(await screen.findByText(/Showing 6 of 9/)).toBeTruthy()
@@ -423,7 +423,7 @@ describe('the companion page as one column', () => {
     approvals.mockResolvedValue([])
     uLoops.mockImplementation(() => Promise.resolve([]))
     tasks.mockImplementation(() => Promise.resolve({ tasks: [], total: 0 }))
-    inboxPending.mockImplementation(() => Promise.resolve([]))
+    inboxOpen.mockImplementation(() => Promise.resolve([]))
     notifications.mockImplementation(() => Promise.resolve({ notifications: [], unread: 0 }))
     render(<CompanionPage {...route} />)
 
@@ -442,7 +442,7 @@ describe('the companion page as one column', () => {
     approvals.mockResolvedValue([])
     uLoops.mockImplementation(() => Promise.resolve([]))
     tasks.mockImplementation(() => Promise.resolve({ tasks: [], total: 0 }))
-    inboxPending.mockImplementation(() => Promise.resolve([]))
+    inboxOpen.mockImplementation(() => Promise.resolve([]))
     notifications.mockImplementation(() => Promise.resolve({ notifications: [], unread: 0 }))
     const navigate = vi.fn()
     render(<CompanionPage {...route} navigate={navigate} />)

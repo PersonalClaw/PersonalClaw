@@ -340,8 +340,16 @@ def should_renotify(
     reminding, a non-actionable block is not the user's to answer, a card with no creation time
     cannot
     be aged, and a card younger than the window is simply not stale yet.
+
+    "Still open" is `inbox.OPEN_STATUSES`, not a literal pair here — a reminder policy that
+    disagreed with the inbox's own count about which cards are open would nag about rows the
+    surface has stopped counting, or go silent on rows it still shows (issue 493). Imported inside
+    the function on purpose: this module is otherwise dependency-free by design (see the header),
+    and the import is cached after the first call.
     """
-    if status not in ("pending", "seen"):
+    from personalclaw.inbox import OPEN_STATUSES
+
+    if status not in OPEN_STATUSES:
         return False, f"card is {status}"
     if item.renotifications >= MAX_RENOTIFICATIONS:
         return False, "already reminded once — further reminders train the user to mute"

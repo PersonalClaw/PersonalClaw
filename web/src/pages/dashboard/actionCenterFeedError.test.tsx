@@ -29,7 +29,7 @@ function mockApi(over: Record<string, unknown>) {
     ...(await orig<Record<string, unknown>>()),
     api: {
       approvals: () => Promise.resolve([]),
-      inboxPending: () => Promise.resolve([]),
+      inboxOpen: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
       uLoops: () => Promise.resolve([]),
       readyTasks: () => Promise.resolve([]),
@@ -87,7 +87,7 @@ describe('ActionCenter tells a failed lane apart from an empty queue', () => {
 
   it('a failed lane does not bury the lanes that loaded', async () => {
     const item = { id: 'i1', sender_name: 'Alice from Ops', message: 'ping' }
-    mockApi({ approvals: boom, inboxPending: () => Promise.resolve([item]) })
+    mockApi({ approvals: boom, inboxOpen: () => Promise.resolve([item]) })
     await mount()
     // The failed approvals lane is announced …
     const alert = await waitFor(() => screen.getByRole('alert'))
@@ -119,7 +119,7 @@ describe('the lane failures reach the queue instead of being swallowed', () => {
     expect(code, 'and the per-lane retries are wired to the loaders')
       .toMatch(/retryApprovals: loadApprovals[\s\S]*retryInbox: loadInbox[\s\S]*retryProposals: loadProposals/)
     // The swallow this fix removes must not come back on any of the three reads.
-    for (const call of ['approvals', 'inboxPending', 'skillProposals']) {
+    for (const call of ['approvals', 'inboxOpen', 'skillProposals']) {
       expect(code, `api.${call}() no longer swallows its rejection`)
         .not.toMatch(new RegExp(`api\\.${call}\\(\\)[\\s\\S]{0,90}?catch\\(\\(\\) => \\{\\}\\)`))
     }

@@ -134,12 +134,16 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   }, [openId, open])
 
   const reload = () => { invalidateKeys('inbox:items'); invalidateKeys('inbox:status'); refreshItems(); refreshStatus() }
-  // Dismiss all sweeps EVERY pending item of every kind (proposals, messages, digests
+  // Dismiss all sweeps EVERY open item of every kind (proposals, messages, digests
   // alike) with no undo, so it gets the same danger confirm as the analogous
   // Notifications → "Clear all". The count comes from the same status the header shows,
   // so the blast radius is on screen before the click lands.
   async function dismissAll() {
-    const n = status?.pending_count ?? 0
+    // 🪤 `open_count`, and the server's sweep is `open_items()` — the SAME set. Sized from the old
+    // `pending_count` this understated the blast radius of the most destructive control on the
+    // page by exactly the rows the user had read: measured, the confirm said "dismiss all 33
+    // pending items" and the endpoint answered `{"dismissed": 37}` (issue 493).
+    const n = status?.open_count ?? 0
     // 🪤 "There is no undo" is TRUE — `/api/inbox/{id}/restore` 409s on anything that is not FILTERED, and
     // no surface un-dismisses — but on its own it implied the items were GONE. They are not: this page's
     // own `handled` filter includes `status === 'dismissed'`, so every one of them stays readable one tab
@@ -147,13 +151,13 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     // destruction (and the app's house style already pairs the two: "Completed work is kept",
     // "Workspace files on disk are left untouched").
     if (!(await confirm({
-      title: `Dismiss all ${n} pending item${n === 1 ? '' : 's'}?`,
-      body: 'Every pending item of every kind is dismissed at once. There is no undo — but they stay readable under Handled.',
+      title: `Dismiss all ${n} open item${n === 1 ? '' : 's'}?`,
+      body: 'Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under Handled.',
       danger: true,
       confirmLabel: 'Dismiss all',
     }))) return
     // 🪤 NO CATCH AT ALL — a failure here rejected unhandled, so the strongest confirm on this page
-    // ("every pending item of every kind", "there is no undo") could do nothing and say nothing.
+    // ("every open item of every kind", "there is no undo") could do nothing and say nothing.
     // `reload()` is gated: an unchanged list after a failed sweep reads as "nothing happened".
     setBusy(true)
     try {
@@ -290,15 +294,26 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `truncate` on this flex container does nothing (it has no text of its own), which
           // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
           // the secondary count truncates — the same shape `notifications` uses.
+          // 🔴 "N OPEN", from `open_count`. This read `pending_count` — a PENDING-only count — while
+          // the Open filter, every classification count and every kind chip below used
+          // `isOpen = pending | seen`. Measured on a seeded store: the header said 33 and the Open
+          // filter said 37, four `seen` rows apart, and neither was wrong on its own terms. Worse,
+          // opening a row marks it SEEN, so a GLANCE decremented this number (33 → 32) while
+          // resolving nothing — training the user that the count means nothing. One count, one
+          // definition, shared with the server (issue 493). The read/unread distinction survives
+          // where it belongs: the per-row accent rail and dot, which key off `pending` below.
+          //
+          // TSE2-3's SHARED-inbox split is kept, re-expressed in open terms: on a shared inbox the
+          // label says how much of the queue is the owner's, because "12 open" where nine are a
+          // teammate's misreads as personal backlog. Both halves now read OPEN counts from the one
+          // owner (`my_open_count` / `open_count`), so this label, the `mine` chip and the Open
+          // filter cannot disagree — pairing the new open total with the old PENDING owner-count
+          // would have rebuilt this very defect inside the sentence that fixes it. Solo installs
+          // render the two-part open count exactly as before.
           left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
-            {/* TSE2-3 — on a SHARED inbox the count says how much of the queue is the owner's,
-                because "12 pending" in a queue where nine are a teammate's is a number that
-                misreads as personal backlog. `my_pending_count` is the server's own
-                owner-scoped figure, so this label and the `mine` chip report one number. Solo
-                installs keep the original two-part count exactly. */}
-            {shared && status.my_pending_count !== undefined
-              ? <>{status.my_pending_count} of {status.pending_count} pending are yours · {status.total_count} total</>
-              : <>{status.pending_count} pending · {status.total_count} total</>}
+            {shared && status.my_open_count !== undefined
+              ? <>{status.my_open_count} of {status.open_count} open are yours · {status.total_count} total</>
+              : <>{status.open_count} open · {status.total_count} total</>}
           </span>}</PageTitle>}
           right={
             // The header has room now (search/filter live on the page), so surface
@@ -329,7 +344,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 </Popover>
               )}
               <HeaderActions>
-                {(status?.pending_count ?? 0) > 0 && (
+                {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
+                    PENDING-only count made the only bulk control VANISH once every row had been
+                    read, while the queue was still full (issue 493). */}
+                {(status?.open_count ?? 0) > 0 && (
                   <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
                 )}
                 <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
