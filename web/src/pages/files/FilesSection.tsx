@@ -46,8 +46,10 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   // up a dir; deep-link/refresh restores it). It is the SINGLE source of truth for
   // where the explorer is pointing — a bare ?dir-less route means "the root tab".
   // The dir lives under a registered root (Home/Workspace), so the allowlist permits
-  // it. Content search rides ?q/?include (replace — an in-place refinement).
+  // it. `?file=<path>` opens one exact file in the workbench (used by source-file
+  // links); content search rides ?q/?include (replace — an in-place refinement).
   const [dir, setDir] = useQueryParam(routeQuery, setQuery, 'dir', '')
+  const sourceFile = routeQuery.file || ''
   const [tab, setTab] = useState<string>(() => localStorage.getItem(TAB_KEY) || '')
   useEffect(() => { if (tab) localStorage.setItem(TAB_KEY, tab) }, [tab])
 
@@ -67,6 +69,10 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   // Multi-tab open files.
   const fileTabs = useFileTabs()
+  useEffect(() => {
+    if (!sourceFile) return
+    fileTabs.open({ name: baseName(sourceFile), path: sourceFile, is_dir: false })
+  }, [sourceFile, fileTabs.open])
   // One viewer is mounted at a time (the active tab), so one ref — not a per-path map.
   const viewerRef = useRef<FileViewerHandle>(null)
   // The host-owned draft cache FileViewer documents (issue 2279): without one, any

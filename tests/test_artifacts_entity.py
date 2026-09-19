@@ -134,6 +134,43 @@ class TestNativeProvider:
         assert len(provider.list(tag="dash")) == 1
         assert len(provider.list(q="widget")) == 1
 
+    def test_list_query_matches_body_content(self, provider) -> None:
+        body_match = provider.create(
+            name="Quarterly report",
+            content="The launch codename is heliotrope.",
+            kind="markdown",
+        )
+        provider.create(name="Meeting notes", content="No launch details here.", kind="markdown")
+
+        assert [a.slug for a in provider.list(q="heliotrope")] == [body_match.slug]
+
+    def test_list_query_matches_collection(self, provider) -> None:
+        collection_match = provider.create(
+            name="Quarterly report",
+            content="Revenue summary",
+            collection="Board packets",
+        )
+        provider.create(name="Meeting notes", content="Action items", collection="Operations")
+
+        assert [a.slug for a in provider.list(q="board packets")] == [collection_match.slug]
+
+    def test_list_query_matches_slug(self, provider) -> None:
+        # The hyphenated form only ever appears in the SLUG — the display name spaces
+        # the same words and no other field carries them — so this cannot pass through
+        # the name/description/tags/collection/body arms of the predicate (#421).
+        slug_match = provider.create(name="RAIDZ2 vs DRAID homelab report", content="Pool layout")
+        provider.create(name="Meeting notes", content="Action items")
+        needle = "raidz2-vs-draid"
+        assert needle in slug_match.slug
+        every_other_field = (
+            f"{slug_match.name}\n{slug_match.description}\n"
+            f"{' '.join(slug_match.tags)}\n{slug_match.collection or ''}\n"
+            f"{slug_match.content or ''}"
+        ).casefold()
+        assert needle not in every_other_field
+
+        assert [a.slug for a in provider.list(q=needle)] == [slug_match.slug]
+
     def test_delete(self, provider) -> None:
         provider.create(name="C", content="v1")
         assert provider.delete("c") is True
@@ -330,6 +367,39 @@ async def test_rest_create_and_get(patched_native) -> None:
         detail = await client.get(f"/api/artifacts/{slug}")
         assert detail.status == 200
         assert (await detail.json())["content"] == "<div>hi</div>"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rest_query_matches_body_content(patched_native) -> None:
+    body_match = patched_native.create(
+        name="Quarterly report",
+        content="The launch codename is heliotrope.",
+        kind="markdown",
+    )
+    patched_native.create(name="Meeting notes", content="No launch details here.", kind="markdown")
+    client = await _client(patched_native)
+    try:
+        body = await (await client.get("/api/artifacts", params={"q": "heliotrope"})).json()
+        assert [a["slug"] for a in body["artifacts"]] == [body_match.slug]
+        assert "content" not in body["artifacts"][0]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rest_query_matches_collection(patched_native) -> None:
+    collection_match = patched_native.create(
+        name="Quarterly report",
+        content="Revenue summary",
+        collection="Board packets",
+    )
+    patched_native.create(name="Meeting notes", content="Action items", collection="Operations")
+    client = await _client(patched_native)
+    try:
+        body = await (await client.get("/api/artifacts", params={"q": "board packets"})).json()
+        assert [a["slug"] for a in body["artifacts"]] == [collection_match.slug]
     finally:
         await client.close()
 
