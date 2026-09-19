@@ -976,6 +976,32 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
     ),
+    # 🔴 #2217 — the provider credential DESCRIPTORS (`llm/credentials.py` `CREDENTIALS_FILE`,
+    # written 0600 by `CredentialStore.save`). Neither claimed nor ignored, so
+    # `personalclaw snapshot` — the command the pre-1.0 release notes tell users to run BEFORE
+    # upgrading — did not carry it, and a restore came back with every model provider's key
+    # gone. That is the same asset #951 destroyed from the other side, a `config set` dropping
+    # `providers[]` with the keys in it.
+    #
+    # Declared rather than left as census debt because this one needs no guess. The debt set
+    # exists because a wrong `merge` silently corrupts on convergence — and `merge` cannot fire
+    # for a secret at all: shards are built from `export_entries()` (which drops secrets) and
+    # the merge only ever runs on rows imported FROM a shard. So `secret=True` supplies both
+    # halves the issue asked for — captured by snapshot, excluded from every export — and
+    # leaves nothing undecided. Same posture, and the same argument, as `auth` directly above.
+    #
+    # Distinct from the `credentials` TREE two entries up: that is the keychain-backed store,
+    # this is the top-level `credentials.json` descriptor file, and `claim_for` is
+    # longest-prefix over path SEGMENTS, so `credentials` never claimed `credentials.json`.
+    StateEntry(
+        id="provider_credentials",
+        kind=KIND_JSON_FILE,
+        path="credentials.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="provider credential descriptors (API keys)",
+    ),
     StateEntry(
         id="security_events",
         kind=KIND_JSONL_APPEND,
@@ -1104,6 +1130,14 @@ IGNORED: tuple[str, ...] = (
     # copy is worse than the empty one the next read refolds.
     "usage_stats.json",
     "fixture.yaml",  # test-fixture marker written by `--seed`
+    # The rendered run-prompt (`LOOP_MD_NAME`). Not state: it is re-rendered from the loop's own
+    # declared inputs on every run, so a restored copy would only ever be a stale duplicate of
+    # something the next run overwrites. Recorded HERE, where every other "deliberately not
+    # state" decision lives, rather than only in the census's own exception list — that list
+    # held a second copy of eight of these rows, and a decision kept in two places is a decision
+    # that can disagree with itself. `audit_home()` reads IGNORED and could not see it at all
+    # while it lived only in the test (#2217).
+    "loop.md",
     # 🔴 #2539 — the socket this gateway bound, plus the pid that bound it
     # (`gateway_base.RUNTIME_FILE`). MACHINE-LOCAL and process-lifetime-scoped: it is written
     # after bind, removed on shutdown, and it is the record every child resolves its API base
@@ -1199,6 +1233,40 @@ def claim_for(rel: str) -> StateEntry | None:
     return best
 
 
+def claims_within(rel: str) -> bool:
+    """Does any entry declare a path INSIDE the directory *rel*?
+
+    A directory whose CONTENTS are declared is accounted for by them: ``knowledge/`` holds only
+    ``knowledge/knowledge.db``, and :func:`claim_for` is longest-prefix, so it names the child
+    without naming the parent. Reporting the parent as unclaimed would demand a redundant
+    wrapper entry for every nested store.
+    """
+    prefix = "/".join(_parts(rel)) + "/"
+    return any(e.path.startswith(prefix) for e in INVENTORY)
+
+
+def is_accounted(rel: str) -> bool:
+    """Is this home-relative path claimed by an entry, or deliberately ignored?
+
+    🔴 THE ONE QUESTION, ASKED ONCE. The inventory accounts for a path two ways — an entry
+    CLAIMS it, or :data:`IGNORED` deliberately excludes it — and :func:`audit_home` has always
+    honoured both. The static census over the source tree
+    (``tests/test_durability_inventory_census.py``) re-derived a NARROWER version that read only
+    the claims, plus its own hand-written copy of eight of IGNORED's rows.
+
+    Two consequences, both measured (#2217). Five locations resolved the *correct* way for
+    machine-local state — ``session_key``, ``sessions.json``, ``update_check.json``,
+    ``update_releases.json``, ``doctor``, each ignored with a written argument — were still
+    reported as undeclared debt, inflating the gap the issue reports. And because the census's
+    stale-pin ratchet could only notice a pin that became *declared*, the debt set could shrink
+    by declaring and never by ignoring, so those five could never be retired.
+
+    Exported so the census asks the inventory rather than modelling it: a second spelling of
+    "accounted for" is the same class of bug as the duplicated allowlist it replaces.
+    """
+    return is_ignored(rel) or claim_for(rel) is not None or claims_within(rel)
+
+
 @dataclass
 class AuditResult:
     """What :func:`audit_home` found."""
@@ -1238,11 +1306,9 @@ def audit_home(home: Path) -> AuditResult:
         if claim_for(rel) is not None:
             result.claimed += 1
             continue
-        # A directory whose CONTENTS are declared is claimed by them. `knowledge/` holds only
-        # `knowledge/knowledge.db`, and `claim_for` is longest-prefix, so it can name the child
-        # without naming the parent — reporting the parent as unclaimed would demand a redundant
-        # wrapper entry for every nested store.
-        if child.is_dir() and any(e.path.startswith(rel + "/") for e in INVENTORY):
+        # A directory whose CONTENTS are declared is claimed by them — see `claims_within`, which
+        # the static census now shares rather than re-deriving (#2217).
+        if child.is_dir() and claims_within(rel):
             result.claimed += 1
             continue
         result.unclaimed.append(rel + ("/" if child.is_dir() else ""))
