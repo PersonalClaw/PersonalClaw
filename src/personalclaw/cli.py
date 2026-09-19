@@ -1308,8 +1308,9 @@ Examples:
         help="Get or set configuration values",
         epilog="""
 Examples:
-  personalclaw config get                   # Show all config
+  personalclaw config get                   # Show all config (credentials withheld)
   personalclaw config get dashboard.port    # Get specific value
+  personalclaw config get --reveal          # …including credentials, in the clear
   personalclaw config set dashboard.port 8888
   personalclaw config edit                  # Open in $EDITOR
 """,
@@ -1318,6 +1319,14 @@ Examples:
     cfg_sub = cfg_parser.add_subparsers(dest="config_action")
     cfg_get = cfg_sub.add_parser("get", help="Get a config value (or all if no key)")
     cfg_get.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.port)")
+    cfg_get.add_argument(
+        "--reveal",
+        action="store_true",
+        help=(
+            "Print credentials in the clear instead of withholding them. This is the source to "
+            "use for a file you intend to `config set --file` back."
+        ),
+    )
     cfg_set = cfg_sub.add_parser("set", help="Set a config value")
     cfg_set.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.port)")
     cfg_set.add_argument("value", nargs="?", help="Value to set")

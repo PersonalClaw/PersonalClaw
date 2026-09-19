@@ -6,6 +6,11 @@ import os
 import sys
 from pathlib import Path
 
+from personalclaw.apps.secret_fields import (
+    mask_bearing_paths,
+    mask_secrets_in_document,
+    preserve_unchanged_secrets_in_document,
+)
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -43,6 +48,34 @@ def _merged_view(cfg: AppConfig) -> dict:
     return config_loader.merge_unmodeled_top_keys(d, existing)
 
 
+def _report_withheld(masked_paths: list[str], key: str | None) -> None:
+    """Say what was withheld, on STDERR, so the operator is not guessing.
+
+    A redaction the reader cannot see is indistinguishable from a config that has no
+    credentials in it — and the operator who needs the real value needs to be told the flag
+    exists. STDERR rather than stdout because `config get > f.json` must stay valid JSON; that
+    redirect is the documented round-trip and a note inside the document would break it.
+    """
+    if key is not None:
+        # `providers[0].api_key` is under `providers`, so the subtree test has to admit the
+        # index bracket as well as the dot separator.
+        masked_paths = [p for p in masked_paths if p == key or p.startswith((f"{key}.", f"{key}["))]
+    if not masked_paths:
+        return
+    shown = ", ".join(masked_paths[:6])
+    if len(masked_paths) > 6:
+        shown += f", … (+{len(masked_paths) - 6} more)"
+    print(
+        f"ℹ️  {len(masked_paths)} credential field(s) withheld: {shown}",
+        file=sys.stderr,
+    )
+    print(
+        "   `personalclaw config get --reveal` prints them; that is also the source to use "
+        "for a file you intend to `config set --file` back.",
+        file=sys.stderr,
+    )
+
+
 def _config_cmd(args: argparse.Namespace) -> None:
     """Get or set config values."""
     action = getattr(args, "config_action", None)
@@ -58,15 +91,29 @@ def _config_cmd(args: argparse.Namespace) -> None:
         # path must show what the file holds.
         d = _merged_view(cfg)
         key = getattr(args, "key", None)
+        reveal = bool(getattr(args, "reveal", False))
         sel().log_api_access(
             caller="cli",
-            operation="config_get",
+            operation="config_get_reveal" if reveal else "config_get",
             outcome="allowed",
             source="cli",
+            # The KEY, never the value — an audit trail that records the credential it was
+            # written to watch over is the leak it is auditing. `--reveal` is a distinct
+            # operation so a deliberate disclosure is visible in `personalclaw security events`.
             resources=key or "*",
         )
+        # 🔴 …and the merged view is exactly why this must be masked. The blocks it adds are the
+        # ones core does NOT model, which is the same set that holds the credentials: `providers`
+        # (the only copy of an API key entered in the dashboard) and the legacy `slack` block.
+        # #3119 made `config get` show what the file holds, which was right, and printed the keys
+        # in it, which was not (#3125). Masked by DEFAULT, because the operator who needs a
+        # plaintext config is the rare case and the one reading a terminal is not.
+        masked_paths: list[str] = []
+        if not reveal:
+            d, masked_paths = mask_secrets_in_document(d)
         if not key:
             print(json.dumps(d, indent=2))
+            _report_withheld(masked_paths, None)
             return
         val = _dict_get(d, key)
         if val is _MISSING:
@@ -76,6 +123,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
             print(json.dumps(val, indent=2))
         else:
             print(val)
+        _report_withheld(masked_paths, key)
     elif action == "set":
 
         file_path = getattr(args, "file", None)
@@ -94,15 +142,8 @@ def _config_cmd(args: argparse.Namespace) -> None:
                 print("❌ Invalid JSON: config must be a JSON object", file=sys.stderr)
                 sys.exit(1)
             p = config_path()
-            # Same merge as `set <key> <value>`, for the same reason and then one more: `config
-            # get` could not even PRINT the unmodeled blocks, so the file an operator hands back
-            # here is SYSTEMATICALLY missing them. Replacing the document wholesale would delete
-            # `providers[]` by omission on the one path whose whole purpose is restoring a config
-            # the operator believes is complete (#951).
             try:
-                data = config_loader.merge_unmodeled_top_keys(
-                    data, config_loader.read_config_for_merge(p)
-                )
+                stored = config_loader.read_config_for_merge(p)
             except config_loader.ConfigPreserveError as exc:
                 # Refusing beats writing blind: a config whose content cannot be read is exactly
                 # the case where we cannot know what the write would destroy.
@@ -115,6 +156,46 @@ def _config_cmd(args: argparse.Namespace) -> None:
                     resources=str(fp),
                 )
                 sys.exit(1)
+            # 🔴 THE OTHER HALF OF MASKING, and the reason masking the read alone would have been
+            # worse than the leak. `config get > f.json` → edit → `config set --file f.json` is a
+            # documented loop, so the file arriving here is usually one `config get` printed — and
+            # a masked one NAMES `providers`, which means the merge below (key-level and shallow
+            # on purpose) sees the key already present and copies nothing forward. Without this,
+            # the round-trip would persist the MASK over the only copy of the API key: a
+            # disclosure bug traded for a data-loss bug. A masked field means "keep the stored
+            # value", the
+            # same rule the dashboard's PATCH has always applied to a round-tripped form.
+            data, unresolved = preserve_unchanged_secrets_in_document(data, stored)
+            if unresolved:
+                # Fail CLOSED. A mask we cannot resolve to a stored value would otherwise be
+                # written as the credential itself. `--reveal` is the round-trip source that has
+                # no masks to resolve.
+                print(
+                    "❌ refusing to write config: "
+                    f"{len(unresolved)} masked credential field(s) could not be matched to a "
+                    f"value in {p.name}, and writing the mask would destroy them: "
+                    + ", ".join(unresolved),
+                    file=sys.stderr,
+                )
+                print(
+                    "   Use `personalclaw config get --reveal` as the source of a file you "
+                    "intend to write back.",
+                    file=sys.stderr,
+                )
+                sel().log_api_access(
+                    caller="cli",
+                    operation="config_set_file",
+                    outcome="denied",
+                    source="cli",
+                    resources=str(fp),
+                )
+                sys.exit(1)
+            # Same merge as `set <key> <value>`, for the same reason and then one more: the file
+            # an operator hands back here can be missing a block `config get` did not print.
+            # Replacing the document wholesale would delete `providers[]` by omission on the one
+            # path whose whole purpose is restoring a config the operator believes is complete
+            # (#951).
+            data = config_loader.merge_unmodeled_top_keys(data, stored)
             atomic_write(p, json.dumps(data, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
@@ -141,6 +222,23 @@ def _config_cmd(args: argparse.Namespace) -> None:
             # produced. Keys the allowlist does not declare keep today's behaviour: the
             # allowlist is the PATCH surface, not a complete config schema, and refusing
             # everything absent from it would break `config set` for most of the file.
+            # The same "a mask never reaches disk" rule as `--file`, at the one other place a
+            # masked value can arrive: an operator who copied what `config get` printed. Writing
+            # it would replace the credential with bullets and report ✅.
+            if mask_bearing_paths({key: parsed}):
+                print(
+                    f"❌ {key}: that is the placeholder `config get` prints for a credential it "
+                    "withheld, not a value. Pass the real value, or leave the field alone.",
+                    file=sys.stderr,
+                )
+                sel().log_api_access(
+                    caller="cli",
+                    operation="config_set",
+                    outcome="denied",
+                    source="cli",
+                    resources=key,
+                )
+                sys.exit(1)
             spec = _editable_spec(key)
             if spec is not None:
                 from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
