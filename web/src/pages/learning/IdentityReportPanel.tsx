@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ExternalLink, FileText, UserRound } from 'lucide-react'
 import { Button } from '../../ui/Button'
-import { LoadError } from '../../ui/ListScaffold'
+import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Segmented } from '../../ui/Segmented'
 import { fvs } from '../../design/fontWeight'
 import type { IdentityReportView } from '../../lib/api'
@@ -61,12 +61,31 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
   const [cadence, setCadence] = useState(report?.cadence ?? '')
   useEffect(() => { if (report?.cadence !== undefined) setCadence(report.cadence) }, [report?.cadence])
 
+  // THREE states, one surface, and the two gates below must stay adjacent so their nouns provably
+  // describe the same read (`ui/loadingNounPairing.test.ts`).
+  //
   // A failed fetch renders as an EMPTY STATE unless the error is read — and "nothing has been
   // learned" is the one claim this panel must never make by accident.
+  //
+  // 🪤 AND PENDING IS A STATE TOO; RENDERING NOTHING FOR IT IS A LAYOUT SHIFT. `useQuery` leaves
+  // `report` undefined until its GET answers, and `LearningPage` does not thread its `loading` flag
+  // down here — so `report === undefined` with no error IS "still asking". Returning `null` for it
+  // made this whole section (heading + cadence strip + four cards, ~195px) appear out of nowhere
+  // once the read landed, pushing everything below it down: a content jump for the user, and an
+  // INVISIBLE one to anything watching the page. That second half is what makes it worth a skeleton
+  // rather than a comment — a pending read that renders nothing is indistinguishable from a settled
+  // empty state, so the DOM is quiet, no loading affordance is on screen, no animation is running,
+  // and two consecutive screenshots agree: every signal says "at rest" while a 195px section is
+  // still in flight. Measured with 6s of latency on THIS endpoint alone (its siblings answering
+  // promptly, so nothing else kept the page busy): the visual rail reported the page settled with
+  // zero affordances and the section ABSENT, and diffed `learning-dark` at 15,911px against a
+  // golden that has it, on a run where nothing had drifted. A skeleton is the app's own vocabulary
+  // for the state, so it fixes the jump and makes the wait observable in one move, with no
+  // harness-side special case.
   if (report === undefined && error) {
     return <LoadError what="identity report" error={error} onRetry={onRetry} />
   }
-  if (!report) return null
+  if (!report) return <CardGridSkeleton cards={4} cols={4} what="identity report" />
 
   const setCadenceTo = async (next: string) => {
     // Narrowed against the strip's OWN option list rather than cast. `Segmented` hands back a

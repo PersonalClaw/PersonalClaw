@@ -232,7 +232,17 @@ export default defineConfig({
         {
           command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
           url: BASE_URL,
-          timeout: 180_000,
+          // 🕐 THE BUILD IS A PRECONDITION, AND 180s IS BELOW ITS COST ON A LOADED HOST. This
+          // entry runs `npm run build` — tsc twice plus a full vite build — before the preview
+          // server can answer, and that is pure host-bound work. Against the old 180_000 a
+          // loaded box did not fail a test, it produced NO TESTS: `Error: Timed out waiting
+          // 180000ms from config.webServer`, at a sha whose goldens were 41/41 on a quiet one.
+          // So the rail's answer was decided by the machine before a single pixel was compared.
+          //
+          // Raising a PRECONDITION budget loosens nothing that is asserted: `maxDiffPixelRatio`
+          // stays 0.01, no golden is exempted and no axe rule moves. It only stops a busy host
+          // from being reported as a broken suite.
+          timeout: 900_000,
           reuseExistingServer: !process.env.CI,
           // vite.config.ts reads PERSONALCLAW_PORT for its /api proxy target.
           env: { PERSONALCLAW_PORT: String(GATEWAY_PORT) },

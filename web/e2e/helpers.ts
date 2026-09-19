@@ -37,51 +37,153 @@ export async function assertShellMounted(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 10_000 })
 }
 
-/** Navigate to a hash route and wait for the shell to settle: no spinner, fonts
- *  loaded, network idle. Returns after the route's chrome is painted. */
-/** How long `gotoRoute` may spend waiting for a surface to go quiet.
+/** How long `gotoRoute` may spend waiting for each stage of a surface to come to rest.
  *
- *  🪤 A KNOB, because the two consumers want different things and one number cannot serve
+ *  🪤 KNOBS, because the two consumers want different things and one number cannot serve
  *  both. The a11y/walkthrough sweeps are ~130 tests each and read the accessibility tree,
- *  which does not care whether a card's count arrived — for them the default keeps the whole
+ *  which does not care whether a card's count arrived — for them the defaults keep the whole
  *  `gotoRoute` inside Playwright's 30s per-test budget. `visual.spec.ts` is the opposite
  *  trade: it compares PIXELS, so one late arrival is a failed golden, and it is 40 tests
- *  that no CI job runs. It buys a longer settle and raises its own test timeout to match.
+ *  that no CI job runs. It buys longer stages and raises its own test timeout to match.
  *
- *  This is emphatically NOT a tolerance: `maxDiffPixelRatio` is untouched. It gives the
+ *  These are emphatically NOT tolerances: `maxDiffPixelRatio` is untouched. They give the
  *  settle more time to reach a resting state, rather than accepting more pixels of drift. */
 export interface SettleBudget {
-  /** Cap for `settleDom`'s quiescence wait. */
+  /** Cap for `settleShellChrome`'s connectivity wait. */
+  chromeMs?: number
+  /** Cap for `settleDom`'s combined quiescence + loaded-ness wait. */
   settleMs?: number
+  /** Cap for `settleEntranceAnimations`'s fade wait. */
+  fadeMs?: number
 }
 
-export async function gotoRoute(page: Page, route: string, budget: SettleBudget = {}): Promise<void> {
+/** Which of `gotoRoute`'s stages reached a resting state, and which ran out of budget.
+ *
+ *  🪤 THE RETURN VALUE IS THE POINT, AND ITS ABSENCE WAS THE DEFECT. Every stage below is
+ *  non-throwing: each swallowed its own timeout so that a surface which never quiesces
+ *  proceeds instead of reddening the gate for a reason that is not its clause. That is the
+ *  right behaviour for the a11y/walkthrough sweeps, which read the accessibility tree and
+ *  tolerate a late card. It is the WRONG behaviour for a pixel comparison, because there a
+ *  swallowed timeout does not degrade the measurement — it FABRICATES one. The screenshot is
+ *  taken anyway, mid-load, and `toHaveScreenshot` then reports "render drift" at 0.02–0.04
+ *  against the 0.01 cap for a page that simply never finished arriving.
+ *
+ *  So the stages still do not throw, and the sweeps still ignore this value. What changes is
+ *  that exhaustion is now SAYABLE: `expectRouteScreenshot` refuses to diff a page that never
+ *  reached rest and names the stage, instead of publishing a drift number about a frame that
+ *  does not exist once the page settles. */
+export interface SettleReport {
+  /** Every stage reached its resting state inside its budget. */
+  settled: boolean
+  /** The stages that ran out of budget, in the order they ran. */
+  exhausted: string[]
+}
+
+/** Navigate to a hash route and return once it is AT REST — fonts loaded, the shell's polls
+ *  resolved, every loading affordance cleared, the DOM and page height quiescent, no fade
+ *  mid-flight — reporting any stage that ran out of budget rather than swallowing it. */
+export async function gotoRoute(
+  page: Page,
+  route: string,
+  budget: SettleBudget = {},
+): Promise<SettleReport> {
   await page.goto(`/#/${route}`)
   // Fonts must be ready or text metrics shift the screenshot.
   await page.evaluate(() => (document as unknown as { fonts?: { ready: Promise<unknown> } }).fonts?.ready)
-  // Bounded: routes that poll (agents status, live feeds) NEVER go network-idle,
-  // and the default waitForLoadState timeout equals the test timeout — the test
-  // would die before the catch fires. 5s settles real loads; pollers fall through.
-  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => { /* long-poll routes never idle; fall through */ })
-  // Give the route cross-fade a beat to finish (animations are disabled for the
-  // screenshot itself, but the mount still needs to resolve).
+  // Give the route's mount effects a beat to FIRE. `useVisiblePoll` and every one-shot read
+  // issue their first request from inside a `useEffect`, i.e. after first paint — so a
+  // quiescence check run immediately after `goto` would observe a page that has not started
+  // loading yet and call it settled. This wait is what makes the stages below meaningful.
   await page.waitForTimeout(400)
   // Every caller measures the route it just navigated to; none of them can tell an
   // onboarding hijack from a clean surface on their own.
   await assertShellMounted(page)
-  // Then the SHELL's own async chrome, then the route's DOM, then the fades — in that
-  // order, and the order is the point. Each stage can only resolve once the previous one
-  // has: the shell's polls cannot answer before the shell mounts, a route's content cannot
-  // quiesce before those answers stop re-laying it out, and an entrance fade cannot be
-  // waited for before the element that fades in has arrived.
-  await settleShellChrome(page)
-  await settleDom(page, undefined, budget.settleMs)
+  // Then the SHELL's own async chrome, then the route's content, then its layout, then the
+  // fades — in that order, and the order is the point. Each stage can only resolve once the
+  // previous one has: the shell's polls cannot answer before the shell mounts, a route's
+  // skeletons cannot clear before those answers arrive, layout cannot stop moving before the
+  // content that moves it has landed, and an entrance fade cannot be waited for before the
+  // element that fades in exists.
+  const exhausted: string[] = []
+  if (!(await settleShellChrome(page, budget.chromeMs))) exhausted.push('settleShellChrome')
+  if (!(await settleDom(page, undefined, budget.settleMs))) {
+    // Name WHICH half of the barrier was still unsatisfied. "The page never went quiet" and
+    // "eleven cards are still skeletons" are different diagnoses with different next actions,
+    // and the whole point of this rail is to stop reporting one thing as another.
+    const pending = await page
+      .evaluate((selector: string) => document.querySelectorAll(selector).length, LOADING_SELECTOR)
+      .catch(() => -1)
+    exhausted.push(pending > 0 ? `settleDom (${pending} loading affordances still on screen)` : 'settleDom')
+  }
   // 🪤 LAST, not before `assertShellMounted` where this call used to sit. There it ran
   // ~400ms after navigation — before the route's data had arrived, so before the staggered
   // fades it exists to await had been triggered at all. It was waiting for animations that
   // had not started yet and then reporting the page settled.
-  await settleEntranceAnimations(page)
+  if (!(await settleEntranceAnimations(page, budget.fadeMs))) exhausted.push('settleEntranceAnimations')
+  return { settled: exhausted.length === 0, exhausted }
 }
+
+/** 🪤 WHY THERE IS NO NETWORK BARRIER HERE, AND WHY `networkidle` IS GONE RATHER THAN TUNED.
+ *
+ *  "Wait until the page's requests have answered" is the obvious barrier, and it is the one
+ *  this helper used to reach for. It cannot work in this app: `useConfigFsWatch.ts:19`,
+ *  `DiagnosticsPanel.tsx:57`, `ModelsPanel.tsx:642` and `useModelDownloads.ts:27` each hold a
+ *  long-lived `EventSource` open, so those routes never go network-idle at all. Its 5s cap
+ *  therefore always elapsed and always fell through — the old comment said so ("pollers fall
+ *  through") and treated a permanently-failing wait as an acceptable one.
+ *
+ *  And the network is the wrong quantity even where it is reachable: a poller that re-fetches
+ *  the same numbers moves no pixels, while the arrival that DOES move them is visible either
+ *  as a loading affordance clearing or as a DOM mutation — which is exactly what `settleDom`
+ *  below now requires together. Those are the signals that survive contact with a
+ *  permanently-polling app. Do not re-add a network wait here. */
+
+/** 🪤 WHY THE TWO CONDITIONS ARE ONE BARRIER AND NOT TWO STAGES — MEASURED, because the
+ *  obvious shape ("wait for the skeletons to clear, THEN wait for quiet") is wrong in a way
+ *  that only shows up under load. Sampling every 250ms with 2s of injected latency on every
+ *  `/api/**` response (Darwin, 18 cores, 1-min load 10–28), each condition is satisfied
+ *  MID-LOAD on its own:
+ *
+ *  · Zero loading affordances is reached TRANSIENTLY, long before the route has finished
+ *    arriving, because each card mounts its own skeleton when ITS fetch starts rather than
+ *    sharing one barrier. `#/dashboard` first reads zero at 506ms and then raises skeletons
+ *    again until 5755ms (peak 45); `#/settings` 531ms → 6010ms (peak 32); `#/inbox` 557ms →
+ *    4313ms; `#/knowledge` 541ms → 4282ms. A bare `count === 0` wait returns in the first gap.
+ *  · DOM quiescence is reached WITH skeletons on screen, because a pending fetch mutates
+ *    nothing. On `#/tools` `settleDom` returned at 6053ms with **19 loading affordances still
+ *    rendered**, and the last one did not clear until 6301ms.
+ *
+ *  So each condition covers exactly the other's hole, and only their CONJUNCTION is a resting
+ *  state: the DOM has been quiet for `quietMs` AND nothing on screen says it is still loading.
+ *  Two sequential stages would have let `#/tools` through on the second one. */
+
+/** Anything the app renders to say "this region has not loaded yet".
+ *
+ *  Both halves of the skeleton kit, and between them they are exhaustive:
+ *  · `.skeleton` — the bare atom (`ui/ListScaffold.tsx:251`), `aria-hidden`, no ARIA state.
+ *  · `[aria-busy="true"]` — the shaped primitives (`ListSkeleton`/`FormSkeleton`/
+ *    `CardGridSkeleton` and the bare-text loader at `:224`), which wrap the atoms in
+ *    `role="status" aria-busy="true"`.
+ *  Neither alone covers the other: the atom carries no ARIA, and the wrappers' own node has
+ *  no `.skeleton` class.
+ *
+ *  🪤 NOT VACUOUS, and that was measured rather than assumed, because a "no skeletons" check is
+ *  trivially true on a route that renders none. Peak affordance counts under 2s of injected API
+ *  latency: 45 (`#/dashboard`), 32 (`#/settings`), 19 (`#/tools`, `#/inbox`, `#/knowledge`), 13
+ *  (`#/learning`), 1 (`#/workflows`), 0 (`#/terminal`). Every measured route reaches zero, so
+ *  the condition is satisfiable everywhere as well as load-bearing almost everywhere. */
+const LOADING_SELECTOR = '.skeleton, [aria-busy="true"]'
+
+/** How many times one target may mutate the same attribute before `settleDom` stops treating
+ *  that stream as motion worth waiting for.
+ *
+ *  🕐 12, sized from the two measured extremes rather than chosen. `#/chat`'s rAF-driven rotating
+ *  mark fires ~23 mutations/second, so it is reclassified in ~0.5s — early enough that it costs
+ *  the barrier nothing. The busiest legitimate stream measured was `#/dashboard`'s live metric
+ *  text at ~1/second (inside the masked island), which takes 12s to reach the same threshold and
+ *  is by then genuinely live data rather than an arrival. A route's LOAD, by contrast, mutates
+ *  many distinct targets a handful of times each, so nothing about it trips this. */
+const PERPETUAL_MUTATIONS = 12
 
 /** The gateway-connectivity dot's LIVE resting state, as an accessible name.
  *
@@ -133,12 +235,12 @@ const CONNECTIVITY_RESOLVED = /System status — Gateway connected/
  *  measured AFTER the shell's fetches are in flight, not during the idle window before
  *  they start.
  *
- *  🕐 BUDGET 6s, and the ceiling is arithmetic, not taste. Every spec runs on Playwright's
- *  default 30s test timeout and `gotoRoute` already spends up to 5s (`networkidle`) + 0.4s
- *  before this line, with `settleDom`, the fades and the screenshot still to come. See
- *  `settleDom` for the full sum. */
-export async function settleShellChrome(page: Page, timeout = 6_000): Promise<void> {
-  await page
+ *  🕐 BUDGET 6s, and the ceiling is arithmetic, not taste. The sweeps run on Playwright's
+ *  default 30s test timeout and `gotoRoute` already spends 0.4s before this line, with
+ *  `settleLoadState`, `settleDom`, the fades and their own assertions still to come. See
+ *  `settleDom` for the full sum, and `visual.spec.ts` for the budgets the pixel rail buys. */
+export async function settleShellChrome(page: Page, timeout = 6_000): Promise<boolean> {
+  return page
     .waitForFunction(
       (pattern: string) => {
         const el = document.querySelector('button[aria-label*="System status"]')
@@ -147,20 +249,28 @@ export async function settleShellChrome(page: Page, timeout = 6_000): Promise<vo
       CONNECTIVITY_RESOLVED.source,
       { timeout },
     )
-    .catch(() => { /* still `connecting` — settleDom is the backstop, and the 2× proof reports it */ })
+    .then(() => true)
+    // Still `connecting`. The sweeps proceed — `settleDom` is their backstop — but the caller
+    // is TOLD, so a pixel comparison can refuse instead of capturing an orange dot as green.
+    .catch(() => false)
 }
 
 /** Block until the DOM stops changing for `quietMs` — the generic settle that covers every
  *  async arrival the harness cannot enumerate by name.
  *
- *  🪤 WHY QUIESCENCE AND NOT A BIGGER `waitForTimeout`. The second non-determinism source
- *  is that `gotoRoute` could return while a route was still showing its LOADING SKELETON:
- *  every wait above this line is best-effort with a SWALLOWED timeout (`networkidle` 5s,
- *  the fade settle 2s), so on a loaded host the screenshot simply lands mid-load and the
- *  baseline records whichever frame won the race. A fixed wait cannot fix that, because
- *  load time is a property of the HOST while quiescence is a property of the PAGE — this
- *  scales with whatever the machine is doing, which is the only form that survives being
+ *  🪤 WHY QUIESCENCE AND NOT A BIGGER `waitForTimeout`. A fixed wait cannot establish rest,
+ *  because load time is a property of the HOST while quiescence is a property of the PAGE —
+ *  this scales with whatever the machine is doing, which is the only form that survives being
  *  run on both a busy dev box and a 4-core runner.
+ *
+ *  🪤 AND QUIET ALONE WAS NOT A RESTING STATE, which is the mistake that made this the last
+ *  line of defence it was never able to be. A pending fetch mutates nothing, so 400ms of DOM
+ *  silence is routinely reached MID-LOAD and the screenshot records the skeleton — measured on
+ *  `#/tools` at 2s injected API latency, this helper returned at 6053ms with 19 loading
+ *  affordances still rendered. So the quiet window is now only half the predicate: when it
+ *  elapses, the barrier also requires that nothing on screen says it is still loading, and
+ *  re-arms if anything does. See the `LOADING_SELECTOR` note above for why neither half works
+ *  alone and why they are one barrier rather than two stages.
  *
  *  `attributes` is observed as well as `childList`, deliberately: the shell corner-width
  *  var is written to the root element's `style` attribute (`ShellCorners.tsx:96`), so an
@@ -185,42 +295,88 @@ export async function settleShellChrome(page: Page, timeout = 6_000): Promise<vo
  *  a region's pixels, not its SIZE, so the masked box simply landed at a different y in the
  *  two captures and reddened anyway.
  *
- *  Best-effort by design, like its siblings: a surface that never quiesces proceeds after
+ *  Non-throwing by design, like its siblings: a surface that never quiesces proceeds after
  *  the cap rather than reddening the gate for a reason that is not its clause. What makes
- *  that safe HERE, and did not before, is that the two-capture determinism proof is the
- *  acceptance test for this helper — a route that still races is reported as a measured
- *  residue instead of being silently baked into a golden.
+ *  that safe is that it now RETURNS whether it settled, so the one caller that cannot
+ *  tolerate an unsettled page — the pixel comparison — refuses instead of recording the frame
+ *  that won the race. Swallowing this is how a host-load artifact got published as a
+ *  0.02–0.04 drift ratio; see `SettleReport`.
  *
  *  🕐 BUDGET 8s, one step above `settleShellChrome`'s 6s. `#/learning` fires ten
  *  independent one-shot reads on mount with no shared "all loaded" barrier, each mounting
  *  its own section the moment ITS fetch answers, so its tail is the longest in the suite.
- *  Worst case through `gotoRoute` is 5s (networkidle) + 0.4s + 6s (shell chrome) + 8s
- *  (this) + 2s (fades) ≈ 21.4s, leaving ~8.6s of the 30s test timeout for the screenshot
- *  assertion itself. That sum is the reason neither cap is simply generous: raising both to
- *  15s exceeds the per-test budget on the routes that never quiesce. */
-export async function settleDom(page: Page, quietMs = 400, timeout = 8_000): Promise<void> {
-  await page
+ *  Worst case through `gotoRoute` is 0.4s + 6s (shell chrome) + 8s (this) + 2s (fades)
+ *  ≈ 16.4s, leaving ~13.6s of the 30s test timeout for the sweeps' own assertions. That sum
+ *  is the reason no cap is simply generous: raising them all exceeds the per-test budget on
+ *  the routes that never quiesce. The pixel rail does not live inside that 30s and buys its
+ *  own budgets — see `visual.spec.ts`. */
+export async function settleDom(
+  page: Page,
+  quietMs = 400,
+  timeout = 8_000,
+  loadingSelector = LOADING_SELECTOR,
+): Promise<boolean> {
+  return page
     .evaluate(
-      ({ quiet, cap }) =>
-        new Promise<void>((resolve) => {
+      ({ quiet, cap, selector, perpetual }) =>
+        new Promise<boolean>((resolve) => {
           let timer = 0
-          const finish = () => {
+          const finish = (settled: boolean) => {
             window.clearTimeout(timer)
             window.clearTimeout(hardCap)
             obs.disconnect()
             size.disconnect()
-            resolve()
+            resolve(settled)
+          }
+          // The quiet window elapsed. That is HALF of a resting state: the other half is that
+          // nothing on screen still says it is loading. If a skeleton is up, re-arm instead of
+          // resolving — a pending fetch mutates nothing, so quiet alone is routinely reached
+          // mid-load, and this is the exact frame the rail used to publish as "drift".
+          const quiesced = () => {
+            if (document.querySelectorAll(selector).length === 0) finish(true)
+            else bump()
           }
           const bump = () => {
             window.clearTimeout(timer)
-            timer = window.setTimeout(finish, quiet)
+            timer = window.setTimeout(quiesced, quiet)
           }
-          const obs = new MutationObserver(bump)
+          // 🪤 AN ELEMENT THAT MUTATES ON EVERY FRAME IS ANIMATING, AND AN ANIMATION IS A
+          // RESTING STATE — the ruling `settleEntranceAnimations` already makes for infinite
+          // CSS animations, applied to the case the Animations API cannot see. `#/chat`'s empty
+          // state renders a 47×47 mark whose inline `style` is rewritten with a new
+          // `transform: rotate(…)` on every frame from rAF, so `getAnimations()` reports ZERO
+          // on it and `animations: 'disabled'` cannot freeze it either. Measured: 692 mutations
+          // in 15s with a largest quiet gap of 85ms, i.e. `#/chat` can NEVER reach a 400ms quiet
+          // window. Under the swallowed timeout that was invisible; enforced, it would red two
+          // goldens that have no drift.
+          //
+          // So a mutation stream is followed only until it has fired `perpetual` times from the
+          // SAME target and attribute. A real arrival mutates a handful of times across MANY
+          // targets and keeps bumping; a frame-driven animator blows the count in well under a
+          // second and then stops holding the barrier open. This narrows what counts as motion;
+          // it does not widen what counts as a match — `maxDiffPixelRatio` is untouched.
+          const streams = new WeakMap<Node, Map<string, number>>()
+          const isPerpetual = (r: MutationRecord): boolean => {
+            let byKey = streams.get(r.target)
+            if (!byKey) {
+              byKey = new Map()
+              streams.set(r.target, byKey)
+            }
+            const key = `${r.type}|${r.attributeName ?? ''}`
+            const n = (byKey.get(key) ?? 0) + 1
+            byKey.set(key, n)
+            return n > perpetual
+          }
+          const obs = new MutationObserver((records) => {
+            // `every` would let one animator's frame hide a real arrival in the same batch, so
+            // this asks whether ANY record in the batch is still worth waiting for.
+            if (records.some((r) => !isPerpetual(r))) bump()
+          })
           // Height changes, from ANY cause — including ones that edit no DOM at all, and
           // ones whose reflow lands after their mutation. `box: 'border-box'` so a padding
           // change counts too.
           const size = new ResizeObserver(bump)
-          const hardCap = window.setTimeout(finish, cap)
+          const hardCap = window.setTimeout(() => finish(false), cap)
           obs.observe(document.documentElement, {
             subtree: true,
             childList: true,
@@ -228,11 +384,13 @@ export async function settleDom(page: Page, quietMs = 400, timeout = 8_000): Pro
             characterData: true,
           })
           size.observe(document.documentElement, { box: 'border-box' })
-          timer = window.setTimeout(finish, quiet)
+          timer = window.setTimeout(quiesced, quiet)
         }),
-      { quiet: quietMs, cap: timeout },
+      { quiet: quietMs, cap: timeout, selector: loadingSelector, perpetual: PERPETUAL_MUTATIONS },
     )
-    .catch(() => { /* navigation raced the evaluate — the caller's own assertions still hold */ })
+    // Navigation raced the evaluate. The caller's own assertions still hold, and an
+    // unmeasurable settle is reported as unsettled rather than as quiescent.
+    .catch(() => false)
 }
 
 /** Block until no element is mid-fade, so a scan measures the page AT REST.
@@ -262,23 +420,41 @@ export async function settleDom(page: Page, quietMs = 400, timeout = 8_000): Pro
  *  Scoped to INLINE opacity because that is what the motion library writes while
  *  animating; class-based translucency (a decorative overlay at rest) must not keep us
  *  waiting. `getAnimations()` is checked too, for animations that never touch inline
- *  style. Best-effort by design: on timeout we proceed exactly as before, so a route
+ *  style. Non-throwing by design: on timeout we proceed exactly as before, so a route
  *  with a permanently-animating element degrades to today's behaviour instead of
- *  failing.
+ *  failing — but the caller is now TOLD, so a pixel comparison can refuse.
  *
  *  Deliberately NOT solved by emulating `prefers-reduced-motion`: that would skip the
  *  animated path entirely, and this gate should measure what a user actually sees.
+ *
+ *  🪤 A TRANSLUCENT VALUE IS NOT A FADE, AND READING IT AS ONE MADE THIS PREDICATE VACUOUS ON
+ *  EVERY ROUTE — the same defect as the infinite-animation half below, in the other half, and
+ *  it survived the fix that closed that one. `ui/NavRail.tsx:139` renders the rail's section
+ *  labels with a permanent inline `style={{ opacity: 0.65 }}`. The rail lives in the SHELL and
+ *  `assertShellMounted` requires it on every route, so on all 40 surfaces there was always at
+ *  least one element whose inline opacity sits strictly between 0.01 and 0.99 with nothing
+ *  animating it. `midFade` was therefore permanently TRUE, `waitForFunction` could never
+ *  resolve, and this helper was a 2s no-op on every route in the suite — including for the
+ *  a11y sweep, the consumer whose composited-contrast flake it was written for.
+ *
+ *  The fix is to test for CHANGE rather than for a value: an element mid-fade has a different
+ *  opacity from one frame to the next, and a static 0.65 does not. `waitForFunction` polls on
+ *  rAF by default, so consecutive invocations are consecutive frames, and the previous sample
+ *  is kept on `window` to compare against. The first invocation has nothing to compare to and
+ *  reports "still moving", which costs one frame and cannot produce a false settle.
  */
-export async function settleEntranceAnimations(page: Page, timeout = 2_000): Promise<void> {
-  await page
+export async function settleEntranceAnimations(page: Page, timeout = 2_000): Promise<boolean> {
+  return page
     .waitForFunction(
       () => {
-        const midFade = Array.from(document.querySelectorAll<HTMLElement>('[style*="opacity"]')).some(
-          (el) => {
-            const v = Number.parseFloat(el.style.opacity)
-            return Number.isFinite(v) && v > 0.01 && v < 0.99
-          },
-        )
+        const w = window as unknown as { __pcFadeSample?: string }
+        // Every inline opacity on the page, in document order, as one comparable string.
+        const sample = Array.from(document.querySelectorAll<HTMLElement>('[style*="opacity"]'))
+          .map((el) => el.style.opacity)
+          .join('|')
+        const previous = w.__pcFadeSample
+        w.__pcFadeSample = sample
+        const midFade = previous === undefined || previous !== sample
         // 🪤 INFINITE animations must NOT count as "still settling", or this predicate is
         // VACUOUS on every route. `SystemWidget` renders a `.status-pulse` ring whenever the
         // gateway is connected (`SystemWidget.tsx:83-85`), and that class is
@@ -305,9 +481,10 @@ export async function settleEntranceAnimations(page: Page, timeout = 2_000): Pro
       undefined,
       { timeout },
     )
-    .catch(() => {
-      /* a permanently-animating surface must not fail the scan — fall through */
-    })
+    .then(() => true)
+    // A permanently-animating surface must not fail the scan — fall through, but SAY so, so a
+    // pixel comparison can refuse a frame that is still mid-fade.
+    .catch(() => false)
 }
 
 /** Assert an interaction actually grew the DOM, i.e. the surface really opened.
@@ -409,8 +586,39 @@ export const OPENERS: Opener[] = [
   },
 ]
 
-/** Assert a full-page screenshot matches the platform-qualified baseline. */
-export async function expectRouteScreenshot(page: Page, name: string): Promise<void> {
+/** Assert a full-page screenshot matches the platform-qualified baseline — but only once the
+ *  page is known to be AT REST.
+ *
+ *  🪤 THE PRECONDITION IS CHECKED FIRST, AND IT IS NOT A TOLERANCE. `maxDiffPixelRatio` stays
+ *  at the config's 0.01, no golden is exempted and no route is skipped. What this refuses is a
+ *  comparison whose INPUT is unknown: `gotoRoute`'s stages are non-throwing, so before this
+ *  check a page that ran out of settle budget was screenshotted anyway and the difference was
+ *  attributed to the pixels. A screenshot taken mid-load differs from one taken at rest by
+ *  whole content bands — a skeleton is a different HEIGHT from the rows that replace it, and a
+ *  `fullPage` capture's dimensions are the page height — which is why this rail could report
+ *  0.02–0.04 ratios with a DIFFERENT failing set on every run at one sha.
+ *
+ *  So an exhausted stage fails HERE, naming the stage, rather than being laundered into a
+ *  drift number. That is strictly stronger than the old behaviour: it neither skips the route
+ *  (which would let real drift through) nor accepts more pixels — it reports the measurement as
+ *  invalid, which is what it was. The actionable response is a bigger budget or a quieter host,
+ *  and the message says so; re-capturing would only bake the racing frame into the golden,
+ *  which is how this rail broke the last two times. */
+export async function expectRouteScreenshot(
+  page: Page,
+  name: string,
+  settle: SettleReport,
+): Promise<void> {
+  expect(
+    settle.exhausted,
+    `${name}: the page never reached rest — ${settle.exhausted.join(', ')} ran out of budget, so\n` +
+      `there is NOTHING here worth diffing. This is NOT render drift and the golden is NOT stale:\n` +
+      `a screenshot taken mid-load differs from one taken at rest by whole content bands, which is\n` +
+      `why this rail used to report 0.02–0.04 ratios with a different failing set on every run at\n` +
+      `one sha. Do NOT run \`e2e:update\` — that records the racing frame as the baseline and moves\n` +
+      `the failure to the next run. Raise the stage's budget in \`visual.spec.ts\`, or run on a\n` +
+      `quieter host.`,
+  ).toEqual([])
   await expect(page).toHaveScreenshot(`${name}.png`, {
     fullPage: true,
     animations: 'disabled',
