@@ -394,6 +394,24 @@ async def ingest_item(
         # A re-ingest that NOW lands (a provider was bound, a text version uploaded) must
         # clear the stale reason, or the item stays on the attention surface forever.
         meta_updates["unsearchable_reason"] = None
+    # KOCR — a TRUNCATED read must say so on the ITEM. `pdf_rasterize` enforces the page cap
+    # (ARCC `cnt_eMkU5kkpTaEk65`) and reports what it capped, but it is a structural
+    # (`pooled=False`) node: its metadata feeds the next node and reaches no user-visible
+    # surface, so a 120-page scan rendered exactly `MAX_OCR_PAGES` pages and then presented
+    # 40 pages of text as if it were the whole document. Promoting the three facts onto
+    # `file_metadata` is what makes the cap legible to the detail UI, the API and the Doctor —
+    # the same promotion `node_phases` gets, and for the same reason: a ceiling nobody can see
+    # is indistinguishable from no ceiling. Keys are `ocr_`-prefixed because that is the
+    # namespace the item already reports OCR facts under.
+    raster = result.outputs.get("pdf_rasterize")
+    raster_meta = (raster.metadata or {}) if (raster and raster.success) else {}
+    # `None` REMOVES the key (see `_merge_file_metadata`), so a re-ingest of a document that
+    # no longer caps — a shorter version uploaded, the cap raised — stops claiming truncation.
+    meta_updates["ocr_pages_capped"] = raster_meta.get("pages_capped") or None
+    meta_updates["ocr_page_cap"] = raster_meta.get("page_cap") if raster_meta else None
+    meta_updates["ocr_pages_rasterized"] = (
+        raster_meta.get("pages_rasterized") if raster_meta else None
+    )
     _merge_file_metadata(store, item_id, meta_updates)
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
