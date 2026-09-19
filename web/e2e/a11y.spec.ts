@@ -1,7 +1,15 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, THEMES } from './routes'
-import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
+import {
+  seedTheme,
+  gotoRoute,
+  assertMounted,
+  OPENERS,
+  driveScriptedTurns,
+  openHeaderOverflowIfNeeded,
+  settleEntranceAnimations,
+} from './helpers'
 // Two defects axe has no rule for, asserted on the SAME navigation this spec already performs —
 // see `nonAxeA11yChecks.ts` for why they live here rather than in a spec of their own.
 import { expectNoNonAxeA11yDefects } from './nonAxeA11yChecks'
@@ -118,3 +126,74 @@ for (const theme of THEMES) {
     }
   })
 }
+
+// ── Tier 5: THE MOBILE VIEWPORT (atom SSM-10) ───────────────────────────────
+// Every tier above runs at this config's one viewport, 1280×900. That is a fourth
+// hole of the same shape as the three the comment at the top of this file records:
+// breadth on the route and state axes was hiding a hole on the VIEWPORT axis. The
+// app switches real surfaces on `useIsMobile` (≤768px) — the shell's nav rail
+// becomes an overlay drawer, and the Session Map's gutter rail becomes a tappable
+// SidePanel drawer — so at 1280px those branches were never scanned by anything.
+//
+// 🪤 DELIBERATELY *NOT* A SECOND PLAYWRIGHT PROJECT, which is the obvious way to do
+// this and the wrong one. A `{ name: 'mobile', use: devices['Pixel 5'] }` project
+// re-runs EVERY spec in this directory at that viewport: `visual.spec.ts` would
+// demand 34 new committed baselines, and the 96 route scans + PWA + walkthrough
+// specs would double the gate's runtime to cover surfaces no atom asked for. A
+// describe-scoped `test.use({ viewport })` buys exactly the coverage the clause
+// names, changes the shared config by zero lines, and cannot destabilise a single
+// existing test. (Recorded because SSM-10's own audit note predicted the project.)
+//
+// SCOPE: one route, because it is the only one whose LAYOUT the breakpoint changes
+// into a different control set, and because reaching it needs a real chat turn.
+test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () => {
+  // A phone viewport, below `useIsMobile`'s 768px breakpoint.
+  test.use({ viewport: { width: 390, height: 844 } })
+  // A real turn waits on the backend, unlike every other test in this file.
+  test.describe.configure({ timeout: 180_000 })
+
+  for (const theme of THEMES) {
+    test(`chat: Session Map drawer [mobile] (${theme})`, async ({ page }, testInfo) => {
+      await seedTheme(page, theme)
+      await gotoRoute(page, 'chat')
+      await driveScriptedTurns(page, 'Index this turn on the session map, please', 2)
+
+      // The clause's own floor: in-session nav must remain REACHABLE at this viewport. The
+      // gutter rail is gone here by design, so if the one named control is also unreachable the
+      // mobile user has no in-session navigation at all — and a clean axe result on a surface
+      // that lost its navigation is precisely the kind of pass this file exists to refuse.
+      expect(
+        await openHeaderOverflowIfNeeded(page, 'Session map'),
+        'IN-SESSION NAV IS UNREACHABLE at 390px: neither the Session Map rail nor its named\n' +
+          'control is present. SSM-10 exists to prevent exactly this.',
+      ).toBe(true)
+      await page.getByRole('button', { name: 'Session map', exact: true }).click()
+      const drawer = page.getByRole('region', { name: 'Session map' })
+      await expect(drawer).toBeVisible({ timeout: 10_000 })
+      await expect(drawer.locator('[data-session-map-row]').first()).toBeVisible()
+      // The rows stagger `opacity: 0 → 1` (`SessionMapDrawer`'s per-row `delay`), and the row
+      // above being VISIBLE only means the FIRST one arrived. Measured without this settle: axe
+      // reported `[serious] color-contrast … 3.56` against `#85888c`, which is not a token —
+      // it is `--color-on-surface-var` (`#5f6368`) composited on white at α ≈ 0.76 (per channel:
+      // (255−0x85)/(255−0x5f) = 0.76, (255−0x88)/(255−0x63) = 0.76). At rest the pair is 5.9:1.
+      // Same mechanism, same fix, as the dashboard flake `settleEntranceAnimations` documents.
+      await settleEntranceAnimations(page)
+
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze()
+      const blocking = results.violations.filter((v) => BLOCKING.has(v.impact ?? ''))
+      await testInfo.attach(`axe-session-map-mobile-${theme}.json`, {
+        body: JSON.stringify(results.violations, null, 2),
+        contentType: 'application/json',
+      })
+      expect(
+        blocking,
+        `serious/critical a11y violations on the mobile Session Map drawer (${theme}):\n` +
+          blocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
+      ).toEqual([])
+
+      await expectNoNonAxeA11yDefects(page, `chat Session Map drawer [mobile] (${theme})`)
+    })
+  }
+})

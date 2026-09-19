@@ -28,7 +28,9 @@ export interface SidePanelData {
  *  (+ Side — an isolated throwaway Q&A against the frozen session context.) */
 export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = [], onKillFanout, side }: {
   activity: ChatActivity
-  onJumpTo: (turnIndex: number) => void
+  /** `ChatPage`'s `jumpToTurn`, handed an `IndexEntry.visibleIndex` — the same coordinate the
+   *  Session Map's rail and drawer hand it, so all three are one navigation. */
+  onJumpTo: (visibleIndex: number) => void
   onOpenFile: (path: string) => void
   subagents?: SubagentCard[]
   onKillFanout?: () => void  // kill EVERY running child of this chat's fan-out (C1.4)
@@ -95,7 +97,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
             ? <Empty icon={MessageSquare} text="No messages yet." />
             : <div className="flex flex-col gap-px">
                 {activity.index.map((e, i) => (
-                  <motion.button key={e.turnIndex} type="button" onClick={() => onJumpTo(e.turnIndex)} title={e.label}
+                  <motion.button key={e.visibleIndex} type="button" onClick={() => onJumpTo(e.visibleIndex)} title={e.label}
                     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
                     data-type="body-s" className="block w-full truncate rounded-md px-2.5 py-2 text-left text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface [&_*]:!my-0 [&_*]:!inline [&_p]:truncate">
                     <Markdown className="truncate">{e.label}</Markdown>

@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, ListTree } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -67,7 +67,7 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
 import { readOnlyCommandOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
@@ -86,6 +86,9 @@ import { findSegments } from './chat/findSegments'
 import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
+import { SessionMapRail } from './chat/SessionMapRail'
+import { SessionMapDrawer } from './chat/SessionMapDrawer'
+import { sessionMapMarks } from './chat/sessionMap'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
@@ -94,6 +97,7 @@ import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
+import { useIsMobile } from '../app/useIsMobile'
 import { copyText } from '../app/clipboard'
 
 // Instant-paint cache for opened chat sessions, held in the ONE data layer.
@@ -598,7 +602,52 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // New-chat page: a right-docked chat-history panel (the shared SidePanel), toggled
   // from the header. URL-bound (?history=1) so Back closes it + refresh restores it.
   const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
-  // per-turn DOM nodes so the Index tab can scroll to a turn.
+  // ── SESSION MAP (SEMANTIC-SESSION-MAP §A.1/§A.9, atom SSM-11) ──────────────────────────────
+  // The in-session index: a fixed rail in the transcript's left gutter on a pointer device, a
+  // tappable SidePanel drawer on the mobile form (SSM-10). Open/closed is URL state so it is
+  // deep-linkable and survives a reload, exactly like `?activity`.
+  //
+  // 🪤 NOT `useQueryFlag`, and the reason is the DEFAULT. §A.1 makes the map always-available, so
+  // its default is OPEN — and a present-or-absent flag can only record the non-default, i.e. it
+  // could never express "this user closed it". `useQueryParam` with a '1' default is the same
+  // one-key URL contract in both directions: open is the clean URL, `?map=0` records a
+  // deliberate close and restores it on refresh. (§A.9 named `useQueryFlag`; this is that
+  // mechanism's two-way form, not a second one — same module, same `setQuery`.)
+  //
+  // Which FORM the map takes. `useIsMobile` (the app's ≤768px breakpoint) rather than a
+  // `(pointer: coarse)` query of its own: the shell already switches its nav rail to a drawer on
+  // exactly this signal, and a second "is this the touch form?" mechanism would be free to
+  // disagree with the first. It is also the discriminator a browser gate can drive — a mobile
+  // VIEWPORT is what `web/e2e/a11y.spec.ts` can set; pointer type is not.
+  const isMobile = useIsMobile()
+  // 🪤 THE DEFAULT IS PER-FORM, AND A SINGLE `'1'` DEFAULT WAS A REAL DEFECT rather than a
+  // preference. §A.1's "always available" is what the gutter rail delivers for free — it occupies
+  // the empty left column §A.0 measured, so open-by-default costs the transcript nothing. The
+  // mobile form is not that: it is the shared `SidePanel`, a docked column whose fit-width fills a
+  // 390px viewport, so defaulting it open means the drawer is ALREADY COVERING the composer the
+  // moment `started` flips — a phone user arrives at a chat they cannot type into. Measured, not
+  // reasoned: `a11y.spec.ts`'s mobile tier timed out clicking `Message input` with the panel's
+  // resize separator (`aria-valuenow=420`) intercepting the pointer, and `sessionMap.spec.ts`'s
+  // own mobile test drives three turns and THEN taps the control to open the drawer, i.e. both
+  // gates were written against a closed default.
+  //
+  // The URL contract is unchanged and still two-way in both forms, because `useQueryParam` writes
+  // `null` exactly when the value equals the default it was given: on a pointer device the clean
+  // URL means open and `?map=0` records a deliberate close; on the mobile form the clean URL means
+  // closed and `?map=1` records a deliberate open. One key, one mechanism, one control — only the
+  // resting state differs, which is the thing the two forms genuinely do not share.
+  const [mapFlag, setMapFlag] = useQueryParam(query, setQuery, 'map', isMobile ? '0' : '1')
+  const mapOpen = mapFlag === '1'
+  const setMapOpen = (on: boolean) => setMapFlag(on ? '1' : '0')
+  // per-turn DOM nodes so the Index tab and the Session Map can scroll to a turn.
+  //
+  // 🔑 KEYED BY THE MAP'S COORDINATE (`markCoordOf`), NOT BY ARRAY POSITION, and this was a real
+  // defect rather than a preference. `hydrateTurns` collapses loop re-injections and merges
+  // consecutive assistant messages, so a turn's array position runs BEHIND its
+  // `visibleIndex` — the coordinate every `SessionMark` carries and the one the rail hands back
+  // through `onJumpTo`. Registered under `i`, a mark jump on any tool-using transcript resolved
+  // an EARLIER turn's node (the same gap `branchLineage.ts` documents for the fork coordinate).
+  // One key, defined once on the map's contract, so the registry and the marks cannot disagree.
   const turnNodes = useRef<Map<number, HTMLDivElement>>(new Map())
   // Find-in-conversation (CHAT-CRAFT S2) — a client-side find bar over the hydrated
   // turns, opened with Cmd/Ctrl+F while the chat page owns focus + a session is open.
@@ -2210,9 +2259,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // agent side to its name when one is bound, else the neutral "Assistant".
   function attributionForNode(node: Node | null): string | undefined {
     if (!node) return undefined
-    for (const [idx, el] of turnNodes.current.entries()) {
+    for (const [coord, el] of turnNodes.current.entries()) {
       if (el.contains(node)) {
-        const turn = turns[idx]
+        // The registry is keyed by the map's coordinate, so the owning turn is the one whose
+        // coordinate matches — not `turns[coord]`, which is the array lookup the key change
+        // above made wrong.
+        const turn = turns.find((t, i) => markCoordOf(t, i) === coord)
         if (!turn) return undefined
         return turn.role === 'user' ? 'You' : (selection.agent || 'Assistant')
       }
@@ -2222,9 +2274,40 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   // activity panel: Index tab jumps to a turn by scrolling its node into view.
   const activity = useMemo(() => deriveActivity(turns), [turns])
-  function jumpToTurn(turnIndex: number) {
-    const node = turnNodes.current.get(turnIndex)
+  // The Session Map's ordered marks (SSM-1) — one per turn plus one per typed sub-event inside
+  // it. Memoised on the same inputs the rail and the drawer both read, so the two forms index
+  // the identical array and the observer in SSM-5 is not rebuilt per render.
+  const sessionMarks = useMemo(() => sessionMapMarks(turns, subagents), [turns, subagents])
+  /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
+   *  rail's tick, the drawer's row and the Activity Index list. */
+  function jumpToTurn(coord: number) {
+    const node = turnNodes.current.get(coord)
     node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  /** A drawer row's coordinate, parked between the tap and the drawer finishing its exit.
+   *
+   *  🔴 THE ORDER IS THE WHOLE FIX, AND JUMPING FIRST WAS A REAL DEFECT. The mobile drawer is a
+   *  docked `SidePanel` flex SIBLING of this column, so while it is open the transcript is
+   *  squeezed to the 32px `EDGE_PEEK` sliver (measured at a 390px viewport: panel 358, column
+   *  32). `scrollIntoView` resolves a target offset against the layout it is called in — so
+   *  `jumpToTurn(coord); setMapOpen(false)` computed an offset for a 32px-wide transcript and
+   *  then immediately re-flowed it to 390px, where the retained `scrollTop` means something
+   *  else entirely. Measured: tapping the oldest row left turn 1 at viewport ratio 0, i.e. the
+   *  tap navigated nowhere, which is the one thing SSM-10's row exists to do.
+   *
+   *  So the tap now only RECORDS where it wants to go, and the scroll runs from the
+   *  `AnimatePresence` `onExitComplete` below — the first moment the panel is out of the DOM and
+   *  the transcript's width is final. `onExitComplete` rather than a `requestAnimationFrame` or a
+   *  timeout because the exit is a spring on `width` (`ui/SidePanel`): its duration is not a
+   *  number this file can know, and under `prefers-reduced-motion` it is zero. Framer's callback
+   *  is the only signal that means "the layout has stopped moving" in both cases.
+   */
+  const pendingMapJump = useRef<number | null>(null)
+  /** Run the parked jump, if a row tap (and not the panel's own close button) armed one. */
+  function runPendingMapJump() {
+    const coord = pendingMapJump.current
+    pendingMapJump.current = null
+    if (coord !== null) jumpToTurn(coord)
   }
 
   // Kill EVERY running subagent of this chat's fan-out in one click (WF2WOR-8 C1.4).
@@ -2918,6 +3001,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <HeaderControl icon={Sparkles} label="Save as starter" priority="low" onClick={saveAsTemplate} />
             )}
             <HeaderControl icon={Edit3} label="New chat" variant="primary" priority="primary" onClick={() => navigate('chat/new')} />
+            {/* The Session Map's ONE control, on every viewport (§A.8's "one named control"):
+                it shows/hides the gutter rail on a pointer device and opens/closes the drawer on
+                the mobile form, so there is never a second name for "show me the map".
+                `ariaExpanded`, not `active`: this is a disclosure, not an on/off setting.
+                `priority="primary"` because on the mobile form this control IS the in-session
+                navigation — shedding it into the overflow `…` menu is exactly the "mobile loses
+                session nav" outcome §A.8 exists to prevent. */}
+            {started && (
+              <HeaderControl icon={ListTree} label="Session map" priority="primary"
+                ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />
+            )}
             {started && (
               <HeaderControl icon={PanelRight} label="Activity" active={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />
             )}
@@ -2930,7 +3024,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           narrower (flex siblings) — the FILE peek and the ACTIVITY rail. Both use
           the shared SidePanel primitive so they match every other page. */}
       <div className="relative flex min-h-0 flex-1">
-        <div className="relative flex min-w-0 flex-1 flex-col">
+        {/* 🪤 INERT WHILE THE MOBILE SESSION MAP COVERS IT. The drawer below is a flex SIBLING
+            whose fit-width exceeds a phone viewport, so when it opens this column is squeezed to
+            ZERO width — measured at 390px: the composer's `.cm-scroller` ends up `clientWidth: 0`
+            with `scrollWidth: 19`. That is not merely invisible, it is a keyboard trap in waiting:
+            a tab-order stop and (per axe's `getScroll`, buffer 13) a `scrollable-region-focusable`
+            [serious] scroll region that no one can reach or see. `inert` is the whole fix — it
+            drops the subtree from focus AND from assistive tech, which is exactly what "the drawer
+            covers the transcript at this width" already claims. NOT `aria-hidden`, which would
+            leave the composer focusable and trade one serious violation for `aria-hidden-focus`.
+            The header control that closes the drawer lives ABOVE this row, so the user is never
+            shut out. */}
+        <div className="relative flex min-w-0 flex-1 flex-col" inert={mapOpen && isMobile && started}>
           {loadingHistory ? (
             // Opening an existing session: paint the chat frame instantly (header +
             // docked composer are already live around this column) and skeleton the
@@ -2960,13 +3065,32 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </div>
           ) : (
             <>
-              <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
+              {/* ── SESSION MAP RAIL + TRANSCRIPT (§A.1, atom SSM-11) ────────────────────────
+                  🔑 THE RAIL IS A SIBLING OF THE SCROLLER, NOT A CHILD OF IT, and that IS the
+                  "stays fixed while the transcript scrolls" requirement rather than a styling
+                  choice: an element outside the scroll container has no scroll offset to
+                  inherit, so no `sticky`, no scroll listener and no re-positioning code exists
+                  to get wrong. `e2e/sessionMap.spec.ts` asserts BOTH halves in a real browser —
+                  the rail's box does not move while the transcript scrolls, AND the scroll
+                  container does not contain the rail — because a `sticky` rail inside the
+                  scroller would pass the box check and still drift under an ancestor transform.
+                  The gutter is the empty column §A.0 measured ("No left sidebar"), so the rail
+                  costs the centred transcript nothing. */}
+              <div className="relative flex min-h-0 flex-1">
+              {mapOpen && !isMobile && (
+                <SessionMapRail marks={sessionMarks} turnNodes={turnNodes.current}
+                  scrollRef={scrollRef} onJumpTo={jumpToTurn} />
+              )}
+              {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
+                  the browser gate can assert scroll-fixity and the jump against the real scroll
+                  container instead of guessing which ancestor scrolls. */}
+              <div ref={scrollRef} data-transcript-scroll className="relative min-w-0 flex-1 overflow-y-auto">
                 <AnimatePresence>
                   {/* `ui/FindBar` is surface-agnostic; chat supplies what a turn's searchable
                       text is (`findSegments`) and which node to scroll to. Both references are
                       stable, so a composer keystroke does not re-scan the transcript. */}
                   {findOpen && (
-                    <FindBar items={turns} segmentsOf={findSegments} nodeOf={(_t, i) => turnNodes.current.get(i)}
+                    <FindBar items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
                       scrollRef={scrollRef} label="Find in conversation" onClose={() => setFindOpen(false)} />
                   )}
                 </AnimatePresence>
@@ -2977,7 +3101,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                     const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')
                     return (
                       <div key={i} className="relative"
-                        ref={(el) => { if (el) turnNodes.current.set(i, el); else turnNodes.current.delete(i) }}>
+                        ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
                         {/* small, fixed, centered glow anchor at the top of the
                             ACTIVE turn — the traveling light targets this stable
                             point (not the growing turn box), so the pool stays
@@ -3042,6 +3166,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   </div>
                 </div>
               </div>
+              </div>
               <div className="relative shrink-0 px-l pb-l">
                 {/* reconnecting cue — the WS dropped; state will re-sync on
                     reconnect (cycle 59), but tell the user the link is down. */}
@@ -3076,6 +3201,36 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         <AnimatePresenceFilePanel path={openFile} onClose={() => setOpenFile(null)}
           commentTarget={sameSessionTarget((msg) => { send(msg) })} />
 
+        {/* ── SESSION MAP, COARSE-POINTER FORM (§A.8, atom SSM-10) ────────────────────────────
+            On the mobile form the gutter rail is replaced by this drawer: the SHARED `SidePanel`,
+            so the map's WIDTH persists through the primitive's own `storeKey` mechanism (§A.9)
+            and the panel matches every other dock in the app. Same `?map` flag and same header
+            control as the rail — one open/closed state, two forms.
+
+            CLOSED AT REST on this form — see the per-form default where `mapFlag` is read. This
+            drawer is a docked column whose fit-width fills a phone viewport, so an open resting
+            state puts it over the composer before the user has typed anything.
+
+            🪤 NO `urlKey`, DELIBERATELY, and the reason survives the per-form default. `SidePanel`'s
+            `urlKey` close path writes `{key: null}`, i.e. "back to the default" — which is the
+            right value here but the wrong MECHANISM: the flag is shared with the rail, whose
+            default is the opposite, so a close routed through `urlKey` would depend on which form
+            happened to be mounted. `onClose` writes the closed value explicitly, so close ⇒ URL
+            updated holds identically in both forms.
+
+            A tap jumps AND closes: the drawer covers the transcript at this width, so a jump the
+            user cannot see is not a jump. It closes FIRST and scrolls after — see
+            `pendingMapJump`, where the order is the difference between a tap that navigates and
+            one that resolves an offset in a 32px-wide transcript and lands nowhere. */}
+        <AnimatePresence onExitComplete={runPendingMapJump}>
+          {mapOpen && isMobile && started && (
+            <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
+              fillHeight onClose={() => setMapOpen(false)}>
+              <SessionMapDrawer marks={sessionMarks}
+                onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
+            </SidePanel>
+          )}
+        </AnimatePresence>
         {/* Activity rail — a standard right-docked SidePanel (Index / Files / Links
             / Side), a flex sibling that pushes the chat narrower (not a floating
             overlay). URL-bound: ?activity=1 (Back closes; refresh restores). */}
