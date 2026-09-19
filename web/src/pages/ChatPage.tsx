@@ -2292,7 +2292,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return undefined
   }
 
-  // activity panel: Index tab jumps to a turn by scrolling its node into view.
+  // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
+  // the Session Map's rail and drawer are the session's only jump surface (SSM-13).
   const activity = useMemo(() => deriveActivity(turns), [turns])
   // The Session Map's ordered marks (SSM-1) — one per turn plus one per typed sub-event inside
   // it. Memoised on the same inputs the rail and the drawer both read, so the two forms index
@@ -2311,7 +2312,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     [allSessionMarks, mapDensity],
   )
   /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
-   *  rail's tick, the drawer's row and the Activity Index list. */
+   *  rail's tick and the drawer's row, which since SSM-13 are the only two jump surfaces. */
   function jumpToTurn(coord: number) {
     const node = turnNodes.current.get(coord)
     node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -3273,14 +3274,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </SidePanel>
           )}
         </AnimatePresence>
-        {/* Activity rail — a standard right-docked SidePanel (Index / Files / Links
-            / Side), a flex sibling that pushes the chat narrower (not a floating
-            overlay). URL-bound: ?activity=1 (Back closes; refresh restores). */}
+        {/* Activity rail — a standard right-docked SidePanel (Files / Links / Side),
+            a flex sibling that pushes the chat narrower (not a floating overlay).
+            URL-bound: ?activity=1 (Back closes; refresh restores). */}
         <AnimatePresence>
           {activityOpen && started && (
             <SidePanel title="Activity" icon={<Activity size={18} className="text-primary" />} storeKey="chat-activity-w"
               fillHeight urlKey={{ key: 'activity', setQuery }} onClose={() => setActivityOpen(false)}>
-              <ChatActivityPanel activity={activity} onJumpTo={jumpToTurn} onOpenFile={setOpenFile} subagents={subagents}
+              <ChatActivityPanel activity={activity} onOpenFile={setOpenFile} subagents={subagents}
                 onKillFanout={killFanout}
                 side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }} />
             </SidePanel>

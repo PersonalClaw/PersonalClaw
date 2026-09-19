@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ListTree, FileText, Link2, MessageSquare, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX } from 'lucide-react'
+import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 import { Button } from '../../ui/Button'
 import { spring } from '../../design/motion'
@@ -10,7 +10,7 @@ import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
 import { tabListKeys } from '../../lib/tabListKeys'
 
-type Tab = 'index' | 'files' | 'links' | 'subagents' | 'side'
+type Tab = 'files' | 'links' | 'subagents' | 'side'
 
 export interface SidePanelData {
   msgs: { q: string; a: string; runId: string; done: boolean }[]
@@ -21,30 +21,32 @@ export interface SidePanelData {
 
 /** Chat-only activity panel (Stage 5) — the CONTENT of the chat's docked side
  *  panel (the outer `SidePanel` primitive owns the frame: title bar, close, resize,
- *  expand-to-full). Three tabs derived entirely client-side from the conversation:
- *   • Index — user-message outline (markdown); click → scroll to that turn.
+ *  expand-to-full). Two tabs derived entirely client-side from the conversation:
  *   • Files — files touched this session; click → open in the file side panel.
  *   • Links — http(s) URLs surfaced in the conversation.
- *  (+ Side — an isolated throwaway Q&A against the frozen session context.) */
-export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = [], onKillFanout, side }: {
+ *  (+ Side — an isolated throwaway Q&A against the frozen session context.)
+ *
+ *  This panel owns NO navigation. It used to open on an "Index" tab — a user-message
+ *  outline whose rows jumped to a turn — and the Session Map (§A) superseded it: the
+ *  map is the in-session index, always-available rather than behind a panel, and it
+ *  marks tool calls / approvals / errors / subagents as well as user turns. SSM-13
+ *  deleted the tab rather than keeping both, so there is exactly one jump surface.
+ *  `indexTabRetired.test.tsx` is the rail that keeps it that way. */
+export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKillFanout, side }: {
   activity: ChatActivity
-  /** `ChatPage`'s `jumpToTurn`, handed an `IndexEntry.visibleIndex` — the same coordinate the
-   *  Session Map's rail and drawer hand it, so all three are one navigation. */
-  onJumpTo: (visibleIndex: number) => void
   onOpenFile: (path: string) => void
   subagents?: SubagentCard[]
   onKillFanout?: () => void  // kill EVERY running child of this chat's fan-out (C1.4)
   side?: SidePanelData
 }) {
-  const [tab, setTab] = useState<Tab>('index')
+  const [tab, setTab] = useState<Tab>('files')
   // opening the Side tab opens the throwaway side buffer (lazy).
   useEffect(() => { if (tab === 'side') side?.onOpen() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
-  const counts = { index: activity.index.length, files: activity.files.length, links: activity.links.length }
+  const counts = { files: activity.files.length, links: activity.links.length }
 
   // Ordered tab descriptors — drive both the tablist render and arrow-key nav.
   // Subagents tab appears only once at least one has been spawned this session.
-  const TABS: { key: Tab; label: string; icon: typeof ListTree; count: number }[] = [
-    { key: 'index', label: 'Index', icon: ListTree, count: counts.index },
+  const TABS: { key: Tab; label: string; icon: typeof FileText; count: number }[] = [
     { key: 'files', label: 'Files', icon: FileText, count: counts.files },
     { key: 'links', label: 'Links', icon: Link2, count: counts.links },
     ...(subagents.length ? [{ key: 'subagents' as Tab, label: 'Subagents', icon: Bot, count: subagents.length }] : []),
@@ -92,19 +94,6 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
         </div>
       ) : (
       <div role="tabpanel" id={`act-panel-${tab}`} aria-labelledby={`act-tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto p-2">
-        {tab === 'index' && (
-          activity.index.length === 0
-            ? <Empty icon={MessageSquare} text="No messages yet." />
-            : <div className="flex flex-col gap-px">
-                {activity.index.map((e, i) => (
-                  <motion.button key={e.visibleIndex} type="button" onClick={() => onJumpTo(e.visibleIndex)} title={e.label}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
-                    data-type="body-s" className="block w-full truncate rounded-md px-2.5 py-2 text-left text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface [&_*]:!my-0 [&_*]:!inline [&_p]:truncate">
-                    <Markdown className="truncate">{e.label}</Markdown>
-                  </motion.button>
-                ))}
-              </div>
-        )}
         {tab === 'files' && (
           activity.files.length === 0
             ? <Empty icon={FileText} text="No files referenced yet." />
@@ -159,12 +148,9 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
   )
 }
 
-// active tab shows its label; inactive tabs are icon-only (with a tooltip) so all
-// four + the close button fit comfortably in the ~300px header. A real role="tab"
-
 /** Panel-slot empty — the canonical SlotEmptyState (patterns.md: slot-empty, not
  *  page-empty), centered in the tab panel's space. */
-function Empty({ icon: Icon, text }: { icon: typeof ListTree; text: string }) {
+function Empty({ icon: Icon, text }: { icon: typeof FileText; text: string }) {
   return (
     <div className="flex justify-center px-4 py-10">
       <SlotEmptyState icon={Icon}>{text}</SlotEmptyState>
