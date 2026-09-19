@@ -1483,6 +1483,14 @@ async def start_dashboard(
 
     register_task_routes(app)
 
+    # Document comments — the annotation layer over files and artifacts. Server-side
+    # because it shipped as ONE `localStorage` key, so clearing site data destroyed the
+    # only copy and `personalclaw snapshot` could not carry what the server never saw —
+    # while TASK comments next door were a real store the whole time (#429).
+    from personalclaw.dashboard.handlers.doc_comments import register_doc_comment_routes
+
+    register_doc_comment_routes(app)
+
     # Workflows — the v2 run/def API (WORKFLOWS-V2 Slice 7a) over the same
     # `workflows.service` the chat tools use, so the two surfaces cannot diverge.
     from personalclaw.workflows.handlers import register_workflow_routes

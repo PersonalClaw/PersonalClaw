@@ -1452,11 +1452,16 @@ class TestAcceptedSkillsTravel:
 
     def test_skill_count_reports_the_whole_library(self, fake_personalclaw_home, tmp_path):
         """`skill_count` counts what the walk wrote, so an exclusion made the manifest under-report
-        with no way for a reviewer to notice — the count simply looked smaller than the library."""
+        with no way for a reviewer to notice — the count simply looked smaller than the library.
+
+        Measured against the tree rather than a literal: a hardcoded number passes just as well
+        when the count is right for the wrong reason.
+        """
         _seed_skills(fake_personalclaw_home)
+        on_disk = sum(1 for p in (fake_personalclaw_home / "skills").rglob("*") if p.is_file())
         with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
             _, manifest = create_export_zip()
-        assert manifest["contents"]["skill_count"] == 2, manifest["contents"]
+        assert manifest["contents"]["skill_count"] == on_disk, manifest["contents"]
 
     def test_a_round_trip_returns_the_accepted_skill(self, fake_personalclaw_home, tmp_path):
         """Widening the export alone would only move the drop one step downstream: the import
