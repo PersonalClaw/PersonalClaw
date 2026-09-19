@@ -335,6 +335,22 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
       await waitFor(() => expect(patchConfig).toHaveBeenCalledWith(`evals.${key}`, next))
     }
   })
+
+  it('patches the declared min itself, not min+step (#2952)', async () => {
+    // The test above never tries the FLOOR: `min + step` is deliberately non-zero for
+    // `judge_agreement_floor` (min 0, step < 1), which is exactly how the backend bug
+    // (`load()`'s `X or DEFAULT` turning a saved 0 back into 0.6) went unnoticed here — this
+    // panel's own round-trip test never sent the one value that exposed it. This does not
+    // reach `load()` (that assertion is the Python `test_config_roundtrip.py`), but it does
+    // pin that the UI is willing to PATCH the boundary at all, rather than a control that
+    // silently floors below its own displayed minimum.
+    await mount()
+    const el = screen.getByRole('spinbutton', { name: META.judge_agreement_floor.label })
+    expect(Number(el.getAttribute('min'))).toBe(0)
+    fireEvent.change(el, { target: { value: '0' } })
+    fireEvent.blur(el)
+    await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('evals.judge_agreement_floor', 0))
+  })
 })
 
 describe('the switch says what turning it on costs', () => {

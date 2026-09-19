@@ -176,9 +176,16 @@ class TestConfigFourPoints:
             "rate_burst",
             "rate_concurrent",
             "auto_disable_after_breaches",
-            "capture_retention_days",
         ):
             assert f"external_access.{knob}" in _EDITABLE_CONFIG
+        # #2950: the retention window has exactly ONE writable spelling — the nested
+        # `capture.retention_days` `load()` actually prefers. The legacy flat
+        # `capture_retention_days` is deliberately OUT of the allowlist now: it used to sit
+        # beside the nested key here, PATCHing it wrote the file and `load()` never read it
+        # back (a fresh config.json always ships the nested key), so a control wired to the
+        # flat name reported 200 having changed nothing effective.
+        assert "external_access.capture.retention_days" in _EDITABLE_CONFIG
+        assert "external_access.capture_retention_days" not in _EDITABLE_CONFIG
 
     def test_the_old_inbound_section_is_gone(self):
         """Clean break: `InboundConfig` is REPLACED, not shadowed by a compat alias.

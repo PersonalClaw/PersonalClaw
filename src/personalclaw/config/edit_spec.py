@@ -256,8 +256,16 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
             # Rule ops v2 (§2.3): optional declarative line operations. Each op regex
             # must compile; head/tail must be small non-negative ints. Omitted = off.
             for k in ("head", "tail"):
+                raw_op = r.get(k, 0)
+                # Same guard as the top-level `int` branch, and for the same reason:
+                # `isinstance(True, int)` is True and `int(True)` is 1, so without this a
+                # JSON `true` would quietly become "keep the last 1 line" (#2958) — the
+                # exact hardening the sibling `int` branch already enforces two dozen lines
+                # up in this same function.
+                if isinstance(raw_op, bool):
+                    raise ConfigValueError(f"{k} must be an integer", f"{path_key}[{i}]")
                 try:
-                    n = int(r.get(k, 0) or 0)
+                    n = int(raw_op or 0)
                 except (TypeError, ValueError):
                     raise ConfigValueError(f"{k} must be an integer", f"{path_key}[{i}]") from None
                 if n < 0 or n > 10_000:
@@ -320,8 +328,16 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
                 raise ConfigValueError("each catalog needs a url", f"{path_key}[{i}]")
             if len(url) > 512:
                 raise ConfigValueError("url too long (max 512)", f"{path_key}[{i}]")
-            if not (url.startswith("https://") or url.startswith("http://")):
-                raise ConfigValueError("url must be http(s)", f"{path_key}[{i}]")
+            # Same shape as the `https_url` branch's `parsed.netloc` check (#2958): a bare
+            # scheme prefix accepts `https:///topic` — no host, nothing that could ever be
+            # fetched — and stores it as a configured source. Refusing here, where the
+            # request still has the caller to report a 400 to, is cheaper than surfacing the
+            # failure later at fetch time (or not at all).
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ConfigValueError(
+                    "url must be a full http(s):// URL with a host", f"{path_key}[{i}]"
+                )
             if kind not in ("index", "tap"):
                 raise ConfigValueError("kind must be 'index' or 'tap'", f"{path_key}[{i}]")
             clean_catalogs.append({"name": name, "url": url, "kind": kind})

@@ -293,6 +293,90 @@ async def test_the_two_endpoints_agree_on_the_same_field(cfg_file):
     assert "max_subagents" in put_err, "the PUT does not say which field it refused"
 
 
+# ── PATCH /api/config/personalclaw — custom-type coercers (#2958) ────────
+#
+# `coerce_edit_value`'s `int`/`float` branches refuse a JSON `true` explicitly, with a
+# comment saying why: `isinstance(True, int)` is True and `int(True)` is 1, so a bare
+# `int(value)` would quietly turn a boolean into 1 for a numeric field. Two custom-type
+# branches — `projection_rules`'s per-rule `head`/`tail` and `skill_catalogs`'s url check —
+# did the looser thing their sibling branches were hardened against.
+
+
+@pytest.mark.asyncio
+async def test_projection_rule_tail_true_is_refused_not_stored_as_one(cfg_file):
+    """`tail: true` used to become `int(True)` = 1 — "keep the last 1 line" — silently
+    truncating a tool's output to one line for a caller who sent a boolean, not a count."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "tools",
+            lambda: c.patch(
+                "/api/config/personalclaw",
+                json={
+                    "path": "tools.projection_rules",
+                    "value": [{"name": "b", "match_regex": "x", "strategy": "log", "tail": True}],
+                },
+            ),
+        )
+        assert resp.status == 400, await resp.text()
+        assert "tail" in (await resp.json())["error"]
+    assert unchanged, "tail:true was coerced to 1 and written anyway"
+
+
+@pytest.mark.asyncio
+async def test_projection_rule_a_real_tail_count_still_writes(cfg_file):
+    """Vacuity for the test above: a real count must still work."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={
+                "path": "tools.projection_rules",
+                "value": [{"name": "b", "match_regex": "x", "strategy": "log", "tail": 3}],
+            },
+        )
+        assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "tools")["projection_rules"][0]["tail"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_hostless_skill_catalog_url_is_refused(cfg_file):
+    """`https:///topic` has no host and can never be fetched — `https_url` already refuses
+    exactly this shape for `mobile.ntfy_topic_url` via `parsed.netloc`; `skill_catalogs`
+    checked only the scheme prefix and stored it as a configured source."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "packs",
+            lambda: c.patch(
+                "/api/config/personalclaw",
+                json={
+                    "path": "packs.skill_catalogs",
+                    "value": [{"name": "k", "url": "https://"}],
+                },
+            ),
+        )
+        assert resp.status == 400, await resp.text()
+        assert "url" in (await resp.json())["error"]
+    assert unchanged, "the hostless url was stored anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_real_skill_catalog_url_still_writes(cfg_file):
+    """Vacuity for the test above: a real catalog URL must still work."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={
+                "path": "packs.skill_catalogs",
+                "value": [{"name": "k", "url": "https://example.com/index.json"}],
+            },
+        )
+        assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "packs")["skill_catalogs"][0]["url"] == (
+        "https://example.com/index.json"
+    )
+
+
 # ── personalclaw config set ───────────────────────────────────────────────
 
 
