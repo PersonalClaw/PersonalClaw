@@ -49,6 +49,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
@@ -112,9 +113,7 @@ async def api_pack_bundled_install(request: web.Request) -> web.Response:
     name = request.match_info.get("name", "")
     if get_bundled(name) is None:
         return json_error("pack_not_bundled", message=f"no bundled pack named {name!r}", status=404)
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     staging = Path(tempfile.mkdtemp(prefix="pclaw-bundled-"))
     try:
         archive = build_bundled(name, staging / f"{name}.pclaw")
@@ -188,9 +187,7 @@ async def api_pack_bindings(request: web.Request) -> web.Response:
     from personalclaw.packs.installed import BindingError, bind_answer
 
     name = request.match_info.get("name", "")
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     key = str(body.get("key", "") or "")
     value = str(body.get("value", "") or "")
     if not key:
@@ -208,9 +205,7 @@ async def api_pack_prompt_card(request: web.Request) -> web.Response:
     """Import a pasted prompt card (§4.3) — files a proposal, writes no entity."""
     from personalclaw.packs.prompt_cards import PromptCardError, import_prompt_card
 
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     try:
         result = await import_prompt_card(str(body.get("card", "") or ""))
     except PromptCardError as exc:
@@ -226,9 +221,7 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
     from personalclaw.packs.import_ import PackImportRefused
     from personalclaw.packs.onelink import OneLinkError, import_onelink
 
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     doc = body.get("link")
     if not isinstance(doc, dict):
         return json_error("one_link_required", message="a `link` object is required", status=400)
@@ -277,9 +270,7 @@ async def api_pack_proposal_reject(request: web.Request) -> web.Response:
     """Remember that this project's user does not want this pack — the never-re-nag write (§7)."""
     from personalclaw.packs.fingerprint import reject_proposal
 
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     project_id = str(body.get("project_id", "") or "").strip()
     pack = str(body.get("pack", "") or "").strip()
     try:
@@ -304,9 +295,7 @@ async def api_pack_update(request: web.Request) -> web.Response:
     from personalclaw.packs.update import PackUpdateError, apply_update, plan_update
 
     name = request.match_info.get("name", "")
-    body = await _json_body(request)
-    if body is None:
-        return json_error("invalid_json", message="request body must be a JSON object", status=400)
+    body = await json_object_body(request)
     if get_bundled(name) is None:
         # v1 updates a pack from the version shipped in THIS build — the only archive the
         # gateway can produce on its own. A URL/file source is the export UI's later scope.
@@ -334,18 +323,6 @@ async def api_pack_update(request: web.Request) -> web.Response:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return web.json_response({"ok": True, "update": plan.to_dict()})
-
-
-async def _json_body(request: web.Request) -> dict | None:
-    """The request's JSON object, or None when there isn't one. An EMPTY body is ``{}`` —
-    every route here has usable defaults, so requiring a body would be ceremony."""
-    if not request.can_read_body:
-        return {}
-    try:
-        body = await request.json()
-    except Exception:
-        return None
-    return body if isinstance(body, dict) else None
 
 
 def _connector_choices(body: dict) -> dict | None:

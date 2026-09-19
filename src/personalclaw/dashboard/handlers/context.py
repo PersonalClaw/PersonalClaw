@@ -24,6 +24,7 @@ from aiohttp import web
 from personalclaw.atomic_write import atomic_write
 from personalclaw.http_errors import json_error
 from personalclaw.legibility import context_router as cr
+from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.tasks.hierarchy import HierarchyStore
 
 logger = logging.getLogger(__name__)
@@ -172,12 +173,8 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
             {"error": f"workspace directory does not exist: {workspace}"}, status=400
         )
 
-    query = ""
-    try:
-        body = await request.json()
-        query = str((body or {}).get("query", ""))[:500]
-    except Exception:
-        query = ""
+    body = await json_object_body(request)
+    query = string_field(body, "query")[:500]
 
     routed = _route_for_project(state, project, query)
     block = cr.render_block(routed)

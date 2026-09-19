@@ -2,8 +2,8 @@
 
 The extension ``ProviderRegistry`` has real type handlers for the types that own
 a consumed domain registry (model/task/workflow/memory/tool/hook/prompt/channel/
-knowledge/inbox) and ``EntitySeamHandler`` for the types whose real entity lives
-in a separate subsystem: agent, skills, notification.
+knowledge/inbox/notification) and ``EntitySeamHandler`` for the types whose real
+entity lives in a separate subsystem: agent, skills.
 
 These tests pin the seam invariant: the seam must NAME where each entity actually
 lives (so no future feature wires the Nth consumer of a no-op path), a genuine
@@ -27,12 +27,17 @@ from personalclaw.providers.registry import (
 # owned through this seam). Real-registry types are asserted separately.
 # ``channel`` graduated to a real handler (ChannelTypeHandler registers a
 # transport in channel_transports), so it is no longer a seam.
-SEAM_TYPES = {"agent", "skills", "notification"}
+SEAM_TYPES = {"agent", "skills"}
 # ``knowledge`` graduated to a real handler (KnowledgeTypeHandler registers a
 # provider in knowledge_providers.registry, consumed by list_provider_info +
 # search_all — WATCHED-SOURCES §1.3), so it is no longer a seam.
 # ``inbox`` graduated the same way (InboxTypeHandler registers a source in
 # inbox_providers.registry, consumed by get_default_provider — INU-8).
+# ``notification`` graduated the same way (NotificationTypeHandler registers a
+# backend in notification_providers.registry, consumed by
+# DashboardState.notify -> deliver_to_addressee — MULTI-TENANCY-ENTITY TSE2-5).
+# Its seam's own source_of_truth had said "pluggable delivery backends remain a
+# future design"; the addressee is what made one buildable.
 REAL_REGISTRY_TYPES = {
     "model",
     "task",
@@ -44,6 +49,7 @@ REAL_REGISTRY_TYPES = {
     "channel",
     "knowledge",
     "inbox",
+    "notification",
 }
 # Types with a genuine factory↔registry contract mismatch flagged for an owner.
 MISMATCH_TYPES = {"skills"}

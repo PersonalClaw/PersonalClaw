@@ -45,6 +45,7 @@ from personalclaw.dashboard.origin import is_loopback
 from personalclaw.dashboard.session_store import DeviceInfo, device_sessions
 from personalclaw.http_errors import json_error
 from personalclaw.net import LOOPBACK_INTERNAL, evaluate
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -111,14 +112,6 @@ def _paired_device(request: web.Request) -> DeviceInfo | None:
     return record.device
 
 
-async def _body(request: web.Request) -> dict[str, Any]:
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 — a malformed body is an empty body, not a 500
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
 async def api_browse_connector_attach(request: web.Request) -> web.Response:
     """POST /api/browse/connector — record the operator's attached browser.
 
@@ -135,7 +128,7 @@ async def api_browse_connector_attach(request: web.Request) -> web.Response:
         _audit("browse_connector_attached", "denied", error="not a paired device session")
         return json_error("browse_connector_unpaired", status=403)
 
-    body = await _body(request)
+    body = await json_object_body(request)
     cdp_url = str(body.get("cdp_url") or "").strip()
     if not cdp_url:
         _audit("browse_connector_attached", "denied", caller=device.id, error="missing cdp_url")

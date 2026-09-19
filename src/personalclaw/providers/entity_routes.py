@@ -154,9 +154,14 @@ def load_notifications_settings() -> dict[str, Any]:
     Migrates the pre-rename ``master_mute`` key to ``mute_all`` (the store
     self-heals on the next PUT); unknown keys are dropped by the merge —
     including the retired ``default_channel`` (removed 2026-07: it picked among
-    notification-delivery providers, but no provider declares
-    ``type=notification`` and no delivery consumer exists — see the
-    EntitySeamHandler registration in providers/registry.py)."""
+    notification-delivery providers, which did not exist).
+
+    ``type=notification`` providers DO exist now (`TSE2-5` — see
+    ``providers/registry.py::NotificationTypeHandler``), and ``default_channel`` stays
+    retired anyway: routing is decided per note by its **addressee**
+    (``notification_addressing``), which is a property of the thing the note is about, not a
+    standing preference. A default route would have to answer "everyone's notifications go
+    here", which is the question the addressee replaced."""
     raw = _load_entity_settings("notifications")
     if "mute_all" not in raw and "master_mute" in raw:
         raw["mute_all"] = bool(raw["master_mute"])

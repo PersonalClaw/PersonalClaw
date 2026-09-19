@@ -27,14 +27,13 @@ to replace when a browser re-subscribes.
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
 
 from aiohttp import web
 
 from personalclaw import push
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +46,6 @@ ERR_NOT_REGISTERED = "push_relay_not_registered"
 #: subscriptions file arbitrarily large — the endpoints browsers actually mint are ~200 chars.
 _MAX_ENDPOINT = 1024
 _MAX_DEVICE_ID = 128
-
-
-async def _body(request: web.Request) -> dict[str, Any]:
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _audit(operation: str, outcome: str, *, resources: str = "") -> None:
@@ -99,7 +90,7 @@ async def api_push_status(request: web.Request) -> web.Response:
 
 async def api_push_subscribe(request: web.Request) -> web.Response:
     """store one device's W3C push subscription, and route approvals to it."""
-    body = await _body(request)
+    body = await json_object_body(request)
     device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
     subscription = body.get("subscription")
     if not device_id or not isinstance(subscription, dict):
@@ -132,7 +123,7 @@ async def api_push_subscribe(request: web.Request) -> web.Response:
 
 async def api_push_unsubscribe(request: web.Request) -> web.Response:
     """drop one device's push subscription."""
-    body = await _body(request)
+    body = await json_object_body(request)
     device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
     if not device_id or not push.unsubscribe(device_id):
         _audit("push_unsubscribe", "denied", resources=f"device={device_id}")
@@ -148,7 +139,7 @@ async def api_push_relay_register(request: web.Request) -> web.Response:
     the device id and platform only — the same reasoning that keeps webpush endpoints
     out of SEL lines (see :func:`_audit`).
     """
-    body = await _body(request)
+    body = await json_object_body(request)
     device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
     platform = str(body.get("platform") or "").strip().lower()
     token = str(body.get("token") or "").strip()[:_MAX_ENDPOINT]
@@ -179,7 +170,7 @@ async def api_push_relay_register(request: web.Request) -> web.Response:
 
 async def api_push_relay_unregister(request: web.Request) -> web.Response:
     """Drop one device's relay token."""
-    body = await _body(request)
+    body = await json_object_body(request)
     device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
     if not device_id or not push.unregister_relay_token(device_id):
         _audit("push_relay_unregister", "denied", resources=f"device={device_id}")

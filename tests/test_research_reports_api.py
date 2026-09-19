@@ -188,7 +188,12 @@ def isolated(tmp_path, monkeypatch, sel_log):
 
 
 def _app() -> web.Application:
-    app = web.Application()
+    # `request_boundary_middleware` mirrors `dashboard/server.py`: these routes read their
+    # body through `personalclaw.request_validation`, which RAISES, and the middleware is
+    # what turns that into the 400 a client sees. Without it the app is not the gateway.
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
     rr_api.setup_research_report_routes(app)
     return app
 
@@ -328,9 +333,14 @@ class TestValidation:
         async with TestClient(TestServer(_app())) as c:
             resp = await c.post("/api/knowledge/reports", json=[1, 2])
             assert resp.status == 400
+            # `invalid_body`, not `invalid_json`: this module's deleted private `_body`
+            # spelled BOTH "unparseable" and "parsed to the wrong thing" `invalid_json`,
+            # which told a caller whose JSON was perfectly valid to go looking for a syntax
+            # error. The shared reader separates them, and the message names the JSON type
+            # the caller actually sent rather than Python's.
             assert (await resp.json())["error"] == {
-                "code": "invalid_json",
-                "message": "JSON body must be an object",
+                "code": "invalid_body",
+                "message": "The request body must be a JSON object, not an array.",
             }
 
 

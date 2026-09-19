@@ -1123,6 +1123,13 @@ PROVIDER_TYPES = frozenset(
         # Rows only, never execution: the local TriggerService fires, and only rows whose `author`
         # is the owner. Its `TriggerTypeHandler` lands in the same commit (the #47 rule).
         "trigger",
+        # KNOWLEDGE-BASE-VECTOR-STORE KBVS-1: an app-contributed EXTERNAL chunk-vector index —
+        # the user's own Qdrant/pgvector/Chroma serving knowledge vector search in place of the
+        # bundled sqlite-vec/vec0 index. NOT the `memory` type: that supplies a memory RECORD
+        # store (records plus their own vector layer); this supplies only the chunk-vector INDEX
+        # for the knowledge library, and the chunk rows themselves stay local. Its
+        # `VectorStoreTypeHandler` lands in the same commit (the #47 rule).
+        "vector_store",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

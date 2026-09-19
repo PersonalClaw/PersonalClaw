@@ -244,6 +244,17 @@ class KnowledgePersistActionProvider(ActionProvider):
                         "conflict_candidates": conflict_candidates,
                         "citation_warnings": cited.warnings,
                         "reason": decision.reason,
+                        # Pushed on reinforce too: `sharing_policy` is the one field a later
+                        # write may CHANGE, so this is exactly where an item gets PROMOTED from
+                        # private to shared. Skipping the push here would make the promotion
+                        # local-only and the item would never reach the team store it was just
+                        # marked for.
+                        "shared_to": await _push_shared(
+                            item_id=decision.item_id,
+                            title=title,
+                            content=body,
+                            metadata=metadata,
+                        ),
                     }
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
@@ -315,6 +326,9 @@ class KnowledgePersistActionProvider(ActionProvider):
                     "conflict_candidates": conflict_candidates,
                     "citation_warnings": cited.warnings,
                     "reason": decision.reason,
+                    "shared_to": await _push_shared(
+                        item_id=item_id, title=title, content=body, metadata=metadata
+                    ),
                 }
             ),
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -1032,6 +1046,33 @@ def _scope_metadata(
     else:
         out[policy_key] = str(existing[policy_key])
     return out
+
+
+async def _push_shared(
+    *, item_id: str, title: str, content: str, metadata: dict[str, Any]
+) -> list[str]:
+    """Offer a just-written item to the team store when its policy says ``shared`` (TSE2-4).
+
+    The write has already committed, so this is the OUTBOUND half of §1.6's
+    ``sharing_policy`` and nothing more: the local item is the record, the push is a
+    courtesy. Returns the provider names that accepted — reported in the action's stdout so
+    a run can SEE the item left the machine rather than assuming a declared policy did
+    something. ``[]`` for a private item (the common case) and for an install with no
+    provider registered, which is every solo install.
+
+    The gate lives in ``sharing.push_shared_item``, not here: this call site must not be able
+    to disagree with the project view about what "shared" means.
+    """
+    from personalclaw.knowledge import sharing
+    from personalclaw.knowledge_providers.base import KnowledgeItem
+
+    try:
+        return await sharing.push_shared_item(
+            KnowledgeItem(id=item_id, title=title, content=content, metadata=dict(metadata))
+        )
+    except Exception:  # noqa: BLE001 — never fail a committed write on an outbound courtesy
+        logger.debug("shared knowledge push failed for %s", item_id, exc_info=True)
+        return []
 
 
 def _run_source_ref(ctx: ActionContext) -> str:

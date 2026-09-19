@@ -23,6 +23,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `tool`
 - `trigger`
 - `trigger_source`
+- `vector_store`
 - `workflow`
 
 ## Registered providers

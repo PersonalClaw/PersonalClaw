@@ -16,6 +16,13 @@ from aiohttp import web
 
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.request_validation import (
+    MISSING,
+    json_object_body,
+    optional_string,
+    require_string,
+    string_field,
+)
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -112,14 +119,11 @@ async def api_chat_tags(request: web.Request) -> web.Response:
 async def api_chat_tag_create(request: web.Request) -> web.Response:
     """POST /api/chat/tags — create a new tag."""
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+    body = await json_object_body(request)
     tag = create_tag(
         state,
-        str(body.get("name") or ""),
-        color=str(body.get("color") or _DEFAULT_COLOR),
+        require_string(body, "name"),
+        color=string_field(body, "color", default=_DEFAULT_COLOR) or _DEFAULT_COLOR,
         status=bool(body.get("status", False)),
     )
     if tag is None:
@@ -295,18 +299,8 @@ async def api_chat_tag_column_create(request: web.Request) -> web.Response:
     rather than persisted.
     """
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
-    raw_name = body.get("name", "")
-    if not isinstance(raw_name, str) or not raw_name.strip():
-        return web.json_response(
-            {"error": "tag column name is required and must be a non-empty string"},
-            status=400,
-        )
+    body = await json_object_body(request)
+    require_string(body, "name")
     column = _normalize_column(state, {**body, "order": len(state._tag_boards)})
     if column is None:
         return web.json_response({"error": "invalid column payload"}, status=400)
@@ -330,10 +324,13 @@ async def api_chat_tag_column_update(request: web.Request) -> web.Response:
     column = next((c for c in state._tag_boards if c.get("id") == cid), None)
     if not column:
         return web.json_response({"error": "not found"}, status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+    body = await json_object_body(request)
+    # The create door's rule, re-asked (#2992). MISSING means the caller did not send a
+    # name, which leaves the column's name alone; anything present must clear the same
+    # bar the POST sets.
+    name = optional_string(body, "name")
+    if name is not MISSING:
+        body["name"] = name
     merged = _normalize_column(state, body, existing=column)
     if merged is None:
         return web.json_response({"error": "invalid column payload"}, status=400)

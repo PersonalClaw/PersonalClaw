@@ -41,6 +41,7 @@ from personalclaw.dashboard.token_auth import (
 )
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -166,10 +167,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
         )
         return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     username = str(body.get("username") or "")
@@ -346,10 +344,7 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
     """
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
 
@@ -393,10 +388,7 @@ async def api_auth_enroll_start(request: web.Request) -> web.Response:
 
     from personalclaw.auth import enrollment
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     label = str((body or {}).get("label") or "") if isinstance(body, dict) else ""
 
     code, expires_at = enrollment.issue_code(label=label)
@@ -434,10 +426,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
 
     from personalclaw.auth import enrollment
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     code = str((body or {}).get("code") or "") if isinstance(body, dict) else ""
 
     if not enrollment.redeem_code(code):

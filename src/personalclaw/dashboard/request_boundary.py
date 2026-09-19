@@ -29,6 +29,16 @@ that did not. The raw exception is logged, never returned: the client gets the s
 envelope and its generic sentence, and the traceback stays in ``gateway.log`` — the
 current behavior leaks the internal fault to the client, this one does not.
 
+**Two precisions, one gate.** The fault family described above is what NOBODY guarded,
+and its generic sentence names no field because it cannot — it is reading an
+``AttributeError``. The other branch serves
+:class:`~personalclaw.request_validation.RequestValidationError`,
+which a handler raised ON PURPOSE via the shared write-path validator and which DOES
+name the field. Both live here for the same reason: answered per handler, the next route
+forgets. Ordering is load-bearing — the deliberate refusal is caught first, because
+routing it through the fault branch would discard the field name that is the entire
+value of having validated.
+
 **What it deliberately does NOT catch.** ``web.HTTPException`` is re-raised untouched:
 a handler that answers 404/400/redirect on purpose, and the router's 404/405 that
 ``spa_fallback`` normalizes, are already-formed responses, not faults to reinterpret.
@@ -55,6 +65,7 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import RequestValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +90,20 @@ def request_boundary_middleware() -> Any:
             # An already-formed HTTP response (a handler's deliberate 4xx/redirect, or
             # the router's 404/405 that spa_fallback owns). Never reinterpret it.
             raise
+        except RequestValidationError as exc:
+            # The DELIBERATE half of this middleware's job, and it must be caught before
+            # the fault family below. A handler that called
+            # `request_validation.json_object_body`/`require_string` has already decided
+            # this request is malformed and knows WHICH field; the refusal carries its own
+            # code and message, so there is nothing to reinterpret — only to serve. This is
+            # what makes adoption a one-line change at the 265 body-read sites `dd5c279db`
+            # carried, instead of a try/except at each (see request_validation's docstring).
+            #
+            # NOT path-scoped, unlike the branch below: an explicit refusal is a formed
+            # answer for any route that chose to validate, not a fault being rescued on the
+            # /api surface. And answered here rather than by the handler for the reason the
+            # docstring gives — a per-handler answer is how a systemic gap stays open.
+            return exc.response
         except (ValueError, TypeError, AttributeError) as exc:
             # Scoped to /api/* for the same reason spa_fallback scopes its 404/405
             # normalization: the wire envelope is what a JSON client reads, and turning a

@@ -133,6 +133,36 @@ layer that cannot read its own config must not be able to silence the system.
 An unregistered pair resolves to `system/generic` with a warning rather than
 raising.
 
+**3. The addressee** — `notification_addressing.py`. The first two layers answer
+*should this be delivered* and *how loudly*; neither could answer *to whom*, so
+every note went to **this** dashboard by construction. Once a shared store
+contributes rows somebody else owns (`TSE2-1`/`TSE2-2`/`TSE2-3` stamp
+`owner_username` on runs, entities and inbox items), that is wrong: a teammate's
+inbox item wanting attention fired a toast at whoever was sitting here.
+
+- a note's `addressee` is the same `owner_username` slug everything else
+  carries — **not** a second owner vocabulary. `inbox.emit_attention_item`
+  supplies the item's own owner, because the notification is a *view* of the
+  item;
+- **foreign-addressed is visible-but-not-fired**, the shipped foreign-*trigger*
+  posture applied to the attention path. `triggers/ownership.py` withholds a
+  foreign row from the ARM read (`triggers/provider.py::armable`) while the
+  LISTING read keeps it; here `_append_notification` is the listing (the bell
+  and `GET /api/notifications` still show the row, marked
+  `withheld_reason: foreign_addressee`) and the fire half — WS broadcast,
+  `native`, `push`, the digest — is what the addressee gates;
+- empty addressee, or no configured username, reads as the owner's, so an
+  install with no shared source behaves exactly as before;
+- **delivery is pluggable**: a foreign-addressed note is offered to registered
+  `type=notification` providers (`notification_providers/`, published as
+  `sdk/notification.py`), and the accepting backend's name is recorded in
+  `routed_to`. With none installed `routed_to` is `""` — "nobody could reach
+  them" must never read as "delivered".
+
+The decision sits after `never` and before the three delivery modes: `digest`
+and `badge` are local deliveries too, and a foreign note in the morning digest
+is a foreign note fired one day late.
+
 Unread counts are *derived* from unacked log entries; deletes broadcast
 `notification_removed`. Notification metadata may carry a `channel_link` —
 built via `ChannelDelivery.build_thread_link`, never by core string-formatting

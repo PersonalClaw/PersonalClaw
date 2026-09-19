@@ -480,6 +480,10 @@ ARTIFACT_SAVE_SCHEMA = ToolSchema(
         FieldSpec("description", str, max_len=2000),
         FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
         FieldSpec("content_file", str, max_len=MAX_SHORT_STRING),
+        # Bound mirrors the store's own clamp (artifacts.models.MAX_NAME_LEN), same as
+        # ``name`` above: the schema refuses what the store would silently truncate.
+        FieldSpec("collection", str, max_len=200),
+        FieldSpec("force", bool),
     ],
 )
 
@@ -499,6 +503,7 @@ ARTIFACT_UPDATE_SCHEMA = ToolSchema(
         FieldSpec("description", str, max_len=2000),
         FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
         FieldSpec("content_file", str, max_len=MAX_SHORT_STRING),
+        FieldSpec("collection", str, max_len=200),
     ],
 )
 
@@ -508,6 +513,7 @@ ARTIFACT_LIST_SCHEMA = ToolSchema(
         FieldSpec("tag", str, max_len=64),
         FieldSpec("kind", str, max_len=20, allowed=_ARTIFACT_KINDS),
         FieldSpec("q", str, max_len=MAX_SHORT_STRING),
+        FieldSpec("collection", str, max_len=200),
     ],
 )
 

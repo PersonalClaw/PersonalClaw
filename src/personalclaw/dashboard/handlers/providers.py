@@ -66,7 +66,12 @@ async def api_providers_list(request: web.Request) -> web.Response:
                 from personalclaw.config.loader import config_dir
                 from personalclaw.llm.credentials import CredentialStore
 
-                store = CredentialStore(config_dir() / "credentials.json")
+                # The HOME, not the file: `CredentialStore.__init__` takes a home and derives
+                # `<home>/credentials.json` + `<home>/.env` itself. Passing the file made it read
+                # `credentials.json/credentials.json`, load no descriptors, and raise `KeyError`
+                # from `resolve` for every name — swallowed below into "missing", so every
+                # correctly configured provider reported its credential as absent (#2217).
+                store = CredentialStore(config_dir())
                 cred = store.resolve(entry.credential)
                 cred_status = "ok" if cred.secret else "missing"
             except Exception:

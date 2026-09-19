@@ -14,43 +14,28 @@ from aiohttp import web
 
 from personalclaw.agents import routing
 from personalclaw.config.loader import AppConfig
+from personalclaw.request_validation import json_object_body, require_string
 
 logger = logging.getLogger(__name__)
 
-
-def _bad(message: str, code: str = "bad_request", status: int = 400) -> web.Response:
-    return web.json_response({"error": {"code": code, "message": message}}, status=status)
-
-
-async def _agent_from_body(request: web.Request) -> tuple[str | None, web.Response | None]:
-    try:
-        body = await request.json()
-    except Exception:
-        return None, _bad("invalid JSON body")
-    if not isinstance(body, dict):
-        return None, _bad("body must be an object")
-    agent = str(body.get("agent", "")).strip()
-    if not agent:
-        return None, _bad("agent is required")
-    return agent, None
+# `_agent_from_body` + its private `_bad` emitter used to live here. Both are gone: the
+# shared reader answers the malformed-body half and `require_string` the missing-`agent`
+# half, so the two routes below read the same two lines and no longer carry a
+# `(value, response)` tuple whose error slot each caller had to remember to check.
 
 
 async def api_routing_dismiss(request: web.Request) -> web.Response:
     """POST /api/agents/routing/dismiss {agent} — bump the dismissal counter; the
     agent is muted once it reaches the mute threshold."""
-    agent, err = await _agent_from_body(request)
-    if err is not None:
-        return err
-    status = routing.record_dismiss(str(agent), now=time.time())
+    agent = require_string(await json_object_body(request), "agent")
+    status = routing.record_dismiss(agent, now=time.time())
     return web.json_response({"ok": True, **status})
 
 
 async def api_routing_unmute(request: web.Request) -> web.Response:
     """POST /api/agents/routing/unmute {agent} — clear an agent's mute + dismissals."""
-    agent, err = await _agent_from_body(request)
-    if err is not None:
-        return err
-    routing.unmute(str(agent))
+    agent = require_string(await json_object_body(request), "agent")
+    routing.unmute(agent)
     return web.json_response({"ok": True, "agent": agent})
 
 

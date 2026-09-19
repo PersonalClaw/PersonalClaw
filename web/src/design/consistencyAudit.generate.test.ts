@@ -19,7 +19,7 @@
  * So generation reuses the runner that already exists, and the separation that matters —
  * a plain test run writes nothing — is achieved by the gate rather than by the language.
  * The same shape as `e2e:update` next door, which is `playwright test
- * --update-snapshots`: the suite is the tool, the flag is the intent.
+ * e2e/visual.spec.ts --update-snapshots`: the suite is the tool, the flag is the intent.
  *
  * `consistencyAudit.noRepoWrites.test.ts` is the rail that keeps it this way — it allows
  * exactly this file to write, and only while the write stays behind the gate.

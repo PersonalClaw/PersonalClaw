@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { ConsentModal } from './installConsent'
+import { ConsentModal, consentPermissions } from './installConsent'
 import type { GuardedResult } from '../../lib/useGuardedInstall'
 
 // ── The install-consent modal's BLOCKED states have to read correctly ──────────────────────────────
@@ -246,5 +246,51 @@ describe('the scheduled-job row reads as a schedule', () => {
   it('still words the every-seconds form itself', () => {
     const c = row({ name: 'poll', every: 3600 })
     expect((c.textContent || '')).toMatch(/every hour/)
+  })
+})
+
+// ── consentPermissions: "declared none" and "not known yet" are different sentences ──
+//
+// Issue 614 was closed on this modal's guard (`permissions ? … : "could not read …"`),
+// but that guard cannot tell the two apart by itself: `CatalogEntry.to_dict` is `asdict`,
+// so EVERY catalog row ships a `permissions` object, `{}` for a declared-none manifest
+// AND `{}` for a registry pointer whose manifest is not fetched until install. `{}` is
+// truthy, so the pointer went down the KNOWN branch and asserted "granted no gateway
+// capability" about an app nobody had read — the same conflation the issue named, in the
+// opposite direction and on the path that actually installs. `consentKnown` is the one
+// authority; this helper is where the modal's documented `undefined` is derived.
+describe('consentPermissions separates declared-none from not-known-yet', () => {
+  it('a scanned manifest that declared nothing is KNOWN and empty', () => {
+    expect(consentPermissions({ consentKnown: true, permissions: {} })).toEqual({})
+  })
+
+  it('a scanned manifest carries its grants through unchanged', () => {
+    const perms = { storage: true }
+    expect(consentPermissions({ consentKnown: true, permissions: perms })).toBe(perms)
+  })
+
+  it('a registry pointer is NOT known, even though its permissions are {} on the wire', () => {
+    expect(consentPermissions({ consentKnown: false, permissions: {} })).toBeUndefined()
+  })
+
+  it('a row from before the flag existed, and no row at all, are both not-known', () => {
+    expect(consentPermissions({ permissions: {} })).toBeUndefined()
+    expect(consentPermissions(undefined)).toBeUndefined()
+  })
+
+  it('the modal says the grants are unreadable for a pointer, not that there are none', () => {
+    render(<ConsentModal label="remote-thing" busy={false} onConfirm={() => {}} onClose={() => {}}
+      permissions={consentPermissions({ consentKnown: false, permissions: {} })} crons={undefined}
+      result={guarded({ needsConsent: true, scan: scan() })} />)
+    expect(screen.getByText(/could not read this app's declared permissions/i)).toBeTruthy()
+    expect(screen.queryByText(/granted no gateway capability/i)).toBeNull()
+  })
+
+  it('and it DOES say "none" for a manifest that really declared nothing', () => {
+    render(<ConsentModal label="silent-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+      permissions={consentPermissions({ consentKnown: true, permissions: {} })} crons={undefined}
+      result={guarded({ needsConsent: true, scan: scan() })} />)
+    expect(screen.getByText(/granted no gateway capability/i)).toBeTruthy()
+    expect(screen.queryByText(/could not read this app's declared permissions/i)).toBeNull()
   })
 })

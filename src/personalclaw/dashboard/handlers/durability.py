@@ -33,6 +33,7 @@ from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query
 
 logger = logging.getLogger(__name__)
@@ -759,22 +760,6 @@ def _history_root(request: web.Request):
     return root, None
 
 
-async def _history_body(request: web.Request) -> tuple[dict, web.Response | None]:
-    if not request.can_read_body:
-        return {}, None
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return {}, web.json_response(
-            {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
-        )
-    if not isinstance(body, dict):
-        return {}, web.json_response(
-            {"error": {"code": "bad_body", "message": "body must be a JSON object"}}, status=400
-        )
-    return body, None
-
-
 def _history_paths(raw: object, *, field: str) -> tuple[list[str], web.Response | None]:
     """Normalize a repo-relative path subset from a request body.
 
@@ -956,9 +941,7 @@ async def api_durability_history_operate(request: web.Request) -> web.Response:
             },
             status=404,
         )
-    body, err = await _history_body(request)
-    if err is not None:
-        return err
+    body = await json_object_body(request)
     sha = str(body.get("sha", "") or "").strip()
     if not sha:
         return web.json_response(

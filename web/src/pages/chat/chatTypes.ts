@@ -252,6 +252,29 @@ export interface ChatTurn {
   visibleIndex?: number
 }
 
+/** THE UI COORDINATE of a turn — what identifies a turn to everything that scrolls to one:
+ *  `ChatPage`'s `turnNodes` DOM registry, every `SessionMark.visibleIndex`, and the
+ *  Activity → Index jump anchors.
+ *
+ *  🔑 IT IS A CONTRACT BETWEEN MODULES, WHICH IS WHY IT IS A FUNCTION AND NOT AN INLINE `?? i`.
+ *  The Session Map rail owns no scroll machinery: it hands a mark's coordinate to `onJumpTo` and
+ *  reads the page's node registry AT THAT COORDINATE. So the registry and the marks must be
+ *  keyed by the same rule, and a rule written twice in two files is a rule that drifts — which
+ *  is precisely what it did: registered under the array position, a mark jump on any tool-using
+ *  transcript resolved an EARLIER turn's node, because `hydrateTurns` collapses re-injections and
+ *  merges consecutive assistant messages so array position runs behind `visibleIndex`.
+ *
+ *  🪤 AND IT IS NOT `branchIndexOf`. That answers the OTHER question about a turn — "which
+ *  backend message does it BRANCH at" — and it is deliberately not reused here: its walk-back
+ *  derivation counts turns that have emitted TEXT, so a streaming assistant turn's value changes
+ *  mid-answer. A DOM registry keyed on it would strand the node it registered under the previous
+ *  value. This rule is stable for the life of a turn, which is what a registry needs. Two
+ *  questions, two rules, both right — do not collapse them.
+ */
+export function markCoordOf(turn: Pick<ChatTurn, 'visibleIndex'>, arrayIndex: number): number {
+  return turn.visibleIndex ?? arrayIndex
+}
+
 /** Convenience: a user turn from plain text. `optimized` records the optimized
  *  variant sent to the model when the original was rewritten before sending. */
 export const userTurn = (text: string, ts?: string, pastes?: ChatTurn['pastes'], files?: string[], optimized?: string): ChatTurn => ({ role: 'user', segments: [{ kind: 'text', text }], ts, pastes, files: files?.length ? files : undefined, optimized: optimized || undefined })
@@ -279,11 +302,16 @@ export interface SubagentCard {
   tokens?: number        // per-child total tokens (on done)
 }
 
-// ── activity-panel derivation (Index / Files / Links) — all client-side from turns ──
-export interface IndexEntry { turnIndex: number; label: string }
+// ── activity-panel derivation (Files / Links) — all client-side from turns ──
+//
+// There is no `index` here. The panel used to derive a user-message outline whose rows jumped to
+// a turn; the Session Map (the `sessionMapMarks`) is that index now — it marks tool calls,
+// approvals, errors and subagents as well as user turns, and it is always on screen rather than
+// behind a panel tab. SSM-13 deleted the outline and this model with it, so the session has ONE
+// index rather than two that have to be kept saying the same thing.
 export interface FileEntry { path: string; name: string }
 export interface LinkEntry { url: string; label: string }
-export interface ChatActivity { index: IndexEntry[]; files: FileEntry[]; links: LinkEntry[] }
+export interface ChatActivity { files: FileEntry[]; links: LinkEntry[] }
 
 // file-ish path: /a/b.ext, ~/a/b.ext, or workspace-relative a/b.ext (has an ext).
 const ACT_FILE_RE = /(?:^|[\s(`'"])((?:~|\/)[\w./\-]+\.\w{1,8}|[\w./\-]+\/[\w./\-]+\.\w{1,8})/g
@@ -293,12 +321,12 @@ const baseNameOf = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p
 const DIFF_NOISE = /^(?:[ab]\/|\/dev\/null$)/
 
 /** Derive the activity-panel data from the conversation turns:
- *   - Index: each user turn → a jump anchor (preview label).
  *   - Files: file paths from tool inputs/outputs + paths mentioned in assistant
  *     text (deduped, first-seen order).
- *   - Links: http(s) URLs surfaced in assistant text (deduped). */
+ *   - Links: http(s) URLs surfaced in assistant text (deduped).
+ *  User turns contribute neither (they are the reader's own text), so they are skipped
+ *  whole — see the `role === 'user'` early return below. */
 export function deriveActivity(turns: ChatTurn[]): ChatActivity {
-  const index: IndexEntry[] = []
   const files = new Map<string, FileEntry>()
   const links = new Map<string, LinkEntry>()
 
@@ -309,14 +337,9 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
     if (!files.has(p)) files.set(p, { path: p, name: baseNameOf(p) })
   }
 
-  turns.forEach((t, i) => {
-    if (t.role === 'user') {
-      // keep the FULL single-line text (CSS truncates visually) — don't slice the
-      // string, or markdown rendering of the label could cut mid-syntax (`**bo`).
-      const txt = turnText(t).replace(/\s+/g, ' ').trim()
-      if (txt) index.push({ turnIndex: i, label: txt })
-      return
-    }
+  turns.forEach((t) => {
+    // A user turn carries no tool output and no assistant prose, so neither tab reads it.
+    if (t.role === 'user') return
     for (const seg of t.segments) {
       if (seg.kind === 'tool') {
         // tool input/output often carry file paths (read/edit/write/terminal).
@@ -333,7 +356,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
       }
     }
   })
-  return { index, files: [...files.values()], links: [...links.values()] }
+  return { files: [...files.values()], links: [...links.values()] }
 }
 
 export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; is_read_only?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }

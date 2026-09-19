@@ -273,9 +273,10 @@ Get or set configuration values (see the [configuration reference](configuration
 
 | Subcommand | What it does |
 |---|---|
-| `config get [KEY]` | Get a value by dot-separated key, or the whole config with no key. |
+| `config get [KEY]` | Get a value by dot-separated key, or the whole config with no key. **Credentials are withheld**: any field whose name marks it as a secret (`api_key`, `bot_token`, `client_secret`, …) prints as `••••••••`, and a note on stderr names what was withheld. |
+| `config get [KEY] --reveal` | The same, with credentials in the clear. Use this — not the masked form — as the source of a file you intend to `config set --file` back. |
 | `config set KEY VALUE` | Set one value (validated through the loader), merged into the existing `config.json` so keys the loader does not model — `providers`, `use_cases`, `slack`, `meta` — are preserved. Refuses (exit 1) if the existing file cannot be read or parsed, rather than overwriting content it could not see. |
-| `config set --file FILE` | REPLACE the whole config with a JSON document. Unlike the single-key form this is a wholesale overwrite: anything absent from `FILE` is gone. |
+| `config set --file FILE` | Merge a JSON document into `config.json`. Top-level keys absent from `FILE` are preserved, so handing back a document `config get` printed cannot delete a block by omission. A field arriving as the `••••••••` placeholder means "keep what is on disk"; a placeholder that cannot be matched to a stored value refuses the write (exit 1) rather than overwriting the credential with bullets. |
 | `config edit` | Open `config.json` in `$EDITOR`. |
 
 ## `personalclaw skills`

@@ -301,7 +301,12 @@ class HierarchyStore:
         if not project:
             return None
         if "name" in fields:
-            new_name = str(fields["name"]).strip()
+            # No `str()`: coercing here is what turned `{"name": null}` into a project
+            # literally called "None" and a dict into Python's repr `{'a': 1}` (#456).
+            # A wrong type is REFUSED, never renamed.
+            if not isinstance(fields["name"], str):
+                raise ValueError("project name must be a string")
+            new_name = fields["name"].strip()
             if not new_name:
                 raise ValueError("project name cannot be empty")
             if project.is_builtin_project() and new_name != project.name:
@@ -452,8 +457,7 @@ class HierarchyStore:
         # two "General" lists, which made the auto-attach in `handlers` pick an arbitrary one
         # for a `project_id`-only task (#777). Scoped to the resolved project: the same name in a
         # DIFFERENT project stays legitimate (every project has its own "General").
-        if any(tl.name == name for tl in self.list_task_lists(project_id=project.id)):
-            raise ValueError(f"a task list named '{name}' already exists in this project")
+        self._refuse_duplicate_list_name(name, project.id)
         now = _now_iso()
         tl = TaskList(
             id=f"tl-{uuid.uuid4().hex[:8]}",
@@ -466,19 +470,53 @@ class HierarchyStore:
         self._write_list(tl)
         return tl
 
+    def _refuse_duplicate_list_name(
+        self, name: str, project_id: str, exclude_list_id: str = ""
+    ) -> None:
+        """Refuse *name* if another list in *project_id* already carries it (#777, #2990).
+
+        Extracted so `create_task_list`, a rename and a cross-project move all ask the
+        SAME question — the shape `update_project` has had all along. Three doors that
+        each decided it for themselves is how the invariant came to hold on exactly one
+        of them, while two in-code comments (`handlers._attach_project_general_list` and
+        `test_tasks_hierarchy`) asserted it held everywhere.
+        """
+        for tl in self.list_task_lists(project_id=project_id):
+            if tl.name == name and tl.id != exclude_list_id:
+                raise ValueError(f"a task list named '{name}' already exists in this project")
+
     def update_task_list(self, list_id: str, **fields) -> TaskList | None:
         tl = self.get_task_list(list_id)
         if not tl:
             return None
         if "name" in fields:
-            new_name = str(fields["name"]).strip()
+            # Same as `update_project`: refuse a wrong type rather than rename it (#456).
+            if not isinstance(fields["name"], str):
+                raise ValueError("task list name must be a string")
+            new_name = fields["name"].strip()
             if not new_name:
                 raise ValueError("task list name cannot be empty")
+            # ══ #2990 — the per-project name uniqueness `create_task_list` enforces,
+            # re-asked on RENAME. Without it a project could still end up holding two
+            # "General" lists on current `main` (the PUT accepted the exact name the POST
+            # had just refused), and `_attach_project_general_list` then routed two
+            # identically-shaped `project_id`-only task creates into DIFFERENT lists.
+            # Scoped to the list's CURRENT project and excluding self, exactly as
+            # `update_project`'s rename check is.
+            self._refuse_duplicate_list_name(new_name, tl.project_id, tl.id)
             tl.name = new_name
         if "project_id" in fields and fields["project_id"]:
+            if not isinstance(fields["project_id"], str):
+                # Before this, an int/list reached `PosixPath / <value>` and 500'd with
+                # `unsupported operand type(s) for /` (#456).
+                raise ValueError("project_id must be a string")
             target = self.get_project(fields["project_id"])
             if not target:
                 raise ValueError(f"no project with id '{fields['project_id']}'")
+            # ══ #2990's second door: a cross-project MOVE collides too. The name being
+            # carried into the target project is the one just validated above when the
+            # caller renamed in the same request, else the list's existing name.
+            self._refuse_duplicate_list_name(tl.name, target.id, tl.id)
             tl.project_id = target.id
         if "agent_instructions_template" in fields:
             tl.agent_instructions_template = fields["agent_instructions_template"]

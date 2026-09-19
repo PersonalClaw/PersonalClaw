@@ -11,6 +11,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
 
@@ -1027,10 +1028,7 @@ async def api_memory_promote(request: web.Request) -> web.Response:
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
     store = _get_provider(request.app["state"])
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     try:

@@ -11,7 +11,8 @@ import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { PageTitle } from '../../ui/PageTitle'
 import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
-import { intervalToSecs } from '../schedule/scheduleMeta'
+import { intervalToSecs, scheduleWhenMet } from '../schedule/scheduleMeta'
+import { epochSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { findTriggerPreset, prefillDraft } from './triggerPresets'
 import { schemaProps } from '../tools/schema'
@@ -145,7 +146,10 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // rejects it with `sender_glob_required`, so gate it here and point at the field rather than
   // round-tripping to learn the same thing.
   const eventMatcherMet = kind !== 'event' || !pm.matcherRequired || !!eventMatcher.trim()
-  const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet
+  // A One-shot with an empty date-time would omit `at` and earn a bare "every, cron, or at
+  // required" 400 — so the WHEN axis is a save requirement, named like the other four (issue 530).
+  const scheduleWhenOk = kind !== 'schedule' || scheduleWhenMet(sched.kind, sched.at)
+  const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet && scheduleWhenOk
 
   async function create() {
     if (!canSave) { setErr('Fill in the trigger name, action, and any required action fields'); return }
@@ -171,7 +175,10 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         }
         if (sched.kind === 'cron') body.cron = sched.cron.trim()
         else if (sched.kind === 'every') body.every = intervalToSecs(sched.intervalValue, sched.intervalUnit)
-        else if (sched.kind === 'at') body.at = sched.at
+        // Epoch seconds, converted in the BROWSER — see `draftToPayload`'s note: the handler
+        // refuses a raw `datetime-local` string, and parsing it server-side would resolve the
+        // zone-less value in the gateway's OS zone instead of the user's (issues 530, 497).
+        else if (sched.kind === 'at') body.at = epochSeconds(sched.at)
         // The unified facade derives exec fields from the canonical action.
         body.action = { provider, config: coerced.config }
         await api.createSchedule(body)
@@ -317,8 +324,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
-          {/* `canSave` ANDs four requirements; the reason names the FIRST one outstanding, in the
-              order the form presents them, rather than reciting all four. Omitted while `saving`,
+          {/* `canSave` ANDs five requirements; the reason names the FIRST one outstanding, in the
+              order the form presents them, rather than reciting all five. Omitted while `saving`,
               where the label already reads "Creating…". */}
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !canSave}
             disabledReason={saving ? undefined
@@ -328,7 +335,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
                 : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
                   : !provider ? 'Pick a provider'
                     : !requiredConfigMet ? 'Complete the required settings'
-                      : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
+                      : !scheduleWhenOk ? 'Pick the date & time to fire once'
+                        : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
         </div>
       </div>
     </div>

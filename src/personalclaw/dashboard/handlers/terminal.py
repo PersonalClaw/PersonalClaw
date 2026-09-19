@@ -20,6 +20,7 @@ from aiohttp import web
 from personalclaw import tmux_substrate
 from personalclaw.config import loader as config_loader
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body, string_field
 
 
 def config_path():
@@ -665,18 +666,9 @@ async def api_terminal_create(request: web.Request) -> web.Response:
     # Optional cwd: a session can start in the workspace dir. Validated when the
     # PTY spawns (WS handler) — here we just stash the requested cwd so the WS
     # handler can use it; falls back to cfg/HOME.
-    requested_cwd = ""
-    requested_sandbox = ""
-    if request.body_exists:
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                if isinstance(body.get("cwd"), str):
-                    requested_cwd = body["cwd"]
-                if isinstance(body.get("sandbox"), str):
-                    requested_sandbox = body["sandbox"].strip()
-        except Exception:
-            pass
+    body = await json_object_body(request)
+    requested_cwd = string_field(body, "cwd", strip=False)
+    requested_sandbox = string_field(body, "sandbox")
     if requested_cwd:
         # A PTY is far more powerful than the file tools, so don't let it root in a
         # credential dir (~/.ssh, ~/.aws) or an OS system tree — the WS spawn only
@@ -885,7 +877,19 @@ async def api_terminal_list(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"count={len(sessions)}",
     )
-    return web.json_response({"enabled": True, "sessions": sessions})
+    # `persist_available` is the HOST FACT behind `_persist_enabled`'s second conjunct, published
+    # so the client can stop deriving its promise from the config flag alone. Without it the
+    # terminal header read the flag it had just written and claimed "Sessions are tmux-backed, so
+    # they survive a restart." on a host with no tmux binary — where `_persist_enabled` is False
+    # and every session dies with the gateway (issue 545). The flag is the user's INTENT; this is
+    # whether that intent can be honoured, and only both together mean persistence.
+    return web.json_response(
+        {
+            "enabled": True,
+            "persist_available": _tmux_available(),
+            "sessions": sessions,
+        }
+    )
 
 
 async def _list_tmux_sessions() -> list[str]:

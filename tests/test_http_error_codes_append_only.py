@@ -123,7 +123,22 @@ _CODE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 #: asserts each of those literals is in ``HTTP_ERROR_CODES``. That is the same guarantee
 #: this ceiling protects, proven at the indirection level that actually exists. Raising
 #: this number for a computed code would still be wrong.
-_DYNAMIC_CODE_SITE_CEILING = 17
+#:
+#: 18th: ``request_validation.RequestValidationError.response`` renders the refusal a
+#: handler raised, passing the exception's own ``code``. Admitted on exactly the 17th's
+#: reasoning and no new reasoning: nothing is COMPUTED on that path either — every
+#: ``raise RequestValidationError(...)`` in that module passes a bare literal, so the set of
+#: codes reachable here is closed and statically enumerable; the scanner simply cannot
+#: follow a value through an exception attribute, any more than through a forwarded
+#: parameter.
+#:
+#: Closed one level up by
+#: ``tests/test_request_validation.py::test_every_code_this_module_raises_is_a_registered_literal``
+#: — it parses ``request_validation.py``, asserts every raise passes a literal (failing on
+#: any that does not) and asserts each literal is in ``HTTP_ERROR_CODES``. Deliberately
+#: enumerated from the source rather than from a list, so a fifth code cannot be added
+#: unregistered. Raising this number for a genuinely computed code would still be wrong.
+_DYNAMIC_CODE_SITE_CEILING = 18
 
 
 def test_every_released_code_is_still_present():

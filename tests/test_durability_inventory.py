@@ -387,3 +387,93 @@ class TestTheGuardMeetsARealHome:
             entry = next(e for e in inv.INVENTORY if e.id == derived_id)
             assert entry.derived is True
             assert derived_id not in backed_up
+
+
+class TestProviderCredentialsAreCarried:
+    """Issue 2217. `credentials.json` — the provider credential descriptors `CredentialStore`
+    writes 0600 — was neither claimed nor ignored, so `personalclaw snapshot` omitted it and a
+    restore came back with every model provider's key gone.
+
+    That is the same asset issue 951 destroyed from the other side (a `config set` dropping
+    `providers[]` with the keys in it), and the command the pre-1.0 release notes tell users to
+    run *before upgrading* did not carry it either. Declared rather than pinned as census debt
+    because the decision needs no guess: the issue body states it outright ("`credentials.json`
+    must be **declared** … while staying **excluded from export**"), and `secret=True` supplies
+    both halves — `backup_entries()` keeps secrets, `export_entries()` drops them. Same posture,
+    and the same argument, as `auth` (#130).
+    """
+
+    def test_the_provider_credential_file_is_declared(self):
+        entry = inv.claim_for("credentials.json")
+        assert entry is not None, "credentials.json is unclaimed — snapshot will not carry it"
+        assert entry.id == "provider_credentials"
+        assert entry.secret is True, "provider credentials must never leave the machine"
+
+    def test_a_snapshot_carries_it_and_an_export_does_not(self):
+        """The two projections, asserted together: a secret that exported would be worse than
+        one that is missed, and a secret that no snapshot carries is the data loss this closes.
+        """
+        assert "credentials.json" in {e.path for e in inv.backup_entries()}
+        assert "credentials.json" not in {e.path for e in inv.export_entries()}
+        assert "credentials.json" in inv.secret_paths()
+
+    def test_a_named_snapshot_component_stages_it(self):
+        """At snapshot's own call site, not just in the manifest.
+
+        The `security` component and not `everything`, deliberately: secrets are excluded from
+        the generic restore pass (`_extra_restore_paths`), so an entry that rode `everything`
+        would be captured and then never returned. This component is the documented exception,
+        copy-if-missing at 0600.
+        """
+        from personalclaw.snapshot import CORE_FILES
+
+        assert "credentials.json" in CORE_FILES["security"]
+
+    def test_the_component_help_names_it(self):
+        """The picker's own description is the surface a user chooses components from — a
+        component that silently carries one more secret than it says it does is a bad prompt."""
+        from personalclaw.snapshot import COMPONENT_HELP
+
+        assert "credentials.json" in COMPONENT_HELP["security"]
+
+    def test_the_merge_strategy_is_unreachable_for_a_secret(self):
+        """WHY declaring this one is not the guess the issue warns against.
+
+        A wrong `merge` silently corrupts on convergence, which is why the remaining stores stay
+        pinned as debt. For a secret it cannot fire at all: shards are built from
+        `export_entries()` (`durability/shards.py`), which drops secrets, and `reconcile_entry`
+        (`durability/reconcile.py`) only ever runs on rows imported FROM a shard. No shard, no
+        merge — so `replace_only` is a declaration, not a bet.
+        """
+        assert "credentials.json" not in {e.path for e in inv.export_entries()}
+
+
+class TestTheAccountingQuestionIsAskedOnce:
+    """Issue 2217. `audit_home()` excuses a path two ways — an entry CLAIMS it, or `IGNORED`
+    deliberately excludes it — and the static census re-derived a narrower version that read
+    only the claims plus its own copy of IGNORED's rows. `is_accounted` is the one predicate
+    both now ask.
+    """
+
+    def test_is_accounted_honours_both_halves(self):
+        assert inv.is_accounted("credentials.json"), "a claimed path is accounted for"
+        assert inv.is_accounted("session_key"), "an IGNORED path is accounted for too"
+        assert not inv.is_accounted("a-store-nobody-declared")
+
+    def test_a_directory_whose_contents_are_declared_is_accounted_for(self):
+        """`claims_within`, extracted from `audit_home` so the census cannot disagree with it."""
+        assert inv.claims_within("knowledge"), "knowledge/ holds knowledge/knowledge.db"
+        assert not inv.claims_within("credentials.json"), "a leaf file claims nothing within"
+
+    def test_the_rendered_run_prompt_is_ignored_where_audit_home_can_see_it(self):
+        """`loop.md` was a decision the census file had made and the inventory never heard
+        about, so `audit_home()` reported it as unmanaged drift on every home that ran a loop."""
+        assert inv.is_ignored("loop.md")
+
+    def test_a_real_home_with_only_ignored_noise_audits_clean(self, tmp_path):
+        """Driven, not asserted over the constant: the predicate has to hold at `audit_home`."""
+        for name in ("loop.md", "gateway.log", "session_key", "sessions.json", "doctor"):
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        (tmp_path / "credentials.json").write_text("{}", encoding="utf-8")
+        result = inv.audit_home(tmp_path)
+        assert result.unclaimed == [], f"unexpectedly unclaimed: {result.unclaimed}"

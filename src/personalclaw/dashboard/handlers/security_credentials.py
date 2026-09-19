@@ -35,6 +35,7 @@ from personalclaw.config.credential_migration import (
     verify_credential_migration,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.sel import sel
 
@@ -64,13 +65,15 @@ def _refuse_app(request: web.Request) -> web.Response | None:
     )
 
 
-async def _confirmed(request: web.Request) -> bool:
-    """Did the caller send ``confirm: true``? A malformed body is a NO, never a yes."""
-    try:
-        body = await request.json()
-    except Exception:
-        return False
-    return confirm_granted(body)
+# `_confirmed` is gone in both directions. It used to read the body itself (a private
+# body reader — see `personalclaw.request_validation`) AND decide what counts as consent
+# (a private confirm predicate — see `safety_flags.confirm_granted` and
+# `tests/test_confirm_gate_parity.py`). Both questions now have exactly one owner each,
+# and the two routes below ask them in one line, so there is no local wrapper left to
+# drift from either. The malformed-body case moved UP to `json_object_body`: a truncated
+# body is now a 400 saying so, rather than a silent `False` reported as
+# `confirmation_required` — a caller whose JSON broke used to be told to add a flag it had
+# already sent. Neither shape ever performs the move, so consent is not loosened.
 
 
 def _payload() -> dict:
@@ -96,7 +99,7 @@ async def api_security_credentials_migrate(request: web.Request) -> web.Response
     denied = _refuse_app(request)
     if denied is not None:
         return denied
-    if not await _confirmed(request):
+    if not confirm_granted(await json_object_body(request)):
         return json_error(
             "confirmation_required",
             message=(
@@ -119,7 +122,7 @@ async def api_security_credentials_rollback(request: web.Request) -> web.Respons
     denied = _refuse_app(request)
     if denied is not None:
         return denied
-    if not await _confirmed(request):
+    if not confirm_granted(await json_object_body(request)):
         return json_error(
             "confirmation_required",
             message='send {"confirm": true} — this rewrites .env from the snapshot',

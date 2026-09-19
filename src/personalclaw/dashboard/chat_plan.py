@@ -51,6 +51,7 @@ from personalclaw.history import _safe_key
 from personalclaw.http_errors import json_error
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
 
 
@@ -250,16 +251,6 @@ def _resume_prompt(markdown: str) -> str:
 # ── HTTP surface (mirrors the loop walkthrough's read / mutate / write discipline) ──
 
 
-async def _body(request: web.Request) -> dict | web.Response:
-    try:
-        data = await request.json()
-    except Exception:  # noqa: BLE001
-        return json_error("invalid_json", message="Request body must be JSON", status=400)
-    if not isinstance(data, dict):
-        return json_error("invalid_json", message="JSON body must be an object", status=400)
-    return data
-
-
 def _resolve(request: web.Request) -> tuple[DashboardState, _ChatSession] | web.Response:
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -344,9 +335,7 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     _state, chat = resolved
-    body = await _body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return json_error("step_id_required", message="step_id is required", status=400)
@@ -375,9 +364,7 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
-    body = await _body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return json_error("step_id_required", message="step_id is required", status=400)
@@ -410,9 +397,7 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
-    body = await _body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return json_error("step_id_required", message="step_id is required", status=400)

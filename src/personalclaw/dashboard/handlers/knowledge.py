@@ -26,6 +26,7 @@ from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbn
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
+from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -301,9 +302,9 @@ async def create_item(request: web.Request) -> web.Response:
             {"error": f"'{item_type}' items are created by {via}, not authored directly"},
             status=400,
         )
-    title = str(body.get("title") or "").strip()
-    content = str(body.get("content") or "")
-    url = str(body.get("url") or "").strip()
+    title = string_field(body, "title")
+    content = string_field(body, "content", strip=False)
+    url = string_field(body, "url")
     if item_type == "bookmark":
         if not url:
             return web.json_response({"error": "bookmark requires a url"}, status=400)
@@ -388,10 +389,7 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
     with no insights yet, or 'all'). Returns the count queued.
     """
     store = _store(request)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     scope = str(body.get("scope") or request.query.get("scope") or "missing").strip()
@@ -2432,18 +2430,13 @@ def _collection_clash_response(detail: str) -> web.Response | None:
 
 async def create_collection(request: web.Request) -> web.Response:
     """POST /api/knowledge/collections — create a manual or smart shelf."""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    body = await json_object_body(request)
     try:
         cid = _store(request).create_collection(
-            name=str(body.get("name") or ""),
-            kind=str(body.get("kind") or "manual"),
-            query=str(body.get("query") or ""),
-            icon=str(body.get("icon") or ""),
+            name=require_string(body, "name"),
+            kind=string_field(body, "kind", default="manual") or "manual",
+            query=string_field(body, "query"),
+            icon=string_field(body, "icon"),
         )
     except ValueError as exc:
         # The store's own validation is the single source of truth for what a valid
@@ -2593,10 +2586,7 @@ async def set_item_read_state(request: web.Request) -> web.Response:
 async def set_item_favorited(request: web.Request) -> web.Response:
     """POST /api/knowledge/items/{id}/favorite — star or unstar."""
     iid = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     store = _store(request)
@@ -3530,20 +3520,6 @@ def _restructure_refusal(exc: "RestructureError") -> web.Response:
     return web.json_response(body, status=_RESTRUCTURE_STATUS.get(exc.code, 400))
 
 
-async def _restructure_body(request: web.Request) -> tuple[dict, web.Response | None]:
-    try:
-        body = await request.json()
-    except Exception:
-        return {}, web.json_response(
-            {"error": {"code": "bad_body", "message": "body must be JSON"}}, status=400
-        )
-    if not isinstance(body, dict):
-        return {}, web.json_response(
-            {"error": {"code": "bad_body", "message": "body must be an object"}}, status=400
-        )
-    return body, None
-
-
 async def get_item_sections(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/sections — the section boundaries a split may cut on.
 
@@ -3580,9 +3556,7 @@ async def restructure_item(request: web.Request) -> web.Response:
     store = _store(request)
     item_id = request.match_info["id"]
     verb = str(request.match_info.get("verb") or "").strip()
-    body, err = await _restructure_body(request)
-    if err is not None:
-        return err
+    body = await json_object_body(request)
     params = body.get("params")
     if params is None:
         # The verb's arguments may be sent flat for convenience; `params` is the explicit form.
@@ -3624,9 +3598,7 @@ async def undo_restructure(request: web.Request) -> web.Response:
     """
     from personalclaw.knowledge import restructure
 
-    body, err = await _restructure_body(request)
-    if err is not None:
-        return err
+    body = await json_object_body(request)
     token = str(body.get("token") or "").strip()
     if not token:
         return web.json_response(

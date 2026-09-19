@@ -927,7 +927,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'doctor', group: 'System', label: 'Doctor', icon: Stethoscope, size: 'sm',
-    description: 'Read-only health probes across every subsystem — memory, channels, models, apps, the SPA symlink.',
+    // 🔴 SAME FALSE PROMISE AS THE PANEL'S OWN HEADER (issue 537), one surface EARLIER. This said
+    // "Read-only health probes", and the hub tile is what a user reads BEFORE opening the panel —
+    // so fixing only `DoctorPanel`'s hint would have left the claim standing on the surface that
+    // sets the expectation. The panel repairs state through a failed probe's Fix and Maintenance →
+    // Run now; "read-only" is true of the PROBING and of nothing else here.
+    description: 'Health probes across every subsystem — memory, channels, models, apps, the SPA symlink — plus the confirm-gated repairs a failed probe offers.',
     useSearchText() {
       const { data: d } = useDoctor()
       const failed = d ? Object.entries(d.capabilities).filter(([, c]) => !c.ok).map(([k]) => k).join(' ') : ''
@@ -1147,7 +1152,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'feedback', group: 'System', label: 'AI feedback', icon: ThumbsUp, size: 'sm',
-    description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing stops surfacing.',
+    description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing asks to be reviewed.',
     useSearchText() {
       const { data } = useFeedbackProducers()
       const rows = data?.producers ?? []
@@ -1161,7 +1166,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined} stale={isStalePaint}>
           {rows.length === 0
-            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
                 <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {rated.length ? `${rated.length} rated` : 'collecting verdicts'}

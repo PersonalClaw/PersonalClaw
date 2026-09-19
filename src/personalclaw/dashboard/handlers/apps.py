@@ -32,6 +32,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import (
     is_sensitive_path,
@@ -590,10 +591,7 @@ async def api_app_update(request: web.Request) -> web.Response:
     from personalclaw.apps import source as app_source
 
     name = request.match_info["name"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)

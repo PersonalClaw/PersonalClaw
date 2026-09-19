@@ -1248,6 +1248,128 @@ class TestListGetUpdate:
         assert r.status == 409  # a live worker holds the cwd
 
 
+#: What a research intake authors and the goal-shaped Plan Review screen never renders.
+#: Marked values, so a survivor can't be confused with a kind default.
+_RESEARCH_ONLY = {
+    "subtopics": ["zzS1", "zzS2"],
+    "output_template": "ZZ TEMPLATE: exec summary then table",
+    "output_manner": "ZZ MANNER: terse bullet memo for a CFO",
+    "primary_deliverable": "ZZREPORT.md",
+    "breadth": 5,
+    "depth": 4,
+    "granularity": "forever",
+}
+
+
+class TestUpdateTreatsKindConfigAsAPatch:
+    """``kind_config`` is a PATCH on this route, not a replacement (#411).
+
+    The launch write from Plan Review carries only the five or six goal-shaped keys that
+    screen renders, and ``kind_config`` is one JSON column — so persisting that partial
+    object as the whole column destroyed every field the screen never shows. Research
+    loops route through the goal-shaped screen (``LoopsSection.tsx`` excludes only
+    ``design``), so a research loop reached Launch and lost its subtopics, output template
+    and manner, primary deliverable, breadth/depth budget and granularity dial, all
+    authored during a multi-step intake, at the one click a user cannot undo.
+
+    The request was already being VALIDATED as a patch (``spec_edit_errors`` merges the
+    body's ``kind_config`` over the stored one "so a partial patch is judged in context"),
+    so the two halves of one request disagreed. These pin the agreement, plus the one thing
+    a merge must not cost: a caller that OWNS a key can still clear it.
+    """
+
+    def _research(self, state) -> str:
+        body = {
+            "kind": "research",
+            "task": "research the competitive landscape for on-device agents",
+            "kind_config": {
+                "goal_type": "open_ended",
+                "sub_goals": ["zzS1", "zzS2"],
+                **_RESEARCH_ONLY,
+            },
+        }
+        return _body(_run(H.api_loop_create(_req("POST", "/api/loops", state, body=body))))["id"]
+
+    def _put(self, state, cid, kc):
+        return _run(
+            H.api_loop_update(
+                _req(
+                    "PUT",
+                    f"/api/loops/{cid}",
+                    state,
+                    body={"kind_config": kc},
+                    match_info={"id": cid},
+                )
+            )
+        )
+
+    def _stored(self, cid) -> dict:
+        from personalclaw.loop import store
+
+        return store.get(cid).kind_config
+
+    def test_the_fields_the_screen_never_showed_survive_the_launch_write(self, state):
+        cid = self._research(state)
+        # Vacuity floor: they must really be on the loop before the write, or a merge that
+        # preserved nothing at all would still satisfy every assertion below.
+        seeded = self._stored(cid)
+        assert {k: seeded.get(k) for k in _RESEARCH_ONLY} == _RESEARCH_ONLY
+
+        # Exactly the shape LoopPlanReview sends: the goal keys, nothing else.
+        r = self._put(state, cid, {"goal_type": "open_ended", "sub_goals": ["a", "b"]})
+        assert r.status == 200
+        kc = self._stored(cid)
+        assert {
+            k: kc.get(k) for k in _RESEARCH_ONLY
+        } == _RESEARCH_ONLY, (
+            "a launch from the goal-shaped screen wiped fields only the research intake authors"
+        )
+
+    def test_the_patch_still_wins_for_the_keys_it_carries(self, state):
+        # The other half of a merge: it must not become a no-op that ignores the caller.
+        cid = self._research(state)
+        self._put(state, cid, {"goal_type": "verifiable", "sub_goals": ["only-this"]})
+        kc = self._stored(cid)
+        assert kc["goal_type"] == "verifiable"
+        assert kc["sub_goals"] == ["only-this"]
+
+    def test_an_explicit_null_clears_a_key_the_caller_owns(self, state):
+        # A merge with no way to REMOVE a key is the same swallowed write in reverse, and it
+        # is load-bearing here: `instrument.py` resolves `kind_config["verify_command"]` as
+        # the reproduce anchor WITHOUT re-reading goal_type, so a goal the user switched away
+        # from `verifiable` would keep re-running the command they abandoned.
+        cid = self._research(state)
+        self._put(state, cid, {"goal_type": "verifiable", "verify_command": "make test"})
+        assert self._stored(cid)["verify_command"] == "make test"
+
+        r = self._put(state, cid, {"goal_type": "open_ended", "verify_command": None})
+        assert r.status == 200
+        kc = self._stored(cid)
+        assert "verify_command" not in kc, "an owned key the screen no longer holds must clear"
+        # …and clearing one key must not take the neighbours with it.
+        assert {k: kc.get(k) for k in _RESEARCH_ONLY} == _RESEARCH_ONLY
+
+    def test_the_response_echoes_the_merged_config(self, state):
+        # The screen re-reads the loop from this response; a partial echo would leave the
+        # surface disagreeing with what is on disk.
+        cid = self._research(state)
+        r = self._put(state, cid, {"goal_type": "open_ended", "sub_goals": ["a"]})
+        assert _body(r)["kind_config"]["output_template"] == _RESEARCH_ONLY["output_template"]
+
+    def test_the_edit_gate_screens_the_merged_config_not_the_raw_body(self, state):
+        # "Validated" and "persisted" must be the same object. A dangerous command still has
+        # to be refused when it arrives as a partial patch…
+        cid = self._research(state)
+        r = self._put(state, cid, {"goal_type": "verifiable", "verify_command": "rm -rf /"})
+        assert r.status == 400
+        assert {k: self._stored(cid).get(k) for k in _RESEARCH_ONLY} == _RESEARCH_ONLY
+        # …and a patch that CLEARS a command must not be screened against the command it is
+        # removing, which a re-merge of the stored config would resurrect.
+        self._put(state, cid, {"goal_type": "verifiable", "verify_command": "make test"})
+        r2 = self._put(state, cid, {"goal_type": "open_ended", "verify_command": None})
+        assert r2.status == 200
+
+
 class TestLifecycle:
     def _make(self, state):
         return _body(

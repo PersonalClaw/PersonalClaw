@@ -45,7 +45,7 @@ import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The install-consent surface is shared with the first-run essential-apps step.
-import { ScanReport, ConsentModal, PermissionList, CronConsentList } from './installConsent'
+import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** An install held at the consent gate. `entry` is the catalog row the install came
@@ -844,7 +844,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
           label={pending.label}
           result={guarded.blocked}
           busy={guarded.busy}
-          permissions={pending.entry?.permissions}
+          permissions={consentPermissions(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1000,7 +1000,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
           label={pending.label}
           result={guarded.blocked}
           busy={guarded.busy}
-          permissions={pending.entry?.permissions}
+          permissions={consentPermissions(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1321,6 +1321,10 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   // here, so the guard below caught it before a user saw "ocr provider". Acronym, so it is shouted:
   // `TAG_WORD_CASING` already renders the `ocr` TAG as "OCR", and the two must agree.
   ocr: 'OCR',
+  // 🔴 FIFTH occurrence — `vector_store` joined `PROVIDER_TYPES` with no entry here, so the
+  // guard below caught "vector_store provider" before a user read it. Sentence case, matching
+  // `trigger_source` → "Trigger source": the house convention is the first word only.
+  vector_store: 'Vector store',
 }
 
 
@@ -1655,11 +1659,19 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
       )}
 
       {/* P29 install-consent: what this app will be GRANTED + the recurring jobs it will
-          RUN, shown BEFORE install so the choice is informed. Only rendered when the
-          catalog actually surfaced them (a dir-scanned/bundled entry; a registry pointer
-          has no manifest yet, so these are absent and the section stays hidden). */}
-      {item.permissions && Object.keys(item.permissions).length > 0 && (
-        <PermissionList perms={item.permissions} />
+          RUN, shown BEFORE install so the choice is informed. Keyed on consentKnown, not
+          permissions-emptiness (issue 614): a scanned manifest that declares nothing gets
+          PermissionList's own "None — no gateway capability" disclosure (33 of 36 Store
+          apps — hiding the section made "asked for nothing" indistinguishable from
+          silence), while a registry pointer — whose manifest isn't fetched until install —
+          says the permissions aren't known YET rather than pretending they're none. */}
+      {item.consentKnown ? (
+        <PermissionList perms={item.permissions ?? {}} />
+      ) : (
+        <div data-type="body-s" className="text-on-surface-low">
+          Permissions: not known yet — this is a registry listing, and its manifest is
+          read at install. The consent gate runs then, before anything is granted.
+        </div>
       )}
       {(item.crons ?? []).length > 0 && <CronConsentList crons={item.crons!} />}
 
@@ -1678,7 +1690,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
       {consent && guarded.blocked && (
         <ConsentModal label={item.displayName} result={guarded.blocked} busy={guarded.busy}
-          permissions={item.permissions} crons={item.crons}
+          permissions={consentPermissions(item)} crons={item.crons}
           onConfirm={async () => { const r = await guarded.confirmInstall(); if (r?.ok) { setConsent(null); onInstalled() } }}
           onClose={() => { setConsent(null); guarded.reset() }} />
       )}

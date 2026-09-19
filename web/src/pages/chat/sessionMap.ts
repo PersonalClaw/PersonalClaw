@@ -10,7 +10,7 @@
  *  `SubagentCard[]` (the parallel `subagent_spawn/tool/done` stream).
  */
 import type { ChatTurn, Segment, SubagentCard } from './chatTypes'
-import { turnText } from './chatTypes'
+import { turnText, markCoordOf } from './chatTypes'
 import { previewText } from '../../lib/previewText'
 
 /** The CLOSED mark vocabulary. A mark is EITHER a turn (`user` / `assistant`) or a
@@ -50,6 +50,70 @@ export interface SessionMark {
 }
 
 const PREVIEW_CAP = 140
+
+/** SELF-SUPPRESSION THRESHOLD — a map of fewer than two marks indexes nothing worth
+ *  navigating, so the map does not render at all. Defined here, with the contract, because BOTH
+ *  forms apply it: the rail renders nothing, and the coarse-pointer drawer
+ *  explains itself instead of showing a blank panel. Two forms, one threshold, one definition. */
+export const SESSION_MAP_MIN_MARKS = 2
+
+/** MARK DENSITY — the persisted VIEW preference.
+ *
+ *  §A.9 rules where this lives, and the ruling is the point: a per-surface VIEW preference
+ *  belongs in the appearance token registry + localStorage, NOT in `config.json`. So this
+ *  vocabulary is declared here (with the mark contract it filters) and registered as a
+ *  `select` token in `design/tokenRegistry.ts` under `SESSION_MAP_DENSITY_VAR`; the
+ *  appearance store persists it and `DesignPanel` renders its control for free. It is
+ *  deliberately NOT a config field: nothing about it needs to sync across devices, and the
+ *  Python config round-trip contract applies only to preferences that do.
+ *
+ *  `detailed` (the default) shows every mark the derivation emits — one per turn plus one
+ *  per typed sub-event. `turns` shows only the turn marks: on a long tool-heavy session the
+ *  sub-event marks are the majority, and a reader who wants the shape of the CONVERSATION
+ *  rather than the shape of the WORK is otherwise reading a rail of tool ticks. */
+export type SessionMapDensity = 'detailed' | 'turns'
+
+/** The CLOSED density vocabulary as a runtime array — the single source the registry entry's
+ *  `options`, the validator and the tests all read, so a new value cannot be added in one
+ *  place only. */
+export const SESSION_MAP_DENSITIES: readonly SessionMapDensity[] = ['detailed', 'turns'] as const
+
+/** The default, named ONCE and exported. (`appearance.tsx`'s 🪤 comment records what two
+ *  disagreeing declared defaults cost; the registry entry reads this constant rather than
+ *  spelling the literal a second time.) */
+export const DEFAULT_SESSION_MAP_DENSITY: SessionMapDensity = 'detailed'
+
+/** The appearance-registry key the preference persists under (`Overrides.selects[...]`). */
+export const SESSION_MAP_DENSITY_VAR = '--session-map-density'
+
+/** Validate a STORED density on read.
+ *
+ *  localStorage is user-writable and survives a downgrade, so the stored string is untrusted
+ *  input: `appearance.tsx`'s `load()` is a bare `JSON.parse` spread with no enum check, and
+ *  the existing selects blind-cast (`DotGlow.tsx:117`), which turns a stale value into a
+ *  silently blank surface. This narrows to the closed vocabulary and falls back to the NAMED
+ *  default — not to an array position, which is the pre-existing `WidthPill.tsx:24` bug. */
+export function asSessionMapDensity(value: string | undefined | null): SessionMapDensity {
+  return SESSION_MAP_DENSITIES.includes(value as SessionMapDensity)
+    ? (value as SessionMapDensity)
+    : DEFAULT_SESSION_MAP_DENSITY
+}
+
+/** Apply the density preference to a derived mark list.
+ *
+ *  Filters, then RE-INDEXES: `markIndex` is documented as "the 0-based position in the
+ *  returned array", the rail uses it as its render key and `sessionMapMarkName` counts
+ *  "Turn X of N" over the list it is handed. A filtered list carrying its pre-filter indices
+ *  would keep the contract's field name while breaking its meaning. */
+export function sessionMapDensityMarks(
+  marks: SessionMark[],
+  density: SessionMapDensity,
+): SessionMark[] {
+  if (density === 'detailed') return marks
+  return marks
+    .filter((m) => m.kind === 'user' || m.kind === 'assistant')
+    .map((m, i) => ({ ...m, markIndex: i }))
+}
 
 /** Compact one-line preview for a tool / approval mark: the STABLE tool name plus its
  *  refined one-liner (the command / file+range, else the raw input), markdown-stripped. */
@@ -94,7 +158,7 @@ export function sessionMapMarks(turns: ChatTurn[], subagents: SubagentCard[] = [
   const push = (m: Omit<SessionMark, 'markIndex'>) => { marks.push({ markIndex: marks.length, ...m }) }
 
   turns.forEach((turn, i) => {
-    const visibleIndex = turn.visibleIndex ?? i
+    const visibleIndex = markCoordOf(turn, i)
     const ts = turn.ts ?? ''
     push({ kind: turn.role, role: turn.role, visibleIndex, ts, preview: previewText(turnText(turn), PREVIEW_CAP) })
     for (const seg of turn.segments) {
@@ -105,7 +169,7 @@ export function sessionMapMarks(turns: ChatTurn[], subagents: SubagentCard[] = [
 
   if (subagents.length) {
     const last = turns[turns.length - 1]
-    const visibleIndex = last?.visibleIndex ?? (turns.length ? turns.length - 1 : 0)
+    const visibleIndex = last ? markCoordOf(last, turns.length - 1) : 0
     const ts = last?.ts ?? ''
     for (const s of subagents) {
       push({ kind: 'subagent', role: 'assistant', visibleIndex, ts, preview: previewText(s.task || s.agent || 'subagent', PREVIEW_CAP) })

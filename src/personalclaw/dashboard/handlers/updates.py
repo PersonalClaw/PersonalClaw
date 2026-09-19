@@ -21,6 +21,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
+from personalclaw.request_validation import json_object_body
 
 
 def config_path() -> Path:
@@ -776,10 +777,7 @@ async def api_update_simulate(request: web.Request) -> web.Response:
     configurable delay (default 2s per step).
     """
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
 
     # Simulate a pre-flight rejection (e.g. dirty working tree)
     if body.get("reject"):

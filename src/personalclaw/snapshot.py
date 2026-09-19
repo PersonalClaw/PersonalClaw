@@ -132,7 +132,13 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
         "routing_policy.json",
     ),
     "notifications": ("notifications.jsonl",),
-    "security": ("sel_hmac.key", "telemetry_salt"),
+    # `credentials.json` — the provider credential descriptors (#2217). It belongs to this
+    # NAMED component rather than riding `everything`, because secrets are deliberately excluded
+    # from the generic restore pass (`_extra_restore_paths`): capture keeps them, restore must
+    # not re-plant credential material into a home that rotated it. This component is the
+    # documented exception — copy-if-missing, chmod 0600 — so listing it here is what makes it
+    # both captured AND restorable, instead of backed up and unreturnable.
+    "security": ("sel_hmac.key", "telemetry_salt", "credentials.json"),
 }
 
 
@@ -358,7 +364,7 @@ COMPONENT_HELP = {
     "skills": "skills/ directory",
     "workspace": "workspace/ directory",
     "notifications": "notifications.jsonl (notification history)",
-    "security": "sel_hmac.key, telemetry_salt",
+    "security": "sel_hmac.key, telemetry_salt, credentials.json (provider API keys)",
     "projects": "projects/ — briefs, context ledgers, templates (worktrees excluded, git-owned)",
     "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
 }

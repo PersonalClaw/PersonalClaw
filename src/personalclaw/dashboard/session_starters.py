@@ -22,6 +22,7 @@ from personalclaw.artifacts import registry
 from personalclaw.dashboard import session_export, session_share, session_templates
 from personalclaw.dashboard.chat_utils import _history_key_for, resolve_history_key
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -39,12 +40,7 @@ async def api_session_templates_create(request: web.Request) -> web.Response:
     is required; an empty agent/model means "whatever the default is at use time", which
     is what makes a template survive the user changing their default model.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        return web.json_response({"error": "expected a JSON object"}, status=400)
+    body = await json_object_body(request)
 
     tid, err = session_templates.save_template(body)
     if err:
@@ -63,12 +59,7 @@ async def api_session_templates_create(request: web.Request) -> web.Response:
 async def api_session_template_update(request: web.Request) -> web.Response:
     """PUT /api/chat/sessions/templates/{template} — replace a starter's fields."""
     tid = request.match_info["template"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        return web.json_response({"error": "expected a JSON object"}, status=400)
+    body = await json_object_body(request)
 
     err = session_templates.update_template(tid, body)
     if err == "not found":

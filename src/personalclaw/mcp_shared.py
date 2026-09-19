@@ -300,17 +300,29 @@ def leaf_env(parent_env: dict[str, str], lineage: dict[str, str]) -> dict[str, s
 def leaf_tool_denial(name: str) -> str:
     """Why this tool call is refused for a leaf, or "" when it is allowed.
 
-    Two rules, both from `batch_compile` rather than restated here — a second copy of a policy is a
+    Two rules, both from elsewhere rather than restated here — a second copy of a policy is a
     policy that drifts:
 
     * ORCHESTRATION tools are denied at EVERY depth. A leaf that can spawn fans out without a
       budget, and the depth counter alone would let it happen once per level.
-    * WRITE tools are denied to a research-class leaf. `leaf_tool_posture` decides the posture; this
-      is the handler seam that makes it true.
+    * The leaf's TOOL GRANTS decide the rest, via `guardrails.policy.tool_grant_denial`. The
+      compiled posture (`leaf_tool_posture` → the `__wf_read_only` flag) picks the tier — `read`
+      for a research-class leaf, `read_write` for a mutating one — and
+      `guardrails.policy.tool_grant_posture` intersects it with the operator CEILING, so an
+      operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather than being a
+      composed value nothing reads. The write/read classification stays
+      `batch_compile.is_write_tool`, the classifier a research LEAF and a research SUBAGENT deny
+      alike; only the tier algebra is shared.
 
     Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
     `subagent_run` still works.
     """
+    from personalclaw.guardrails.policy import (
+        TOOL_READ,
+        TOOL_READ_WRITE,
+        tool_grant_denial,
+        tool_grant_posture,
+    )
     from personalclaw.workflows import batch_compile
 
     depth = _leaf_depth()
@@ -321,12 +333,32 @@ def leaf_tool_denial(name: str) -> str:
             f"{name!r} is an orchestration tool and is denied to a batch leaf at every depth "
             "— a leaf that can fan out again spawns without a budget"
         )
-    if _leaf_is_read_only() and batch_compile.is_write_tool(name):
-        return (
-            f"{name!r} is a write tool and this leaf is capability=research (read-only) "
-            "— declare capability=mutating on the leaf if it must write"
+    read_only = _leaf_is_read_only()
+    try:
+        profile = tool_grant_posture(
+            "leaf_research" if read_only else "leaf_mutating",
+            TOOL_READ if read_only else TOOL_READ_WRITE,
         )
-    return ""
+    except Exception as exc:  # a ceiling that will not resolve must DENY, not wave through
+        logger.warning("leaf tool grants unresolvable, denying %s: %s", name, exc)
+        return (
+            f"{name!r} is denied: the governance ceiling would not resolve, so this leaf's tool "
+            "grants are unknown — fix the ceiling file and restart"
+        )
+    # The FIX line names whichever layer actually refused: the leaf's own declaration when the
+    # tier is the compiled posture's, the operator ceiling when the ceiling narrowed it. Telling an
+    # author to re-declare a leaf that a ceiling refused would send them to fix the wrong file.
+    ceiling_narrowed = profile.tool_grants != (TOOL_READ if read_only else TOOL_READ_WRITE)
+    return tool_grant_denial(
+        profile,
+        name,
+        write_class=batch_compile.is_write_tool(name),
+        detail=(
+            "widen the governance ceiling's tools scope if this leaf must call it"
+            if ceiling_narrowed
+            else "declare capability=mutating on the leaf if it must write"
+        ),
+    )
 
 
 def _leaf_depth() -> int:

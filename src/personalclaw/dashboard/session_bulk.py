@@ -33,6 +33,7 @@ from personalclaw.dashboard.session_lifecycle import (
 )
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -194,10 +195,7 @@ async def api_chat_sessions_auto_archive(request: web.Request) -> web.Response:
     what it is about to do before doing it.
     """
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     dry_run = bool(body.get("dry_run", False))

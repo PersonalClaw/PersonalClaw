@@ -8,10 +8,15 @@
  * progressive enhancement over the always-right raw text.
  *
  * Selection order:
- *   input:  native override (by tool name) → schema-driven fields (from inputObj)
- *           → raw <pre> of the string input
+ *   input:  native override (by tool name) → schema-driven fields (from
+ *           resolveInputObj) → raw <pre> of the string input
  *   output: native override (by tool name) → content_type renderer
  *           → sniff (reuse ToolOutput) → raw <pre>
+ *
+ * BOTH dispatch paths hand a renderer the segment UNTOUCHED. `resolveInputObj` is
+ * the one owner of "where does this call's input object come from" and every
+ * renderer that wants a field out of the input goes through it — see `inputOf` in
+ * native.tsx.
  */
 import { type ReactNode } from 'react'
 import type { ToolSegment } from '../chatTypes'
@@ -34,17 +39,20 @@ function findNative(seg: ToolSegment): ToolRenderer | undefined {
 
 /** Render the tool's INPUT region (everything but the raw fallback is optional). */
 export function renderToolInput(seg: ToolSegment): ReactNode {
-  // Make a JSON-string input behave like a structured object for the override +
-  // schema-driven paths (history/ACP carry input as a string).
-  const obj = resolveInputObj(seg)
-  const effective: ToolSegment = obj && !seg.inputObj ? { ...seg, inputObj: obj } : seg
-  // 1. native override
-  const native = findNative(effective)
+  // 1. native override, handed the segment as the caller gave it — exactly like the
+  //    output path below. This used to patch a resolved `inputObj` onto a COPY first,
+  //    and that mask is what made issue 682 so hard to read: a renderer reading
+  //    `seg.inputObj` raw looked correct on THIS path and rendered nothing on the
+  //    output path, where no copy is built. One owner of the resolution rule
+  //    (resolveInputObj, via `inputOf`) means a raw read fails on both paths, where
+  //    the registry-derived parity rail catches it.
+  const native = findNative(seg)
   if (native?.input) {
-    const node = safe(() => native.input!(effective))
+    const node = safe(() => native.input!(seg))
     if (node !== undefined) return node
   }
   // 2. schema-driven: render the structured input object as labeled fields
+  const obj = resolveInputObj(seg)
   if (obj) {
     const node = safe(() => <KeyValueFields obj={obj} />)
     if (node !== undefined) return node

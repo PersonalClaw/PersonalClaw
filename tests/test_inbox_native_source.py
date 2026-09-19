@@ -14,6 +14,7 @@ from aiohttp.test_utils import make_mocked_request
 import personalclaw.inbox_providers.native_source as ns
 from personalclaw.dashboard import handlers_inbox as H
 from personalclaw.inbox import InboxItem, InboxState, InboxStore, ItemStatus
+from personalclaw.request_validation import RequestValidationError
 
 
 def _run(coro):
@@ -100,6 +101,15 @@ async def _coro(v):
     return v
 
 
+async def _coro_raise(exc: BaseException):
+    """An `await request.json()` that FAILS, which is how aiohttp reports an absent body.
+
+    Paired with a `read()` returning no bytes it is the "sent nothing" case `json_object_body`
+    answers `{}` for — as distinct from bytes that failed to parse, which it refuses.
+    """
+    raise exc
+
+
 def test_send_routes_native_reply_to_live_session(state, monkeypatch):
     item = ns.post_to_inbox("approve?", kind="question", sender_name="coder", reply_target="chat:1")
     session = MagicMock()
@@ -168,10 +178,39 @@ def _favorite_req(state, item_id, body):
 
 
 @pytest.mark.parametrize("body", [None, [], 5, "text"])
-def test_favorite_tolerates_a_non_object_body(state, body):
-    """Favoriting has a sensible default, so junk means "favorite it" — never a 500."""
+def test_favorite_refuses_a_non_object_body(state, body):
+    """A body that is present and NOT an object is the shared 400, not a defaulted write.
+
+    This route used to read the junk as "favorite it" — the sensible-default argument taken
+    one step too far, because the default belongs to an ABSENT body (asserted below), not to
+    a body whose serialiser produced ``5``. A caller in that state got a 200 and a write it
+    never asked for, which is #2923's shape at a second door. It now travels through the one
+    reader, so the refusal is `invalid_body` with a sentence naming what arrived.
+
+    The property the old tolerance actually protected — never a 500 — is asserted here too,
+    and the item must be left ALONE: a refused request is not a partial write.
+    """
     item = ns.post_to_inbox("look at this", kind="fyi")
-    resp = _run(H.api_inbox_favorite(_favorite_req(state, item.id, body)))
+    with pytest.raises(RequestValidationError) as caught:
+        _run(H.api_inbox_favorite(_favorite_req(state, item.id, body)))
+    assert caught.value.code == "invalid_body"
+    assert caught.value.status == 400, "a malformed body is the caller's fault, never a 500"
+    assert caught.value.response.status == 400
+    assert state._inbox_store.items[item.id].favorited is False
+
+
+def test_favorite_still_defaults_an_absent_body_to_favoriting(state):
+    """The vacuity floor for the refusal above: the DEFAULT the route exists for survives.
+
+    `POST /api/inbox/{id}/favorite` with no body at all is still "favorite it". Without this,
+    the test above would pass just as well against a handler that refused every body, and the
+    unification would have quietly taken a working route away.
+    """
+    item = ns.post_to_inbox("look at this", kind="fyi")
+    req = _favorite_req(state, item.id, None)
+    req.json = lambda: _coro_raise(ValueError("no body"))
+    req.read = lambda: _coro(b"")
+    resp = _run(H.api_inbox_favorite(req))
     assert resp.status == 200
     assert json.loads(resp.body)["favorited"] is True
     assert state._inbox_store.items[item.id].favorited is True

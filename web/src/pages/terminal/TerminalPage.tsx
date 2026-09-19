@@ -57,6 +57,12 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       .then((c) => setPersist(Boolean(c?.dashboard?.terminal?.persist)))
       .catch(() => setPersist(false))
   }, [])
+  // The config flag is INTENT; whether it can be honoured is a host fact (is `tmux` installed?),
+  // and the backend ANDs the two — `_persist_enabled`. Deriving the promise from the flag alone
+  // made the header claim "Sessions are tmux-backed, so they survive a restart." on a host with no
+  // tmux, where every session dies with the gateway (issue 545). `undefined` = an older backend
+  // that does not publish the fact: make NO capability claim rather than guess either way.
+  const [persistAvailable, setPersistAvailable] = useState<boolean | undefined>(undefined)
   // EI-4 §1.3(3): the sandbox tiers a new session may open inside, and the current pick. The
   // host ("none") is the default; a container/VM tier appears only when its provider app is
   // enabled, so the picker is hidden entirely when host is the only option (nothing to choose).
@@ -86,6 +92,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
     let alive = true
     api.terminalSessions().then((r) => {
       if (!alive) return
+      setPersistAvailable(r.persist_available)
       const labels = loadLabels()
       const live = (r.sessions || []).filter((s) => s.alive !== false)
       if (live.length) {
@@ -171,9 +178,13 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
                secondary line. */
             <HeaderControl icon={Anchor}
               label={persist ? 'Disable persistent sessions' : 'Enable persistent sessions'}
-              hint={persist
-                ? 'Sessions are tmux-backed, so they survive a restart.'
-                : 'Sessions are lost on restart. Enabling keeps them alive with tmux.'}
+              hint={persistAvailable === false
+                ? (persist
+                  ? 'tmux is not installed on this host, so sessions are still lost on restart — install it to make this take effect.'
+                  : 'Sessions are lost on restart. This needs tmux, which is not installed on this host.')
+                : (persist
+                  ? 'Sessions are tmux-backed, so they survive a restart.'
+                  : 'Sessions are lost on restart. Enabling keeps them alive with tmux.')}
               active={persist} priority="low" onClick={togglePersist} />
           )}
           {tabs.length > 0 && (

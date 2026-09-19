@@ -1033,15 +1033,35 @@ class TestPolicyOverridesRoute:
         assert resp.status == 404 and _body(resp)["error"]["code"] == "not_found"
 
     async def test_a_non_object_body_is_a_400(self) -> None:
-        req = _req("PUT", "/api/workflows/runs/x/policy-overrides", state=_State(None))
-        req.match_info["run_id"] = "x"  # type: ignore[index]
+        """Still a coded 400 — now answered once for every route instead of per handler.
 
-        async def _json():
-            return ["not", "a", "dict"]
+        This used to call the handler directly and expect it to return the envelope itself,
+        because `handlers._json_body` built one locally and spelled BOTH "unparseable" and
+        "parsed to the wrong thing" `invalid_request`. That helper is gone: the shared
+        reader raises, `request_boundary_middleware` renders it, and the two facts now have
+        the two codes they always needed (`invalid_json` vs `invalid_body`) so a client can
+        tell "your JSON is broken" from "your JSON is fine but it is an array".
 
-        req.json = _json  # type: ignore[method-assign]
-        resp = await H.api_run_policy_overrides(req)
-        assert resp.status == 400 and _body(resp)["error"]["code"] == "invalid_request"
+        So the assertion moved outward rather than being relaxed — it goes through the
+        middleware the gateway installs, which is what actually decides what the client
+        sees. The property under test is unchanged: a non-object body is a 400 carrying a
+        parseable coded envelope, never a bare 500.
+        """
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+        app = web.Application(middlewares=[request_boundary_middleware()])
+        app["state"] = _State(None)
+        app.router.add_put(
+            "/api/workflows/runs/{run_id}/policy-overrides", H.api_run_policy_overrides
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.put(
+                "/api/workflows/runs/x/policy-overrides", json=["not", "a", "dict"]
+            )
+            assert resp.status == 400
+            assert (await resp.json())["error"]["code"] == "invalid_body"
 
     async def test_the_route_is_registered_as_a_put(self) -> None:
         app = web.Application()

@@ -139,7 +139,14 @@ def _make_tags_app(state: DashboardState) -> web.Application:
         api_chat_tags,
     )
 
-    app = web.Application()
+    # `request_boundary_middleware` is installed here because `dashboard/server.py`
+    # installs it on the real gateway: a route that raises `RequestValidationError` (every
+    # route reading a body through `personalclaw.request_validation`) answers its 400
+    # THERE, so a test app without it does not model the gateway and turns a deliberate
+    # refusal into a 500.
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app["state"] = state
     app.router.add_get("/api/chat/tags", api_chat_tags)
     app.router.add_post("/api/chat/tags", api_chat_tag_create)

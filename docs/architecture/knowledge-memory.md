@@ -26,6 +26,28 @@ plus other projects' `shared` items labeled with their source project; another
 project's private items never appear. The project tag is the same one
 `knowledge/session_brief.py::project_tag` reads for a run's project brief.
 
+### Sharing a knowledge item OUT (the push half)
+
+`sharing_policy` also decides what leaves the machine. `knowledge/sharing.py` owns
+the outbound half and is the ONE place the gate lives: a `shared` item is offered
+to every registered provider's `KnowledgeProvider.push` — the mirror of `ingest` —
+while a `private` item never reaches a provider at all, so no provider can widen
+the default. A provider with no outbound half returns the ABC's `None` and is
+reported as having **declined**, never as a delivery.
+
+What crosses is an allowlist of four attribution keys (`contributor` plus the
+scope trio), not the item's whole `file_metadata`: an item's claims and citations
+are local bookkeeping. `contributor` is the same key `vector_memory` attributes
+semantic memory with, rendered by the same `identity.contributor_label`.
+
+Coming back, `SourceEngine` carries those four keys onto the row it writes and
+files it under its container's tag, so a teammate's contribution reaches both
+readers **labelled**: the project Knowledge view names them, and the session brief
+puts the contributor on the fence's source label *inside* `fence_untrusted`
+(labelled and fenced — `shared-store-provider-conformance.md` clause 2). Only
+foreign contributions are labelled; labelling the owner's own rows would hide the
+one case the label exists for. A push never fails the local write.
+
 ### Ingestion pipeline (node graphs)
 
 `knowledge/pipeline/` is a node-graph executor:

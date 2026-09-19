@@ -13,6 +13,13 @@ import { defineConfig, devices } from '@playwright/test'
 // change in the plan's Execution log for owner review — never silently keep
 // or revert a real visual change.
 //
+// 🪤 `e2e:update` regenerates from a VISUAL-ONLY run, and `npm run e2e` runs the
+// visual rail as a second invocation, for one reason: the specs that drive real
+// scripted chat turns write flywheel state into the single gateway below, which
+// changes what `#/learning` renders. Capturing in a mixed run and verifying in a
+// visual-only one (or the reverse) makes the same golden both correct and wrong.
+// See `helpers.assertPristineFlywheel` and `e2e/README.md`.
+//
 // The servers: this harness drives the built SPA served by vite preview, which
 // proxies /api to a gateway the harness STARTS ITSELF — isolated, onboarded and
 // token-authenticated. Without a gateway the SPA cannot resolve identity, so it

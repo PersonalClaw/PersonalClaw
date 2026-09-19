@@ -99,6 +99,23 @@ export const ACTIVE_LOOP_STATUSES: ReadonlySet<string> = new Set([
   'running', 'paused', 'stagnant', 'blocked', 'needs_input',
 ])
 
+/** The cycle number a user should READ for a loop — "working on cycle N".
+ *
+ *  `total_cycles` is the COMPLETED count, so the human-facing number is one more than it
+ *  whenever a cycle is open. The gate is ACTIVE_LOOP_STATUSES, not `status === 'running'`:
+ *  every active state holds an open cycle, whether the worker is mid-turn (`running`) or the
+ *  cycle is parked awaiting the user (`paused`, `stagnant`, `blocked`, `needs_input`). A
+ *  PRELAUNCH loop has no open cycle and an ENDED one has none left, so both read the raw count.
+ *
+ *  Three surfaces each gated the `+1` on `running` alone while rendering the label for paused
+ *  loops too, so pausing mid-cycle-1 made the counter fall from "cycle 1/30" to "cycle 0/30" —
+ *  as if the pause had discarded the work — and disagreed with the cockpit's own "Cycle 1 ·
+ *  paused" detail row on the same screen (issue 274). This is that number's ONE implementation;
+ *  do not re-derive it at a call site. */
+export function shownCycle(status: string, totalCycles: number): number {
+  return ACTIVE_LOOP_STATUSES.has(status) ? totalCycles + 1 : totalCycles
+}
+
 /** What `stop` may be called FROM — ACTIVE plus the two pre-launch states that otherwise had no
  *  action at all. Mirrors the backend `loop.loop:STOPPABLE_STATUSES`, and is a separate set rather
  *  than a widened ACTIVE_LOOP_STATUSES because that one also drives the "active loop" filters and

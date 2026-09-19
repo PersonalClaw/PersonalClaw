@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
+import { BookOpen, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, Pencil, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -9,6 +9,7 @@ import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaff
 import { DecisionJournal } from './DecisionJournal'
 import { WindowedList } from '../../ui/WindowedList'
 import { Checkbox, FieldError } from '../../ui/forms'
+import { Toggle } from '../../ui/Toggle'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
@@ -22,7 +23,7 @@ import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { LibraryHome } from './LibraryHome'
-import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
@@ -141,9 +142,23 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
   const selectedIntent: KnowledgeIntent | null = intentTok === '__new__'
     ? blankIntent()
     : (intentTok ? resolvedIntent : null)
+  // View↔edit for the OPEN intent, on the app-wide `?edit=1` primitive (`useEditFlag`) —
+  // the same one Tasks, Triggers, Agents and Prompts already use for "edit-vs-view of an
+  // open record". An intent panel used to branch on the id ALONE, which is why an existing
+  // intent had no editor at all: `IntentEditor` was reachable only on the `id === ''`
+  // (new) branch. `?edit` was free on this page — nothing else here reads it.
+  const [editingIntent, setEditingIntent] = useEditFlag(query, setQuery)
   const setSelectedIntent = (it: KnowledgeIntent | null) => {
+    const nextTok = it ? (it.id || '__new__') : ''
+    // 🪤 CLEARED ONLY WHEN THE SELECTION ACTUALLY CHANGES, not on every call. `IntentsView`'s
+    // resolver effect re-selects the ALREADY-open intent every time its list reloads, which a
+    // save and a row pause both trigger. Clearing unconditionally therefore threw the user out
+    // of the editor mid-edit as soon as anything refreshed the list. Closing the panel or
+    // switching to a DIFFERENT intent still leaves edit mode, so the next intent never opens
+    // into the editor.
+    if (nextTok !== intentTok) setEditingIntent(false)
     setResolvedIntent(it && it.id ? it : null)
-    setIntentTok(it ? (it.id || '__new__') : '')
+    setIntentTok(nextTok)
   }
   const [intentsReloadKey, setIntentsReloadKey] = useState(0)
   const refreshIntents = () => setIntentsReloadKey((k) => k + 1)
@@ -514,9 +529,15 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           </SidePanel>
         ) : view === 'intents' && selectedIntent ? (
           <SidePanel key={selectedIntent.id || '__new__'} fillHeight storeKey="knowledge-panel-w" urlKey={{ key: 'intent', setQuery }} icon={<Target size={18} className="text-primary" />} title={selectedIntent.id ? (selectedIntent.goal || selectedIntent.id) : 'New intent'} onClose={() => setSelectedIntent(null)}>
-            {selectedIntent.id
-              ? <IntentDetail intent={selectedIntent} onChanged={refreshIntents} onClose={() => setSelectedIntent(null)} onOpenItem={(id) => onOpenItem(id)} />
-              : <IntentEditor intent={selectedIntent} onClose={() => setSelectedIntent(null)} onSaved={() => { setSelectedIntent(null); refreshIntents() }} />}
+            {/* 🪤 THE BRANCH THAT MADE AN INTENT CREATE-ONLY was `selectedIntent.id ? Detail : Editor`
+                — the editor's only mount condition was an EMPTY id, so an existing intent could
+                never reach it even though the editor's own save comment says "Edits keep their
+                existing id" and the backend upsert documents the id-keyed update path. `editing`
+                is the second half of the condition, so the SAME editor now serves both. */}
+            {selectedIntent.id && !editingIntent
+              ? <IntentDetail intent={selectedIntent} onChanged={refreshIntents} onClose={() => setSelectedIntent(null)} onOpenItem={(id) => onOpenItem(id)} onEdit={() => setEditingIntent(true)} />
+              : <IntentEditor intent={selectedIntent} onClose={() => (selectedIntent.id ? setEditingIntent(false) : setSelectedIntent(null))}
+                  onSaved={() => { setEditingIntent(false); if (!selectedIntent.id) setSelectedIntent(null); refreshIntents() }} />}
           </SidePanel>
         ) : null
       }
@@ -901,7 +922,33 @@ function blankIntent(): KnowledgeIntent {
   return { id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false }
 }
 
-function IntentsView({ selectedId, onSelect, reloadKey }: {
+/** THE single writer for an intent — every surface that changes one goes through here.
+ *
+ *  `POST /api/knowledge/intents` is a WHOLE-RECORD upsert keyed on the id, not a PATCH, so
+ *  each caller has to resend the fields it is not changing. Two callers hand-assembling
+ *  that body is how `enabled: true` came to be hard-coded in the editor's save: the field
+ *  was spelled as a literal because the editor had no control bound to it, and nothing
+ *  else wrote intents at all, so `enabled: false` was unreachable through the entire
+ *  product even though the backend and the data model both support it.
+ *
+ *  Spreading the record and then the patch means a caller states ONLY what it changes, and
+ *  a field added to `Intent` later cannot be silently dropped or frozen by one call site
+ *  and not the other. `outcome_count` is list decoration, not part of the record, and the
+ *  backend's `from_dict` ignores it. */
+function writeIntent(intent: KnowledgeIntent, patch: Partial<KnowledgeIntent>) {
+  return api.upsertKnowledgeIntent({
+    // A new intent omits the id so the backend derives the slug from the goal (single
+    // source of truth); an edit sends it, which is what selects the update path.
+    id: intent.id || undefined,
+    goal: intent.goal,
+    enabled: intent.enabled,
+    enabled_for: intent.enabled_for ?? [],
+    propose_skill: intent.propose_skill,
+    ...patch,
+  })
+}
+
+export function IntentsView({ selectedId, onSelect, reloadKey }: {
   selectedId: string | null
   onSelect: (intent: KnowledgeIntent | null) => void
   reloadKey: number
@@ -915,6 +962,9 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
   // `ui/loadErrorState.test.tsx` ADOPTERS row: that rail's no-swallow check is FILE-scoped, and this
   // 1000-line page carries several deliberate decoration-read fallbacks it would flag.)
   const [intentsErr, setIntentsErr] = useState<unknown>(null)
+  // Per-row, not a single page-wide flag: pausing one intent must not disable every other
+  // row's switch while the write is in flight.
+  const [busyId, setBusyId] = useState<string | null>(null)
   const load = () => api.knowledgeIntents()
     .then((r) => { setIntentsErr(null); setIntents(r.intents) })
     .catch((e) => { setIntentsErr(e); setIntents([]) })
@@ -946,7 +996,13 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
           hint='e.g. "anything that could improve my homelab", "ideas that help me learn agentic engineering", or "hints on how I should invest".'
           action={{ label: 'New intent', onClick: () => onSelect(blankIntent()), icon: Plus }} />
       )}
-      {intents.map((it) => (
+      {intents.map((it) => {
+        // ONE rule for "is this intent active", read the way the BACKEND defaults it
+        // (`enabled=bool(d.get("enabled", True))`), because the wire type is optional. The
+        // badge, this row's switch and the editor all resolve it identically, so an absent
+        // field cannot render a Paused badge over a switch that reads on.
+        const on = it.enabled !== false
+        return (
         <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
@@ -961,7 +1017,15 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
                   app's idiom for that (19 elements carry it; SystemWidget, RoutingPanel and the tag
                   row among them). */}
               <span data-type="body-m" className="truncate text-on-surface" title={it.goal || it.id}>{it.goal || it.id}</span>
-              {!it.enabled && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">off</span>}
+              {/* 🪤 THIS BADGE WAS UNREACHABLE, and the word was the smaller half of why. Nothing in
+                  the product could set `enabled` to false (the editor's save hard-coded `true`), so
+                  the branch never ran. "off" was also the wrong word for it: its two siblings in
+                  this same directory — a watched source and a research report — both say **Paused**,
+                  and both carry a `title` naming the CONSEQUENCE rather than restating the state
+                  ("This source is not being polled."). Matched here rather than reinvented; the pill
+                  classes stay the row's own, shared with the "proposes skill" badge beside it. */}
+              {!on && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low"
+                title="This intent is not evaluated against new items, and Run gathers nothing while it is paused.">Paused</span>}
               {it.propose_skill && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis">proposes skill</span>}
             </div>
             <div data-type="caption" className="truncate text-on-surface-low">
@@ -969,6 +1033,24 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
               {(it.enabled_for?.length ?? 0) > 0 && ` · ${it.enabled_for!.join('/')}`}
             </div>
           </div>
+          {/* The COST lever, on the row — the same place a watched source and a research report
+              carry theirs, because an active intent spends a model call per saved item and a Run
+              fans out one per existing item. Delete used to be the only way to stop that, and it
+              takes the gathered outcomes with it; pausing keeps them. No `disabledReason`: the
+              only reason it is ever off is the in-flight save, which resolves itself. */}
+          <span onClick={(e) => e.stopPropagation()}>
+            <Toggle on={on} size="sm" disabled={busyId === it.id}
+              label={`${on ? 'Pause' : 'Resume'} intent: ${rowSubject([it.goal || it.id], 40)}`}
+              onChange={async (next) => {
+                setBusyId(it.id)
+                try {
+                  if (!(await reportingWrite(next ? 'resume this intent' : 'pause this intent',
+                    () => writeIntent(it, { enabled: next })))) return
+                  notify(`Intent ${next ? 'resumed' : 'paused'}`, 'success')
+                  load()
+                } finally { setBusyId(null) }
+              }} />
+          </span>
           <span onClick={(e) => e.stopPropagation()}>
             {/* An icon-only DESTRUCTIVE control had no accessible name at all: axe `button-name`
                 [critical] at both themes, and a screen-reader user heard "button" beside every intent.
@@ -982,7 +1064,8 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
               }}><Trash2 size={14} /></Button>
           </span>
         </ListRow>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -1012,11 +1095,12 @@ function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: str
 }
 
 /** Intents-tab sidebar: an intent's gathered outcomes + a retroactive-run action. */
-function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
+export function IntentDetail({ intent, onChanged, onClose, onOpenItem, onEdit }: {
   intent: KnowledgeIntent
   onChanged: () => void
   onClose: () => void
   onOpenItem: (id: string) => void
+  onEdit: () => void
 }) {
   const [outcomes, setOutcomes] = useState<IntentOutcome[] | null>(null)
   const [outcomesErr, setOutcomesErr] = useState<unknown>(null)
@@ -1044,6 +1128,12 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
         r.new > 0 ? `Found ${r.new} new match${r.new === 1 ? '' : 'es'}.${errSuffix}`
         : r.matched > 0 ? `No new matches — ${r.matched} existing still match.${errSuffix}`
         : r.errors ? `Couldn't evaluate ${r.errors} item${r.errors === 1 ? '' : 's'} — the model may still be warming up. Try again in a moment.`
+        // 🪤 A PAUSED INTENT EVALUATES NOTHING, so this branch used to report the true-but-
+        // misleading "No matches in your existing items" — a verdict about the items, when in
+        // fact nothing was ever looked at. MEASURED against a live gateway: paused answers
+        // `{evaluated: 0, matched: 0, errors: 0}` and enabled answers `{evaluated: 5, ...}`
+        // over the same five items, so `evaluated === 0` with items present IS the pause.
+        : intent.enabled === false ? 'This intent is paused, so nothing was evaluated. Resume it to run.'
         : 'No matches in your existing items.')
       onChanged()
     } catch { setNote('Run failed.') } finally { setRunning(false) }
@@ -1062,12 +1152,20 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
   return (
     <div className="flex flex-col gap-m p-l">
       <p data-type="body-m" className="text-on-surface">{intent.goal}</p>
+      {/* Said BEFORE the Run button rather than only after a fruitless run: Run is enabled and
+          succeeds on a paused intent, it just evaluates nothing, so without this the control
+          reads as broken. */}
+      {intent.enabled === false && (
+        <p data-type="body-s" className="text-on-surface-low">Paused — this intent is not evaluated against new items, and Run gathers nothing until it is resumed.</p>
+      )}
       <div className="flex flex-wrap items-center gap-s">
         {/* Hand-rolled in-flight state, replaced by the prop it was imitating: `animate-pulse` on
             the icon plus a `running ? 'Running…'` label is exactly what `loading` + `loadingLabel`
             do, minus the `aria-busy` that only `loading` publishes. The verb is kept rather than
             faded, because this runs an intent over an existing library and can take a while. */}
         <Button size="sm" variant="secondary" onClick={run} loading={running} loadingLabel="Running…"><Play size={14} /> Run on existing items</Button>
+        {/* The affordance whose absence froze `propose_skill` and `enabled` at creation. */}
+        <Button size="sm" variant="secondary" onClick={onEdit}><Pencil size={14} /> Edit</Button>
         {/* The blocked reason used to live on a WRAPPING span's title, where a hover finds it and
             a keyboard user never can — the button inside stayed natively disabled and out of the
             tab order. Both strings now ride the button: `title` explains the action,
@@ -1149,12 +1247,19 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
 
 /** Natural-language intent composer — the user writes ONE sentence; everything else
  *  (relevance, the fields to extract) is the LLM's job at ingest time. */
-function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; onClose: () => void; onSaved: () => void }) {
+export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; onClose: () => void; onSaved: () => void }) {
   const [goal, setGoal] = useState(intent.goal ?? '')
   const [enabledFor, setEnabledFor] = useState((intent.enabled_for ?? []).join(', '))
   const [proposeSkill, setProposeSkill] = useState(!!intent.propose_skill)
+  // 🔴 THE FROZEN FIELD. This was the literal `enabled: true` in the save below, which is why
+  // the list's Paused badge could never render and an intent could never be paused: the ONLY
+  // writer of an intent in the whole product spelled the field as a constant. Seeded from the
+  // record so an edit round-trips the real value instead of silently re-enabling a paused
+  // intent the moment anything else about it is saved.
+  const [enabled, setEnabled] = useState(intent.enabled !== false)
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  const isEdit = !!intent.id
 
   async function save() {
     setErr('')
@@ -1162,10 +1267,8 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
     if (!g) { setErr('Describe what you want to track.'); return }
     setSaving(true)
     try {
-      await api.upsertKnowledgeIntent({
-        // New intents omit id — the backend derives the slug from the goal (single
-        // source of truth). Edits keep their existing id.
-        id: intent.id || undefined, goal: g, enabled: true, propose_skill: proposeSkill,
+      await writeIntent(intent, {
+        goal: g, enabled, propose_skill: proposeSkill,
         enabled_for: enabledFor.split(',').map((s) => s.trim()).filter(Boolean),
       })
       onSaved()
@@ -1175,7 +1278,7 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
   return (
     <div className="p-l flex flex-col gap-m">
       <div className="flex items-center justify-between">
-        <span data-type="body-m" className="text-on-surface">New intent</span>
+        <span data-type="body-m" className="text-on-surface">{isEdit ? 'Edit intent' : 'New intent'}</span>
         {/* Icon-only close: with no name it announced as bare "button". A CONSTANT name is right
             here (one per panel), unlike the per-item buttons this sweep also found. */}
         <button type="button" aria-label="Close the intent editor" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
@@ -1192,12 +1295,22 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
           data-type="body-s" className="h-9 rounded-md bg-surface px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       </div>
+      {/* A `Toggle`, not a checkbox: this is the on/off state of something that RUNS, which is
+          what the two siblings in this directory use for their own `enabled` column, and it is
+          the same primitive as the switch on the list row — one state, one control shape. */}
+      <div className="flex items-start justify-between gap-m">
+        <div className="flex flex-col gap-0.5">
+          <span data-type="label-s" className="text-on-surface-var">Active</span>
+          <span data-type="caption" className="text-on-surface-low">A paused intent is not evaluated against new items, so it stops spending a model call per saved item. What it has already gathered is kept.</span>
+        </div>
+        <Toggle on={enabled} size="sm" label="Active" onChange={setEnabled} />
+      </div>
       <label data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
         <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
         <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
       </label>
       {err && <FieldError>{err}</FieldError>}
-      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button><Button size="sm" onClick={save} loading={saving} loadingLabel="Saving…">Save intent</Button></div>
+      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>{isEdit ? 'Back' : 'Cancel'}</Button><Button size="sm" onClick={save} loading={saving} loadingLabel="Saving…">{isEdit ? 'Save changes' : 'Save intent'}</Button></div>
     </div>
   )
 }

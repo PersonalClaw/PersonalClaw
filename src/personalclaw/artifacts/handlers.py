@@ -42,6 +42,7 @@ from personalclaw.artifacts.models import (
 )
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -928,10 +929,7 @@ async def api_artifact_regenerate(request: web.Request) -> web.Response:
     if prov.readonly:
         return web.json_response({"error": f"provider '{prov.name}' is read-only"}, status=400)
     slug = request.match_info["slug"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
 
@@ -1074,10 +1072,7 @@ async def api_artifacts_pin(request: web.Request) -> web.Response:
         _audit(request, "artifact.pin", "denied", "restricted_session")
         return web.json_response({"error": "restricted session"}, status=403)
     slug = request.match_info.get("slug", "")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     # Default TRUE: the route is reached from a Pin control, so the common call carries no body.
@@ -1118,17 +1113,12 @@ async def api_artifact_folder_create(request: web.Request) -> web.Response:
     prov = _provider(request)
     if prov is None:
         return web.json_response({"error": "unknown provider"}, status=400)
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    body = await json_object_body(request)
     try:
         folder = _folder_store(prov).create(
-            str(body.get("name", "")),
-            parent_id=str(body.get("parent_id", "") or ""),
-            icon=str(body.get("icon", "") or ""),
+            require_string(body, "name"),
+            parent_id=string_field(body, "parent_id"),
+            icon=string_field(body, "icon"),
         )
     except ValueError as exc:
         _audit(request, "artifact.folder_create", "denied", str(exc))
@@ -1270,10 +1260,7 @@ async def api_artifact_deploy(request: web.Request) -> web.Response:
             {"error": f"kind '{art.kind}' is not deployable"},
             status=400,
         )
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
     store = _deploy_store(prov)

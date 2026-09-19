@@ -35,7 +35,13 @@ async def _client(tmp_path):
         patch("personalclaw.concurrency.config_dir", return_value=tmp_path),
         patch("personalclaw.loop.files.config_dir", return_value=tmp_path),
     ):
-        app = web.Application()
+        # Installed because `dashboard/server.py` installs it on the real gateway: a route
+        # reading its body through `personalclaw.request_validation` raises
+        # `RequestValidationError` and answers its 400 THERE, so a test app without it
+        # does not model the gateway and reports a deliberate refusal as a 500.
+        from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+        app = web.Application(middlewares=[request_boundary_middleware()])
         register_task_routes(app)
         async with TestClient(TestServer(app)) as client:
             yield client

@@ -9,9 +9,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A notification can now say WHO it is for, and one addressed to somebody else is visible here but fired nowhere here.**
+- **`sharing_policy: shared` knowledge now actually goes somewhere: the provider contract gains its outbound half.**
+- **One install of a knowledge connector can now watch MANY sources: the engine hands `poll` the source row's validated `spec`.**
+- **Bring your own vector store: knowledge vector search can run against your own Qdrant (or pgvector, or Chroma) instead of the built-in `sqlite-vec` index.**
+- **A Session Map mark now says what the turn DID, and you can tell the map to show fewer of them.**
 - **A scanned PDF stops ingesting EMPTY: `ocr` is a new provider type, and a PDF with no text layer is rasterized and read.**
 - **A clean run down one branch of an either/or no longer reports as `partial`.**
 - **A relevance reranker arm for knowledge retrieval, OFF by default.**
+- **The Session Map is reachable: chat now carries an in-session index rail, and on a phone it becomes a tappable drawer.**
+- **A mark jump now lands on the turn you clicked.**
 - **`personalclaw footprint` reports where your disk went, and the gateway now actually gives it back.**
 - **A chat session now has a durable index: `GET /api/chat/sessions/{session}/map`.**
 - **The first-run essentials step now offers a zero-key on-ramp for a local Ollama — on this machine and, opt-in, on your network.**
@@ -37,9 +44,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **⚠️ TIMED TRIGGERS WITH NO EXPLICIT TIMEZONE NOW FIRE AT THEIR LOCAL WALL-CLOCK TIME, NOT AT UTC.**
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
+### Removed
+- **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
+
 ### Fixed
+- **The documented `config get > f.json` → edit → `config set --file f.json` loop no longer deletes every provider you have configured.**
+- **`personalclaw config get` no longer prints your provider API keys and Slack tokens, and the fix does not delete them instead.**
+- **Launching a loop from Plan Review no longer wipes every `kind_config` field that screen doesn't render.**
+- **`personalclaw snapshot` now carries your provider API keys, and the durability census stopped counting decisions that had already been made as debt.**
 - **`personalclaw config set` no longer deletes every configured model provider.**
+- **A tool call's input has one owner, so a persisted chat renders the same as a live one.**
 - **The health strip no longer goes coral just because you set a login password.**
+- **A scanned document read only as far as the page cap now SAYS so, and the OCR true-type gate covers both OCR backends instead of one.**
 - **Settings → Agent defaults no longer shows a "Sandbox" switch that makes no sandbox decision.**
 - **A loop's first cycle is credited again: a fast first cycle no longer leaves its SDLC stage un-advanced.**
 - **One unreachable git source no longer makes the Store take two minutes to open, or re-pay that cost on every load.**
@@ -93,6 +109,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Knowledge search no longer hands back the whole library for a term the library happens to talk about — and no longer collapses to a single result when one title happens to match.**
 - **Removed**
 - **A loop deleted while its cockpit is open now says so instead of rendering the loop forever.**
+- A knowledge **intent is now editable and pausable**, which turns three dead controls back on.
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -114,6 +131,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Reordering an action plan no longer deletes the completed steps: a locked row is deliberately rendered outside the reorder group so it cannot be dragged, which means Motion's `onReorder` can only describe the DRAGGABLE rows — and the write-back treated that partial array as the whole list, so one drag destroyed every ticked step (six of ten on a half-finished plan) and Save persisted it, under a tooltip promising "A completed step keeps its place".**
 - **Picking a personality now actually changes the assistant's voice: the chat send path attaches the active personality's persona theme, wiring the frontend half of a persona-injection path whose backend was fully built but read a field no client ever sent.**
 - **An unsaved edit to a markdown memory doc (Preferences / Projects / History) now survives clicking another Studio item.**
+- **Install consent now distinguishes "this app asked for nothing" from "nobody has read its manifest yet", on both surfaces that ask you to consent.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

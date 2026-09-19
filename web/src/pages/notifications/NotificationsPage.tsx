@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Bell, Check, CheckCheck, Trash2, Undo2, X, Target } from 'lucide-react'
+import { Bell, Check, CheckCheck, Filter, Trash2, Undo2, X, Target } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -224,7 +224,22 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         ) : (
           <>
             {filtered.length === 0 ? (
-              <div className="text-center text-on-surface-low text-[0.8125rem] py-2xl">Nothing matches this filter.</div>
+              // 🔑 THE PRIMITIVE, NOT A CENTRED DIV — and this file already used it eight lines above
+              // for its blank slate. That is the sharp form of the drift: the same component reaches
+              // for `EmptyState` on one branch and hand-rolls the sibling branch, so there was never
+              // a container argument for it (the two live in the same slot).
+              //
+              // The old copy also failed the family's own criterion — it must name what the user can
+              // CHANGE. `Nothing matches this filter.` named the narrowing and not the way out, so a
+              // user who filtered a fresh install could not tell an empty filter from an empty app.
+              // Shape matched to `code/CodeSection`, which main converged onto the same form: how
+              // many exist, that they are merely elsewhere, and the un-narrowing as the action.
+              <EmptyState
+                icon={Filter}
+                title="No matching notifications"
+                hint={`You have ${items?.length ?? 0} notification${(items?.length ?? 0) === 1 ? '' : 's'} — just none in this view.`}
+                action={{ label: 'Show all', onClick: () => setFilter('all') }}
+              />
             ) : (
               <div className="flex flex-col gap-l">
                 {BUCKET_ORDER.filter((b) => groups[b]?.length).map((b) => (

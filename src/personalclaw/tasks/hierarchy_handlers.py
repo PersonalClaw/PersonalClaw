@@ -9,7 +9,13 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.http_errors import json_error
+from personalclaw.request_validation import (
+    MISSING,
+    json_object_body,
+    optional_string,
+    require_string,
+    string_field,
+)
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import is_sensitive_path, is_system_path
 from personalclaw.tasks.hierarchy import HierarchyStore
@@ -42,6 +48,48 @@ _PROJECT_UPDATABLE = frozenset(
     }
 )
 _TASK_LIST_UPDATABLE = frozenset({"name", "project_id", "agent_instructions_template"})
+
+
+#: Update-door string fields, split by whether BLANK is a legal value.
+#:
+#: The split is the whole content of the fix and it is not cosmetic. ``name`` must clear
+#: the same non-blank bar its create door sets (#456/#2992); the rest are bindings a
+#: caller may legitimately CLEAR by sending ``""`` — an empty ``workspace_dir`` means "the
+#: project's context dir becomes the workspace", and an empty ``project_id`` on a task-list
+#: PUT means "do not move it". Validating those as non-blank would refuse a documented
+#: operation, which is how a validation pass turns into a regression.
+_PROJECT_NON_BLANK = ("name",)
+_PROJECT_NULLABLE = ("brief", "workspace_dir")
+_TASK_LIST_NON_BLANK = ("name",)
+_TASK_LIST_NULLABLE = ("project_id",)
+#: Free text: type-checked but never stripped, because leading/trailing whitespace in a
+#: prompt template is the author's. Before this it was stored with NO coercion at all, so
+#: a dict round-tripped into `project.json` as a nested object where every reader expects
+#: a string (#456).
+_TEMPLATE_FIELD = "agent_instructions_template"
+
+
+def _revalidate_strings(body: dict, non_blank: tuple[str, ...], nullable: tuple[str, ...]) -> None:
+    """Re-ask the create door's string rules for every field the caller actually SENT.
+
+    The asymmetry this closes ran backwards from the usual shape (#456): the POST 500'd on
+    a non-string scalar while the PUT ``str()``-coerced it and persisted the result, so the
+    update door was the DAMAGING half — it did not reject a bad type, it *invented* a
+    plausible-looking value (``null`` → the four-character name ``None``, a dict → Python's
+    repr ``{'a': 1}``). A field the caller omitted is left alone, so a PUT stays a partial
+    write.
+
+    Mutates *body* in place with the validated value, so the store never re-strips.
+    """
+    for field in non_blank:
+        value = optional_string(body, field)
+        if value is not MISSING:
+            body[field] = value
+    for field in nullable:
+        if field in body:
+            body[field] = string_field(body, field)
+    if _TEMPLATE_FIELD in body:
+        body[_TEMPLATE_FIELD] = string_field(body, _TEMPLATE_FIELD, strip=False)
 
 
 def _store() -> HierarchyStore:
@@ -114,20 +162,21 @@ async def api_projects_list(request: web.Request) -> web.Response:
 
 async def api_projects_create(request: web.Request) -> web.Response:
     """POST /api/projects"""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
+    body = await json_object_body(request)
+    name = require_string(body, "name")
     store = _store()
-    refusal = _workspace_refusal(str(body.get("workspace_dir") or "").strip())
+    workspace_dir = string_field(body, "workspace_dir")
+    refusal = _workspace_refusal(workspace_dir)
     if refusal is not None:
         return refusal
     try:
         project = store.create_project(
-            name=body.get("name", ""),
-            agent_instructions_template=body.get("agent_instructions_template", ""),
-            brief=body.get("brief", ""),
-            workspace_dir=body.get("workspace_dir", ""),
+            name=name,
+            agent_instructions_template=string_field(
+                body, "agent_instructions_template", strip=False
+            ),
+            brief=string_field(body, "brief"),
+            workspace_dir=workspace_dir,
             # A name the user typed at creation is explicit → lock it (same as a rename),
             # so it isn't mislabeled "Auto-named" and isn't auto-renamed by the LLM. The
             # loop's auto-backing-project path (tasks_link.ensure_project) omits this, so
@@ -469,19 +518,21 @@ async def api_projects_work(request: web.Request) -> web.Response:
     )
 
 
-async def _claim_body(request: web.Request) -> tuple[str, str] | web.Response:
-    """Parse `{target_id, holder}` from a claim/release POST, or return a 400 response."""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "body must be a JSON object"}, status=400)
-    target_id = str(body.get("target_id", "") or "").strip()
-    holder = str(body.get("holder", "") or "").strip()
-    if not target_id or not holder:
-        return web.json_response({"error": "target_id and holder are required"}, status=400)
-    return target_id, holder
+async def _claim_body(request: web.Request) -> tuple[str, str]:
+    """The `{target_id, holder}` a claim/release POST must carry.
+
+    No longer a body reader: it reads through :func:`json_object_body` and asks
+    :func:`require_string` for each field, so its three hand-rolled refusals (one
+    ``invalid_json`` envelope, two bare ``{"error": str}`` bodies that no envelope rail
+    covers) collapse into the shared ones and the `tuple | Response` return — which every
+    caller had to `isinstance`-check — becomes a plain tuple.
+
+    ``target_id`` and ``holder`` are refused SEPARATELY rather than by the old
+    ``not target_id or not holder``, because "target_id and holder are required" does not
+    tell a caller which of the two it got wrong.
+    """
+    body = await json_object_body(request)
+    return require_string(body, "target_id"), require_string(body, "holder")
 
 
 async def api_projects_work_claim(request: web.Request) -> web.Response:
@@ -493,10 +544,7 @@ async def api_projects_work_claim(request: web.Request) -> web.Response:
     """
     if _store().get_project(request.match_info["project_id"]) is None:
         return web.json_response({"error": "not found"}, status=404)
-    parsed = await _claim_body(request)
-    if isinstance(parsed, web.Response):
-        return parsed
-    target_id, holder = parsed
+    target_id, holder = await _claim_body(request)
     granted, reason = leases.acquire_claim(target_id, holder, ttl=_CLAIM_TTL_SECS)
     return web.json_response(
         {
@@ -514,10 +562,7 @@ async def api_projects_work_release(request: web.Request) -> web.Response:
     """
     if _store().get_project(request.match_info["project_id"]) is None:
         return web.json_response({"error": "not found"}, status=404)
-    parsed = await _claim_body(request)
-    if isinstance(parsed, web.Response):
-        return parsed
-    target_id, holder = parsed
+    target_id, holder = await _claim_body(request)
     remaining, reason = leases.release_claim(target_id, holder)
     return web.json_response(
         {
@@ -530,17 +575,15 @@ async def api_projects_work_release(request: web.Request) -> web.Response:
 
 async def api_projects_update(request: web.Request) -> web.Response:
     """PUT /api/projects/{project_id}"""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    body = await json_object_body(request)
     rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
     if rejected is not None:
         return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
+    # The create door's rule, re-asked on every string field the caller actually sent
+    # (#456). MISSING = omitted = leave it alone, so a PUT stays a partial write.
+    _revalidate_strings(body, _PROJECT_NON_BLANK, _PROJECT_NULLABLE)
     if "workspace_dir" in body:
-        refusal = _workspace_refusal(str(body["workspace_dir"] or "").strip())
+        refusal = _workspace_refusal(string_field(body, "workspace_dir"))
         if refusal is not None:
             return refusal
     store = _store()
@@ -704,17 +747,16 @@ async def api_task_lists_list(request: web.Request) -> web.Response:
 
 async def api_task_lists_create(request: web.Request) -> web.Response:
     """POST /api/task-lists"""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
+    body = await json_object_body(request)
     try:
         tl = _store().create_task_list(
-            name=body.get("name", ""),
-            project_id=body.get("project_id", ""),
-            project_name=body.get("project_name", ""),
+            name=require_string(body, "name"),
+            project_id=string_field(body, "project_id"),
+            project_name=string_field(body, "project_name"),
             repeatable=bool(body.get("repeatable", False)),
-            agent_instructions_template=body.get("agent_instructions_template", ""),
+            agent_instructions_template=string_field(
+                body, "agent_instructions_template", strip=False
+            ),
         )
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -731,15 +773,11 @@ async def api_task_lists_get(request: web.Request) -> web.Response:
 
 async def api_task_lists_update(request: web.Request) -> web.Response:
     """PUT /api/task-lists/{list_id}"""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    body = await json_object_body(request)
     rejected = _unwritable_field(body, _TASK_LIST_UPDATABLE)
     if rejected is not None:
         return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
+    _revalidate_strings(body, _TASK_LIST_NON_BLANK, _TASK_LIST_NULLABLE)
     try:
         tl = _store().update_task_list(request.match_info["list_id"], **body)
     except ValueError as e:
@@ -815,10 +853,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     from personalclaw.tasks import registry
     from personalclaw.tasks.models import REPEATABLE_PROJECT, TaskStatus, task_reset_payload
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return web.json_response(
             {

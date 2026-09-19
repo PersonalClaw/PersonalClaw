@@ -823,6 +823,9 @@ export interface AppCatalogEntry {
   // before the user commits. Empty dict/[] for an app that declares neither, or for a
   // registry-index pointer (its manifest isn't fetched until install).
   permissions?: AppPermissionsWire
+  /** Whether a manifest was actually read for this entry — a registry pointer has
+   *  none yet, so empty permissions there mean "not known", not "declared none". */
+  consentKnown?: boolean
   crons?: AppCronSummary[]
   // The declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
@@ -1201,7 +1204,10 @@ export interface ProjectLinkedItem { id: string; name: string; status: string; e
  *  values the backend can send; a view that renders these must handle both explicitly. */
 export type SharingPolicy = 'private' | 'shared'
 /** A knowledge item surfaced in a project's view. `source_project` is "" for the project's
- *  own items and the OWNING project's name for a `shared` item from another container. */
+ *  own items and the OWNING project's name for a `shared` item from another container.
+ *  `contributor` is "" for anything the local owner wrote and a teammate's handle for a
+ *  foreign contribution that came back from a shared store — the backend resolves
+ *  "is this mine?", so the client never compares handles itself. */
 export interface ProjectKnowledgeItem {
   id: string
   title: string
@@ -1212,6 +1218,7 @@ export interface ProjectKnowledgeItem {
   run_id: string
   sharing_policy: SharingPolicy
   source_project: string
+  contributor: string
 }
 // Work board. `WorkRow` mirrors `containers.BoardRow.to_dict()`;
 // `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed
@@ -2939,7 +2946,9 @@ export interface KnowledgeItem {
   // vision fields (may be absent from the PClaw backend today)
   type?: KnowledgeType; gist_language?: string; url?: string; url_title?: string
   mime_type?: string; file_size?: number; thumbnail_path?: string; file_path?: string; word_count?: number
-  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number } & Record<string, unknown>
+  // `ocr_*`: a scanned PDF's pages are rasterized to be OCR'd, and that is capped — these
+  // three say whether the cap BIT, so a partial read is never presented as a whole document.
+  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number } & Record<string, unknown>
   insights?: Record<string, unknown> | null; ai_summary?: string; ai_title?: string
   // node-graph ingestion lifecycle (#30): queued|processing|done|partial|failed
   processing_status?: string; processing_error?: string
@@ -6708,7 +6717,10 @@ export const api = {
   // terminal (PTY)
   createTerminal: (cwd?: string, sandbox?: string) => post<{ session_id: string; shell?: string; cwd?: string; sandbox?: string }>('/api/terminal/sessions', { ...(cwd ? { cwd } : {}), ...(sandbox ? { sandbox } : {}) }),
   sandboxProviders: () => get<{ providers: Array<{ name: string; display_name: string; available: boolean }> }>('/api/sandbox/providers'),
-  terminalSessions: () => get<{ enabled?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
+  // `persist_available` = a tmux binary exists on the HOST. Optional because an older backend does
+  // not send it, and absent must mean "no capability claim" rather than a default either way — the
+  // persistence promise is only true when the config flag AND this are both on (issue 545).
+  terminalSessions: () => get<{ enabled?: boolean; persist_available?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
   deleteTerminal: (id: string) => del(`/api/terminal/sessions/${encodeURIComponent(id)}`),
 
   // lifecycle triggers (projected onto the legacy HookItem shape the shared
@@ -7213,6 +7225,17 @@ export const api = {
     post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
   setCredentialKeychain: (on: boolean) =>
     patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
+  // Which MCP servers may interrupt a tool call to ask the user a question
+  // (`elicitation/create`). The grant is per SERVER, so the wire value is the whole
+  // allowlist and the caller adds/removes one name: a boolean here would be the global
+  // "MCP can interrupt me" switch the security shape forbids. Read via the config blob
+  // rather than a bespoke GET — it is one plain field, and inventing an endpoint for it
+  // would put the grant behind two doors that could disagree.
+  mcpElicitationServers: () =>
+    get<Record<string, any>>('/api/config/personalclaw').then(
+      (c) => (c?.security?.mcp_elicitation_servers ?? []) as string[]),
+  setMcpElicitationServers: (names: string[]) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.mcp_elicitation_servers', value: names }),
   // The secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

@@ -26,7 +26,7 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
-import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
 
 // The status word + accent come from `lib/loopStatus` — the ONE registry every loop
@@ -211,9 +211,9 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                   ? 1
                   : (c.max_cycles ? Math.min(1, c.total_cycles / c.max_cycles) : 0)
                 const running = c.status === 'running'
-                // While running, count the in-flight cycle so the list matches the
-                // cockpit header (total_cycles is the COMPLETED count).
-                const shownCycle = running ? c.total_cycles + 1 : c.total_cycles
+                // The open cycle counts, so the list matches the cockpit header — one shared
+                // `shownCycle` rather than this page's own `+1` (total_cycles is the COMPLETED count).
+                const shownCycleNo = shownCycle(c.status, c.total_cycles)
                 const latest = c.findings?.length ? c.findings[c.findings.length - 1] : null
                 const latestText = latest?.key_insight || latest?.summary
                 // 🔴 THE ROW PRINTED THE SAME SENTENCE TWICE. The title is the loop's name and the
@@ -280,7 +280,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                           const label = k === 'design' ? 'design' : k === 'general' ? 'loop' : (GOAL_GLYPH[c.goal_type] ?? c.goal_type)
                           const title = k === 'design' ? 'design loop' : k === 'general' ? 'general loop' : `${c.goal_type} goal`
                           return <span data-type="caption" className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
-                        <span data-type="caption" className="shrink-0 text-on-surface-low">· {loopStatusLabel(dispStatus)}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycle}` : ` · cycle ${shownCycle}/${c.max_cycles}`)}</span>
+                        <span data-type="caption" className="shrink-0 text-on-surface-low">· {loopStatusLabel(dispStatus)}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycleNo}` : ` · cycle ${shownCycleNo}/${c.max_cycles}`)}</span>
                       </div>
                       {(latestText || goalEarnsItsLine) && (
                         <p data-type="body-s" className="mt-1 text-on-surface-low truncate">
@@ -303,7 +303,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <ProgressRing pct={pct} tone={loopStatusColor(dispStatus)} label={`Cycle progress: ${shownCycle}${c.max_cycles ? ` of ${c.max_cycles}` : ''}`} />
+                      <ProgressRing pct={pct} tone={loopStatusColor(dispStatus)} label={`Cycle progress: ${shownCycleNo}${c.max_cycles ? ` of ${c.max_cycles}` : ''}`} />
                       {/* 🪤 "fnd" IS AN ABBREVIATION NOTHING ELSE IN THE APP USES, and a screen reader
                           reads it literally. The visible form cannot grow — the box is `w-9` (36px), and
                           widening it reflows the row — so the abbreviation stays for the eye and the full
@@ -336,8 +336,8 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
   const dispStatus = effectiveLoopStatus(loop.status, loop.error_message)
   const running = loop.status === 'running'
   const kind = (loop as { kind?: string }).kind
-  const shownCycle = running ? loop.total_cycles + 1 : loop.total_cycles
-  const cycleLabel = loop.max_cycles === 0 ? `cycle ${shownCycle} · ongoing` : `cycle ${shownCycle}/${loop.max_cycles}`
+  const shownCycleNo = shownCycle(loop.status, loop.total_cycles)
+  const cycleLabel = loop.max_cycles === 0 ? `cycle ${shownCycleNo} · ongoing` : `cycle ${shownCycleNo}/${loop.max_cycles}`
   const latest = loop.findings?.length ? loop.findings[loop.findings.length - 1] : null
   const latestText = latest?.key_insight || latest?.summary
   return (

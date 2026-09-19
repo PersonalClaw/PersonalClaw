@@ -155,6 +155,23 @@ def _render_scale(width: float, height: float) -> float:
     return min(scale, MAX_RENDER_SCALE)
 
 
+def ocr_rejection(node_type: str, backend: str, rejected: list[str]) -> NodeOutput:
+    """The output an ``ocr`` backend returns when the true-type gate refused every input.
+
+    Shared by BOTH backends so the fact "OCR refused these bytes" reads identically however
+    the executor resolved the node — a user must not have to know which backend ran to find
+    out their file was rejected, and a surface keyed on ``ocr == "rejected"`` must not go
+    blind because the other backend spelled the refusal differently.
+    """
+    return NodeOutput(
+        node_type=node_type,
+        backend=backend,
+        success=False,
+        error="; ".join(rejected) or "no accepted image",
+        metadata={"ocr": "rejected", "ocr_rejected": rejected},
+    )
+
+
 class OcrEngineNode:
     """Read text from images with the OCR engine an installed ``ocr`` app registered.
 
@@ -178,7 +195,7 @@ class OcrEngineNode:
 
     async def run(self, inputs: dict[str, NodeOutput], ctx: NodeContext) -> NodeOutput:
         from personalclaw.knowledge.pipeline.nodes.media_nodes import _images_from
-        from personalclaw.ocr.filetype import TrueTypeRejected, assert_image
+        from personalclaw.ocr.filetype import partition_images
         from personalclaw.ocr.provider import OcrError
         from personalclaw.ocr.registry import active_ocr
 
@@ -198,24 +215,9 @@ class OcrEngineNode:
             return NodeOutput(
                 node_type=self.node_type, backend=self.backend, success=False, error="no image"
             )
-        accepted: list[str] = []
-        rejected: list[str] = []
-        for path in images:
-            try:
-                assert_image(path)
-            except TrueTypeRejected as exc:
-                logger.info("OCR refused %s: %s", path, exc)
-                rejected.append(str(exc))
-                continue
-            accepted.append(path)
+        accepted, rejected = partition_images(images)
         if not accepted:
-            return NodeOutput(
-                node_type=self.node_type,
-                backend=self.backend,
-                success=False,
-                error="; ".join(rejected) or "no accepted image",
-                metadata={"ocr": "rejected", "ocr_rejected": rejected},
-            )
+            return ocr_rejection(self.node_type, self.backend, rejected)
         try:
             result = await provider.recognize(accepted)
         except OcrError as exc:

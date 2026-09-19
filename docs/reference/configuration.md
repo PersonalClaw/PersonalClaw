@@ -9,7 +9,8 @@ Three ways to change it:
    column below names the panel).
 2. **CLI** — `personalclaw config get|set <key> [value]` (dot-separated keys, e.g.
    `personalclaw config set session.timeout_secs 7200`), or `personalclaw config edit`
-   to open the file in `$EDITOR`.
+   to open the file in `$EDITOR`. `config get` withholds credentials; add `--reveal`
+   when you need them (see the [CLI reference](cli.md#personalclaw-config)).
 3. **API** — `GET /api/config/personalclaw` (full config),
    `PATCH /api/config/personalclaw {path, value}` (single-field, allowlisted),
    `GET /api/config/schema` (the machine-readable field registry this document
@@ -287,7 +288,7 @@ read or write, not a degraded local call.
 - `GET /api/config/personalclaw` — full config as JSON (owner-only).
 - `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses. This document is generated against it.
-- `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader.
+- `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.
 
 See also: [API overview](api-overview.md) · [CLI reference](cli.md) ·
 [Getting started](../guides/getting-started.md)

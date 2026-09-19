@@ -36,6 +36,17 @@ def _make_request(user="testuser", session_id="abc123", registry=None, cfg=None)
     request.match_info = MagicMock()
     request.match_info.get = lambda k, default="": session_id if k == "session_id" else default
     request.remote = "127.0.0.1"
+
+    # An awaitable `json()`, because the create handler reads through
+    # `request_validation.json_object_body`, which awaits it unconditionally. A bare
+    # `MagicMock` attribute is not awaitable and raised `TypeError` inside the reader; that
+    # went unnoticed only while the handler wrapped its read in `except Exception: pass`,
+    # so this double was resting on the very swallow #2923 is about. `{}` is what the shared
+    # reader returns for a request carrying no body, which is what these cases send.
+    async def _json():
+        return {}
+
+    request.json = _json
     return request
 
 
@@ -403,7 +414,12 @@ class TestApiTerminalList:
             mock_sel.return_value.log_api_access = MagicMock()
             resp = await terminal.api_terminal_list(req)
         body = json.loads(resp.body)
-        assert body == {"enabled": True, "sessions": []}
+        # `persist_available` rides on every list response — the HOST fact the client needs so its
+        # persistence promise stops being derived from the config flag alone (issue 545). Asserted
+        # by key, not by value, because whether tmux is installed is a property of the test host.
+        assert set(body) == {"enabled", "persist_available", "sessions"}
+        assert body["enabled"] is True
+        assert body["sessions"] == []
 
     @pytest.mark.asyncio
     async def test_lists_sessions_with_details(self):

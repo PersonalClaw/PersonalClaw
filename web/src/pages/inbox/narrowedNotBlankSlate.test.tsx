@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ── One list of twelve answered "nothing matches" with its onboarding paragraph ─────────────
@@ -42,6 +42,53 @@ import { join } from 'node:path'
 // the expression is written.
 
 const SRC = join(process.cwd(), 'src')
+
+/** Comments stripped BEFORE any match — the standing rule in this file, and load-bearing for the
+ *  census below: several subjects carry comments quoting the copy they replaced. */
+function strip(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+}
+
+/** The sentences that mean "your filter or search emptied this list", as distinct from "you have
+ *  none". Deliberately phrase-based rather than component-based: the whole point of the census is to
+ *  find the sites that did NOT reach for the component. */
+const NARROWED_COPY =
+  /No matching [a-z]+|No [a-z]+ match|Nothing matches|No results|Try a different|match(?:es)? (?:the|your) (?:current )?(?:search|filter)/i
+
+/** Re-measured 2026-09-19 against this tree: 43 narrowed states through `EmptyState`, 19 hand-rolled
+ *  (44 / 20 before this change converted `notifications/NotificationsPage`). The ceiling may only
+ *  FALL. The remaining 19 are NOT all defects — a popover, a command palette and an inline composer
+ *  toolbar cannot host a centred block with a 48px icon badge and `py-2xl`, and some are result
+ *  summaries rather than empty states at all. They stay a shrink-only count rather than nineteen
+ *  named exemptions, because a weak claim that cannot be got wrong beats nineteen verdicts that can. */
+const HAND_ROLLED_CEILING = 19
+
+function tsxFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) tsxFiles(p, acc)
+    else if (entry.endsWith('.tsx') && !entry.includes('.test.')) acc.push(p)
+  }
+  return acc
+}
+
+function censusNarrowed(): { primitive: string[]; handRolled: string[] } {
+  const primitive: string[] = []
+  const handRolled: string[] = []
+  for (const abs of [...tsxFiles(join(SRC, 'pages')), ...tsxFiles(join(SRC, 'ui'))]) {
+    const rel = abs.slice(SRC.length + 1)
+    const code = strip(readFileSync(abs, 'utf8'))
+    for (const m of code.matchAll(new RegExp(NARROWED_COPY.source, 'gi'))) {
+      // Which JSX construct encloses it: the nearest opening tag looking backwards.
+      const back = code.slice(Math.max(0, m.index! - 400), m.index!)
+      const tags = [...back.matchAll(/<([A-Za-z][A-Za-z0-9]*)/g)].map((t) => t[1])
+      const wrapper = tags.length ? tags[tags.length - 1] : '?'
+      ;(wrapper === 'EmptyState' ? primitive : handRolled).push(`${rel} <${wrapper}>`)
+    }
+  }
+  return { primitive, handRolled }
+}
+
 const inbox = readFileSync(join(SRC, 'pages/inbox/InboxPage.tsx'), 'utf8')
 /** 🪤 Comments stripped, because this rail's first version flagged its own subject's PROSE: the file
  *  documents the historical `filter !== 'all'` trap in a comment, and the assertion below counted that
@@ -113,7 +160,12 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     expect(inbox).toMatch(/results=\{\{[^}]*active: narrowed[^}]*\}\}/)
   })
 
-  it('the eleven surfaces that were already right still are', () => {
+  it('the seven pinned surfaces keep their narrowed copy', () => {
+    // 🔴 RENAMED, because the name was the bug. It said "the eleven surfaces" and the list held
+    // SEVEN — and the name was the only surviving record of the four it had lost. That is the defect
+    // class this repo keeps re-finding: an enumerated rail cannot see its own blind spot. The count
+    // now matches the list, and the census test below is what actually guards the POPULATION; this
+    // one is a copy pin on seven surfaces whose exact wording has been deliberately chosen.
     // Not vacuous, and a guard against a future copy sweep flattening these into one sentence: each
     // names what the user should change. Asserted per file, since that is where a regression lands.
     const CANONICAL: [string, RegExp][] = [
@@ -131,6 +183,54 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     ]
     for (const [rel, copy] of CANONICAL) {
       expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must keep its narrowed copy`).toMatch(copy)
+    }
+  })
+
+  it('every narrowed empty state goes through the PRIMITIVE, and the list is DERIVED', () => {
+    // The census the enumerated pin above cannot be: measured from source, so a surface added
+    // tomorrow is covered without anyone remembering to register it. 62 narrowed states across
+    // `pages` + `ui` — 43 through `EmptyState`, 19 hand-rolled.
+    const { primitive, handRolled } = censusNarrowed()
+
+    // A rail over nothing asserts nothing: the scan must find the population it guards.
+    expect(primitive.length, 'the census found almost no primitive-based narrowed states — the scan is broken')
+      .toBeGreaterThan(30)
+
+    // Shrink-only in the direction that matters: hand-rolled may only go DOWN. A new surface that
+    // centres a bare <div> instead of reaching for the primitive reds here, by name.
+    expect(
+      handRolled.length,
+      'a narrowed empty state must use `EmptyState` unless its container is too small for it ' +
+        '(a popover, a palette, an inline toolbar). Hand-rolled sites, which may only decrease:\n  ' +
+        handRolled.join('\n  '),
+    ).toBeLessThanOrEqual(HAND_ROLLED_CEILING)
+
+    // And the two sharp ones must not come back. Each reached for `EmptyState` on its blank-slate
+    // branch and hand-rolled the sibling branch IN THE SAME COMPONENT, so there was never a
+    // container argument for them. `CodeSection` was converged on main; `NotificationsPage` here.
+    for (const rel of ['pages/code/CodeSection.tsx', 'pages/notifications/NotificationsPage.tsx']) {
+      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      expect(code, `${rel} must render its narrowed state through the primitive`)
+        .toMatch(/<EmptyState[\s\S]{0,400}?just none/)
+      expect(code, `${rel} must not reintroduce a centred div for it`)
+        .not.toMatch(/text-center[^>]{0,80}>\s*\{?\s*(needle \?|`No projects|Nothing matches this filter)/)
+    }
+  })
+
+  it('a narrowed state names what the user can CHANGE, and offers the un-narrowing', () => {
+    // The family's own criterion. `Nothing matches this filter.` named the narrowing and not the way
+    // out, so a user who filtered a fresh install could not tell an empty filter from an empty app.
+    // Shape shared with `loops/LoopsListPage` and `code/CodeSection`, the most complete members: how
+    // many exist, that they are merely elsewhere, and the un-narrowing as an action.
+    for (const [rel, action] of [
+      ['pages/code/CodeSection.tsx', /(Clear search|View all projects)/],
+      ['pages/notifications/NotificationsPage.tsx', /Show all/],
+      ['pages/loops/LoopsListPage.tsx', /View all loops/],
+    ] as [string, RegExp][]) {
+      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      expect(code, `${rel} must offer the un-narrowing as an action`).toMatch(action)
+      expect(code, `${rel} must say how many exist, so an empty filter reads differently from an empty app`)
+        .toMatch(/just none in this view/)
     }
   })
 })

@@ -28,6 +28,13 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import (
+    MISSING,
+    json_object_body,
+    optional_string,
+    require_string,
+    string_field,
+)
 from personalclaw.voice import bindings as vb
 from personalclaw.voice import profiles as vp
 
@@ -58,16 +65,6 @@ def _broadcast(request: web.Request, event: str, profile: vp.VoiceProfile | None
         logger.debug("voice profile broadcast failed for %s", event, exc_info=True)
 
 
-async def _body(request: web.Request) -> dict:
-    try:
-        raw = await request.json()
-    except Exception as exc:
-        raise vp.VoiceProfileError("invalid JSON", 400, "invalid_json") from exc
-    if not isinstance(raw, dict):
-        raise vp.VoiceProfileError("JSON body must be an object", 400, "invalid_json")
-    return raw
-
-
 # ── CRUD ────────────────────────────────────────────────────────────────────
 
 
@@ -83,8 +80,11 @@ async def api_voice_profiles_list(request: web.Request) -> web.Response:
 
 async def api_voice_profile_create(request: web.Request) -> web.Response:
     """POST /api/voice/profiles {name, kind, provider, model, …}."""
+    body = await json_object_body(request)
+    # Written BACK, not merely checked: `require_string` returns the stripped value, and a
+    # door that validates and then forwards the raw one stores `" x "` after refusing `" "`.
+    body["name"] = require_string(body, "name")
     try:
-        body = await _body(request)
         profile = vp.create_profile(**body)
     except vp.VoiceProfileError as exc:
         return json_error(exc.reason, message=exc.message, status=exc.status)
@@ -103,8 +103,14 @@ async def api_voice_profile_get(request: web.Request) -> web.Response:
 
 async def api_voice_profile_update(request: web.Request) -> web.Response:
     """PUT /api/voice/profiles/{id} — patch the mutable fields."""
+    body = await json_object_body(request)
+    # The create door's rule, re-asked. `optional_string` returns MISSING when the caller
+    # omitted `name` (a PUT stays a partial write) and raises the same 400 the POST raises
+    # when they sent one that is not a non-blank string — which is the whole of #2992.
+    name = optional_string(body, "name")
+    if name is not MISSING:
+        body["name"] = name
     try:
-        body = await _body(request)
         profile = vp.update_profile(request.match_info["id"], **body)
     except vp.VoiceProfileError as exc:
         return json_error(exc.reason, message=exc.message, status=exc.status)
@@ -134,7 +140,7 @@ async def api_voice_profile_delete(request: web.Request) -> web.Response:
 async def api_voice_profile_lock(request: web.Request) -> web.Response:
     """POST /api/voice/profiles/{id}/lock {history_index} — pin seed + locked.wav."""
     try:
-        body = await _body(request)
+        body = await json_object_body(request)
         profile = vp.lock_profile(request.match_info["id"], body.get("history_index", 0))
     except vp.VoiceProfileError as exc:
         return json_error(exc.reason, message=exc.message, status=exc.status)
@@ -163,9 +169,10 @@ async def api_voice_profile_consent_record(request: web.Request) -> web.Response
     and re-derives the verdict.
     """
     pid = request.match_info["id"]
+    body = await json_object_body(request)
+    consent_text = string_field(body, "consent_text", strip=False)
     try:
-        body = await _body(request)
-        profile = vp.record_consent(pid, consent_text=str(body.get("consent_text") or ""))
+        profile = vp.record_consent(pid, consent_text=consent_text)
     except vp.VoiceProfileError as exc:
         _sel().log_api_access(
             caller=_caller(request),
@@ -277,7 +284,7 @@ async def api_voice_bindings_put(request: web.Request) -> web.Response:
     an ethics checkpoint).
     """
     try:
-        body = await _body(request)
+        body = await json_object_body(request)
         surface = str(body.get("surface") or "")
         pid = str(body.get("profile_id") or "")
         bindings = vb.set_binding(surface, pid)
@@ -314,10 +321,7 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
     """
     from personalclaw.voice import migration as vm
 
-    try:
-        raw = await request.json()
-    except Exception:
-        raw = {}
+    raw = await json_object_body(request)
     name = str(raw.get("name") or "") if isinstance(raw, dict) else ""
     try:
         profile = vm.migrate_active_to_default_profile(name=name)

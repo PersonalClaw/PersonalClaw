@@ -42,6 +42,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +65,6 @@ def _sel():
     from personalclaw.dashboard import handlers as _h
 
     return _h.sel()
-
-
-async def _body(request: web.Request) -> dict:
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 def _config() -> Any:
@@ -288,7 +281,7 @@ async def api_proactive_install(request: web.Request) -> web.Response:
             message="Automation writes are not allowed in this session mode.",
             status=403,
         )
-    body = await _body(request)
+    body = await json_object_body(request)
     config = _config()
     proactive = _proactive(config)
     asked = str(body.get("cron", "") or "").strip()
@@ -526,7 +519,7 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
         return json_error(
             "forbidden", message="Digest replies are not allowed in this session mode.", status=403
         )
-    body = await _body(request)
+    body = await json_object_body(request)
     run_id = str(body.get("run_id", "") or "").strip()
     text = str(body.get("text", "") or "")
     if not run_id:

@@ -26,6 +26,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +194,7 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
         return web.json_response({"ok": True, "revoked": client_id})
 
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         return json_error("invalid_body", message="body must be a JSON object", status=400)
     label = str(body.get("label", "") or "").strip()
@@ -277,10 +275,7 @@ async def api_external_access_client_toggle(request: web.Request) -> web.Respons
     from personalclaw.inbound import clients as clients_mod
 
     client_id = str(request.match_info.get("client_id", "") or "")
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict) or not isinstance(body.get("disabled"), bool):
         return json_error("invalid_body", message="body must be {disabled: bool}", status=400)
     if not clients_mod.set_disabled(client_id, bool(body["disabled"]), reason="operator action"):

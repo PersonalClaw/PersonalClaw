@@ -46,6 +46,7 @@ from personalclaw.dashboard.state import (
 )
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
+from personalclaw.request_validation import json_object_body
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
@@ -978,12 +979,12 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
 async def api_chat_session_create(request: web.Request) -> web.Response:
     """POST /api/chat/sessions — create a new chat session."""
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # #2923: this read used to be `except Exception: body = {}`, so a truncated or
+    # corrupt body was DISCARDED and session creation carried on with every field
+    # defaulted — a real, persisted session at 200. The next check already 400'd a body
+    # that parsed to a non-dict, which made the pair backwards: unparseable input is the
+    # STRONGER signal that the caller is broken. The shared reader refuses both.
+    body = await json_object_body(request)
     name = body.get("name")
     if name is not None and not isinstance(name, str):
         return web.json_response({"error": "name must be a string"}, status=400)
@@ -1747,10 +1748,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     Skips the active session and pinned sessions.
     """
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     max_days = 3
     try:
         max_days = max(1, int(body.get("max_inactive_days", 3)))
@@ -2263,10 +2261,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         name = name.removeprefix("dashboard_")
     if not state.conversation_log:
         return web.json_response({"error": "no conversation log"}, status=400)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     # The client-supplied NAME of the session to resume. It is a session name, not a
     # persisted key: everything below that touches disk must go through the one owner
     # (`resolved_key`), and only the in-memory dedupe just below may compare the
