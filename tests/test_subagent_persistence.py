@@ -16,6 +16,11 @@ from personalclaw.subagent_persistence import (
     write_tombstone,
 )
 
+# Bounded stand-in hang: long enough to outlast the cap under test, short enough that a
+# cap which fails to bind costs one assertion failure rather than the 120s
+# pytest-timeout that took a whole CI shard down (#2996, #3143).
+_HANG_SECS = 2.0
+
 
 @pytest.fixture()
 def agent_root(tmp_path, monkeypatch):
@@ -524,7 +529,7 @@ class TestTombstoneOnAbnormalExit:
         manager._running_count = 1
 
         async def _hang(*a, **kw):
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         with (
             patch.object(manager, "_run_inner", _hang),
@@ -732,12 +737,13 @@ class TestFolderCleanupOnSuccess:
         ctx.hooks.auto_approve_subagent_spawn = True
 
         async def _slow_on_done(_batch):
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
-        manager = SubagentManager(sessions=sessions, ctx_builder=ctx, on_done=_slow_on_done)
+        manager = SubagentManager(
+            sessions=sessions, ctx_builder=ctx, on_done=_slow_on_done, on_done_timeout=0.01
+        )
 
         with (
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.01),
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
         ):

@@ -413,6 +413,8 @@ class SubagentManager:
         on_event: SubagentEventCallback | None = None,
         run_lane_cap: int = 0,
         delivery_coalesce_secs: float = 0.05,
+        on_done_timeout: float = _ON_DONE_TIMEOUT,
+        reset_timeout: float = _RESET_TIMEOUT,
     ):
         self._sessions = sessions
         self._ctx_builder = ctx_builder
@@ -426,6 +428,15 @@ class SubagentManager:
         # short window and delivered as ONE batch turn, so a burst of N completions
         # is one parent turn, not N serialized behind the per-session Semaphore(1).
         self._delivery_coalesce_secs = max(0.0, delivery_coalesce_secs)
+        # Delivery / reset caps live on the INSTANCE, not as module globals read at
+        # await time. A cap read off a global can only be lowered by patching that
+        # global, which binds for the duration of the patch BLOCK rather than for the
+        # life of the manager — so any await reached outside that window silently used
+        # the 1200s/30s production default and parked until pytest-timeout killed the
+        # shard (#2996, #3143). Bound to the object and the cap can never be out of
+        # force for an await this manager owns.
+        self._on_done_timeout = on_done_timeout
+        self._reset_timeout = reset_timeout
         self._pending_delivery: dict[str, list[SubagentInfo]] = {}
         self._delivery_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._default_turn_limit = default_turn_limit
@@ -777,7 +788,7 @@ class SubagentManager:
 
         # Kill the process FIRST so the pipe unblocks, then cancel the task.
         try:
-            await asyncio.wait_for(self._sessions.reset(session_key), timeout=_RESET_TIMEOUT)
+            await asyncio.wait_for(self._sessions.reset(session_key), timeout=self._reset_timeout)
         except asyncio.TimeoutError:
             logger.warning("Reaper: reset hung for %s, attempting SIGKILL", agent_id)
             self._sigkill_session(session_key)
@@ -1698,7 +1709,7 @@ class SubagentManager:
                 self._maybe_clear_fanout(_fanout_key(info))
                 try:
                     await asyncio.wait_for(
-                        self._sessions.reset(session_key), timeout=_RESET_TIMEOUT
+                        self._sessions.reset(session_key), timeout=self._reset_timeout
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Subagent %s: reset timed out, force-killing", info.id)
@@ -1766,7 +1777,7 @@ class SubagentManager:
     async def _flush_delivery(self, parent_key: str) -> None:
         """Deliver one parent's buffered completions as a single batch (C1.1).
 
-        The whole batch is delivered under ONE ``_ON_DONE_TIMEOUT``. On a delivery
+        The whole batch is delivered under ONE ``self._on_done_timeout``. On a delivery
         FAILURE the orchestrator's context is PRESERVED — the parent session is NOT
         reset (the old remedy wiped the very conversation that asked for the work);
         the failure is surfaced per child via ``notify_injection_failed`` instead.
@@ -1775,7 +1786,7 @@ class SubagentManager:
         if not batch or not self._on_done:
             return
         try:
-            await asyncio.wait_for(self._on_done(batch), timeout=_ON_DONE_TIMEOUT)
+            await asyncio.wait_for(self._on_done(batch), timeout=self._on_done_timeout)
             for info in batch:
                 if not info.error:
                     self._cleanup_delivered(info)
@@ -1784,7 +1795,7 @@ class SubagentManager:
                 "Subagent batch delivery for %s timed out after %.0fs (%d result(s)) — "
                 "parent context PRESERVED, surfacing failure",
                 parent_key,
-                _ON_DONE_TIMEOUT,
+                self._on_done_timeout,
                 len(batch),
             )
             # DO NOT reset the parent session (C1.1): resetting wiped the
@@ -1793,7 +1804,7 @@ class SubagentManager:
             for info in batch:
                 self.notify_injection_failed(
                     info,
-                    reason=f"batch delivery timed out after {int(_ON_DONE_TIMEOUT)}s",
+                    reason=f"batch delivery timed out after {int(self._on_done_timeout)}s",
                 )
         except Exception:
             logger.exception("Subagent batch delivery failed for %s", parent_key)

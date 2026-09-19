@@ -12,6 +12,13 @@ import pytest
 
 from personalclaw.subagent import _TURN_LIMIT, SubagentManager
 
+# How long a stand-in coroutine hangs when a test needs a cap to fire. It only has to
+# OUTLAST the cap under test (0.01s–0.1s here), so it is bounded rather than the 999s
+# it used to be: if the cap ever fails to bind, the test fails on its own assertion in
+# ~2s instead of burning the whole 120s pytest-timeout and taking the CI shard down
+# with it (#2996, #3143).
+_HANG_SECS = 2.0
+
 
 def _mock_sessions() -> MagicMock:
     """Create a mock SessionManager with async methods."""
@@ -602,13 +609,14 @@ class TestSubagentReaper:
         sessions = _mock_sessions()
 
         async def hanging_reset(key: str) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         sessions.reset = hanging_reset
         manager = SubagentManager(
             sessions=sessions,
             ctx_builder=_mock_ctx_builder(),
             is_yolo=lambda: True,
+            reset_timeout=0.1,
         )
 
         info = SubagentInfo(
@@ -622,7 +630,6 @@ class TestSubagentReaper:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._RESET_TIMEOUT", 0.1),
             patch.object(manager, "_sigkill_session") as mock_kill,
         ):
             await manager._force_reap("hang0001", info, _TIMEOUT_SECS + 60)
@@ -638,7 +645,7 @@ class TestSubagentReaper:
         sessions = _mock_sessions()
 
         async def slow_reset(key: str) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         sessions.reset = slow_reset
 
@@ -646,6 +653,7 @@ class TestSubagentReaper:
             sessions=sessions,
             ctx_builder=_mock_ctx_builder(),
             is_yolo=lambda: True,
+            reset_timeout=0.1,
         )
 
         info = SubagentInfo(id="slow0001", task="test task")
@@ -655,7 +663,6 @@ class TestSubagentReaper:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._RESET_TIMEOUT", 0.1),
             patch.object(manager, "_sigkill_session"),
         ):
             await manager._run(info)
@@ -975,18 +982,18 @@ class TestMaxTurnsParam:
 
 
 class TestOnDoneTimeout:
-    """Tests for _ON_DONE_TIMEOUT preventing gateway hang."""
+    """Tests for the on-done delivery cap preventing gateway hang."""
 
     @pytest.mark.asyncio
     async def test_run_on_done_timeout_fires_injection_failed(self) -> None:
-        """When _on_done hangs past _ON_DONE_TIMEOUT, the subagent still completes
+        """When _on_done hangs past the delivery cap, the subagent still completes
         and notify_injection_failed fires a subagent_injection_failed event."""
         from personalclaw.subagent import SubagentInfo
 
         events: list[str] = []
 
         async def hanging_on_done(info: SubagentInfo) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         async def track_event(etype: str, info: object, extra: dict) -> None:
             events.append(etype)
@@ -997,12 +1004,12 @@ class TestOnDoneTimeout:
             on_done=hanging_on_done,
             on_event=track_event,
             is_yolo=lambda: True,
+            on_done_timeout=0.1,
         )
 
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("timeout test", parent_session_key="dashboard:test-session")
             assert info is not None
@@ -1023,7 +1030,7 @@ class TestOnDoneTimeout:
         captured_extra: dict = {}
 
         async def hanging_on_done(info: SubagentInfo) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         async def capture_event(etype: str, info: object, extra: dict) -> None:
             if etype == "subagent_injection_failed":
@@ -1035,12 +1042,12 @@ class TestOnDoneTimeout:
             on_done=hanging_on_done,
             on_event=capture_event,
             is_yolo=lambda: True,
+            on_done_timeout=0.1,
         )
 
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("path test", parent_session_key="dashboard:session-x")
             assert info is not None
@@ -1061,7 +1068,7 @@ class TestOnDoneTimeout:
         events: list[str] = []
 
         async def hanging_on_done(info: SubagentInfo) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         async def track_event(etype: str, info: object, extra: dict) -> None:
             events.append(etype)
@@ -1072,6 +1079,7 @@ class TestOnDoneTimeout:
             on_done=hanging_on_done,
             on_event=track_event,
             is_yolo=lambda: True,
+            on_done_timeout=0.1,
         )
 
         info = SubagentInfo(
@@ -1086,7 +1094,6 @@ class TestOnDoneTimeout:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             await manager._force_reap("hang0002", info, _TIMEOUT_SECS + 60)
             await manager.flush_deliveries()  # coalesced delivery (C1.1)
@@ -1160,7 +1167,7 @@ class TestOnDoneTimeout:
         from personalclaw.subagent import SubagentInfo
 
         async def hanging_on_done(batch: list[SubagentInfo]) -> None:
-            await asyncio.sleep(999)
+            await asyncio.sleep(_HANG_SECS)
 
         sessions = _mock_sessions()
         failed_events: list[str] = []
@@ -1175,12 +1182,12 @@ class TestOnDoneTimeout:
             on_done=hanging_on_done,
             on_event=track_event,
             is_yolo=lambda: True,
+            on_done_timeout=0.1,
         )
 
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("timeout reset test", parent_session_key="dashboard:session-1")
             assert info is not None
@@ -1192,6 +1199,56 @@ class TestOnDoneTimeout:
         assert "dashboard:session-1" not in [c.args[0] for c in sessions.reset.await_args_list]
         # The failure is surfaced instead.
         assert "subagent_injection_failed" in failed_events
+
+    @pytest.mark.asyncio
+    async def test_delivery_cap_comes_from_the_manager_not_a_module_global(self) -> None:
+        """#2996 / #3143 REGRESSION: the delivery cap must be read off the MANAGER, not
+        off ``personalclaw.subagent._ON_DONE_TIMEOUT``.
+
+        A cap read from the module global only binds for the lifetime of a ``patch()``
+        block, so any delivery await reached outside that window silently ran against
+        the 1200s production default and parked there until pytest-timeout killed the
+        whole CI shard. Here the global is set ABOVE the stand-in hang: if production
+        still read it, the cap would never fire, the stand-in would return normally and
+        no failure would be surfaced — so a revert fails this in ~2s rather than 120s.
+        """
+        from personalclaw.subagent import SubagentInfo
+
+        events: list[str] = []
+
+        async def hanging_on_done(batch: list[SubagentInfo]) -> None:
+            await asyncio.sleep(_HANG_SECS)
+
+        async def track_event(etype: str, info: object, extra: dict) -> None:
+            events.append(etype)
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=hanging_on_done,
+            on_event=track_event,
+            is_yolo=lambda: True,
+            on_done_timeout=0.05,
+        )
+
+        started = time.monotonic()
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 600.0),
+        ):
+            info = manager.spawn("cap source", parent_session_key="dashboard:cap")
+            assert info is not None
+            await manager._tasks[info.id]
+            await manager.flush_deliveries()
+            await asyncio.sleep(0.05)
+        elapsed = time.monotonic() - started
+
+        # The manager's own 0.05s cap fired ...
+        assert "subagent_injection_failed" in events
+        # ... and it fired on 0.05s, not on the global's 600s: the delivery finished
+        # well inside the bounded stand-in hang.
+        assert elapsed < _HANG_SECS, f"delivery cap did not come from the manager ({elapsed:.2f}s)"
 
 
 class TestTimeoutContext:
