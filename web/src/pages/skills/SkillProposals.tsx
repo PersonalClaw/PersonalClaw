@@ -7,6 +7,7 @@ import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { useQuery, useMutation, invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
+import { acceptedLabel } from './skillMeta'
 
 /** Skill-proposals inbox (skill-evolution-proposal-only).
  *
@@ -130,10 +131,9 @@ function ProposalRow({ proposal }: { proposal: SkillProposal }) {
   const acceptM = useMutation({
     run: () => api.acceptSkillProposal(proposal.id),
     invalidates: [{ prefix: 'skill-proposals' }, 'skills'],
-    // The VERSION, not just the name. A refinement of a skill that already had refinements
-    // reads identically to its first without it — and "which version did I approve?" is the
-    // only question a refinement raises that the skill name cannot answer.
-    onSuccess: (r) => setDone(r.version ? `Accepted → ${r.name} · refinement v${r.version}` : `Accepted → ${r.name}`),
+    // The VERSION, not just the name — and the sentence itself lives in `skillMeta` because the
+    // inbox's proposal panel accepts through this same endpoint and must confirm it identically.
+    onSuccess: (r) => setDone(acceptedLabel(r.name, r.version)),
     onError: (e) => setDone(e instanceof Error ? e.message : 'Failed'),
   })
   const rejectM = useMutation({
@@ -160,6 +160,20 @@ function ProposalRow({ proposal }: { proposal: SkillProposal }) {
           <div className="flex items-center gap-1.5">
             {open ? <ChevronDown size={14} className="text-on-surface-low" /> : <ChevronRight size={14} className="text-on-surface-low" />}
             <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{proposal.slug}</span>
+            {/* WHICH SKILL this refines, on the COLLAPSED row. The slug is the proposal's own
+                name and need not be the entity being changed: a refine names its target in
+                `refine_target`, and when the two differ the bare slug titles the card after
+                something that isn't an installed skill at all. Since this row carries
+                Accept/Reject, a reviewer who accepts without expanding was acting on a name
+                that wasn't the one affected — and two refinements of one skill read
+                identically. Same phrasing as the inbox's proposal panel, which already named
+                the target, so the two surfaces no longer disagree about the same proposal.
+                The slug STAYS the identity: whether the target is still installed is only
+                knowable from the detail fetch, and the expanded body is where that (and the
+                honest "no longer installed, so this would add it as a new skill" case) lives. */}
+            {proposal.kind === 'refine' && proposal.refine_target && (
+              <span data-type="body-s" className="shrink-0 truncate text-on-surface-low">refines {proposal.refine_target}</span>
+            )}
             {proposal.kind === 'refine' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{refinePillLabel(proposal.trigger)}</span>}
           </div>
           <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{proposal.description}</p>
