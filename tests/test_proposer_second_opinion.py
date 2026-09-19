@@ -48,7 +48,7 @@ from personalclaw.proposer.service import (
 )
 from personalclaw.proposer.verify import rediff, snapshot_workspace
 
-_ALL_RUNNERS = ("claude-code", "codex", "gemini-cli", "kiro")
+_ALL_RUNNERS = ("claude-code", "codex", "gemini-cli", "kiro-cli")
 
 
 @pytest.fixture()
@@ -419,18 +419,18 @@ def test_both_backends_satisfy_the_four_member_contract() -> None:
 
 
 def test_an_undeclared_dialect_refuses_to_prepare_instead_of_guessing_a_flag() -> None:
-    """``kiro`` has no declared non-interactive form, so its backend refuses rather than firing
-    an interactive process that would block on a TTY and time out."""
+    """``kiro-cli`` has no declared non-interactive form, so its backend refuses rather than
+    firing an interactive process that would block on a TTY and time out."""
     from personalclaw.agents.runners import catalog
     from personalclaw.proposer.backends import ProposerUnavailable
     from personalclaw.proposer.dialects import declared_dialects, one_shot
 
-    assert one_shot("", "kiro") is None
+    assert one_shot("", "kiro-cli") is None
     # Floor: the dialect table is not empty — three runners DO have a declared form.
     assert set(declared_dialects()) == {"claude-code", "codex", "gemini-cli"}
     brief = build_brief(goal="g", stuck_at="s", workspace=".", origin_runner="codex")
     with pytest.raises(ProposerUnavailable):
-        asyncio.run(RunnerProposerBackend(catalog()["kiro"]).prepare(brief))
+        asyncio.run(RunnerProposerBackend(catalog()["kiro-cli"]).prepare(brief))
 
 
 def test_result_records_round_trip_as_json() -> None:

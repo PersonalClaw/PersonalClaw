@@ -45,9 +45,9 @@
       "adapter": null
     },
     {
-      "id": "kiro",
-      "display_name": "Kiro",
-      "runtime_id": "acp:kiro",
+      "id": "kiro-cli",
+      "display_name": "Kiro CLI",
+      "runtime_id": "acp:kiro-cli",
       "env_var": "KIRO_CLI_EXECUTABLE",
       "bin_names": ["kiro-cli", "kiro"],
       "version_args": ["--version"],

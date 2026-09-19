@@ -200,7 +200,7 @@ and the adapters in the per-home `npm --prefix` root.
 | Does an ACP turn still run at all, per provider? | **Yes on all three.** One turn each; every CLI echoed an exact virgin marker (`AAPX-KIRO-2260919-LIVE`, `AAPX-CLAUDE-2260919-LIVE`, `AAPX-CODEX-2260919-LIVE`). kiro's cold turn took 22.1 s |
 | Versions, by the product's own probe | `claude 2.1.277` · `codex 0.154.0` · `kiro-cli 2.22.1` · `gemini` absent (`GET /api/agent-runners?probe=1`) |
 | **CLI/adapter notices rendered as assistant prose** (codex, DIVERGED) | **STILL DIVERGED.** codex's first assistant chunk is again its own `Warning: Skill descriptions were shortened…`, persisted as assistant text ahead of the answer — reproduced on `codex 0.154.0.488` + adapter `1.12.0`, i.e. 8 CLI minors and 11 adapter minors beyond the build that first measured it (`C4`, `C7`, `G23`). This is the one cell in this re-drive carried to a verdict, and the finding is that **neither upgrade fixed it** |
-| kiro's advertised runtime id | **New defect** — `acp:kiro` does not resolve; see the kiro section |
+| kiro's advertised runtime id | **Defect found, then FIXED the same day** (`AAPX-2`) — the catalog published `acp:kiro`, which no bundle registers, so the id handed to the user could not be bound. The row is now `kiro-cli`/`acp:kiro-cli` and re-driven green. See the kiro section |
 | Adapter actually in use | **`claude-agent-acp 0.74.0`** and **`codex-acp 1.12.0`**, both resolved from the **global** node install — not from the per-home prefix, which held a pinned `0.60.0` that never ran. Read the running process, not the pin |
 | Adapter provenance | Both rows read `state: "unverified"`. That string is the *tell* for the line above: provisioning (and therefore the integrity digest) only runs when the resolver's last resort would be the `npx -y` fallback, so `unverified` means the pin is probably not what is executing |
 | Host model provider | **None bound.** A plain ACP turn needs none — the external CLI owns the model call — but the background axis refuses with `no model provider resolves for use case 'background'`, the same shape as `C16` |
@@ -515,32 +515,53 @@ one must date it against the code before calling it wrong.
 `kiro-cli` `2.22.1` today; the column was measured on `2.18.1`. Speaking ACP natively — no adapter in
 the path, so nothing here is an adapter version. Core's `default` dialect, which has no
 permission-mode axis. **The column is COMPLETE: 63 of 63 cells carry a runtime observation**
-(43 CONFIRMED / 19 DIVERGED / 1 ENV), and it is the column with a live contradiction.
+(43 CONFIRMED / 19 DIVERGED / 1 ENV). It was also the column that disagreed with itself about the id
+it is reached by — **fixed 2026-09-19**, see the note directly below; the counts are unchanged,
+because that defect was never one of the 63 cells.
 
-> **⚠️ The runtime id this provider is reached by is NOT the one the product advertises.** Measured
-> as-a-user on 2026-09-19 with the CLI installed, authenticated, and the `kiro-cli-agent` bundle
-> installed: `GET /api/agent-runners` publishes this runner as `id: "kiro"`,
-> **`runtime_id: "acp:kiro"`** (from core's `runner_catalog.json`), but the only bundle that
-> implements it registers **`acp:kiro-cli`**. Binding the advertised id and sending a turn fails
-> hard — the gateway log reads, verbatim:
+> **✅ The advertised runtime id now resolves — FIXED 2026-09-19 (`AAPX-2`).** For four weeks the
+> product advertised an id that could not be bound. Measured as-a-user on 2026-09-19 with the CLI
+> installed, authenticated, and the `kiro-cli-agent` bundle installed: `GET /api/agent-runners`
+> published this runner as `id: "kiro"`, **`runtime_id: "acp:kiro"`** (from core's
+> `runner_catalog.json`), while the only bundle that implements it registers **`acp:kiro-cli`**.
+> Binding the advertised id and sending a turn failed hard — the gateway log read, verbatim:
 >
 > ```
 > ProviderResolutionError: unknown provider entry 'acp:kiro';
 >   known entries: ['acp:claude-code', 'acp:codex', 'acp:kiro-cli']
 > ```
 >
-> while the same turn on `acp:kiro-cli` runs and the CLI echoes its marker. **claude-code and codex
-> do not have this defect** — their catalog rows (`acp:claude-code`, `acp:codex`) match their
-> bundles exactly; kiro is the only one of the three that disagrees with itself. Two consequences a
-> reader should not have to derive: `definition_for_runtime("acp:kiro-cli")` returns `None`, so
-> **kiro joins no health row and no capability sidecar** (which is why its runner row can report a
-> version while its capabilities read `null`), and with `agents.unattended_requires_verified_adapter`
-> enabled an unattended kiro spawn is **refused** for "no runner-catalog row". That flag defaults
-> `false`, so it does not bite out of the box — it is a live trap for anyone who turns it on.
+> while the same turn on `acp:kiro-cli` ran and the CLI echoed its marker. **claude-code and codex
+> never had this defect** — their catalog rows match their bundles exactly; kiro was the only one of
+> the three that disagreed with itself.
 >
-> This is a host-side naming defect, not a kiro capability limit, and it is filed as a constraint row
-> below rather than folded into a cell verdict: **no cell on this column is wrong because of it**, but
-> every cell on this column was driven through the id the catalog does not publish.
+> **The fix corrected the catalog, not the registry.** The shipped row is now
+> `id: "kiro-cli"` / `runtime_id: "acp:kiro-cli"` / `display_name: "Kiro CLI"`, which is the spelling
+> the rest of this document, the `NOT_GATEABLE` registry and the web layer's own
+> `categoryLabel('kiro-cli') === 'Kiro CLI'` already used — the catalog row was the sole outlier.
+> Deliberately **no alias was added** to the provider registry to make the wrong id resolve: that
+> would have been a compat shim for a name nothing should have published. `acp:kiro` now honestly
+> resolves to nothing.
+>
+> Re-driven after the fix: `GET /api/agent-runners?probe=1` publishes `id: "kiro-cli"`,
+> `runtime_id: "acp:kiro-cli"`, `health.ok: true`, `version: 2.22.1`. Both knock-ons the defect
+> caused are gone with it — `definition_for_runtime("acp:kiro-cli")` returns the row (it returned
+> `None`, which is why kiro joined **no** health row and **no** capability sidecar, and why its
+> runner row could report a version while its capabilities read `null`), and an unattended kiro spawn
+> under `agents.unattended_requires_verified_adapter` is now admitted instead of **refused** for "no
+> runner-catalog row" (that flag defaults `false`, so it was a live trap only for anyone who turned
+> it on).
+>
+> This was a host-side naming defect, never a kiro capability limit: **no cell on this column is
+> wrong because of it**, but every cell on this column was driven through the id the catalog did not
+> publish. The regression rail is
+> `tests/test_runner_catalog.py::test_shipped_runtime_ids_are_canonical_never_aliases`, which asserts
+> every shipped row advertises the CANONICAL provider id rather than one of
+> `permission_authority._PROVIDER_ALIASES`' aliases for it. That alias table
+> (`"kiro" -> "kiro-cli"`) is exactly why the permission layer kept working while the provider
+> registry refused — one surface compensated for the name and the binding surface did not. The
+> pre-existing row test could not catch this: it asserted only the `acp:` **prefix**, which
+> `acp:kiro` satisfied.
 
 > **The tool-axis scare is RESOLVED — and it left four wrong rows behind.** An earlier drive on
 > 2026-08-19 got `NO_TOOLS` from this same `kiro-cli 2.18.1` and every tool row below was published as
@@ -598,12 +619,12 @@ permission-mode axis. **The column is COMPLETE: 63 of 63 cells carry a runtime o
 | Approvals / safety | Blocking PreToolUse hooks | `K39` — with the hook ids bound to the session's agent profile, the tool line read `(hook blocked: …)` and the file was never created | **Conditional:** the same hook, unreferenced by any agent, fired three times and the write still landed. Hook firing is agent-scoped by design; the global path is informational and cannot block (`G40`) |
 | Prompt-side context | Skills | ~~The tools are absent from the CLI~~ — **corrected**: `skill_invoke`/`skill_search`/`skill_remember` are all present, and `skill_search` was CALLED and answered (`K51`, `K57`). What is unmeasured on kiro is only the INDEX half | No prompt in the sweep matched a skill, so there is no `Surfaced skills:` line and no `skill_surface` row to point at. codex measured that half |
 | Tools | kiro's agent discovery of `personalclaw.json` | The file is generated correctly and stored where kiro never looks (`K6`, `G31`). The seeding meant to fix that never ran (`K54`, `G46`) and was **deleted 2026-08-23** — it was unnecessary, because the core tool surface arrives over the protocol instead, re-confirmed post-deletion with no kiro config on the box naming us (`K51`, `K100`, `O123`) | **Closed by deletion** (atom `AAP-4`, DEVIATION 2 — the clean-break option was taken). The generated file itself stays: it is what the native path and the dashboard MCP manager write, and kiro's not reading it costs a session nothing now | `kiro-cli 2.19.1` |
+| Session mechanics | The advertised runtime id resolves (`acp:kiro-cli`) | **Fixed in this repo 2026-09-19 (`AAPX-2`)** — the shipped `runner_catalog.json` row is now `id: "kiro-cli"` / `runtime_id: "acp:kiro-cli"`, the id the bundle registers. It previously published `acp:kiro`, which no bundle registers, so binding the id `GET /api/agent-runners` handed the user failed with `unknown provider entry 'acp:kiro'`. Re-driven after the fix: the API publishes `runtime_id: "acp:kiro-cli"` with `health.ok: true`, `version: 2.22.1`; `definition_for_runtime("acp:kiro-cli")` returns the row (was `None`); an unattended spawn under `agents.unattended_requires_verified_adapter` is admitted (was refused for "no runner-catalog row") | Host-owned, no upstream watch item. **The catalog was corrected rather than the registry aliased** — adding an alias so the unpublishable id resolved would have been a compat shim. Rail: `test_shipped_runtime_ids_are_canonical_never_aliases` | `kiro-cli 2.22.1`, measured as-a-user 2026-09-19 |
 
 ### Protocol or CLI constraint
 
 | Axis | Capability | Why it does not work | Watch — what must change, where | Measured against |
 |---|---|---|---|---|
-| Session mechanics | **The advertised runtime id does not resolve** (`acp:kiro` vs `acp:kiro-cli`) | Core's `runner_catalog.json` publishes this runner as `runtime_id: "acp:kiro"` and `GET /api/agent-runners` hands that id to the user, but the only bundle implementing the provider registers `acp:kiro-cli`. Binding the advertised id and sending a turn fails with `unknown provider entry 'acp:kiro'; known entries: ['acp:claude-code', 'acp:codex', 'acp:kiro-cli']`, with the CLI installed, authenticated and the bundle enabled. The same turn on `acp:kiro-cli` runs. Knock-ons: `definition_for_runtime("acp:kiro-cli")` → `None`, so kiro joins **no** health row and **no** capability sidecar; and with `agents.unattended_requires_verified_adapter` on (default `false`), an unattended kiro spawn is refused for "no runner-catalog row" | **Host seam** — one of the two ids must change. Note the rest of this document, and the `NOT_GATEABLE` registry, already use `kiro-cli`, so the catalog row is the outlier. claude-code and codex do not have this defect | `kiro-cli 2.22.1`, measured as-a-user 2026-09-19 |
 | Approvals / safety | The host gate is **provably not universal** | Seven of thirteen tool calls in one turn executed with **no** permission request — kiro's native `todo_list` — and the host itself labelled each of them `risk: "destructive"`, in the same turns where the read, the write and the `rm` each raised a card (`K13`, `K15`, `G27`). The severity is structural, not about one tool: host safety on ACP is opt-in **by the CLI**, so a provider's ungated set is whatever that CLI chooses not to ask about | **CLI** would have to escalate every tool; failing that, **host seam** needs a positive mechanism (deny-by-default for un-permissioned tool calls) plus the per-provider enumeration rendered below | `kiro-cli 2.18.1` |
 | Approvals / safety | There is **no config-isolation lever**, and the leak is an identity leak on top of a tool leak | 24 of the 27 personas offered in the picker are the operator's own private agents (`K2`); the CLI's tools are largely the operator's, including cloud-credential and expense-write tools — the re-drive counted **151** of them, twelve MCP servers' worth, from `~/.kiro/settings/mcp.json` (`K4`, `K51`); each session is a five-process tree (`K7`, `G28`) | **Bundle + host seam** (atom `AAP-5`) | `kiro-cli 2.18.1` |
 | Tools | Per-tool disable prefs | The only per-tool disable surface addresses *configured* MCP servers; neither kiro's own tools nor the protocol-injected `personalclaw-core` is one — the request returns `server 'personalclaw-core' not found` (`K45`) | **Host seam** — a per-tool pref that can address an ACP CLI's tools does not exist | `kiro-cli 2.18.1` |

@@ -45,8 +45,20 @@ Probe posture: the health probe runs ``<bin> --version`` (or the row's
 and writes nothing outside the sidecar — so probing the catalog cannot touch a
 workspace.
 
+A shipped row's ``runtime_id`` MUST be the id a bundle actually registers — the
+CANONICAL provider name, never one of :data:`personalclaw.acp.permission_authority.
+_PROVIDER_ALIASES`' aliases for it. Measured 2026-09-19 (`AAPX-2`): the kiro row shipped
+``runtime_id: "acp:kiro"`` while the only bundle implementing it registers
+``acp:kiro-cli``, so binding the id this catalog *advertised* through
+``GET /api/agent-runners`` failed with ``ProviderResolutionError: unknown provider entry
+'acp:kiro'``. The alias table made the permission layer forgiving and the provider
+registry is not, so one surface compensated and the binding surface did not. The row is
+now ``kiro-cli``/``acp:kiro-cli`` and
+``test_runner_catalog.py::test_shipped_runtime_ids_are_canonical_never_aliases`` holds the
+invariant for every row.
+
 Shipped-data honesty note: ``gemini-cli``'s ``acp_args`` (``--experimental-acp``) and
-``kiro``'s bin names are declared from the vendors' documented flags, not measured
+``kiro-cli``'s bin names are declared from the vendors' documented flags, not measured
 here; the health probe below only proves the binary's ``--version`` behaviour. The
 adapter ``version``/``integrity`` pins ship EMPTY on purpose — inventing digests we
 have not verified would make :func:`verify_adapter` lie. Provenance is instead
