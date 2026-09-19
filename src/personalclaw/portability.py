@@ -324,7 +324,7 @@ def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
 
 #: Home-relative paths the three hand-written lists in `create_export_zip` already
 #: carry. Subtracted from the inventory-derived sweep so each keeps its per-entry
-#: reason (the safe sqlite backup API, the `skills/auto` skip, the `crons.json` note).
+#: reason (the safe sqlite backup API, the `crons.json` note).
 _LITERAL_EXPORT_PATHS = frozenset(
     {
         "config.json",
@@ -358,8 +358,8 @@ def _remaining_export_paths(pc: Path, *, covered: frozenset[str] | None = None) 
     Derived from `durability.inventory.export_entries()` — which excludes `secret=True` and
     `derived=True` by construction, so a credential cannot arrive here by being newly declared. The
     three literal lists in `create_export_zip` are subtracted rather than replaced: they encode
-    per-entry reasons (the safe sqlite backup API for the databases, the `skills/auto` skip, the
-    `crons.json` note) that a generic pass would lose.
+    per-entry reasons (the safe sqlite backup API for the databases, the `crons.json` note) that a
+    generic pass would lose.
 
     Databases are deliberately NOT returned. They are already staged through `_backup_sqlite`, and a
     filesystem copy of a live WAL store can capture a torn page set — the hazard the snapshot path
@@ -557,6 +557,20 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
         # history is empty reports "never ran" for automations that have run for months, which is
         # indistinguishable from a broken fire path — the same ambiguity the learning staging log
         # travels to avoid (see the note above).
+        #
+        # 🔴 `skills/` TRAVELS WHOLE, `auto/` INCLUDED. This walk used to carry an unexplained
+        # `if dirname == "skills" and "auto" in rel.parts: continue` — the accepted-proposal tier,
+        # dropped silently. It was the only exclusion here with no reason beside it, and all three
+        # authorities disagreed with it: the inventory declares `skills` with
+        # `derived_within=(".skill_embeddings.json",)` and NOTHING else derived, so `auto/` is plain
+        # user state; `snapshot.py` captures and restores it (`_copy_tree_no_overwrite` over the
+        # whole tree, no carve-out); and the panel promises "every non-derived store PersonalClaw
+        # holds". So `personalclaw snapshot` kept accepted skills while Export dropped them — two
+        # backup mechanisms with different definitions of "your skills", and the export was the
+        # wrong one. The import side skipped `auto/` too, on the grounds that those "must go through
+        # SkillsLoader APIs"; they need not — `loader._iter_skill_files` discovers skills by
+        # `rglob("SKILL.md")`, so a copied directory IS a loaded skill and there is no registry to
+        # desync. `skill_count` counts what the walk wrote, so it now reports the whole library.
         for dirname in ("workspace", "skills", "cron-history"):
             if not _wanted(dirname):
                 continue
@@ -571,8 +585,6 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
                     if not _wanted(str(rel)):
                         continue
                     if is_sensitive_path(str(fpath)):
-                        continue
-                    if dirname == "skills" and "auto" in rel.parts:
                         continue
                     # A declared database leaves through the backup API above or not at
                     # all. Without this the same path was written twice and a skipped
@@ -905,10 +917,6 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             summary["refused"] = stripped
 
         if mode == "replace":
-            # Strip skills/auto/ from snapshot before replace (secret/derived already gone).
-            auto_dir = snap / "skills" / "auto"
-            if auto_dir.is_dir():
-                shutil.rmtree(str(auto_dir))
             before = {p.name for p in pc.glob("pre-restore-*") if p.is_dir()}
             try:
                 _do_replace(snap, pc, None)
@@ -1004,25 +1012,23 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # JSONL, and concatenating two homes' rows would double-count runs that
             # `_last_run_status` and the autopause counters read. A job this home already has keeps
             # its own history; a job arriving from the snapshot brings its own.
-            for dirname in ("workspace", "cron-history"):
+            #
+            # 🔴 `skills` MERGES THROUGH THE SAME HELPER AS THE OTHER TREES. It used to have its
+            # own block that walked only the TOP level (`iterdir`, copy-if-the-name-is-absent) and
+            # skipped `auto/` outright "because those must go through SkillsLoader APIs". Neither
+            # half held: `loader._iter_skill_files` finds skills with `rglob("SKILL.md")`, so a
+            # copied directory is already a loaded skill and no registry can desync — and top-level
+            # granularity meant one pre-existing `auto/` (or `utils/`) directory made the whole
+            # namespace un-mergeable, so an arriving `auto/b` was dropped because the home had
+            # `auto/a`. Per-file no-overwrite is both the fix and what `snapshot.py`'s restore
+            # already does for this exact tree.
+            for dirname in ("workspace", "skills", "cron-history"):
                 sd = snap / dirname
                 if sd.is_dir():
                     dd = pc / dirname
                     dd.mkdir(parents=True, exist_ok=True)
                     _copy_tree_no_overwrite(sd, dd)
                     summary["items"].append(f"{dirname} (merged)")
-
-            if (snap / "skills").is_dir():
-                (pc / "skills").mkdir(parents=True, exist_ok=True)
-                # Skip skills/auto/ — those must go through SkillsLoader APIs
-                for item in (snap / "skills").iterdir():
-                    if item.name == "auto":
-                        continue
-                    target = pc / "skills" / item.name
-                    if item.is_dir() and not target.exists():
-                        shutil.copytree(str(item), str(target))
-                    elif item.is_file() and not target.exists():
-                        shutil.copy2(str(item), str(target))
 
             # 🔴 EVERY REMAINING DECLARED STORE (S182). Widening the EXPORT is only half a round
             # trip: driven end to end, an export carrying `tasks/`, `projects/` and `inbox.json`
@@ -1051,6 +1057,5 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     imported_stores += 1
             if imported_stores:
                 summary["items"].append(f"{imported_stores} stores (merged)")
-                summary["items"].append("skills (merged, auto/ skipped)")
 
     return summary
