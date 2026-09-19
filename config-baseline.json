@@ -857,6 +857,18 @@
     "type": "bool"
   },
   {
+    "default": 20,
+    "path": "knowledge.rerank_candidates",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "knowledge.rerank_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 800,
     "path": "knowledge.session_brief_max_tokens",
     "sensitive": false,

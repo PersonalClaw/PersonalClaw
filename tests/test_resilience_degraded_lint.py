@@ -136,6 +136,15 @@ _CALL_SITE_SURFACES = {
     # `prompt_card_failed` with the provider's own reason, and NOTHING is written — the user
     # still has their pasted text. Fail-closed is the honest floor for a typed converter.
     "packs/prompt_cards.py": "assistant_reasoning",
+    # KBVS-2's relevance-reranker stage, after `_rrf_fuse`. Reasoning-axis, OFF unless
+    # `knowledge.rerank_enabled` is set, and its no-model floor is BUILT IN: no model, an
+    # open breaker, a timeout, an empty response, or JSON naming no real candidate id all
+    # return the un-reranked RRF order (`_rerank_score` → None). Reranking is a relevance
+    # stage, never a security control, so the floor is deliberately fail-OPEN — a provider
+    # outage costs the reordering, never the search itself. The retrieval bench keeps the
+    # two apart: `last_rerank_executed` false publishes the `rerank` row as "not measured"
+    # rather than the fallback's own P@k pretending to be a measurement of the reranker.
+    "knowledge/retrieval.py": "assistant_reasoning",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

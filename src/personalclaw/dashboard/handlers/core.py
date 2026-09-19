@@ -1103,6 +1103,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # new indexing without a restart. Nothing already indexed is removed by turning it off;
     # that would delete search state on a settings toggle.
     "knowledge.auto_ingest_artifacts": {"type": "bool"},
+    # KBVS-2: the relevance-reranker stage. Off by default; the retrieval bench's `rerank`
+    # arm (`personalclaw retrieval-eval`) is how an operator decides whether to flip it.
+    "knowledge.rerank_enabled": {"type": "bool"},
+    "knowledge.rerank_candidates": {"type": "int", "min": 1, "max": 200},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is
