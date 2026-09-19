@@ -228,3 +228,156 @@ test.describe('Session Map — the coarse-pointer form (SSM-10)', () => {
     ).toBeInViewport({ timeout: 10_000 })
   })
 })
+
+test.describe('Session Map — the Activity Index jumps through the map (SSM-12)', () => {
+  test.describe.configure({ timeout: 180_000 })
+  // Same geometry as the SSM-11 block: short enough that three scripted turns overflow, wide
+  // enough to stay the pointer form (`useIsMobile` is max-width 768).
+  test.use({ viewport: { width: 1280, height: 420 } })
+
+  // 🔑 WHY THE BROWSER HALF EXISTS ALONGSIDE `src/pages/chat/sessionMapIndexJump.test.tsx`.
+  // The vitest file owns what jsdom can honestly see: one spy receiving both jumps with the same
+  // argument, and — read off `ChatPage.tsx`'s source — that the page passes the two surfaces the
+  // SAME bare identifier. Neither of those observes the jump ARRIVING, because jsdom computes no
+  // layout and `ChatPage` is not mountable there at all. So the claim left over is the user-visible
+  // one, and it is the reason the atom exists: driving the rail tick and driving the former Index
+  // anchor for the SAME turn must move the real transcript to the SAME place.
+  //
+  // 🪤 THE ACTIVITY PANEL IS OPENED FIRST, BEFORE EITHER JUMP, AND THAT ORDER IS LOAD-BEARING.
+  // It is a docked `SidePanel` flex sibling, so opening it narrows the transcript and re-flows it —
+  // a landing offset measured at full width is not comparable with one measured beside an open
+  // panel. Both jumps therefore run under one layout, which is also what lets the assertion be an
+  // exact offset rather than a direction.
+  test('a rail tick and the Index anchor for one turn land the transcript in the same place', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    // SIX turns, not the three the SSM-11 block drives, and the count is load-bearing. The target
+    // below must be a turn whose centred offset is neither 0 nor the maximum, or a wrong coordinate
+    // would clamp to the same place and the comparison would stop discriminating. MEASURED at three
+    // turns: the second user turn centres at 674 against a scrollable height of 674 — pinned to the
+    // bottom, i.e. exactly the degenerate case. Six turns put it around a quarter of the way down.
+    await driveScriptedTurns(page, PROMPT, 6)
+
+    // ── both surfaces, side by side ─────────────────────────────────────────────────────────
+    await expect(page.locator(RAIL)).toBeVisible()
+    expect(
+      await openHeaderOverflowIfNeeded(page, 'Activity'),
+      'the "Activity" control is reachable nowhere in the header, so the Index tab cannot be driven',
+    ).toBe(true)
+    await page.getByRole('button', { name: 'Activity', exact: true }).click()
+    // `index` is the panel's default tab — no tab click, so this really is the FORMER behaviour.
+    const indexPanel = page.locator('#act-panel-index')
+    await expect(indexPanel, 'the Activity panel did not open on its Index tab').toBeVisible({ timeout: 10_000 })
+
+    // ── the pairing: the Nth Index anchor and the Nth `user` mark are the same turn ──────────
+    // Asserted as equal counts rather than assumed. `sessionMapCoord.test.ts` proves the two lists
+    // carry identical coordinates; this is the same claim in the DOM, where a drift would mean the
+    // two clicks below are not about one turn and the offset comparison proves nothing.
+    const anchors = indexPanel.getByRole('button')
+    const userMarks = page.locator(`${MARK}[data-kind="user"]`)
+    const anchorCount = await anchors.count()
+    expect(anchorCount, 'the Index tab listed no anchors').toBeGreaterThan(1)
+    expect(
+      await userMarks.count(),
+      'the rail and the Index tab disagree on how many user turns this session has, so "the same\n' +
+        'turn" below is not well defined',
+    ).toBe(anchorCount)
+
+    // The MIDDLE user turn, never the first: `scrollIntoView({block:'center'})` clamps the oldest
+    // turn to offset 0, where a coordinate off by one lands in the same place and the comparison
+    // stops discriminating.
+    const nth = 1
+    const target = page.getByText(`${PROMPT} (${nth + 1})`, { exact: false }).first()
+
+    /** Park at the newest turn and return that offset — the "from" every jump travels out of. */
+    const parkAtBottom = async (): Promise<number> => {
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel)
+        if (el) el.scrollTop = el.scrollHeight
+      }, SCROLLER)
+      await page.waitForTimeout(250)
+      return (await scrollBox(page)).top
+    }
+    /** The offset a jump settles at, given where it started.
+     *
+     *  🪤 POLLING FOR QUIET ALONE READS THE OFFSET THE JUMP HAS NOT LEFT YET, and that mode is
+     *  invisible: `scrollIntoView({behavior:'smooth'})` animates, so the first two samples after the
+     *  click can both be the PARKED value, "settle" on it, and hand back a landing of `from`.
+     *  Measured twice at three and at six turns — both runs reported the rail landing exactly at the
+     *  bottom while the following `toBeInViewport` (which waits) passed, i.e. the scroll was real and
+     *  the reading was early. So movement is awaited FIRST and quiet second. */
+    const settledTopAfterMoving = async (from: number, what: string): Promise<number> => {
+      await expect
+        .poll(async () => (await scrollBox(page)).top, {
+          message: `${what} never moved the transcript off ${from} — it either resolved no turn node ` +
+            '(a coordinate mismatch) or reached no handler',
+          timeout: 10_000,
+        })
+        .not.toBe(from)
+      let last = -1
+      await expect
+        .poll(async () => {
+          const now = (await scrollBox(page)).top
+          const quiet = now === last
+          last = now
+          return quiet
+        }, { message: 'the transcript never stopped scrolling', timeout: 10_000 })
+        .toBe(true)
+      return last
+    }
+
+    /** Where the target turn ended up INSIDE the scroller — its top edge relative to the
+     *  container's, in px.
+     *
+     *  🪤 DELIBERATELY NOT `scrollTop`. The two jumps are compared against each other, and the
+     *  transcript's CONTENT HEIGHT is not constant between them: measured, the scrollable height grew
+     *  1339 → 1379 after path A, because this chat's async follow-up pass appends below the last turn
+     *  on its own clock. A 40px growth moves the scrollTop that centres a given turn without the
+     *  navigation being wrong at all. The turn's position within the viewport is the property the
+     *  reader actually experiences and is immune to that. */
+    const targetYInScroller = async (): Promise<number> =>
+      target.evaluate((el, sel) => {
+        const s = document.querySelector(sel)!
+        return Math.round(el.getBoundingClientRect().top - s.getBoundingClientRect().top)
+      }, SCROLLER)
+
+    /** Drive one surface's jump and report where it put the target turn. Also returns the raw
+     *  offset + its maximum, so the caller can refuse a landing that merely CLAMPED. */
+    const jumpAndMeasure = async (click: () => Promise<void>, what: string) => {
+      const from = await parkAtBottom()
+      expect(
+        from,
+        'the transcript does not overflow beside the open Activity panel, so no jump can move it\n' +
+          'and this whole test is vacuous. Drive more turns or shorten the viewport rather than\n' +
+          'letting it pass.',
+      ).toBeGreaterThan(40)
+      await click()
+      const top = await settledTopAfterMoving(from, what)
+      await expect(target, `${what} did not bring its turn on screen`).toBeInViewport({ timeout: 10_000 })
+      const { scrollable } = await scrollBox(page)
+      // Neither end. A landing pinned to 0 or to the maximum is reachable by a WRONG coordinate too
+      // — which is the one thing this test exists to tell apart — so it is a vacuity failure, not a
+      // pass. (Measured: at three turns the target's centred offset WAS the maximum, which is why
+      // the fixture above drives six.)
+      expect(top, `${what} landed at ${top}, clamped to the top of the transcript`).toBeGreaterThan(0)
+      expect(top, `${what} landed at ${top}, clamped to the bottom (max ${scrollable}) — pick a turn further from the ends`).toBeLessThan(scrollable - 40)
+      return { top, y: await targetYInScroller() }
+    }
+
+    // ── path A — the RAIL tick ──────────────────────────────────────────────────────────────
+    const rail = await jumpAndMeasure(() => userMarks.nth(nth).click(), 'the rail tick')
+
+    // ── path B — the FORMER INDEX BEHAVIOUR, same turn, same layout ─────────────────────────
+    const index = await jumpAndMeasure(() => anchors.nth(nth).click(), 'the Index anchor')
+
+    // ── THE CLAUSE ──────────────────────────────────────────────────────────────────────────
+    // One handler, one coordinate — so one resting place for the turn. A few pixels of tolerance for
+    // the smooth-scroll animation's final frame, and nothing more: a coordinate mismatch of one turn
+    // is hundreds of pixels at this viewport.
+    expect(
+      Math.abs(index.y - rail.y),
+      `the Index anchor rested the turn at y=${index.y} inside the transcript and the rail tick at\n` +
+        `y=${rail.y} (offsets ${index.top} vs ${rail.top}) for the SAME turn. The two surfaces are not\n` +
+        'one navigation — either they reach different handlers or they speak different coordinates (SSM-12).',
+    ).toBeLessThanOrEqual(4)
+  })
+})
