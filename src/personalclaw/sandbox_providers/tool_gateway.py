@@ -20,13 +20,13 @@ Memoh's answer to "a sandboxed agent still needs tools" is an in-container HTTP 
   after the request arrives and before the tool is looked up. A research-class profile
   (``tool_grants="read"``) is refused every write-class tool.
 
-🔴 **This is the first enforcement point for** ``SafetyProfile.tool_grants``. ``cli_run.py`` says
-so plainly of the pre-existing tree: "that field has no enforcement point anywhere in the tree
-today … so trusting it would have shipped a read-only promise that denies nothing." Enforcing it
-HERE is safe precisely because this surface is new — no existing automation can be broken by a
-control that had no call sites. And the classification is not a second dialect: the read/write
-question is answered by :func:`personalclaw.task_modes.task_mode_denies`, the deny-by-default
-classifier that is already the only read-only posture in this codebase that actually holds.
+This is ONE of three enforcement points for ``SafetyProfile.tool_grants``, and the only one
+that carries a declared ``kind`` per tool. The tier algebra it shares with the two host-side
+seams (``mcp_shared.leaf_tool_denial``, ``subagent._run_inner``) lives in
+:func:`personalclaw.guardrails.policy.tool_grant_denial`; what is local here is the
+classification, answered by :func:`personalclaw.task_modes.task_mode_denies` — the
+deny-by-default classifier that is already the only read-only posture in this codebase that
+actually holds — reading the declared kind rather than guessing from the name.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from personalclaw.guardrails.policy import TOOL_CUSTOM, TOOL_READ, SafetyProfile
+from personalclaw.guardrails.policy import TOOL_READ, SafetyProfile, tool_grant_denial
 from personalclaw.security import redact
 from personalclaw.task_modes import task_mode_denies
 
@@ -179,24 +179,20 @@ class ToolGateway:
         )
 
     def _refusal(self, spec: ToolSpec) -> str:
-        """Why *spec* is refused under this profile, or ``""`` when it is permitted."""
-        grants = self._profile.tool_grants
-        if grants == TOOL_CUSTOM:
-            allow = tuple(self._profile.tool_allowlist)
-            if spec.name in allow:
-                return ""
-            return (
-                f"{spec.name} is not in the {self._profile.name!r} profile's tool allowlist "
-                f"({', '.join(allow) or 'empty'})"
-            )
-        mode = _GRANT_TO_TASK_MODE.get(grants, "ask")
+        """Why *spec* is refused under this profile, or ``""`` when it is permitted.
+
+        The tier algebra is :func:`~personalclaw.guardrails.policy.tool_grant_denial` — shared
+        with the two host-side seams that enforce the same field (the in-process MCP handler and
+        the spawn approval loop), so ``custom``'s allowlist matching and the fail-closed unknown
+        tier are answered once. What stays HERE is the write/read classification, because this
+        surface has something the other seams do not: a DECLARED ``kind`` per tool, which
+        ``task_mode_denies`` reads directly instead of guessing from the name.
+        """
+        mode = _GRANT_TO_TASK_MODE.get(self._profile.tool_grants, "ask")
         deny = task_mode_denies(mode, spec.name, spec.kind, {})
-        if deny:
-            return (
-                f"{spec.name} is write-class and the {self._profile.name!r} profile grants "
-                f"{grants!r} tools only — {deny}"
-            )
-        return ""
+        return tool_grant_denial(
+            self._profile, spec.name, write_class=bool(deny), detail=deny or ""
+        )
 
     def handle_request(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """One request in, one response out. Never raises; a failure IS a response."""

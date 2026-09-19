@@ -99,6 +99,8 @@ from personalclaw.guardrails.policy import (
     is_unattended_session,
     profile_for_session,
     safety_profile_for,
+    tool_grant_denial,
+    tool_grant_posture,
     unattended_dispatch_key,
 )
 from personalclaw.guardrails.scan import ScanResult, scan_outbound
@@ -167,6 +169,8 @@ __all__ = [
     "run_budget_from_config",
     "safety_profile_for",
     "scan_outbound",
+    "tool_grant_denial",
+    "tool_grant_posture",
     "unattended_dispatch_key",
     "wrap_model_call_guard",
 ]

@@ -19,12 +19,16 @@ Safety posture (fail-CLOSED, and the reason this module exists at all):
   unattended, so the run resolves through the ``HEADLESS`` SafetyProfile by
   construction rather than by anything this module remembers to pass.
 * Read-only default is enforced by the session's TASK MODE (``ask``), not by
-  ``SafetyProfile.tool_grants``. That field has no enforcement point anywhere in the
-  tree today (see ``guardrails/policy.py``'s module docstring: it lands "when that
-  engine lands and consumes ``tool_grants``"), so trusting it would have shipped a
-  read-only promise that denies nothing. ``task_mode_denies`` is deny-by-default,
-  runs BEFORE the approval gate, and is documented as un-bypassable by Trust/YOLO —
-  it is the only read-only posture in this codebase that actually holds.
+  ``SafetyProfile.tool_grants``. ``tool_grants`` is enforced (``guardrails.policy.
+  tool_grant_denial``, at the MCP tool handler, the spawn approval loop and the sandbox
+  gateway), but it is enforced against the posture the SEAM owns — a workflow leaf's
+  compiled capability, a spawn's capability class — and NOT against
+  ``HEADLESS.tool_grants``. Reading the session profile here would make ``--allow``
+  unusable: this run resolves HEADLESS, whose tier is ``read``, so the explicit write
+  grant below would be vetoed by the very posture the caller asked to widen.
+  ``task_mode_denies`` is deny-by-default, runs BEFORE the approval gate, and is
+  documented as un-bypassable by Trust/YOLO — it is the read-only posture that holds for
+  a whole CLI turn.
 * ``--allow`` is the explicit write grant (task mode ``agent``), printed to stderr at
   start so a script is self-documenting about the posture it asked for.
 * ``run`` never sets an approval mode. ``HEADLESS`` resolves to ``HOOK_BASED``, whose
