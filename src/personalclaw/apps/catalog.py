@@ -188,6 +188,11 @@ class CatalogEntry:
     # still routes through source.resolve + the scanner, unchanged. "" for a
     # dir-scanned entry (source itself is the pointer).
     pointer: str = ""
+    # Whether a manifest was actually READ for this entry (issue 614): a registry
+    # pointer has no manifest yet, so its empty permissions mean "not known", while a
+    # scanned manifest with no permissions block means "declared none". The consent
+    # UI must say different things for those two — this flag is the one authority.
+    consentKnown: bool = False  # noqa: N815
     # P29 install-consent transparency: the app's declared permissions + crons, so the
     # Store can show WHAT the app will be granted + WHAT recurring jobs it will run BEFORE
     # the user installs. Metadata only (populated from the scanned manifest); empty for a
@@ -738,6 +743,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     quality=(m.quality.to_dict() if m.quality else {}),
                     pointer=f"{url}#{entry.name}",
                     permissions=_perms,
+                    consentKnown=True,
                     crons=_crons,
                     coreCompatibility=m.core_compatibility().to_dict(),
                 )
@@ -1271,6 +1277,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     tags=list(m.tags),
                     quality=(m.quality.to_dict() if m.quality else {}),
                     permissions=_perms,
+                    consentKnown=True,
                     crons=_crons,
                     coreCompatibility=m.core_compatibility().to_dict(),
                 )
@@ -1371,6 +1378,7 @@ def available_bundled() -> list[CatalogEntry]:
                 tags=list(m.tags),
                 quality=(m.quality.to_dict() if m.quality else {}),
                 permissions=_perms,
+                consentKnown=True,
                 crons=_crons,
                 coreCompatibility=m.core_compatibility().to_dict(),
             )

@@ -823,6 +823,9 @@ export interface AppCatalogEntry {
   // before the user commits. Empty dict/[] for an app that declares neither, or for a
   // registry-index pointer (its manifest isn't fetched until install).
   permissions?: AppPermissionsWire
+  /** Whether a manifest was actually read for this entry — a registry pointer has
+   *  none yet, so empty permissions there mean "not known", not "declared none". */
+  consentKnown?: boolean
   crons?: AppCronSummary[]
   // APE-4: the declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose

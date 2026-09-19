@@ -9,7 +9,7 @@ import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
-import { ConsentModal, PermissionList, CronConsentList } from '../../pages/apps/installConsent'
+import { ConsentModal, PermissionList, CronConsentList, consentPermissions } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
 
@@ -279,7 +279,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
       {guarded.blocked && pendingRef.current && (
         <ConsentModal label={pendingRef.current.displayName || pendingRef.current.name}
           result={guarded.blocked} busy={guarded.busy}
-          permissions={pendingRef.current.permissions} crons={pendingRef.current.crons}
+          permissions={consentPermissions(pendingRef.current)} crons={pendingRef.current.crons}
           onConfirm={confirmInstall} onClose={() => guarded.reset()} />
       )}
     </div>
