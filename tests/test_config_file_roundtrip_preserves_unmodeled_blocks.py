@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.apps.secret_fields import SECRET_MASK
+
 _REAL_KEY = "sk-REAL-KEY-DO-NOT-LOSE"
 
 
@@ -114,15 +116,66 @@ def test_read_for_merge_refuses_what_it_cannot_read(tmp_path, body):
 
 
 def test_config_get_names_a_block_that_is_in_the_file(tmp_path, monkeypatch, capsys):
-    """Defect 1. `config get providers` exited 1 with "Unknown key" for a block on disk."""
+    """Defect 1. `config get providers` exited 1 with "Unknown key" for a block on disk.
+
+    NAMING the block is the behaviour this pins. It first asserted the plaintext key as well,
+    which railed #3125 green: `config get` printing `providers` was right, printing the API key
+    in it was not. The block is still named; the credential inside it is now withheld.
+    """
     from personalclaw import cli_config
 
     cfg = _seed(tmp_path / "home")
     _pin(monkeypatch, cfg)
 
     cli_config._config_cmd(_args("get", key="providers"))
-    out = json.loads(capsys.readouterr().out)
-    assert out[0]["api_key"] == _REAL_KEY
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out[0]["name"] == "openrouter", "the block on disk must still be named"
+    assert out[0]["api_key"] == SECRET_MASK
+    assert _REAL_KEY not in captured.out
+    assert "providers[0].api_key" in captured.err, "a silent redaction reads as 'no secrets here'"
+
+
+def test_config_get_reveal_prints_the_credential(tmp_path, monkeypatch, capsys):
+    """The escape hatch, and the documented source for a file you mean to write back.
+
+    Withholding by default is only viable because there IS a plaintext source; without one,
+    `config set --file` would have no lossless input and the operator would reach for `config
+    edit` on the real file instead.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("get", key="providers", reveal=True))
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)[0]["api_key"] == _REAL_KEY
+    assert captured.err == "", "nothing was withheld, so there is nothing to report"
+
+
+def test_config_get_withholds_every_credential_in_the_whole_document(tmp_path, monkeypatch, capsys):
+    """The issue's own measurement, as a rail: the sentinel count goes 3 → 0.
+
+    Whole-document rather than per-block, because the next credential-bearing block will not be
+    `providers` or `slack` — `merge_unmodeled_top_keys` exists precisely because that set grows.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("get", key=None))
+    captured = capsys.readouterr()
+    assert _REAL_KEY not in captured.out
+    assert "xoxb-REAL" not in captured.out
+    dumped = json.loads(captured.out)
+    assert dumped["providers"][0]["api_key"] == SECRET_MASK
+    assert dumped["slack"]["bot_token"] == SECRET_MASK
+    # …and the non-secret content of the same blocks is untouched, or the dump is useless.
+    assert dumped["use_cases"] == {"chat": "openrouter"}
+    assert dumped["meta"] == {"created": "2026-01-01"}
+    assert dumped["providers"][0]["type"] == "openai_compatible"
 
 
 def test_config_get_with_no_key_dumps_the_unmodeled_blocks(tmp_path, monkeypatch, capsys):
@@ -171,7 +224,15 @@ def test_config_get_degrades_to_the_model_view_on_an_unreadable_file(tmp_path, m
 
 
 def test_the_documented_roundtrip_no_longer_deletes_providers(tmp_path, monkeypatch, capsys):
-    """🔴 THE DEFECT, END TO END. `config get > f.json` then `config set --file f.json`."""
+    """🔴 THE DEFECT, END TO END. `config get > f.json` then `config set --file f.json`.
+
+    Also 🔴 #3125's trap: the handed-back file now carries the MASK where the key was, and
+    `merge_unmodeled_top_keys` cannot save it — that merge is key-level and shallow, so it sees
+    `providers` already present and copies nothing forward. Masking the read without teaching the
+    write what a mask means turns this loop from a disclosure into the deletion of the only copy
+    of the credential. The intermediate file is asserted to be masked precisely so this test
+    cannot pass by the mask never having been applied.
+    """
     from personalclaw import cli_config
 
     cfg = _seed(tmp_path / "home")
@@ -180,6 +241,10 @@ def test_the_documented_roundtrip_no_longer_deletes_providers(tmp_path, monkeypa
     cli_config._config_cmd(_args("get", key=None))
     handed_back = tmp_path / "f.json"
     handed_back.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert (
+        json.loads(handed_back.read_text(encoding="utf-8"))["providers"][0]["api_key"]
+        == SECRET_MASK
+    ), "the round-trip source must be the masked document, or this proves nothing"
 
     cli_config._config_cmd(_args("set", file=str(handed_back)))
 
@@ -187,6 +252,94 @@ def test_the_documented_roundtrip_no_longer_deletes_providers(tmp_path, monkeypa
     for block in ("providers", "use_cases", "slack", "meta", "some_future_app_block"):
         assert block in after, f"the round-trip deleted {block}"
     assert after["providers"][0]["api_key"] == _REAL_KEY
+    assert after["slack"]["bot_token"] == "xoxb-REAL"
+    assert SECRET_MASK not in cfg.read_text(encoding="utf-8"), "a mask must never reach disk"
+
+
+def test_a_reveal_sourced_roundtrip_is_also_lossless(tmp_path, monkeypatch, capsys):
+    """The other documented source. `--reveal` carries no masks, so nothing is restored."""
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("get", key=None, reveal=True))
+    handed_back = tmp_path / "f.json"
+    handed_back.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    cli_config._config_cmd(_args("set", file=str(handed_back)))
+
+    after = json.loads(cfg.read_text(encoding="utf-8"))
+    assert after["providers"][0]["api_key"] == _REAL_KEY
+    assert after["slack"]["bot_token"] == "xoxb-REAL"
+
+
+def test_an_edit_beside_a_masked_credential_still_applies(tmp_path, monkeypatch, capsys):
+    """The realistic edit: change one field, hand the whole masked document back.
+
+    This is the case that made masking the read alone unacceptable — the operator's edit must
+    land AND the credential they never saw must survive it.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("get", key=None))
+    doc = json.loads(capsys.readouterr().out)
+    doc["agent"]["log_level"] = "DEBUG"
+    doc["slack"]["command"] = "pclaw"
+    handed_back = tmp_path / "f.json"
+    handed_back.write_text(json.dumps(doc), encoding="utf-8")
+
+    cli_config._config_cmd(_args("set", file=str(handed_back)))
+
+    after = json.loads(cfg.read_text(encoding="utf-8"))
+    assert after["agent"]["log_level"] == "DEBUG", "the operator's edit must still apply"
+    assert after["slack"]["command"] == "pclaw"
+    assert after["providers"][0]["api_key"] == _REAL_KEY
+    assert after["slack"]["bot_token"] == "xoxb-REAL"
+
+
+def test_set_file_refuses_a_mask_it_cannot_resolve(tmp_path, monkeypatch, capsys):
+    """Fail CLOSED. An unresolvable mask is refused, never written as the credential.
+
+    Reached when the document's shape no longer lines up with the file — a provider renamed or
+    inserted between the `get` and the `set`. Restoring by index there would write one
+    instance's key onto another, so no pair means no restore, and no restore means no write.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    before = cfg.read_bytes()
+    _pin(monkeypatch, cfg)
+
+    incoming = tmp_path / "in.json"
+    incoming.write_text(
+        json.dumps({"providers": [{"name": "renamed-since", "api_key": SECRET_MASK}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli_config._config_cmd(_args("set", file=str(incoming)))
+    assert exc.value.code == 1
+    assert "providers[0].api_key" in capsys.readouterr().err
+    assert cfg.read_bytes() == before, "a refused write must leave the file alone"
+
+
+def test_set_key_refuses_the_mask_as_a_value(tmp_path, monkeypatch, capsys):
+    """The other way a mask can arrive: an operator copying what `config get` printed."""
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    before = cfg.read_bytes()
+    _pin(monkeypatch, cfg)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_config._config_cmd(_args("set", key="agent.log_level", value=SECRET_MASK))
+    assert exc.value.code == 1
+    assert "placeholder" in capsys.readouterr().err
+    assert cfg.read_bytes() == before
 
 
 def test_a_file_that_omits_a_block_does_not_delete_it(tmp_path, monkeypatch, capsys):
@@ -348,7 +501,7 @@ def _args(action: str, **kw):
     """The argparse.Namespace shape `_config_cmd` reads."""
     import argparse
 
-    ns = argparse.Namespace(config_action=action, key=None, value=None, file=None)
+    ns = argparse.Namespace(config_action=action, key=None, value=None, file=None, reveal=False)
     for k, v in kw.items():
         setattr(ns, k, v)
     return ns
