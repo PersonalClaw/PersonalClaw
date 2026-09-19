@@ -9,6 +9,7 @@ import { TextInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
 import { TextLink } from '../../ui/TextLink'
+import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 
 /** The triage digest card (PROACTIVE-ASSISTANT §5.1) + the Morning-triage pack card (§5.4).
  *
@@ -33,7 +34,7 @@ export function TriageDigestCard() {
   // No `.catch(() => null)`. A swallowed rejection would hand this component `undefined` and the
   // card would render its "not installed yet" arm — offering an install for something that may
   // already be running, because the request failed.
-  const { data: view, error, refresh } = useQuery<TriageDigestView>('proactive:digest', () => api.proactiveDigest(), { persist: false })
+  const { data: view, loading, error, refresh } = useQuery<TriageDigestView>('proactive:digest', () => api.proactiveDigest(), { persist: false })
   const [busy, setBusy] = useState('')
   const [cron, setCron] = useState('')
   const [help, setHelp] = useState('')
@@ -45,6 +46,46 @@ export function TriageDigestCard() {
         <InlineError icon onRetry={refresh}>
           Couldn't read your digest: {String((error as Error)?.message || error)}
         </InlineError>
+      </Surface>
+    )
+  }
+  // 🪤 A PENDING READ MUST SAY SO. This returned `null` while `proactiveDigest()` was in flight,
+  // which made "still asking" indistinguishable from "nothing to render" — and the two are not the
+  // same claim. While the gap was on screen the DOM was quiet, no loading affordance existed and no
+  // animation was running, so every observer of "has this page come to rest?" agreed that it had:
+  // a reader's eye, DOM quiescence, the skeleton sweep, and two-identical-screenshots alike. Then
+  // the read landed and a ~196px card pushed the whole page below it down.
+  //
+  // Measured on the e2e harness at 398e6b7a6: ONE `toHaveScreenshot` call on `#/inbox` produced two
+  // consecutive screenshots 212,190 pixels apart, while the committed golden was only 20 pixels from
+  // the settled render. The baseline was right and the RUN never reached rest — so recapturing would
+  // have recorded the racing frame and moved the failure to the next run. This is the same defect
+  // `IdentityReportPanel` carried (fixed in #3169) on a surface that fix did not reach.
+  //
+  // `loading` is `useQuery`'s own "nothing to show yet" flag, whose docstring says to gate skeletons
+  // on it. `.skeleton` is what `e2e/helpers.ts`'s `LOADING_SELECTOR` counts, so the settle barrier
+  // now WAITS for this card instead of stepping over it. The SETTLED render is byte-identical to
+  // what it was before — this arm is only ever on screen while a request is open — so no baseline
+  // moves, and nothing asserted anywhere is loosened.
+  // 🪤 THE BUSY MARKER GOES ON THE INNER div, NOT ON `Surface`. `ui/Surface.tsx` declares its props
+  // in camelCase, so a hyphenated `aria-busy` on it type-checks, renders nothing and reaches nobody —
+  // `ui/ariaPropForwarding.test.tsx` caught exactly that on the first draft of this arm. And a busy
+  // region owes an ANNOUNCEMENT: a live region is announced by its CONTENT changing, and a skeleton's
+  // content is text-free `<div>`s, so `LoadingStatus` is the only part of this a screen reader can
+  // perceive (`ui/loadingAnnounced.test.tsx` keeps that census closed).
+  if (loading && !view) {
+    return (
+      <Surface tone="container" radius="xl" className="mb-l p-l">
+        <div className="flex items-start gap-m" role="status" aria-busy="true">
+          <LoadingStatus what="your morning triage" />
+          <Skeleton className="mt-0.5 size-[18px] shrink-0" />
+          <div className="min-w-0 flex-1">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="mt-s h-4 w-full" />
+            <Skeleton className="mt-xs h-4 w-3/4" />
+            <Skeleton className="mt-m h-9 w-40 rounded-lg" />
+          </div>
+        </div>
       </Surface>
     )
   }

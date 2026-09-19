@@ -207,8 +207,37 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   // sessionStorage as though it were an answer, and the next visit painted "no suggestions" from
   // cache. Without it the rejection leaves `data` undefined and nothing is cached. The strip still
   // hides on failure, which is honest — a decoration that quietly does not appear claims nothing.
-  const { data } = useQuery('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
+  const { data, loading } = useQuery('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
   const items = (data ?? []).slice(0, 6)
+  // 🪤 "STILL ASKING" IS NOT "NONE AVAILABLE", and this strip used to render `null` for both. The
+  // docstring's "silent when none are available" is a deliberate product choice about the EMPTY
+  // answer; it was never meant to cover the pending one. Collapsing the two is expensive here for a
+  // reason specific to this hero: it is vertically CENTERED, so the strip arriving does not push
+  // content down, it moves the mark, the greeting and the composer ALL of them, by half the strip's
+  // height. And on a fresh install `/api/suggestions` can await its generation for up to 45s
+  // (`suggestions.py`), so the arrival lands arbitrarily late while nothing on screen says a read is
+  // open.
+  //
+  // Measured on the e2e harness at 398e6b7a6: ONE `toHaveScreenshot` call on `#/chat` produced two
+  // consecutive screenshots differing by 501,409 pixels — 54% of the image — so the route never
+  // reached rest and yielded no verdict about its baseline at all. Gating on `loading` (the flag
+  // `useQuery` documents for exactly this) puts a `.skeleton` on screen, which is what
+  // `e2e/helpers.ts`'s `LOADING_SELECTOR` counts, so the settle barrier waits for the strip instead
+  // of photographing the hero mid-flight. The settled render is unchanged, so no baseline moves.
+  //
+  // The placeholder mirrors the real strip's geometry — same flex container, same `maxWidth`, pill
+  // heights matching the chips' `py-2` + `text-[0.8125rem]` box — so the swap is a text change
+  // inside a stable layout rather than a second reflow of everything above it.
+  if (loading && !data) {
+    return (
+      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }} role="status" aria-busy="true">
+        <LoadingStatus what="prompt suggestions" />
+        {['w-[132px]', 'w-[104px]', 'w-[168px]', 'w-[148px]', 'w-[120px]', 'w-[156px]'].map((w) => (
+          <Skeleton key={w} className={`h-[37px] ${w} rounded-pill`} />
+        ))}
+      </div>
+    )
+  }
   if (!items.length) return null
   return (
     <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
@@ -234,8 +263,27 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
  *  costs nothing. */
 function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
   // Same as the suggestion strip: persisted key, so the swallow cached a fabricated empty list.
-  const { data } = useQuery('chat:starters', () => api.sessionTemplates(), { persist: true })
+  const { data, loading } = useQuery('chat:starters', () => api.sessionTemplates(), { persist: true })
   const items = (data ?? []).slice(0, 6)
+  // Same pending-vs-empty split as the suggestion strip directly above, and it belongs here too even
+  // though a fresh install answers `[]`: this strip sits ABOVE the suggestion strip in the same
+  // centered hero, so a read that resolves late moves the same four elements. Gating on `loading`
+  // keeps the two strips' waiting states consistent — the settle barrier sees ONE page that is still
+  // reading rather than a page that is at rest between two arrivals. An install that genuinely has no
+  // starters still renders nothing once the read lands, so the settled baseline is unchanged.
+  if (loading && !data) {
+    return (
+      <div className="flex w-full flex-col items-center gap-2" role="status" aria-busy="true">
+        <LoadingStatus what="your starters" />
+        <Skeleton className="h-4 w-24" />
+        <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+          {['w-[146px]', 'w-[118px]', 'w-[162px]'].map((w) => (
+            <Skeleton key={w} className={`h-[37px] ${w} rounded-pill`} />
+          ))}
+        </div>
+      </div>
+    )
+  }
   if (!items.length) return null
   return (
     <div className="flex w-full flex-col items-center gap-2">
