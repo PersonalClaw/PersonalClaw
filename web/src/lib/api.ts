@@ -5880,8 +5880,19 @@ export const api = {
   mcpActive: (agent?: string) => get<McpActiveServer[]>(`/api/mcp/active${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`),
   /** Read-only view of the lifecycle hooks in effect (redacted commands). */
   agentHooks: () => get<{ hooks: Record<string, AgentHook[]> }>('/api/agent-hooks').then((d) => d.hooks),
-  /** Reconcile native agent configs on disk (rewrites installed copies). */
-  syncAgents: () => post<{ ok: boolean; synced?: number }>('/api/agents/sync'),
+  /** Fold agents that exist only as FILES under the agents dir (Store activations, app
+   *  bundles, a restored snapshot) into config.json, so `agents()` can see them. `synced`
+   *  NAMES what was added — it was typed `number` here while the server has always answered
+   *  with a list, so nothing could have rendered it (#344). `message` is the server-composed
+   *  sentence; report it verbatim rather than re-deriving one from the arrays. */
+  syncAgents: () => post<{
+    ok: boolean
+    synced: string[]
+    skipped: string[]
+    unreadable: string[]
+    scanned: number
+    message: string
+  }>('/api/agents/sync'),
 
   // ── Channels runtime (live connection health + connect/disconnect/test) ──
   channels: () => get<{ channels: ChannelRuntime[] }>('/api/channels').then((d) => d.channels),

@@ -146,7 +146,7 @@ describe('the chip names the real provider, so the mismatch is visible', () => {
       api: {
         agents: () => Promise.resolve(catalog),
         agentProviders: () => Promise.resolve([]),
-        syncAgents: () => Promise.resolve({ ok: true }),
+        syncAgents: () => Promise.resolve({ ok: true, synced: [], skipped: [], unreadable: [], scanned: 0, message: 'Already up to date.' }),
         hooks: () => Promise.resolve([]),
         mcpActiveServers: () => Promise.resolve([]),
       },
