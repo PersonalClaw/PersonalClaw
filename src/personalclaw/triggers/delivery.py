@@ -199,6 +199,22 @@ def wants_flat_text(destination: str) -> bool:
     return any(dest.startswith(p) for p in _FLAT_TEXT_PREFIXES)
 
 
+#: The trigger kind that means "a scheduled job" — a clock trigger, whatever its `spec.kind`
+#: (cron / at / interval / sequence / adaptive are all clocks).
+SCHEDULED_TRIGGER_KIND = "clock"
+
+
+def is_scheduled(trigger: Any) -> bool:
+    """Whether *trigger* is a scheduled job, and so reports through the ``cron/*`` kinds (#415).
+
+    Named here rather than inlined at the call site so the gateway's routing and any test that
+    needs to know which kind an outcome will carry read the SAME predicate. A test that hardcoded
+    "a remediation run notifies as `info`" is exactly how the `cron` rows went unnoticed for a
+    release: the assumption lived in the test instead of in one function.
+    """
+    return str(getattr(trigger, "kind", "") or "") == SCHEDULED_TRIGGER_KIND
+
+
 def build_delivery(
     *,
     trigger_id: str,
@@ -209,6 +225,7 @@ def build_delivery(
     destination: str = "",
     attempt_key: str = "",
     duration_secs: float = 0.0,
+    scheduled: bool = False,
 ) -> Delivery:
     """Assemble one run-completion delivery. Pure.
 
@@ -217,12 +234,31 @@ def build_delivery(
     happened rather than of who is reporting it. Both names come from `notification_kinds` so the
     user's existing rules apply — inventing a kind here would produce a notification no rule
     matches, which resolves to `immediate` and ignores the user's settings.
+
+    *scheduled* says the trigger is a CLOCK trigger — a scheduled job — and picks the `cron/*`
+    pair over the generic `system/*` one.
+
+    🔴 WHY THE FLAG, AND WHY NOT UNCONDITIONALLY (issue #415). The ScheduleService removal deleted
+    every emitter of the `cron` kind but left its two rules rows, so "Scheduled job failed →
+    Notify" was a control nothing could trigger and the failure it wanted landed on `system/error`
+    — a row the user never configured, and one they cannot quieten without also quietening every
+    other error. The capability the two rows exist to provide ("interrupt me when a scheduled job
+    breaks, stay quiet about other errors") had silently stopped being expressible.
+    #415 offers restoring the kind or retiring the rows; restoring it keeps the capability.
+
+    But this substrate serves EVERY trigger kind — webhook, event, file, web_watch — so emitting
+    `cron/*` here unconditionally (which is what the report's own suggested one-liner does) would
+    label a webhook's outcome "Scheduled job result". The caller knows the trigger; it passes the
+    one bit this decision needs.
     """
     from personalclaw import notification_kinds
 
     name = trigger_name or trigger_id or "automation"
     event = EVENT_SUCCEEDED if ok else EVENT_FAILED
-    kind = notification_kinds.INFO if ok else notification_kinds.ERROR
+    if scheduled:
+        kind = notification_kinds.CRON if ok else notification_kinds.CRON_FAILED
+    else:
+        kind = notification_kinds.INFO if ok else notification_kinds.ERROR
     verb = "finished" if ok else "failed"
     title = _redact(f"{name} {verb}")
     body = _redact(summary or "")[:BODY_CAP]

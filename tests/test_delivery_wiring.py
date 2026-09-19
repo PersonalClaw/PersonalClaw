@@ -388,3 +388,49 @@ def test_an_EMPTY_error_never_suppresses():
 
     suppress, digest = suppress_repeat_failure(error="", last_hash="abc", last_at=1.0, now=2.0)
     assert suppress is False and digest == ""
+
+
+# ── a CLOCK trigger's outcome reaches the `cron/*` rules rows (issue #415) ──
+
+
+def test_a_clock_triggers_outcome_is_delivered_as_a_SCHEDULED_JOB(tmp_path, monkeypatch):
+    """The call-site half of #415 — without it the `scheduled` flag is a dead parameter.
+
+    The ScheduleService removal deleted every emitter of the `cron` kind but left its two rules
+    rows, so "Scheduled job failed → Notify" was a configurable control nothing could trigger and
+    the failure landed on `system/error` instead. Driven through the real
+    `_deliver_fire_outcome` with a real `kind="clock"` trigger, and asserted on the kind that
+    reaches `notify` — which is what the rules engine resolves a rule from.
+    """
+    from personalclaw import notification_kinds as nk
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path)
+    gw = _gw()
+
+    gw._deliver_fire_outcome(trigger, ok=True)
+    gw._deliver_fire_outcome(trigger, ok=False, error="boom")
+
+    kinds = [n["kind"] for n in gw.dashboard_state.sent]
+    assert kinds == [nk.CRON, nk.CRON_FAILED], kinds
+    assert [nk.kind_for_legacy(k).key for k in kinds] == ["cron/result", "cron/failed"]
+
+
+def test_a_NON_clock_triggers_outcome_is_NOT_a_scheduled_job(tmp_path, monkeypatch):
+    """🪤 THE VACUITY LEG. Same substrate, same handler, a webhook instead of a clock.
+
+    `_deliver_fire_outcome` carries EVERY trigger kind, so a blanket switch to the cron kinds would
+    label a webhook's outcome "Scheduled job result" in the feed and route it through the
+    scheduled-job rule — a second wrong answer in place of the first.
+    """
+    from personalclaw import notification_kinds as nk
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path, tid="webhook:hook1")
+    trigger.kind = "webhook"
+    gw = _gw()
+
+    gw._deliver_fire_outcome(trigger, ok=True)
+    gw._deliver_fire_outcome(trigger, ok=False, error="boom")
+
+    assert [n["kind"] for n in gw.dashboard_state.sent] == [nk.INFO, nk.ERROR]

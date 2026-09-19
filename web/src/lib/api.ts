@@ -3495,7 +3495,10 @@ export interface NotificationRuleRow {
   mode: NotificationMode
   /** The registry default, so the UI can show "changed from default". */
   default_mode: NotificationMode
-  /** True when the user has an explicit stored rule for this kind. */
+  /** True when the user has an explicit stored rule for this kind — i.e. the row no longer
+   *  tracks `default_mode`. Clearing the rule (a `null` PUT) is what makes it false again; it
+   *  used to be unreachable from the UI, because "reset" wrote the default value instead of
+   *  removing the rule (#285). */
   configured: boolean
   targets: NotificationTarget[]
   conditions: { keywords: string[]; name_mention: boolean }
@@ -7297,7 +7300,9 @@ export const api = {
   notificationRules: () => get<NotificationRulesDoc>('/api/notifications/rules'),
   // Merges: only the keys named in the body change. Rejects an unknown kind/mode/target
   // rather than persisting something the read path would silently ignore.
-  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
+  // A rule value of `null` CLEARS the stored rule so the row inherits the registry default again
+  // (#285). Every other value is a partial merge over what is stored — one control per PUT.
+  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch | null>; digest?: { schedule?: string } }) =>
     put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
   // ── The triage digest (PROACTIVE-ASSISTANT §5.1/§5.2/§5.4 — PA-5) ──
   // The card makes ONE read. The server assembles the sections, so the browser never has to

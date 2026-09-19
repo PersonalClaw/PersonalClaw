@@ -25,9 +25,13 @@ classify is still a notification the user should see. Losing a message because a
 forgot to register is worse than showing one with a generic label.
 
 **Severity means the same thing it already did.** 1=info, 2=warning, 3=error, matching
-`_KIND_SEVERITY`/`_MIN_SEVERITY_RANK` in `providers/entity_routes.py` — 3 is the rank
-that bypasses quiet hours. This module does not re-implement the global gate; it supplies
-the severity the gate reads.
+`_MIN_SEVERITY_RANK` in `providers/entity_routes.py` — 3 is the rank that bypasses quiet
+hours. This module does not re-implement the global gate; it supplies the severity the gate
+reads, and **since #341 that is literal**: the gate resolves `kind_for_legacy(kind)
+.default_severity` rather than carrying its own wire-string table. It carried one for a
+while, and the two disagreed — every kind outside `{error, warning, inbox_alert}` ranked as
+info there however this file declared it, so `loop/needs_input` showed severity 2 in the
+rules matrix and was filtered as severity 1 at delivery. One declaration, one answer.
 
 **Every default_mode is ``immediate``, deliberately.** ``badge`` is the interesting new
 capability — persist without interrupting — and heartbeats, loop progress and
@@ -191,13 +195,21 @@ def kind_for_legacy(kind: str) -> NotificationKind:
 # log and the frontend's display map keep working unchanged.
 
 _KINDS: tuple[NotificationKind, ...] = (
-    # cron / schedule — 5 sites in gateway.py. Both rank INFO because gateway.py:1299
-    # emits a job FAILURE through the same flat "cron" kind, which the old severity map
-    # left unlisted (⇒ info). Ranking failures as warning here would start delivering them
-    # to a user who had raised min_severity to warning — a change they never asked for. The
-    # rules matrix is where they can now make that choice themselves.
+    # cron / schedule — emitted by the trigger substrate for a CLOCK trigger's outcome
+    # (`triggers/delivery.build_delivery`, routed by `gateway._deliver_fire_outcome`).
+    #
+    # 🪤 THE COMMENT THAT USED TO BE HERE WAS STALE, AND IT ARGUED FOR THE WRONG SEVERITY (issue
+    # #415). It claimed "5 sites in gateway.py" and justified ranking BOTH rows INFO because
+    # "gateway.py:1299 emits a job FAILURE through the same flat `cron` kind" — one flat kind for
+    # both outcomes, so promoting failures would have promoted successes too. That constraint is
+    # gone: `cron/result` and `cron/failed` are separate pairs with separate wire strings, and the
+    # failure path had meanwhile been re-routed through `system/error` (SEV_ERROR) by the
+    # ScheduleService removal, which silently made exactly the change the old comment existed to
+    # prevent. So `cron/failed` ranks SEV_ERROR **to preserve the delivery users have today** while
+    # the row becomes reachable again — a scheduled job that breaks keeps riding through a raised
+    # min_severity, and now does it under a row the user can actually configure.
     NotificationKind("cron", "result", "Scheduled job result", "immediate", SEV_INFO),
-    NotificationKind("cron", "failed", "Scheduled job failed", "immediate", SEV_INFO),
+    NotificationKind("cron", "failed", "Scheduled job failed", "immediate", SEV_ERROR),
     # heartbeat — 5 sites in gateway.py
     NotificationKind("heartbeat", "status", "Heartbeat", "immediate", SEV_INFO),
     # loop watchdog — dynamic kind via _NOTIFY_EVENTS (8 events → 4 flat kinds)
@@ -394,15 +406,17 @@ _LEGACY_FLAT: dict[str, tuple[str, str]] = {
     GENERIC_KIND: (GENERIC_SOURCE, GENERIC_KIND),
 }
 
-#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds (S2+)
-#: and, since MRT-3, `usage_recap`. Kept separate from the legacy map above because the two
+#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds (S2+),
+#: `usage_recap`/`approval` since MRT-3/MC-5, and (issue #341/#415) the TYPED kinds whose emitter
+#: used to pass a generic severity string. Kept separate from the legacy map above because the two
 #: answer different questions.
 #:
 #: `_LEGACY_FLAT` is a historical record: "what did an emitter already in the tree pass?"
 #: Its entries carry a severity obligation — re-ranking one changes min-severity filtering
-#: for a user who never touched a setting, which is why a test walks it against the old
-#: `_KIND_SEVERITY` map. These kinds have no such history (nothing emitted them before
-#: `emit_attention_item` existed), so they are free to carry their honest severity.
+#: for a user who never touched a setting, which is why a test walks it against the
+#: pre-registry gate's severity map. These kinds have no such history, so they are free to carry
+#: their honest severity. That — not attention-ness — is the property this map actually encodes;
+#: `usage_recap`, `approval` and the `loop_*`/`cron_failed` entries are not attention kinds.
 #:
 #: They still need a wire string: it is what `notify()` resolves a rule from and what the
 #: SPA's display map keys on. Without one they resolve to system/generic and lose their own
@@ -443,6 +457,30 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # `agent_request` already does. The bare `note` would also have been unique, but it drops
     # the provenance that is the entire point of the kind.
     "user_note": ("user", "note"),
+    # ── The typed rows the matrix advertised but nothing could address (#341 / #415) ──
+    #
+    # 🔴 A REGISTERED PAIR WITH NO WIRE STRING IS AN INERT CONTROL. `notify()` takes a flat
+    # string, so a pair is reachable only if some entry here (or in `_LEGACY_FLAT`) points at
+    # it. These four had a row in Settings → Notifications, a mode pill, a condition editor and
+    # a target list — and no way to be delivered: their emitters passed a generic SEVERITY string
+    # (`error`/`success`/`info`), so the note landed on `system/*` and the typed row was never
+    # consulted. Setting "Loop failed → Never" did nothing; the control that governed loop
+    # failures was "System error", so quietening unrelated noise silently stopped reporting them.
+    #
+    # `loop_failed`, not the bare `failed`: the bare kind is registered under TWO sources
+    # (`loop/failed` and `cron/failed`), so it could not name either unambiguously — and the
+    # digest groups by the wire string, which would have counted a broken cron as a loop failure.
+    # `kind_for_legacy_pair` falls back to the bare kind, which is exactly how these pairs ended
+    # up resolving to system/generic.
+    "loop_complete": ("loop", "complete"),
+    "loop_failed": ("loop", "failed"),
+    "cron_failed": ("cron", "failed"),
+    # ES-15's mechanical revocation. Its registration comment asserted "its bare kind IS its wire
+    # string, so it needs no `_ATTENTION_FLAT` entry" — measurably false: nothing mapped
+    # `autonomy_revocation`, so `kind_for_legacy` fell open to system/generic on every emission.
+    # The row rendered with the right LABEL (the SPA keys its display map on the wire string) while
+    # carrying GENERIC's severity and mode, which is the trap the registry's own 🪤 above describes.
+    "autonomy_revocation": ("guardrails", "autonomy_revocation"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -462,7 +500,17 @@ for _k in _KINDS:
 # notification forever, silently.
 
 CRON = "cron"
+#: A clock trigger's FAILURE, distinct from `CRON` (its result). Separate constants because the
+#: registry ranks them differently — a broken scheduled job rides through a raised min_severity
+#: and a successful one does not, which one shared kind could not express (#415).
+CRON_FAILED = "cron_failed"
 HEARTBEAT = "heartbeat"
+#: The loop watchdog's own rows. It used to pass `SUCCESS`/`ERROR`/`INFO` — generic severity
+#: strings — so every loop outcome was governed by a `system/*` rule and the four `loop/*` rows in
+#: the matrix were inert (#341).
+LOOP = "loop"
+LOOP_COMPLETE = "loop_complete"
+LOOP_FAILED = "loop_failed"
 INBOX_ALERT = "inbox_alert"
 AGENT = "agent"
 SUBAGENT = "subagent"
@@ -482,7 +530,11 @@ GENERIC = GENERIC_KIND
 #: Every constant above, for the import-time consistency check and the drift test.
 WIRE_CONSTANTS: tuple[str, ...] = (
     CRON,
+    CRON_FAILED,
     HEARTBEAT,
+    LOOP,
+    LOOP_COMPLETE,
+    LOOP_FAILED,
     INBOX_ALERT,
     AGENT,
     SUBAGENT,

@@ -475,7 +475,36 @@ def _set_rule(home: Path, key: str, mode: str) -> None:
     rules = dict(doc.get("rules") or {})
     rules[key] = {"mode": mode}
     nr.save_rules({**doc, "rules": rules})
-    assert nr.resolve_rule_for_legacy("info").mode == mode, "the rule write did not take"
+    # Read back THE KEY THIS WROTE. It asserted `resolve_rule_for_legacy("info")`, which is a second
+    # hardcoding of the outcome kind — so when the remediation trigger's outcome moved onto the
+    # `cron/*` rows (#415) this helper reported "the rule write did not take" for a write that had
+    # landed perfectly, pointing the failure at the wrong layer.
+    source, _, kind = key.partition("/")
+    assert nr.resolve_rule(source, kind).mode == mode, "the rule write did not take"
+
+
+def _outcome_rule_key(trigger, *, ok: bool) -> str:
+    """The rule key a fire outcome for *trigger* will actually resolve to.
+
+    🔴 DERIVED, NEVER GUESSED — and the previous "resolved from the registry" version still guessed
+    the input. `_set_rule(home, nr.resolve_rule_for_legacy("info").key, …)` hardcoded the assumption
+    that a remediation run reports as `system/info`; a remediation trigger is a CLOCK trigger, so
+    its outcome reports as `cron/result` / `cron/failed` (#415). Two vacuity legs below assert an
+    EMPTY digest queue, so they kept passing for the wrong reason while the positive legs went red —
+    the shape that makes a hardcoded premise expensive to find.
+
+    Both halves come from the shipped code: `is_scheduled` is the predicate the gateway routes on,
+    and `build_delivery` is the function that picks the kind.
+    """
+    from personalclaw import notification_rules as nr
+    from personalclaw.triggers import delivery as D
+
+    delivery = D.build_delivery(
+        trigger_id=str(getattr(trigger, "id", "")),
+        ok=ok,
+        scheduled=D.is_scheduled(trigger),
+    )
+    return nr.resolve_rule_for_legacy(delivery.kind).key
 
 
 def _deliver(monkeypatch, trigger, *, ok: bool, error: str = ""):
@@ -497,14 +526,10 @@ class TestTheRunsReachTheDigest:
         return store.get(P.REMEDIATION_TRIGGER_ID).trigger
 
     def test_a_successful_run_lands_in_the_digest_queue(self, store, monkeypatch, home):
-        from personalclaw import notification_rules as nr
-
         trigger = self._trigger(store, monkeypatch)
-        # The rule the digest selects on. Resolved from the registry, never guessed:
-        # `build_delivery` picks the notification KIND per outcome, and hardcoding a key here
-        # would make this test pass while the real note carried a different one.
-        rule = nr.resolve_rule_for_legacy("info")
-        _set_rule(home, rule.key, "digest")
+        # The rule the digest selects on, derived from the delivery the shipped path will build —
+        # see `_outcome_rule_key`. The earlier form resolved the registry from a hardcoded "info".
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "digest")
 
         state = _deliver(monkeypatch, trigger, ok=True)
 
@@ -518,10 +543,8 @@ class TestTheRunsReachTheDigest:
     def test_the_queued_run_deep_links_to_its_own_run(self, store, monkeypatch, home):
         """ "Like any other run" includes R18's statusUrl: a digest line the user cannot follow back
         to the run is the notification→journal dead end R18 exists to close."""
-        from personalclaw import notification_rules as nr
-
         trigger = self._trigger(store, monkeypatch)
-        _set_rule(home, nr.resolve_rule_for_legacy("info").key, "digest")
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "digest")
         _deliver(monkeypatch, trigger, ok=True)
         queued = _queued(home)
         assert queued[0]["statusUrl"], queued[0]
@@ -533,7 +556,7 @@ class TestTheRunsReachTheDigest:
         from personalclaw import notification_rules as nr
 
         trigger = self._trigger(store, monkeypatch)
-        _set_rule(home, nr.resolve_rule_for_legacy("info").key, "digest")
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "digest")
         _deliver(monkeypatch, trigger, ok=True)
 
         body = nr.build_digest_body(nr.drain_digest_queue())
@@ -542,20 +565,16 @@ class TestTheRunsReachTheDigest:
     def test_a_never_rule_is_NOT_picked_up(self, store, monkeypatch, home):
         """🔴 VACUITY for every assertion above. If the queue swallowed everything the positive
         tests would pass on a path that ignores the user's settings entirely."""
-        from personalclaw import notification_rules as nr
-
         trigger = self._trigger(store, monkeypatch)
-        _set_rule(home, nr.resolve_rule_for_legacy("info").key, "never")
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "never")
         _deliver(monkeypatch, trigger, ok=True)
         assert _queued(home) == []
 
     def test_an_immediate_rule_pushes_instead_of_queueing(self, store, monkeypatch, home):
         """The second falsification: a run must be able to MISS the digest by riding the rules
         engine, which a direct queue write could never honour."""
-        from personalclaw import notification_rules as nr
-
         trigger = self._trigger(store, monkeypatch)
-        _set_rule(home, nr.resolve_rule_for_legacy("info").key, "immediate")
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "immediate")
         state = _deliver(monkeypatch, trigger, ok=True)
         assert _queued(home) == []
         assert len(state._notification_log) == 1
@@ -564,10 +583,8 @@ class TestTheRunsReachTheDigest:
         """`build_delivery` picks the kind per OUTCOME so a failure can escalate past a `digest`
         rule while a success cannot. Proven here rather than assumed: a broken maintenance engine
         must not be discoverable only in tomorrow's grouped summary."""
-        from personalclaw import notification_rules as nr
-
         trigger = self._trigger(store, monkeypatch)
-        _set_rule(home, nr.resolve_rule_for_legacy("info").key, "digest")
+        _set_rule(home, _outcome_rule_key(trigger, ok=True), "digest")
         state = _deliver(monkeypatch, trigger, ok=False, error="sel.prune exploded")
         assert _queued(home) == [], "a failure was grouped into the digest"
         assert len(state._notification_log) == 1

@@ -236,6 +236,110 @@ class TestNotificationAllowed:
         self._write(quiet_hours_enabled=True, quiet_hours_start="bogus", quiet_hours_end="08:00")
         assert er.notification_allowed("info", now=datetime(2026, 1, 1, 3, 0)) is True
 
+    # ── severity comes from the registry, not a local table (#341) ──
+
+    def test_severity_is_read_from_the_registry_not_a_hardcoded_wire_table(self):
+        """The gate ranked every kind outside {error, warning, inbox_alert} as info.
+
+        So `loop/needs_input` and `system/agent_request` — SEV_WARNING in the registry, shown as
+        severity 2 in the rules matrix — ranked 1 here, and raising min_severity to `warning`
+        silently suppressed the two kinds that mean "something is waiting on you". Asserted
+        through the GATE rather than on the mapping, because the mapping was never the user-visible
+        part.
+        """
+        self._write(min_severity="warning")
+        assert er.notification_allowed("needs_input") is True
+        assert er.notification_allowed("agent_request") is True
+        assert er.notification_allowed("approval") is True
+        # The floor: genuinely info-ranked kinds are still filtered, so the assertion above is not
+        # "min_severity stopped working".
+        assert er.notification_allowed("heartbeat") is False
+        assert er.notification_allowed("info") is False
+
+    def test_the_typed_loop_and_cron_kinds_rank_as_the_generic_strings_they_replaced(self):
+        """The property that makes the emitter fix safe (#341/#415).
+
+        A loop failure switched from the generic `error` to its own `loop_failed` would have
+        dropped from rank 3 to rank 1 under the old table — quiet hours and a raised min_severity
+        would both have started eating it. Same for a scheduled-job failure.
+        """
+        self._write(min_severity="error")
+        assert er.notification_allowed("loop_failed") is True
+        assert er.notification_allowed("cron_failed") is True
+        assert er.notification_allowed("loop_complete") is False  # info, as `success` was
+        assert er.notification_allowed("loop") is False  # loop/progress: info, as `info` was
+
+    # ── quiet hours over an attention kind (#341, bug B) ──
+
+    def test_quiet_hours_records_an_attention_kind_instead_of_dropping_it(self):
+        """A loop that needed an answer at 02:00 left NO trace at all.
+
+        `notify()` returned before the note was built, so the notification log had no record the
+        system had ever asked — while the durable inbox row still counted toward the badge, which
+        is what made the gap invisible. The posture is `quiet`: recorded, not interrupting.
+        """
+        from datetime import datetime
+
+        self._write(quiet_hours_enabled=True, quiet_hours_start="22:00", quiet_hours_end="08:00")
+        night = datetime(2026, 1, 1, 2, 0)
+
+        assert er.notification_posture("needs_input", now=night) == er.POSTURE_QUIET
+        assert er.notification_posture("agent_request", now=night) == er.POSTURE_QUIET
+        assert er.notification_allowed("needs_input", now=night) is True
+        # A non-attention kind of the same severity is still dropped — quiet hours keeps its
+        # meaning, and the carve-out is "this persists a row somebody must answer", not "warning".
+        assert er.notification_posture("warning", now=night) == er.POSTURE_DROP
+        assert er.notification_allowed("warning", now=night) is False
+        # Outside the window nothing is downgraded.
+        assert er.notification_posture("needs_input", now=datetime(2026, 1, 1, 12, 0)) == (
+            er.POSTURE_DELIVER
+        )
+
+    def test_quiet_hours_still_drops_an_INFO_ranked_attention_kind(self):
+        """🪤 THE CARVE-OUT IS NOT `attention` ALONE, and the tree says so.
+
+        `attention` means "this persists a durable row", which the info-ranked attention kinds use
+        for the opposite purpose: `learning/report`'s registration states that `immediate` +
+        SEV_INFO is *"what make quiet hours suppress the PING while the artifact stays durable"*,
+        and
+        `test_lv4_identity_report.test_quiet_hours_suppresses_the_ping_but_not_the_artifact` asserts
+        an empty notification log for exactly that case. Widening to every attention kind broke it.
+
+        The line is severity: the attention kinds ranked SEV_WARNING are the "you must decide" ones,
+        which is the population #341 measured as dropped.
+        """
+        from datetime import datetime
+
+        from personalclaw import notification_kinds as nk
+
+        self._write(quiet_hours_enabled=True, quiet_hours_start="22:00", quiet_hours_end="08:00")
+        night = datetime(2026, 1, 1, 2, 0)
+        for wire in ("report", "research_finding", "user_note", "proposal"):
+            registered = nk.kind_for_legacy(wire)
+            assert registered.attention is True, f"{wire} is not an attention kind any more"
+            assert registered.default_severity == nk.SEV_INFO, f"{wire} was re-ranked"
+            assert er.notification_posture(wire, now=night) == er.POSTURE_DROP, wire
+
+    def test_mute_all_and_min_severity_still_drop_an_attention_kind(self):
+        """The carve-out is scoped to quiet hours ("not now"), not to "not at all"."""
+        from datetime import datetime
+
+        night = datetime(2026, 1, 1, 2, 0)
+        self._write(
+            mute_all=True,
+            quiet_hours_enabled=True,
+            quiet_hours_start="22:00",
+            quiet_hours_end="08:00",
+        )
+        assert er.notification_posture("needs_input", now=night) == er.POSTURE_DROP
+        self._write(
+            min_severity="error",
+            quiet_hours_enabled=True,
+            quiet_hours_start="22:00",
+            quiet_hours_end="08:00",
+        )
+        assert er.notification_posture("needs_input", now=night) == er.POSTURE_DROP
+
 
 @pytest.mark.asyncio
 async def test_state_notify_respects_gate(monkeypatch, tmp_path):
@@ -314,6 +418,66 @@ async def test_rules_put_merges_rather_than_replacing(_isolate_rules):
     await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "never"}}}))
     assert nr.resolve_rule("heartbeat", "status").mode == "badge", "second PUT dropped the first"
     assert nr.resolve_rule("hook", "fired").mode == "never"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_null_clears_the_rule_so_the_row_inherits_again(_isolate_rules):
+    """set → reset → `configured is False`, the assertion issue #285 asked for.
+
+    Reset was a SAVE of the registry default, so the row kept an explicit rule holding today's
+    default value: `configured` stayed true and the row stopped tracking `default_mode` forever.
+    Driven through the same handler the UI calls, and asserted on `rules_document()` — the payload
+    the matrix actually renders — rather than on the file.
+    """
+    from personalclaw import notification_rules as nr
+
+    def row(key="skills/proposal"):
+        return next(r for r in nr.rules_document()["rules"] if r["key"] == key)
+
+    assert row()["configured"] is False, "fixture is not clean"
+    default_mode = row()["default_mode"]
+
+    await er.handle_notification_rules_put(_req({"rules": {"skills/proposal": {"mode": "badge"}}}))
+    assert (row()["mode"], row()["configured"]) == ("badge", True)
+
+    resp = await er.handle_notification_rules_put(_req({"rules": {"skills/proposal": None}}))
+    assert resp.status == 200
+    assert row()["configured"] is False, "the override was rewritten, not removed"
+    assert row()["mode"] == default_mode
+    # And it really is gone from the store, so a later change to the registry default reaches it.
+    assert "skills/proposal" not in (nr.load_rules().get("rules") or {})
+
+
+@pytest.mark.asyncio
+async def test_rules_put_clearing_an_unconfigured_row_is_a_no_op(_isolate_rules):
+    """Idempotent: the SPA renders the chip from `configured`, and a double-click must not 400."""
+    resp = await er.handle_notification_rules_put(_req({"rules": {"hook/fired": None}}))
+    assert resp.status == 200
+    resp = await er.handle_notification_rules_put(_req({"rules": {"hook/fired": None}}))
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_rules_put_does_not_persist_an_empty_rule(_isolate_rules):
+    """The same pinning defect by a different door (#285).
+
+    `{}` carries no policy, so storing it changes exactly one thing — it flips `configured` true
+    and detaches the row from the registry. An empty `targets: []` write was the reported way in;
+    it self-heals to `["dashboard"]` on read, leaving a phantom override with no functional effect
+    and no UI signal.
+    """
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {}}}))
+    assert "hook/fired" not in (nr.load_rules().get("rules") or {})
+
+
+@pytest.mark.asyncio
+async def test_rules_put_still_rejects_a_non_object_rule(_isolate_rules):
+    """`null` is the one non-object accepted, and the message says so."""
+    resp = await er.handle_notification_rules_put(_req({"rules": {"hook/fired": "badge"}}))
+    assert resp.status == 400
+    assert "must be an object, or null to clear it" in (await _json(resp))["error"]
 
 
 @pytest.mark.asyncio

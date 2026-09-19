@@ -97,14 +97,22 @@ sibling-preserving read-modify-write — before it can claim a merge-safe semant
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**
 for user-facing notifications. Two layers of policy apply, in this order.
 
-**1. The global gate** — `notification_allowed()`
-(`providers/entity_routes.py`), unchanged and outermost:
+**1. The global gate** — `notification_posture()`
+(`providers/entity_routes.py`), outermost, with `notification_allowed()` as its boolean
+form:
 
-- severity rank map with `min_severity`;
+- severity comes from the **registry** (`notification_kinds`), not a local table — one
+  declaration per kind, so what the rules matrix SHOWS as a row's severity is what filters
+  it at delivery;
+- `min_severity` compares against that rank;
 - midnight-wrapping quiet hours (severity-3 bypasses);
 - `mute_all`;
 - suppressed means **dropped entirely** (not queued); a gate failure fails
   open (a broken settings file must not silence the system).
+- **one gradation**: inside quiet hours an `attention=True` kind returns `quiet` rather than
+  `drop`, and `notify()` records it as a `badge` — persisted, counted, auditable, silent. A
+  loop that needed an answer overnight used to leave no trace in the notification log at
+  all, while its durable inbox row still counted toward the badge.
 
 Preferences persist in `entity_settings/notifications.json` with enum/HH:MM
 domain-guarded PUTs.
@@ -114,11 +122,14 @@ registered `(source, kind)` pair (`notification_kinds.py`); each pair resolves
 to a rule:
 
 - **mode** — `never` (drop), `badge` (persist without a toast), `immediate`
-  (deliver), `digest` (batch into `digest_queue.jsonl` for the scheduled
-  summary);
-- **targets** — `dashboard` today; `channel_dm` via
-  `ChannelDelivery.deliver_notification`; `push`/`native` are accepted and
-  persisted but inert until the mobile/desktop plans land;
+  (persist, broadcast, and raise a toast in the SPA — `lib/notificationToasts.ts`), `digest`
+  (batch into `digest_queue.jsonl` for the scheduled summary);
+- **targets** — `dashboard` today; `native` raises a real OS notification whenever the
+  desktop shell reports the capability (DC-5); `push` sends a content-free `{kind, item_id}`
+  ping to a registered device (MC-5); `channel_dm` is the one target still accepted and
+  persisted but **inert** — nothing in `notify()` consumes it, and the matrix dims it
+  accordingly. (`ChannelDelivery.deliver_notification` exists and is live, but the heartbeat
+  path in `gateway.py` calls it directly; it is not wired to this target.)
 - **conditions** — keywords / name-mention that **escalate** a quieter mode to
   `immediate`. Escalation is capped at `immediate` and never adds targets the
   user didn't choose.
