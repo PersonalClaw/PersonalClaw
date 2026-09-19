@@ -65,6 +65,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_DEF_SAVE_FAILED": (500, "save_failed"),
     "WF_DEF_DELETE_FAILED": (500, "delete_failed"),
     "WF_RUN_MISSING_INPUTS": (400, "missing_inputs"),
+    # 400 like its sibling above, not 422: the body is well-formed and the definition is valid —
+    # it is one value's TYPE that is wrong, which is a malformed request, not a failed validation
+    # pass over a document.
+    "WF_RUN_INPUT_TYPE": (400, "invalid_inputs"),
     "WF_RUN_PREFLIGHT_FAILED": (422, "preflight_failed"),
     "WF_NO_SUPERVISOR": (503, "engine_unavailable"),
     "WF_RUN_LAUNCH_FAILED": (500, "launch_failed"),

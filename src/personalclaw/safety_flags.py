@@ -65,10 +65,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 #: String spellings that mean False. ``""`` is included: an empty value is not an opt-in.
-_FALSE_WORDS = frozenset({"false", "no", "off", "0", "n", ""})
+#:
+#: PUBLIC because it is the project's ONE boolean spelling vocabulary, and a second copy would
+#: drift the moment either grew a word. ``workflows.contracts.coerce_declared_inputs`` reads
+#: these same two sets to type a workflow's declared ``boolean`` input — same vocabulary,
+#: different disposition: a safety flag falls back to its safe default on an unrecognised word,
+#: while a declared input REFUSES, because a run started with an input the caller cannot see
+#: applied is worse than one that never started.
+BOOL_FALSE_WORDS = frozenset({"false", "no", "off", "0", "n", ""})
 
 #: String spellings that mean True.
-_TRUE_WORDS = frozenset({"true", "yes", "on", "1", "y"})
+BOOL_TRUE_WORDS = frozenset({"true", "yes", "on", "1", "y"})
 
 #: Every field name that carries DESTRUCTIVE consent. The parity rail reads this set, so a new
 #: consent flag is registered here rather than re-derived at its call site.
@@ -90,9 +97,9 @@ def strict_bool(value: object, *, field: str, default: bool = False) -> bool:
         return default
     if isinstance(value, str):
         word = value.strip().lower()
-        if word in _FALSE_WORDS:
+        if word in BOOL_FALSE_WORDS:
             return False
-        if word in _TRUE_WORDS:
+        if word in BOOL_TRUE_WORDS:
             return True
         logger.warning(
             "%s: %r is not a boolean — using %r. Write true or false (unquoted) to be explicit.",

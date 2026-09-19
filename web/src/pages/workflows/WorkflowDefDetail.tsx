@@ -6,8 +6,15 @@ import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
-import { Field, TextInput } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
+import {
+  buildArgs,
+  declaredInputsSchema,
+  missingRequired,
+  schemaProps,
+  seedArgs,
+  SchemaField,
+} from '../tools/schema'
 import { PageTitle } from '../../ui/PageTitle'
 import {
   api,
@@ -84,7 +91,10 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
 }) {
   const [def, setDef] = useState<WorkflowDef | null>(null)
   const [loading, setLoading] = useState(true)
-  const [inputs, setInputs] = useState<Record<string, string>>({})
+  // `unknown`, not `string`: a declared `boolean` holds a real boolean and a `number` a real
+  // number, all the way from the control to the POST body. Typing this as `string` was the whole
+  // defect — it made a free-text box the only control the form could render (#327).
+  const [inputs, setInputs] = useState<Record<string, unknown>>({})
   const [starting, setStarting] = useState(false)
   const [tab, setTab] = useState<'steps' | 'versions' | 'ledger'>('steps')
   const [versions, setVersions] = useState<WorkflowVersionRow[]>([])
@@ -120,7 +130,14 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
     let alive = true
     setLoading(true)
     api.workflowDef(name)
-      .then((d) => { if (alive) setDef(d.definition) })
+      .then((d) => {
+        if (!alive) return
+        setDef(d.definition)
+        // Seeded from the declared defaults, so the form opens showing the values a run would
+        // actually use. They were placeholders before — grey text that looks like an empty field,
+        // which is why `apply: false` read as "nothing set" rather than "off".
+        setInputs(seedArgs(declaredInputsSchema(d.definition.inputs)))
+      })
       .catch(() => { if (alive) setDef(null) })
       .finally(() => { if (alive) setLoading(false) })
     loadVersions()
@@ -135,7 +152,14 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   }, [tab, ledger, name])
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
-  const declared = useMemo(() => Object.entries(def?.inputs ?? {}), [def])
+  // The declared inputs as the JSON Schema the shared renderer speaks. One schema drives all
+  // three: which control renders, which values are required, and how they coerce on submit.
+  const paramSchema = useMemo(() => declaredInputsSchema(def?.inputs), [def])
+  const declared = useMemo(() => schemaProps(paramSchema), [paramSchema])
+  const missing = useMemo(
+    () => missingRequired(inputs, declared.required),
+    [inputs, declared],
+  )
   // Read with `=== true`, matching the backend's `is True`: an absent key is UNPUBLISHED, which
   // is what every template authored before A2A existed looks like.
   const published = def?.metadata?.a2a_published === true
@@ -145,18 +169,22 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   )
 
   const start = useCallback(async () => {
+    // Coerced through the SAME schema that rendered the controls, so what is posted is what the
+    // template declared: a `boolean` goes over the wire as `true`, not `"true"`, and an `array`
+    // textarea is parsed before it leaves. `buildArgs` also drops the empty optionals the old
+    // hand-rolled `value !== ''` loop dropped, so that behaviour is kept, not reimplemented.
+    const { args, error } = buildArgs(paramSchema, inputs)
+    if (error) { notify(error, 'error'); return }
     setStarting(true)
     try {
-      const payload: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(inputs)) if (value !== '') payload[key] = value
-      const res = await api.startWorkflowRun({ name, inputs: payload })
+      const res = await api.startWorkflowRun({ name, inputs: args })
       onStarted(res.run_id)
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not start the workflow', 'error')
     } finally {
       setStarting(false)
     }
-  }, [inputs, name, onStarted])
+  }, [inputs, name, onStarted, paramSchema])
 
   // "Refine now": fire the propose-only refiner over this template. It launches a run that
   // proposes a diff for review — it never edits the template — so we navigate to that run.
@@ -228,7 +256,17 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
             >
               <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
             </QuietButton>
-            <Button onClick={start} loading={starting} disabled={starting}>
+            {/* Off while a required input is blank, and it SAYS which one. Before this the
+                button stayed lit through a blank required field and through a mistyped one: the
+                run was refused by the service, so the only feedback was a toast after the
+                round-trip. `missingRequired` is the same emptiness rule the tool inspector and
+                the app config form use — a legitimate `false` or `0` is present, not missing. */}
+            <Button
+              onClick={start}
+              loading={starting}
+              disabled={starting || missing.length > 0}
+              disabledReason={missing.length ? `Fill in: ${missing.join(', ')}` : undefined}
+            >
               <Play size={14} /> Run
             </Button>
           </HeaderActions>
@@ -254,22 +292,18 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
 
             {tab === 'steps' && (
               <>
-                {declared.length > 0 && (
+                {declared.props.length > 0 && (
                   <div className="flex flex-col gap-s">
                     <span data-type="title-m" className="text-on-surface">Inputs</span>
-                    {declared.map(([key, meta]) => (
-                      <Field
+                    {declared.props.map(([key, schema]) => (
+                      <SchemaField
                         key={key}
-                        label={`${key}${meta.required ? ' *' : ''}`}
-                        hint={meta.help || (meta.default !== undefined && meta.default !== null ? `Default: ${String(meta.default)}` : undefined)}
-                      >
-                        <TextInput
-                          value={inputs[key] ?? ''}
-                          onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
-                          placeholder={meta.default !== undefined && meta.default !== null ? String(meta.default) : ''}
-                          ariaLabel={key}
-                        />
-                      </Field>
+                        name={key}
+                        schema={schema}
+                        required={declared.required.has(key)}
+                        value={inputs[key]}
+                        onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
+                      />
                     ))}
                   </div>
                 )}
