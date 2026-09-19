@@ -66,6 +66,7 @@
                 "trigger",
                 "trigger_source",
                 "ui",
+                "vector_store",
                 "workflow"
               ]
             },

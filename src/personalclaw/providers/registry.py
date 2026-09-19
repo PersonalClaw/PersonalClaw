@@ -844,6 +844,38 @@ class MemoryTypeHandler(_TypeHandler):
         unregister_provider(provider_name)
 
 
+class VectorStoreTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'vector_store'`` extensions (KBVS-1).
+
+    Builds a :class:`~personalclaw.vector_stores.base.VectorStoreProvider` from the app's
+    own settings and registers it, which IS the binding: ``HybridRetriever``'s chunk arm
+    asks ``vector_stores.registry.active_provider()`` and uses the bundled
+    ``sqlite-vec``/``vec0`` index when that returns None. There is no second config field
+    naming the backend, so enabling the app and "knowledge searches that store" cannot
+    disagree.
+
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule).
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.vector_stores.registry import register_provider
+
+        register_provider(getattr(instance, "name", "") or ext.name, instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.vector_stores.registry import unregister_provider
+
+        unregister_provider(getattr(instance, "name", "") or ext.name)
+
+
 class KnowledgeTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'knowledge'`` extensions (WATCHED-SOURCES §1.3).
 
@@ -1231,6 +1263,7 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler("sandbox", SandboxTypeHandler())
         _registry.register_type_handler("trigger_source", TriggerSourceTypeHandler())
         _registry.register_type_handler("trigger", TriggerTypeHandler())
+        _registry.register_type_handler("vector_store", VectorStoreTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >

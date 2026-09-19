@@ -1321,6 +1321,10 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   // here, so the guard below caught it before a user saw "ocr provider". Acronym, so it is shouted:
   // `TAG_WORD_CASING` already renders the `ocr` TAG as "OCR", and the two must agree.
   ocr: 'OCR',
+  // 🔴 FIFTH occurrence — `vector_store` (KBVS-1) joined `PROVIDER_TYPES` with no entry here, so the
+  // guard below caught "vector_store provider" before a user read it. Sentence case, matching
+  // `trigger_source` → "Trigger source": the house convention is the first word only.
+  vector_store: 'Vector store',
 }
 
 

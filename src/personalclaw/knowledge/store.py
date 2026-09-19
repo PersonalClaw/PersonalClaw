@@ -56,6 +56,85 @@ _TRACKING_PARAMS = frozenset(
 )
 
 
+def _external_vector_store():
+    """The user's bound external chunk-vector index, or None (KBVS-1).
+
+    Resolved per call rather than cached on the store: a provider is enabled/disabled through
+    the Store UI at runtime, and a store instance outlives that. The lookup is a dict length
+    check.
+    """
+    from personalclaw.vector_stores.registry import active_provider
+
+    return active_provider()
+
+
+def _external_drop_item(item_id: str) -> None:
+    """Drop *item_id*'s vectors from the bound external store, if any.
+
+    Swallows every failure at WARNING for the same reason ``ChunkVectorIndex`` does: an index
+    write must never fail the chunk write it shadows. The visible consequence of a swallowed
+    delete is a stale extra in the external store, which the retrieval path already treats as a
+    harmless extra — a candidate whose chunk row no longer joins is dropped.
+    """
+    provider = _external_vector_store()
+    if provider is None:
+        return
+    try:
+        provider.delete_item(item_id)
+    except Exception as exc:  # noqa: BLE001 - never fail a chunk write on an index write
+        logger.warning(
+            "external vector store %r: delete_item(%s) failed: %s",
+            getattr(provider, "name", "?"),
+            item_id,
+            exc,
+        )
+
+
+def _external_replace_item(item_id: str, rows: list[tuple]) -> None:
+    """Replace *item_id*'s vectors in the bound external store with *rows* (KBVS-1).
+
+    *rows* is ``replace_chunks``' own INSERT tuple — ``(id, item_id, chunk_index, text,
+    embedding, section, line_start, line_end, model_id, provider)`` — read positionally so this
+    stays adjacent to the one write that produces it rather than re-querying what was just
+    written.
+
+    Delete-then-upsert, mirroring ``replace_chunks``' own delete-then-insert: a re-chunk mints
+    fresh chunk ids, so upserting alone would leave every previous generation's vectors behind
+    as orphans. Chunks with no embedding are skipped — an un-embedded chunk has nothing to index
+    and the retrieval join excludes it anyway.
+    """
+    provider = _external_vector_store()
+    if provider is None:
+        return
+    from personalclaw.knowledge.embedder import bytes_to_floats
+    from personalclaw.vector_stores.base import VectorRecord
+
+    try:
+        provider.delete_item(item_id)
+        records = [
+            VectorRecord(
+                chunk_id=r[0],
+                item_id=r[1],
+                chunk_index=r[2],
+                vector=bytes_to_floats(r[4]),
+                section=r[5] or "",
+                line_start=r[6],
+                line_end=r[7],
+            )
+            for r in rows
+            if r[4]
+        ]
+        provider.upsert(records)
+    except Exception as exc:  # noqa: BLE001 - never fail a chunk write on an index write
+        logger.warning(
+            "external vector store %r: indexing %d chunk(s) of %s failed: %s",
+            getattr(provider, "name", "?"),
+            len(rows),
+            item_id,
+            exc,
+        )
+
+
 def _clean_tag_names(tags) -> list[str]:
     """Caller-supplied tags → the names to store: strings only, stripped, blanks and
     duplicates dropped, first-seen order kept.
@@ -2540,6 +2619,10 @@ class KnowledgeStore:
         # indexes. A failure here is swallowed by the index (an index write must never fail a
         # chunk write) and repaired by the next process's reconciliation.
         self.vec_index.sync_item(item_id, [(r[0], r[4]) for r in rows])
+        # KBVS-1: and to the user's own vector store, when one is bound. Per ITEM, which is what
+        # makes a re-poll that added one document index exactly that document's chunks — there is
+        # no full-reindex path here because there is no code that walks the corpus.
+        _external_replace_item(item_id, rows)
         # KL-13: the item's vectors just changed, so the similarity edges derived from the
         # previous generation are stale. Dropping the sweep marker puts the item back in the
         # similarity backlog; without it a re-chunk would keep its old content's neighbours
@@ -2573,6 +2656,7 @@ class KnowledgeStore:
     def clear_chunks(self, item_id: str) -> None:
         """Drop an item's chunk rows (e.g. before a re-ingest)."""
         self.vec_index.drop_item(item_id)  # before the ids go away
+        _external_drop_item(item_id)  # KBVS-1 — same moment, same reason
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         self.clear_similarity_sweep(item_id)  # KL-13 — its vectors are gone; re-look later
         self.db.commit()
@@ -3047,6 +3131,7 @@ class KnowledgeStore:
         self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
         self.vec_index.drop_item(item_id)  # before the chunk ids go away
+        _external_drop_item(item_id)  # KBVS-1 — same moment, same reason
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         # Intent outcomes are kept BY VALUE — only the soft back-ref is severed, so the
         # gathered insight survives the item's deletion.
