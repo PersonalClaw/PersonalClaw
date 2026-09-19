@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter } from 'lucide-react'
+import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
@@ -27,7 +27,7 @@ import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
 import { PageTitle } from '../../ui/PageTitle'
 import { RowHitTarget } from '../../ui/RowHitTarget'
-import { accentChip } from '../../design/accent'
+import { MetaChip } from '../../ui/MetaChip'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
@@ -64,6 +64,10 @@ const SCOPE_CODING = '__coding__'
 const GOAL_LOOPS_PROJECT = 'Goal Loops'
 const ASSIGNED_EVERYONE = ''
 const ASSIGNED_MINE = 'mine'
+// Tag filter — one of the task's `labels`, applied across every view alongside scope.
+// Deliberately URL-ONLY, with no localStorage twin: an empty-string "any" sentinel plus a
+// remembered value is exactly the pair that made the scope filter unclearable (#476 below).
+const TAG_ANY = ''
 
 /** Whether a task is the owner's work — mirrors `Task.belongs_to` on the backend.
  *  Assignee decides when set; otherwise the author does, because an unassigned task
@@ -82,13 +86,14 @@ const _updTs = (t: TaskItem) => Date.parse(t.updated_at || t.created_at || '') |
 
 export function TasksListPage({ onCreate, view: viewProp, filter, openId, setView, setFilter, setOpenId,
   editing, setEditing,
-  q: qProp, sort: sortProp, scope: scopeProp, list: listProp, setQ, setSort, setScope, setList }: {
+  q: qProp, sort: sortProp, scope: scopeProp, list: listProp, tag: tagProp, setQ, setSort, setScope, setList, setTag }: {
   onCreate: () => void
   view: string; filter: string; openId: string | null
   setView: (v: string) => void; setFilter: (f: string) => void; setOpenId: (id: string | null) => void
   editing: boolean; setEditing: (v: boolean) => void
-  q: string; sort: string; scope: string; list: string
+  q: string; sort: string; scope: string; list: string; tag: string
   setQ: (v: string) => void; setSort: (v: string) => void; setScope: (v: string) => void; setList: (v: string) => void
+  setTag: (v: string) => void
 }) {
   // The list is cache-backed for instant paint on revisit (persist:false — task
   // status is live, must not be stale across a reload), but a LOCAL mirror is kept
@@ -137,9 +142,43 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   const sortBy = sortProp || localStorage.getItem(SORT_KEY) || 'recent'
   const setSortBy = setSort
   // Scope filter: a preset sentinel (Goals / Coding) or a specific project name.
-  // URL-backed (?scope, replace) with the localStorage default on a bare route.
-  // `setScope` is the prop itself (used directly below).
-  const scope = scopeProp || localStorage.getItem(SCOPE_KEY) || SCOPE_ALL
+  // URL-backed (?scope, replace) with the remembered scope as the default on a bare route.
+  //
+  // The remembered value is held in REACT STATE, seeded once from the store, rather than read from
+  // localStorage during render. That distinction is load-bearing — see chooseScope below.
+  const [storedScope, setStoredScope] = useState(() => localStorage.getItem(SCOPE_KEY) ?? SCOPE_ALL)
+  const scope = scopeProp || storedScope
+  // Tag filter: one of the task's `labels`, or TAG_ANY. URL-only (see TAG_ANY).
+  const tagFilter = tagProp || TAG_ANY
+  //
+  // 🔴 CLEAR COULD NOT EXPRESS "CLEARED" (#476). Three correct-in-isolation behaviours composed
+  // into a trap: "All tasks" is the EMPTY STRING (`SCOPE_ALL`), `setScope('')` DROPS `?scope`
+  // from the URL (TasksSection maps a falsy value to `null`), and the read above then falls
+  // through a missing param to the remembered value. So Clear wrote nothing anywhere, the stale
+  // stored scope won on the very next render, and the effect below re-persisted it. A user who
+  // scoped to a project with no tasks in it and clicked Clear got a permanently empty Tasks page
+  // — "Nothing here" beside a filter menu simultaneously reporting 27 tasks — with no way out
+  // through the Clear control itself. (Measured: `localStorage['tasks-scope']` still
+  // `"__goals__"` with `location.hash === '#/tasks'` and zero rows rendered.)
+  //
+  // The URL cannot represent the cleared state, so the STORE has to: every scope choice writes
+  // through, so clearing stores `''` and the read above resolves it to `SCOPE_ALL` instead of
+  // resurrecting a project.
+  //
+  // 🪤 AND THE STORE WRITE ALONE IS NOT ENOUGH — the reason the remembered value is React state.
+  // Clearing drops `?scope`, so on the reported repro (a bare `#/tasks`, param already absent) the
+  // URL does not change either. With the fallback reading localStorage mid-render, NOTHING React
+  // watches had changed: no re-render, and the stale scope stayed on screen until the next 12s
+  // poll happened to repaint it. Clear still looked like a no-op. So the choice updates state too,
+  // which is what actually makes the clearing visible.
+  //
+  // This is the only way the page may set a scope; calling the raw `setScope` prop reopens both
+  // halves of the trap.
+  const chooseScope = (v: string) => {
+    localStorage.setItem(SCOPE_KEY, v)
+    setStoredScope(v)
+    setScope(v)
+  }
   // The project + task-list catalog, loaded once so the scope dropdown can list
   // every project and the list sub-filter can resolve names.
   const [projects, setProjects] = useState<ProjectItem[]>([])
@@ -200,7 +239,10 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   useEffect(() => { const t = window.setInterval(refresh, 12000); return () => clearInterval(t) }, [refresh])
   useEffect(() => { if (viewProp) localStorage.setItem(VIEW_KEY, viewProp) }, [viewProp])
   useEffect(() => { localStorage.setItem(SORT_KEY, sortBy) }, [sortBy])
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, scope) }, [scope])
+  // Persist a scope that arrived from the URL (a deep link / a shared link), and keep the
+  // remembered value in step with it so a later bare route and a later reload agree on what the
+  // last-used scope was. Converges in one pass: once `storedScope === scope` this is a no-op.
+  useEffect(() => { localStorage.setItem(SCOPE_KEY, scope); setStoredScope(scope) }, [scope])
   // Clearing the scope (or moving off a single project) drops the list sub-filter.
   // Guard on listProp so it only writes when there's actually a ?list to clear
   // (else it would setQuery every render while unscoped — a no-op churn).
@@ -219,12 +261,17 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     let alive = true
     setSearchErr(null)
     const h = window.setTimeout(() => {
-      api.searchTasks({ query: q, limit: 100 })
+      // `tags` is the search API's own filter axis — plumbed through
+      // `tasks/handlers.py` to `registry.search_tasks` and working, but until now it
+      // had ZERO callers anywhere in the frontend (#477). Sent only when a tag is
+      // active so an unfiltered search keeps its existing request shape, and the
+      // client-side `hasTag` pass below still applies for the non-search paths.
+      api.searchTasks({ query: q, limit: 100, ...(tagFilter !== TAG_ANY ? { tags: [tagFilter] } : {}) })
         .then((d) => { if (alive) setResults(d.tasks) })
         .catch((e) => { if (alive) { setSearchErr(e); setResults(null) } })
     }, 250)
     return () => { alive = false; clearTimeout(h) }
-  }, [q, tasks, searchNonce])
+  }, [q, tasks, tagFilter, searchNonce])
 
   // Load the project / task-list / code-project catalog once: powers the scope
   // dropdown (every project + which are code-backed) and the list sub-filter.
@@ -260,9 +307,17 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     return (t: TaskItem) => t.project === scope
   }, [scope, codingProjectNames])
 
-  // Tasks within the active scope, before status/search — feeds board + DAG
-  // (which present their own statuses) so the scope applies to every view.
-  const scopedTasks = useMemo(() => (tasks ?? []).filter(inScope), [tasks, inScope])
+  // Does a task carry the active tag? (#477 — tags were a write-only decoration:
+  // rendered as chips on every row and card, filterable by `POST /api/tasks/search`,
+  // and reachable from nowhere in the UI.)
+  const hasTag = useMemo(
+    () => (tagFilter === TAG_ANY ? () => true : (t: TaskItem) => (t.labels ?? []).includes(tagFilter)),
+    [tagFilter],
+  )
+
+  // Tasks within the active scope + tag, before status/search — feeds board + DAG
+  // (which present their own statuses) so both narrowings apply to every view.
+  const scopedTasks = useMemo(() => (tasks ?? []).filter(inScope).filter(hasTag), [tasks, inScope, hasTag])
 
   // The unified Filter & sort menu's sections. Status hides while searching (the
   // query overrides it) and Sort hides on board/dag (they present + order their
@@ -282,8 +337,14 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     const projOptions = projects.filter((p) => p.name !== GOAL_LOOPS_PROJECT).sort((a, b) => a.name.localeCompare(b.name))
     const statusCount = (key: string) => key === 'all' ? tasks?.length : key === 'ready' ? ready?.length : key === 'done' ? tasks?.filter((t) => TERMINAL.has(t.status)).length : tasks?.filter((t) => t.status === key).length
 
+    // Tag vocabulary, counted across the whole loaded set (the same basis the Scope
+    // counts use, so the two sections' numbers are comparable). Hidden entirely when
+    // nothing is tagged — a filter that can only ever be a no-op is noise.
+    const tagCounts = new Map<string, number>()
+    for (const t of tasks ?? []) for (const l of t.labels ?? []) tagCounts.set(l, (tagCounts.get(l) ?? 0) + 1)
+
     const sections: FilterSectionDef[] = [{
-      title: 'Scope', value: scope, defaultKey: SCOPE_ALL, onChange: setScope,
+      title: 'Scope', value: scope, defaultKey: SCOPE_ALL, onChange: chooseScope,
       options: [
         { key: SCOPE_ALL, label: 'All tasks', icon: ListChecks, count: tasks?.length },
         { key: SCOPE_GOALS, label: 'Goals', icon: Target, count: goals },
@@ -294,6 +355,19 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     if (showStatus) sections.push({
       title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter,
       options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: statusCount(f.key) })),
+    })
+    // Tag — the axis that existed end to end on the server and had no way in. Offered
+    // in EVERY view (unlike Status): board and DAG present their own statuses, but a tag
+    // narrows which work is on screen, which is exactly what scope does there too.
+    // Busiest tag first, then alphabetical, so a real vocabulary stays navigable.
+    if (tagCounts.size > 0) sections.push({
+      title: 'Tag', value: tagFilter, defaultKey: TAG_ANY, onChange: setTag,
+      options: [
+        { key: TAG_ANY, label: 'Any tag', icon: Tags, count: tasks?.length },
+        ...[...tagCounts.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([name, n]) => ({ key: name, label: name, icon: Tag, count: n })),
+      ],
     })
     // "Mine vs everyone" (TEAM-SHARED-ENTITIES §2.1). Hidden on a single-user
     // install: with no username, or no task belonging to anyone else, the filter
@@ -311,7 +385,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
     return sections
-  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned])
+  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter])
 
   const filtered = useMemo(() => {
     let base: TaskItem[] | null
@@ -321,6 +395,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     else base = filter === 'all' ? [...tasks] : filter === 'done' ? tasks.filter((t) => TERMINAL.has(t.status)) : tasks.filter((t) => t.status === filter)
 
     if (base) base = base.filter(inScope)
+    if (base) base = base.filter(hasTag)
     if (base && listFilter) base = base.filter((t) => t.task_list_id === listFilter.id)
     if (base && owner && assigned === ASSIGNED_MINE) base = base.filter((t) => isMine(t, owner))
 
@@ -334,7 +409,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       base = [...base].sort((a, b) => (Number(TERMINAL.has(a.status)) - Number(TERMINAL.has(b.status))) || cmp(a, b))
     }
     return base
-  }, [tasks, ready, filter, q, results, inScope, listFilter, sortBy])
+  }, [tasks, ready, filter, q, results, inScope, hasTag, listFilter, sortBy])
 
   // Reset a Repeatable task list (server gates: all tasks must be done). Surfaces
   // the server message on the move-error banner on failure; reloads on success.
@@ -398,6 +473,19 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       window.setTimeout(() => setMoveError(''), 6000)
     }
   }
+
+  // The nothing-on-screen state for the views that render `scopedTasks` (board + DAG). They
+  // have no status/search branch to blame, so scope was the only narrower they could name —
+  // and with a Tag filter now applying to them too, "No tasks match this scope." would blame
+  // the wrong control. A tag is dismissable in place, so it gets its own escape; a scope is
+  // chosen by navigation and keeps the neutral sentence.
+  const nothingInView = tagFilter !== TAG_ANY ? (
+    <EmptyState icon={Tag} title={`No tasks tagged “${tagFilter}”`}
+      hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none carrying this tag here.`}
+      action={{ label: 'Clear tag', onClick: () => setTag(TAG_ANY) }} />
+  ) : (
+    <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
+  )
 
   return (
     <WorkbenchLayout
@@ -463,22 +551,22 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
-            ) : scopedTasks.length === 0 ? (
-              <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
-            ) : (
+            ) : scopedTasks.length === 0 ? nothingInView : (
               <TaskBoard tasks={scopedTasks} onOpen={(id) => setOpenId(id)} onMove={moveTask} />
             )}
           </div>
         </div>
       ) : (
-        // The DAG renders an SVG canvas whose nodes are not focusable, so in that view this
-        // scroll container holds NOTHING a keyboard can reach: 2785px of graph unreachable
-        // (axe scrollable-region-focusable). List and Cards each expose 38 focusable rows, so
-        // they need no tab stop and must not get a redundant one. Hence the per-view scope.
-        <div className="flex-1 overflow-y-auto"
-          tabIndex={view === 'dag' ? 0 : undefined}
-          role={view === 'dag' ? 'group' : undefined}
-          aria-label={view === 'dag' ? 'Dependency graph' : undefined}>
+        // No tab stop on this scroll container, in ANY view. The DAG used to need one as a
+        // standin: its SVG nodes were not focusable, so the container held nothing a keyboard
+        // could reach (2785px of graph unreachable, axe scrollable-region-focusable) and a
+        // `tabIndex`/`role`/`aria-label` on the region at least made it scrollable. #474 fixed
+        // the cause — every DAG node is now a real button and a tab stop — so by this page's own
+        // rule ("List and Cards expose 38 focusable rows, so they need no tab stop and must not
+        // get a redundant one") the standin is now the redundant stop it warned against. The
+        // graph names itself too, via `DagView`'s own `role="group"` + label, so keeping one here
+        // would announce the same region twice.
+        <div className="flex-1 overflow-y-auto">
           {/* every view (incl. DAG) honors the shell content-width preset */}
           <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
@@ -495,7 +583,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (
               scopedTasks.length === 0
-                ? <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
+                ? nothingInView
                 : <TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />
             ) : filtered.length === 0 ? (
               // This branch is reachable through FOUR narrowing controls (search, status filter,
@@ -510,24 +598,27 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 <EmptyState icon={Search} title={`No tasks match “${q}”`}
                   hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none matching the search.`}
                   action={{ label: 'Clear search', onClick: () => setQ('') }} />
-              ) : filter !== 'all' || listFilter || (owner && assigned === ASSIGNED_MINE) ? (
+              ) : filter !== 'all' || listFilter || (owner && assigned === ASSIGNED_MINE) || tagFilter !== TAG_ANY ? (
+                // The Tag filter joins the in-page narrowers here, which means it MUST also be
+                // reset by the escape below — an affordance that left a tag applied would be the
+                // same lie this branch was split up to stop.
                 <EmptyState icon={Filter} title="No tasks in this view"
                   hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none in this view.`}
-                  action={{ label: 'View all tasks', onClick: () => { setFilter('all'); setListFilter(null); setAssigned(ASSIGNED_EVERYONE) } }} />
+                  action={{ label: 'View all tasks', onClick: () => { setFilter('all'); setListFilter(null); setAssigned(ASSIGNED_EVERYONE); setTag(TAG_ANY) } }} />
               ) : (
                 <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
               )
             ) : view === 'list' ? (
               <div className="flex flex-col gap-s pb-16">
                 {filtered.map((t, i) => (
-                  <TaskRow key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={setScope}
+                  <TaskRow key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag}
                     selected={selected.has(t.id)} selecting={selected.size > 0} onToggleSelect={() => toggleSelect(t.id)}
                     onComplete={() => moveTask(t.id, 'done')} />
                 ))}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-s">
-                {filtered.map((t, i) => <TaskCard key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={setScope} />)}
+                {filtered.map((t, i) => <TaskCard key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag} />)}
               </div>
             )}
           </div>
@@ -646,8 +737,8 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   )
 }
 
-function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSelect, onComplete }: {
-  t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void
+function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onToggleSelect, onComplete }: {
+  t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void
   selected?: boolean; selecting?: boolean; onToggleSelect?: () => void
   onComplete?: () => void
 }) {
@@ -722,13 +813,13 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
         <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)} title={t.title}>{t.title}</span>
         <MetaLine t={t} onProject={onProject} />
       </div>
-      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}</div>}
+      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <MetaChip key={l} label={l} title={`Filter by tag “${l}”`} onClick={onTag} />)}</div>}
     </motion.div>
     </ContextMenu>
   )
 }
 
-function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void }) {
+function TaskCard({ t, index, onOpen, onProject, onTag }: { t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void }) {
   const sm = statusMeta(t.status)
   const pm = signalPriority(t.priority)
   const due = dueMeta(t.due)
@@ -754,9 +845,9 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       <div className="flex flex-wrap items-center gap-1.5">
         <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
         {pm && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>}
-        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-6 hover:brightness-125" style={accentChip}><FolderKanban size={10} /> {t.project}</button>}
+        {t.project && <MetaChip label={t.project} title={`Filter by project “${t.project}”`} icon={FolderKanban} tone="accent" onClick={onProject} />}
         {due && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
-        {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}
+        {(t.labels ?? []).slice(0, 2).map((l) => <MetaChip key={l} label={l} title={`Filter by tag “${l}”`} onClick={onTag} />)}
       </div>
       {exit.length > 0 && (
         <div className="flex items-center gap-s">

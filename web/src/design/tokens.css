@@ -794,6 +794,17 @@
     marker-end: url(#dag-arrow-active);
   }
   svg.dag-hovering .dag-edge.dag-lit.dag-edge-bad path { stroke-width: 2.5; opacity: 1; }
+
+  /* Keyboard focus on a DAG node (#474). The node's operable surface is an SVG
+     `<g role="button">`, and a UA outline on an SVG group is drawn inconsistently
+     (and around the group's tight bbox), so the indicator is a real ring rect the
+     component renders and this rule reveals. `:focus-visible` only, so a mouse
+     click never leaves a ring behind. */
+  .dag-node-hit { outline: none; }
+  .dag-node-hit .dag-focus-ring { opacity: 0; transition: opacity 120ms ease; }
+  .dag-node-hit:focus-visible .dag-focus-ring { opacity: 1; }
+  /* A focused node stays legible while its own lineage highlight dims the rest. */
+  svg.dag-hovering .dag-node:has(.dag-node-hit:focus-visible) { opacity: 1; }
 }
 
 /* Find-in-conversation (CHAT-CRAFT S2) — the CSS Custom Highlight API paints
