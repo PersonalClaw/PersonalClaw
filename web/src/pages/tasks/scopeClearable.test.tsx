@@ -41,6 +41,9 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // `api.tasks()` keeps its envelope (the page unwraps it); `projects`/`taskLists` are already
       // unwrapped by the client, so they must return ARRAYS here.
       tasks: vi.fn(async () => ({ tasks: TASKS, owner: '' })),
+      // The page loads through the COLLECTION read (#485), which carries `total`/`complete`
+      // alongside the rows; `tasks` stays mocked for the sibling surfaces that take a window.
+      allTasks: vi.fn(async () => ({ tasks: TASKS, total: TASKS.length, complete: true, owner: '' })),
       projects: vi.fn(async () => [{ id: 'p-1', name: 'Client work', status: 'active' }]),
       taskLists: vi.fn(async () => []),
       readyTasks: vi.fn(async () => []),

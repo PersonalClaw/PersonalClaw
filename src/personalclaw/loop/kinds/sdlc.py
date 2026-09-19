@@ -1210,7 +1210,7 @@ class CodeKind(LoopKindStrategy):
                 return None
             from personalclaw.tasks import registry
 
-            tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
+            tasks, _ = await registry.collect_tasks(task_list_id=list_id)
             queued = set((loop.kind_config or {}).get("queued_task_ids", []) or [])
             to_queue = [
                 t.id for t in tasks if t.id not in queued and not tasks_link._is_resolved(t.status)

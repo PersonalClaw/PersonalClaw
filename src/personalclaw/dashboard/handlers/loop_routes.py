@@ -857,7 +857,7 @@ async def _loop_task_ids(loop_id: str) -> set[str]:
         for list_id in (loop.task_list_ids or {}).values():
             if not list_id:
                 continue
-            tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
+            tasks, _ = await registry.collect_tasks(task_list_id=list_id)
             ids.update(t.id for t in tasks)
     except Exception:
         logger.debug("loop task-id gather failed for %s", loop_id, exc_info=True)

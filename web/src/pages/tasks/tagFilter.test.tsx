@@ -40,6 +40,9 @@ vi.mock('../../lib/api', async (importOriginal) => {
     api: {
       ...mod.api,
       tasks: vi.fn(async () => ({ tasks: TASKS, owner: '' })),
+      // The page loads through the COLLECTION read (#485); `tasks` stays mocked because
+      // sibling surfaces still take a window.
+      allTasks: vi.fn(async () => ({ tasks: TASKS, total: TASKS.length, complete: true, owner: '' })),
       projects: vi.fn(async () => []),
       taskLists: vi.fn(async () => []),
       readyTasks: vi.fn(async () => []),
@@ -71,6 +74,7 @@ beforeEach(() => {
   resetDataStore(); localStorage.clear(); sessionStorage.clear()
   vi.mocked(api.searchTasks).mockClear()
   vi.mocked(api.tasks).mockResolvedValue({ tasks: TASKS, owner: '' } as never)
+  vi.mocked(api.allTasks).mockResolvedValue({ tasks: TASKS, total: TASKS.length, complete: true, owner: '' } as never)
 })
 afterEach(cleanup)
 
@@ -142,6 +146,7 @@ describe('the tag axis is reachable from the filter menu', () => {
     // `mockResolvedValue`, not `…Once`: the page calls `api.tasks()` twice on mount (the list, and
     // `{limit:1}` for the owner), so a one-shot override lands on whichever race won.
     vi.mocked(api.tasks).mockResolvedValue({ tasks: [TASKS[2]], owner: '' } as never)
+    vi.mocked(api.allTasks).mockResolvedValue({ tasks: [TASKS[2]], total: 1, complete: true, owner: '' } as never)
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('Re-tile the back step')).toBeTruthy())
 

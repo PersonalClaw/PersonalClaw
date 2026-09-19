@@ -91,8 +91,9 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
       // rows alone; its docstring says so ("tasks are re-homed by the caller / left orphaned-by-list — the
       // task provider owns task deletion"), and reading it yields exactly the sentence that shipped.
       // But #457 added a CASCADE in the calling handler, ABOVE that function
-      // (`tasks/hierarchy_handlers.py`: `list_all_tasks(project=…, limit=10_000)` → `delete_task(t.id)` →
-      // `native.py`'s `path.unlink()`), because without it the rows survived pointing at dead list ids,
+      // (`tasks/hierarchy_handlers.py`: `collect_tasks(project=…)` → `_cascade_delete_tasks` →
+      // `delete_task(t.id)` → `native.py`'s `path.unlink()`; it was a `limit=10_000` window until #485
+      // made it the collection read), because without it the rows survived pointing at dead list ids,
       // "unreachable from every scoped view". The docstring is still accurate about the function it
       // documents. The dialog was describing an inner contract instead of the operation the button runs.
       // Copy written against a callee is copy that goes stale the first time a caller does more.
@@ -980,7 +981,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
  *  full task in the Tasks page. Lazy-fetched (panel only mounts when opened). */
 function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
   const { data: tasks, loading } = useQuery<TaskItem[]>(`tasklist:tasks:${list.id}`,
-    () => api.tasks({ task_list: list.id, limit: 200 }).then((d) => d.tasks))
+    () => api.allTasks({ task_list: list.id }).then((c) => c.tasks))
   if (loading && !tasks) return <div className="flex justify-center py-l"><Loader2 size={16} className="animate-spin text-on-surface-low" /></div>
   if (!tasks?.length) return <p className="text-on-surface-low text-[0.8125rem]">No tasks in this list yet.</p>
   return (
