@@ -235,12 +235,12 @@ def _doctor() -> None:
                 print(
                     f"  node:        ⚠️  v{major} < {_MIN_NODE_VERSION} (frontend needs Node {_MIN_NODE_VERSION}+)"  # noqa: E501
                 )
-                print("               Fix: install Node.js >= 16")
+                print(f"               Fix: install Node.js >= {_MIN_NODE_VERSION}")
         except Exception:
             print(f"  node:        ✅ {node}")
     else:
         print(f"  node:        ⚠️  not found (frontend needs Node {_MIN_NODE_VERSION}+)")
-        print("               Fix: install Node.js >= 16")
+        print(f"               Fix: install Node.js >= {_MIN_NODE_VERSION}")
 
     # SQLite driver + capabilities (PLATFORM-REACH PR-1): FTS5/JSON1 are what the
     # knowledge + memory search paths need, and the bundled stdlib build lacks them
