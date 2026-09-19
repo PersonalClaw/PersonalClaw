@@ -367,7 +367,12 @@ async def test_toggle_accepts_a_real_bool_and_known_tool(monkeypatch):
 class _RecordingProvider:
     """A provider that records whether it was reached. Reaching it IS the bug."""
 
-    def __init__(self, tool_name: str, provider_tag: str = "personalclaw-artifacts") -> None:
+    def __init__(
+        self,
+        tool_name: str,
+        provider_tag: str = "personalclaw-artifacts",
+        risk: str = "destructive",
+    ) -> None:
         from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
 
         self.name = provider_tag
@@ -377,7 +382,7 @@ class _RecordingProvider:
                 name=tool_name,
                 description="d",
                 provider=provider_tag,
-                risk_level=RiskLevel.DESTRUCTIVE,
+                risk_level=RiskLevel(risk),
             )
         ]
 
@@ -444,7 +449,12 @@ async def test_an_enabled_tool_still_runs(monkeypatch):
     would break every cron script."""
     import json
 
-    prov = _RecordingProvider("artifact_list")
+    # `risk="safe"` states what `artifact_list` actually declares. The fixture used to
+    # leave every tool on the harness default (DESTRUCTIVE), which was invisible while risk
+    # reached nothing on this route and became a second, unrelated refusal once #506's gate
+    # landed — this test is about the DISABLE gate, so its fixture has to be honest about
+    # the tier or it stops measuring that.
+    prov = _RecordingProvider("artifact_list", risk="safe")
     _install_provider(monkeypatch, prov)
     _disable(monkeypatch)  # nothing disabled
 
@@ -466,9 +476,16 @@ async def test_a_core_locked_tool_is_never_refused(monkeypatch):
     _install_provider(monkeypatch, prov)
     _disable(monkeypatch, "personalclaw-filesystem:bash")
 
-    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "bash"}))
+    # A read-only command, so the tool reaches the provider on the DISABLE question alone.
+    # The bare `{"tool": "bash"}` this used to send carries no command to screen, which
+    # #506's gate floors at destructive (fail-closed: nothing was read, so nothing can be
+    # called safe) — a second refusal that would have made this test look like a
+    # disable-gate regression. That fail-closed behaviour is pinned on its own below.
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "bash", "arguments": {"command": "ls"}})
+    )
     assert resp.status == 200
-    assert prov.invoked == [("bash", {})]
+    assert prov.invoked == [("bash", {"command": "ls"})]
 
 
 @pytest.mark.asyncio
@@ -534,3 +551,193 @@ def test_only_two_execution_paths_exist_and_both_are_gated():
         "the set of tool-execution call sites changed — a new one needs the same "
         f"tool_prefs gate before it dispatches. Found: {hits}"
     )
+
+
+# ── #506: the route's risk_level GATES execution, it does not only stamp the audit ─────
+#
+# `resolve_effective_risk` was already resolved here and spent entirely on the SEL row:
+# `provider.invoke` ran unconditionally one line later. So a `risk_level` that reached
+# this route changed what the audit SAID about a call, never whether the call happened —
+# which is what makes it an indicator rather than a safety signal. The inspector's Try-it
+# confirm sat over it and scaled with nothing either, so the whole risk taxonomy had no
+# consumer anywhere on this path that could refuse.
+#
+# The gate is deliberately NARROW — effective-`destructive` only — and the tests below pin
+# both edges of that choice, because both are load-bearing:
+#   · too wide (caution included) breaks every cron script that writes, and
+#     `schedule_script.ScriptContext.call_tool` is the shipped path they write through;
+#   · too narrow (no gate) is the defect.
+# The per-invocation downgrade is what keeps the floor cheap: a read-only `bash` resolves
+# SAFE, so an unattended `ls` costs nothing while `rm -rf` must name the tier.
+
+
+@pytest.mark.asyncio
+async def test_invoke_refuses_a_destructive_tool_with_no_risk_confirmation(monkeypatch):
+    """The reported defect, at the route: a destructive tool ran on a bare request."""
+    import json
+
+    prov = _RecordingProvider("memory_forget", provider_tag="personalclaw-core")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "memory_forget", "arguments": {"query": "x"}})
+    )
+    assert resp.status == 403
+    payload = json.loads(resp.body.decode())
+    assert payload["error"]["code"] == "risk_confirmation_required"
+    # The decisive half. A 403 whose provider still ran is not a gate.
+    assert prov.invoked == [], "the provider was reached — risk still gates nothing"
+
+
+@pytest.mark.asyncio
+async def test_invoke_runs_a_destructive_tool_when_the_caller_names_the_tier(monkeypatch):
+    """The way OUT, and it is one field. A gate with no way through is the outage."""
+    import json
+
+    prov = _RecordingProvider("memory_forget", provider_tag="personalclaw-core")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest(
+            {
+                "tool": "memory_forget",
+                "arguments": {"query": "x"},
+                "confirm_risk": "destructive",
+            }
+        )
+    )
+    assert resp.status == 200
+    assert json.loads(resp.body.decode())["ok"] is True
+    # The acknowledgement is a REQUEST field, not a tool argument: leaking it into the
+    # payload would hand every destructive tool an undeclared kwarg.
+    assert prov.invoked == [("memory_forget", {"query": "x"})]
+
+
+@pytest.mark.asyncio
+async def test_a_confirmation_naming_the_wrong_tier_is_refused(monkeypatch):
+    """The ack must name the tier it acknowledges.
+
+    A truthy-anything field would let a caller paste one blanket `confirm_risk` in and
+    stop reading it — the value has to be the tier the route resolved, so the caller
+    states what it believes it is doing and a disagreement fails closed.
+    """
+    prov = _RecordingProvider("memory_forget", provider_tag="personalclaw-core")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest(
+            {"tool": "memory_forget", "arguments": {"query": "x"}, "confirm_risk": "caution"}
+        )
+    )
+    assert resp.status == 403
+    assert prov.invoked == []
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_shell_call_needs_no_confirmation(monkeypatch):
+    """The ladder's FLOOR, via the per-invocation downgrade — the anti-outage property.
+
+    `bash` DECLARES destructive, but `resolve_effective_risk` resolves a read-only
+    invocation to SAFE. So the gate keys on the EFFECTIVE tier: an unattended `ls` keeps
+    costing nothing, and only the call that actually mutates has to name itself. Keying on
+    the declared tier instead would have made this request a 403 and broken every cron
+    script that reads through bash.
+    """
+    prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "bash", "arguments": {"command": "ls"}})
+    )
+    assert resp.status == 200
+    assert prov.invoked == [("bash", {"command": "ls"})]
+
+
+@pytest.mark.asyncio
+async def test_a_mutating_shell_call_must_name_the_tier(monkeypatch):
+    """The same tool, the other verdict — so the downgrade above is not a blanket pass."""
+    prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "bash", "arguments": {"command": "rm -rf /tmp/whatever"}})
+    )
+    assert resp.status == 403
+    assert prov.invoked == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("risk", ["safe", "caution"])
+async def test_the_gate_stops_at_destructive(monkeypatch, risk):
+    """Vacuity floor AND a scope boundary, deliberately pinned.
+
+    A gate that refused everything would pass every test above it and break 86 of 92
+    tools, so the two lower tiers must still run on a bare request. This is also the
+    statement that the caution rung is a UI-side escalation only: 26 caution tools
+    include the ones cron scripts write through (`task_create`, `knowledge_create`), and
+    requiring an ack from them is an outage, not a hardening.
+    """
+    prov = _RecordingProvider("task_create", provider_tag="personalclaw-core", risk=risk)
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "task_create", "arguments": {"title": "x"}})
+    )
+    assert resp.status == 200
+    assert prov.invoked == [("task_create", {"title": "x"})]
+
+
+@pytest.mark.asyncio
+async def test_an_undeclared_tool_inferred_destructive_is_gated_too(monkeypatch):
+    """The gate reads the EFFECTIVE tier, so name inference reaches it as well.
+
+    An external MCP tool declares no risk_level; `resolve_effective_risk` infers
+    destructive from the verb. That inference is exactly why the frontend cannot be the
+    only gate — it renders the DECLARED tier and would offer its cheapest ceremony for a
+    call the route resolves as destructive. The FE handles the resulting refusal by
+    escalating (see toolInspectorRiskGate.test.tsx), which is why this 403 must carry the
+    code rather than a bare message.
+    """
+    import json
+
+    prov = _RecordingProvider("delete_everything", provider_tag="mcp-thing", risk="safe")
+    # Strip the declaration the way a dict-defined MCP tool arrives: no risk_level at all.
+    # The name is not decoration — `infer_risk_from_name` classifies by VERB, so a tool
+    # called `wipe_everything` infers `safe` and floors at caution while `delete_everything`
+    # infers destructive. The inference is the subject here, so the name has to be one it
+    # actually classifies.
+    prov._defs[0].risk_level = None
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "delete_everything", "arguments": {}})
+    )
+    assert resp.status == 403
+    assert json.loads(resp.body.decode())["error"]["code"] == "risk_confirmation_required"
+    assert prov.invoked == []
+
+
+@pytest.mark.asyncio
+async def test_a_shell_call_whose_command_was_never_received_fails_closed(monkeypatch):
+    """No command to screen ⇒ destructive, so the gate asks. Deliberate, and not an
+    accident of the bare-`bash` shape.
+
+    `resolve_effective_risk` returns UNCLASSIFIED for a shell call carrying no command
+    text, and honors the tool's real declaration (`bash` → destructive) rather than
+    guessing about a command nobody read. The gate inherits that: it is the one direction a
+    risk gate must lean, since the alternative is admitting the calls we know least about.
+    """
+    prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "bash"}))
+    assert resp.status == 403
+    assert prov.invoked == []

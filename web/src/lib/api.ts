@@ -6804,8 +6804,14 @@ export const api = {
   toolsIndex: () => get<{
     tools: ToolItem[]; load_failures?: ToolLoadFailure[]
   }>('/api/tools'),
-  invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
-    post<ToolInvokeResult>('/api/tools/invoke', { tool, arguments: args, provider }),
+  // `confirmRisk` is the caller's acknowledgement of the tier the route resolves (#506): a
+  // call whose EFFECTIVE risk is `destructive` is refused with 403 risk_confirmation_required
+  // unless the body names it. Omitted for safe/caution, which the route does not gate — so
+  // passing it unconditionally would assert a ceremony that never happened.
+  invokeTool: (tool: string, args: Record<string, unknown>, provider?: string, confirmRisk?: string) =>
+    post<ToolInvokeResult>('/api/tools/invoke', {
+      tool, arguments: args, provider, ...(confirmRisk ? { confirm_risk: confirmRisk } : {}),
+    }),
   mcpServers: () => get<McpServer[]>('/api/mcp'),
   toggleMcpServer: (name: string, enabled: boolean) => post('/api/mcp/toggle', { name, enabled }),
   toggleMcpTool: (server: string, tool: string, enabled: boolean) => post('/api/mcp/toggle-tool', { server, tool, enabled }),

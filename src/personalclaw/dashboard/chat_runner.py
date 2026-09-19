@@ -3781,9 +3781,31 @@ async def run_chat(
                     # reading it. The live wire below carries a real boolean.
                     perm_meta["is_read_only"] = "1" if read_only else ""
                 # Effective risk of this call (computed above) — a user-facing
-                # INDICATOR on the card so the human can weigh the decision. It does
-                # not gate: an explicit trust/YOLO still auto-approves everything.
+                # INDICATOR on the card so the human can weigh the decision. On this
+                # surface it does not gate execution (an explicit trust/YOLO still
+                # auto-approves everything), but since #506 it DOES gate how far the
+                # answer may reach: the card withholds the standing-grant scopes on a
+                # destructive call until the user widens them deliberately.
                 perm_meta["risk"] = effective_risk
+                # Whether "Always for this agent" can actually persist, and onto WHICH
+                # agent — the fact the card needs BEFORE the user picks that scope (#541).
+                # Without it the card promised "in this chat and future ones"
+                # unconditionally, including for a reserved system agent or an ACP-bound
+                # chat where the grant expires with the session.
+                #
+                # Resolved HERE rather than once per session, and from a fresh config: the
+                # promise is about the file, and the agent could have been created or
+                # removed since the session opened. `api_chat_session_approve` re-resolves
+                # it at decision time through the same owner and reports what actually
+                # happened, so this value is honest COPY and that one is the authority.
+                try:
+                    from personalclaw.agents.defaults import persistable_grant_target
+
+                    perm_meta["grant_agent"] = persistable_grant_target(
+                        session.agent or "", AppConfig.load()
+                    )
+                except Exception:  # noqa: BLE001 — an unreadable config means "cannot promise"
+                    perm_meta["grant_agent"] = ""
                 session.append(
                     "permission",
                     event.title,
@@ -3808,6 +3830,10 @@ async def run_chat(
                         # declared the parameter and one branch of its derivation was
                         # unreachable in production. `null` when the call runs no shell.
                         "is_read_only": read_only,
+                        # The live card needs the grant target too, not just the rehydrated
+                        # one — a prompt answered without a reload is the COMMON case, and
+                        # it is the one that was promising blind (#541).
+                        "grant_agent": perm_meta.get("grant_agent", ""),
                     },
                 )
                 loop = asyncio.get_running_loop()

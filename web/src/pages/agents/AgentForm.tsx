@@ -7,6 +7,7 @@ import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
+import { confirm } from '../../ui/dialog'
 import { APPROVAL_MODES } from './agentMeta'
 
 export interface AgentDraft {
@@ -185,7 +186,35 @@ function CheckList({ label, hint, options, value, onChange }: {
   const selected = new Set(value)
   const n = q.trim().toLowerCase()
   const filtered = n ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(n)) : options
-  const toggle = (v: string) => onChange(selected.has(v) ? value.filter((x) => x !== v) : [...value, v])
+
+  /** Toggle one binding, asking first when the option being ADDED is destructive (#506).
+   *
+   *  A tick here is a STANDING capability grant: every future run of this agent may invoke the
+   *  tool, with no per-call prompt beyond the agent's own approval mode. That makes it the
+   *  longest-lived of the three grants in this cluster, and it cost exactly one click — the same
+   *  click as `artifact_list` — while `risk` was rendered beside it as a tag and read by nothing.
+   *
+   *  ONE direction only. Adding a destructive capability asks; removing one does not. A
+   *  confirmation on the withdrawal of a permission protects nothing and discourages the edit
+   *  that shrinks the blast radius.
+   *
+   *  Keyed on the OPTION's declared risk rather than on this list's label, so the Skills and
+   *  Triggers pickers (whose options carry no risk) are untouched, and a future risk-carrying
+   *  catalogue inherits the gate instead of needing a second copy of it. Destructive only,
+   *  matching `POST /api/tools/invoke` — 26 caution tools are ordinary agent equipment. */
+  async function toggle(o: CheckOption) {
+    if (selected.has(o.value)) { onChange(value.filter((x) => x !== o.value)); return }
+    if (o.risk === 'destructive') {
+      const ok = await confirm({
+        title: `Let this agent call ${o.label}?`,
+        body: `${o.label} is classified destructive — it can delete data or run arbitrary commands. This grant applies to every run of this agent, not just one call.`,
+        danger: true,
+        confirmLabel: `Grant ${o.label}`,
+      })
+      if (!ok) return
+    }
+    onChange([...value, o.value])
+  }
 
   return (
     <Field label={`${label}${value.length ? ` · ${value.length}` : ''}`} hint={hint}>
@@ -206,7 +235,7 @@ function CheckList({ label, hint, options, value, onChange }: {
               {filtered.length === 0 ? <div className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No matches.</div> : filtered.map((o) => {
                 const on = selected.has(o.value)
                 return (
-                  <button key={o.value} type="button" aria-pressed={on} onClick={() => toggle(o.value)}
+                  <button key={o.value} type="button" aria-pressed={on} onClick={() => { void toggle(o) }}
                     className="flex w-full items-center gap-s rounded-md px-2 py-1.5 text-left hover:bg-surface-high transition-colors">
                     <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: on ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: on ? 'var(--color-primary)' : 'transparent' }}>
                       {on && <Check size={12} className="text-on-primary" />}
