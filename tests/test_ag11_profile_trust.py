@@ -178,6 +178,61 @@ async def test_mutating_spawn_allows_write_tool(agent_root):
     provider.reject_tool.assert_not_awaited()
 
 
+# ── AG-5: the class is a tool_grants TIER, so the operator ceiling narrows it ─────────
+
+
+@pytest.fixture()
+def ceiling_home(tmp_path, monkeypatch):
+    """An isolated home the spawn seam reads its operator ceiling from."""
+    from personalclaw.guardrails import ceiling as C
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.delenv(C.CEILING_PATH_ENV, raising=False)
+    C.reset_ceiling()
+    yield tmp_path
+    C.reset_ceiling()
+
+
+def _write_tools_ceiling(home_dir, allow: list[str]) -> None:
+    import json
+
+    from personalclaw.guardrails import ceiling as C
+
+    path = home_dir / "governance" / "ceiling.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 1, "scopes": {"tools": {"allow": allow}}}), encoding="utf-8"
+    )
+    C.reset_ceiling()
+
+
+@pytest.mark.asyncio
+async def test_a_ceiling_tools_allowlist_refuses_a_tool_the_mutating_class_granted(
+    agent_root, ceiling_home
+):
+    """LOAD-BEARING, and the reason the class is expressed as a ``tool_grants`` tier rather than a
+    private boolean: an explicit MUTATING grant is the widest posture a caller can ask for, and the
+    operator's ceiling still refuses a tool outside its allowlist. Before the tier was read at this
+    seam, that ceiling value composed correctly and then changed nothing."""
+    _write_tools_ceiling(ceiling_home, ["read_file"])
+    manager, provider = _manager_with_tool("Write")
+    await _run_spawn(manager, capability_class="mutating", approval_mode="auto")
+    provider.reject_tool.assert_awaited_once_with(1)
+    provider.approve_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_same_ceiling_still_admits_the_tool_it_allows(agent_root, ceiling_home):
+    """The vacuity floor: the allowlist ADMITS what it names, so the refusal above is the ceiling
+    doing work rather than the spawn path refusing everything."""
+    _write_tools_ceiling(ceiling_home, ["read_file"])
+    manager, provider = _manager_with_tool("read_file")
+    await _run_spawn(manager, capability_class="mutating", approval_mode="auto")
+    provider.approve_tool.assert_awaited_once_with(1)
+    provider.reject_tool.assert_not_awaited()
+
+
 # ── cron rewire: an unattended injection turn resolves through profile_for_session ───
 
 

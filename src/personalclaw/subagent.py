@@ -2022,11 +2022,26 @@ class SubagentManager:
         # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
         # research (read-only) class, so its write/execute tools are denied at the approval loop
         # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
-        _research_readonly = (
-            resolve_capability_class(
-                capability_class=info.capability_class, approval_mode=info.approval_mode
-            )
-            == CAPABILITY_RESEARCH
+        from personalclaw.guardrails.policy import (
+            TOOL_READ,
+            TOOL_READ_WRITE,
+            tool_grant_denial,
+            tool_grant_posture,
+        )
+        from personalclaw.workflows.batch_compile import is_write_tool
+
+        _capability_class = resolve_capability_class(
+            capability_class=info.capability_class, approval_mode=info.approval_mode
+        )
+        _research_readonly = _capability_class == CAPABILITY_RESEARCH
+        # The class expressed as a TOOL-GRANT tier (§3 ``tool_grants``), intersected with the
+        # operator ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools`
+        # scope may narrow either to `read` or to a `custom` allowlist, which is the only thing
+        # standing between a composed ceiling value and a control nobody reads. A ceiling that
+        # will not resolve raises HERE, before the stream opens, which fails the spawn CLOSED.
+        _tool_profile = tool_grant_posture(
+            f"spawn_{_capability_class}",
+            TOOL_READ if _research_readonly else TOOL_READ_WRITE,
         )
         async for event in client.stream(full_message):
             if event.kind == EVENT_TEXT_CHUNK:
@@ -2059,30 +2074,36 @@ class SubagentManager:
                     logger.warning("Subagent %s hit turn limit (%d)", info.id, turn_limit)
                     self._write_tombstone(info, "turn_limit")
                     return
-                # §4.1: a research-class spawn is read-only. Its write/execute tools are DENIED
-                # HERE, at the tool-approval layer, BEFORE any auto-approve branch below can admit
-                # them. Placement is load-bearing: an auto-fired research run resolves
+                # §4.1/§3: the spawn's TOOL GRANTS decide, and they are enforced HERE, at the
+                # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
+                # Placement is load-bearing: an auto-fired research run resolves
                 # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER that
-                # branch would be dead code and the class would be a label, not a control. Uses the
-                # SAME ``is_write_tool`` policy the workflow research leaf uses
-                # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike.
-                if _research_readonly:
-                    from personalclaw.workflows.batch_compile import is_write_tool
-
-                    if is_write_tool(event.title or ""):
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
-                            error="research_capability_deny",
-                            metadata={
-                                "subagent_id": info.id,
-                                "capability_class": CAPABILITY_RESEARCH,
-                                "tool": event.title or "",
-                            },
-                        )
-                        continue
+                # branch would be dead code and the grant would be a label, not a control. Uses
+                # the SAME ``is_write_tool`` policy the workflow research leaf uses
+                # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike —
+                # and the same grant algebra (``tool_grant_denial``), so a ceiling that narrowed
+                # this spawn's tools to an allowlist refuses the rest even for a MUTATING class.
+                _grant_deny = tool_grant_denial(
+                    _tool_profile,
+                    event.title or "",
+                    write_class=is_write_tool(event.title or ""),
+                )
+                if _grant_deny:
+                    await self._reject_and_log(
+                        client,
+                        event.request_id,
+                        session_key,
+                        event,
+                        error="tool_grants_deny",
+                        metadata={
+                            "subagent_id": info.id,
+                            "capability_class": _capability_class,
+                            "tool_grants": _tool_profile.tool_grants,
+                            "tool": event.title or "",
+                            "reason": _grant_deny,
+                        },
+                    )
+                    continue
                 tool_result = self._ctx_builder.hooks.on_tool_call(event.title)
                 if tool_result.action == TOOL_DENY:
                     await self._reject_and_log(

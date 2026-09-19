@@ -170,10 +170,13 @@ docstring refuses the easy story. [`src/personalclaw/cli_run.py`](../../src/pers
 records that the read-only default is enforced by the session's **task mode**, which is
 deny-by-default, runs before the approval gate and is documented as un-bypassable — and that the
 approval gate itself is *not* a containment boundary there, because the headless profile's
-fall-through is auto-approve. It also records why the obvious-looking field was not used:
-`SafetyProfile.tool_grants` has no enforcement point in the tree today
-([`src/personalclaw/guardrails/policy.py`](../../src/personalclaw/guardrails/policy.py)), so
-relying on it would have shipped a read-only promise that denied nothing.
+fall-through is auto-approve. It also records why the obvious-looking field is not what holds
+*here*: `SafetyProfile.tool_grants` is enforced
+([`src/personalclaw/guardrails/policy.py`](../../src/personalclaw/guardrails/policy.py)'s
+`tool_grant_denial`, at the MCP tool handler, the spawn approval loop and the sandbox gateway),
+but against the posture each seam owns — a leaf's compiled capability, a spawn's capability class
+— and not against the session profile. Reading the session profile there would make `--allow`
+unusable, since a headless run's own tier is `read`.
 
 That is the shape of receipt worth trusting: a comment that tells you which of two plausible
 mechanisms is actually holding the line, and names the one that would have been theatre.

@@ -12,10 +12,16 @@ classify unattended work (``session._STATELESS_PREFIXES`` + ``loop-*`` workers).
 Auto-fired runs default read-only; write/execute is a creation-time grant on the
 job/trigger, never acquired mid-run.
 
+``tool_grants`` is enforced by :func:`tool_grant_denial`, which every live tool seam
+that owns a read-only decision now asks: the in-process MCP handler
+(``mcp_shared.leaf_tool_denial``), the spawn approval loop (``subagent._run_inner``)
+and the sandbox tool gateway. Each seam states its posture as a tier through
+:func:`tool_grant_posture`, so the operator's ``tools`` ceiling scope narrows a live
+tool call instead of being a value nothing reads.
+
 Per-template graduated profiles (a WORKFLOWS-V2 template naming ``coding`` /
-``review-only`` / ``cleanup``) arrive when that engine lands and consumes
-``tool_grants``; until then the profile decides approval + egress + budget + scan
-for the unattended paths that exist today.
+``review-only`` / ``cleanup``) arrive when that engine lands and picks the tier per
+template; the tier vocabulary and its enforcement are already here.
 """
 
 from __future__ import annotations
@@ -32,8 +38,9 @@ if TYPE_CHECKING:
 
 # Tool-grant tiers. ``read`` = read-only tools only (default-deny write/execute);
 # ``read_write`` = full grant (today's interactive default); ``custom`` = an explicit
-# allowlist carried in ``tool_allowlist`` (consumed by the tool-approval layer when the
-# engine's per-template profiles land).
+# allowlist carried in ``tool_allowlist``. Enforced by :func:`tool_grant_denial` at the
+# live tool seams — the in-process MCP handler (``mcp_shared.call_tool_with_logging``),
+# the spawn approval loop (``subagent._run_inner``) and the sandbox tool gateway.
 TOOL_READ = "read"
 TOOL_READ_WRITE = "read_write"
 TOOL_CUSTOM = "custom"
@@ -351,3 +358,84 @@ def approval_policy_for_session(session_key: str) -> "ToolApprovalPolicy":
     if approval == "auto":
         return ToolApprovalPolicy.AUTO_APPROVE
     return ToolApprovalPolicy.HOOK_BASED
+
+
+# ── tool grants (§3 ``tool_grants``) ──────────────────────────────────────────────
+
+
+def tool_grant_posture(
+    name: str, grants: str, *, allowlist: tuple[str, ...] = ()
+) -> "SafetyProfile":
+    """A tool-grant posture bounded by the operator CEILING — tightest wins.
+
+    A seam that owns a read-only decision (a research-class spawn, a research-class
+    workflow leaf) states that decision HERE as a ``tool_grants`` tier instead of as a
+    private boolean, and the ceiling's ``tools`` scope intersects it. That intersection is
+    the whole point: ``{"scopes": {"tools": {"allow": [...]}}}`` already parses, validates
+    and composes into ``tool_grants="custom"`` + ``tool_allowlist`` (``ceiling.
+    _overrides_gate``), so before this seam read it, an operator's tool allowlist narrowed
+    nothing at all.
+
+    Mirrors :func:`ceiling_permits_approval`'s probe pattern deliberately: ONE composition
+    rule (:func:`~personalclaw.guardrails.ceiling.resolve`), never a second hand-rolled
+    comparison that could drift from it.
+    """
+    from personalclaw.guardrails.ceiling import active_ceiling, resolve
+
+    probe = SafetyProfile(name=name, tool_grants=grants, tool_allowlist=allowlist)
+    return resolve(active_ceiling(), probe)
+
+
+def tool_grant_denial(
+    profile: SafetyProfile, tool_name: str, *, write_class: bool, detail: str = ""
+) -> str:
+    """Why ``profile.tool_grants`` refuses ``tool_name``, or ``""`` when it grants it.
+
+    The ONE answer to "does this posture permit this tool", asked by every live tool seam:
+    ``mcp_shared.leaf_tool_denial`` (the in-process MCP handler every tool call funnels
+    through), ``subagent._run_inner``'s permission loop, and the sandbox
+    :class:`~personalclaw.sandbox_providers.tool_gateway.ToolGateway`.
+
+    ``write_class`` is supplied by the CALLER, not derived here, because the two live
+    seams already own a write/read classifier apiece and answering the question a third
+    time is how a policy starts to drift: the leaf/spawn seams pass
+    ``batch_compile.is_write_tool`` (the classifier a research LEAF and a research
+    SUBAGENT deny alike) and the gateway passes its declared-kind
+    ``task_modes.task_mode_denies`` verdict. This function owns the grant ALGEBRA — which
+    tier means what — and nothing else.
+
+    Fail-CLOSED at every edge, because a grant set that cannot be read must deny rather
+    than wave through:
+
+    * ``custom`` admits only names its ``tool_allowlist`` matches, by the SAME
+      ``name_glob`` matcher the ceiling composed the allowlist with. An empty or
+      blank-only allowlist therefore denies EVERYTHING — an unparseable grant set is the
+      narrowest posture, not the widest.
+    * An unrecognised tier is treated as ``read``. A typo in a profile must not read as
+      "full grant".
+    * An allowlisted name is served whatever its class: an explicit allowlist entry IS the
+      write grant, so ``custom`` never second-guesses the operator who wrote it.
+    """
+    from personalclaw.guardrails.registries import MATCHER_NAME_GLOB, get_matcher
+
+    grants = str(profile.tool_grants or "").strip()
+    name = (tool_name or "").strip()
+    suffix = f" — {detail}" if detail else ""
+    if grants == TOOL_CUSTOM:
+        allow = tuple(str(p).strip() for p in (profile.tool_allowlist or ()) if str(p).strip())
+        matcher = get_matcher(MATCHER_NAME_GLOB)
+        if any(matcher(name, pattern) for pattern in allow):
+            return ""
+        return (
+            f"{name or '(unnamed tool)'} is not on the {profile.name!r} profile's tool "
+            f"allowlist ({', '.join(allow) or 'empty'}){suffix}"
+        )
+    if grants == TOOL_READ_WRITE:
+        return ""
+    if write_class:
+        tier = grants or "(unset)"
+        return (
+            f"{name or '(unnamed tool)'} is write-class and the {profile.name!r} profile "
+            f"grants {tier!r} tools only{suffix}"
+        )
+    return ""
