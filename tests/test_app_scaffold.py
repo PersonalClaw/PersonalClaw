@@ -291,6 +291,142 @@ def test_generated_tests_pass(provider_type: str, tmp_path: Path) -> None:
     assert " passed" in proc.stdout
 
 
+# ---------------------------------------------------------------------------
+# The generated suite CALLS the type's conformance kit (issue #2577)
+# ---------------------------------------------------------------------------
+#
+# The defect these pin was not a missing kit — the kit shipped, `channel` resolved it, and
+# the guide documented it. It was that the GENERATED suite never called it: seven tests
+# about the stub's shape, `7 passed`, and zero advisories about the two vendor seams a
+# scaffolded channel app is missing. A green suite that says nothing reads as confirmation,
+# which is why the vacuity rail below matters as much as the presence one.
+
+
+@pytest.mark.parametrize("provider_type", ALL_TYPES)
+def test_a_type_with_a_kit_calls_it_from_the_generated_suite(
+    provider_type: str, tmp_path: Path
+) -> None:
+    from personalclaw.cli_app_new import resolve_kit
+
+    kit = resolve_kit(provider_type)
+    app = _generate(provider_type, tmp_path)
+    suite = (app / "test_provider.py").read_text(encoding="utf-8")
+    if kit is None:
+        # Not an omission: most types publish no executable contract, and inventing one
+        # here would generate an import that does not exist. Such a bundle stays exactly as
+        # it was — no pytest import, no kit call.
+        assert "import pytest" not in suite, (
+            f"{provider_type} ships no conformance kit, so its generated suite should need "
+            "no pytest import"
+        )
+        assert "assert_channel_contract" not in suite
+        return
+    assert f"from {kit.sdk_module} import" in suite, (
+        f"{provider_type} ships a conformance kit but the generated suite does not import "
+        f"it from the SDK facade — the measured form of issue #2577"
+    )
+    assert f"{kit.assert_fn}(" in suite, f"the generated suite never calls {kit.assert_fn}"
+    # The negative test is not decoration: without it the call could be made vacuous by a
+    # later edit and nothing would notice.
+    assert f"pytest.raises({kit.error_name})" in suite, (
+        "the generated suite calls the kit but carries no case that proves the call can "
+        "fail — a kit call that can never fail is the same silence with a new location"
+    )
+    # The kit drives real core seams (the trust store), so the bundle must pin an isolated
+    # home rather than asserting against — and writing to — the author's own.
+    assert "PERSONALCLAW_HOME" in suite, (
+        "the generated suite calls a kit that reads the trust store without pinning an "
+        "isolated PERSONALCLAW_HOME"
+    )
+
+
+def test_the_generated_kit_call_fails_on_a_non_conformant_provider(tmp_path: Path) -> None:
+    """The vacuity floor: break the provider, and the generated suite must go red.
+
+    The break is a real transport bug — ``send()`` returning the vendor's response object
+    instead of a bool — chosen so it is NOT the break the generated negative test performs
+    itself. Measured against the pre-fix template the identical mutation reported
+    ``7 passed``; the assertion here is that it no longer can.
+    """
+    app = _generate("channel", tmp_path)
+    provider = app / "provider.py"
+    broken, replaced = re.subn(
+        r'(async def send\(self, message\):\n(?:\s+""".*?"""\n)?)\s+return False\n',
+        '\\1        return {"ok": True, "id": "vendor-message-id"}\n',
+        provider.read_text(encoding="utf-8"),
+        count=1,
+        flags=re.DOTALL,
+    )
+    assert replaced == 1, "the generated channel stub no longer has a send() to break"
+    provider.write_text(broken, encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = SRC_ROOT
+    env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", str(app), "-q", "-p", "no:cacheprovider"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert proc.returncode != 0, (
+        "a channel provider whose send() returns a dict passed the generated suite — the "
+        f"kit call is vacuous:\n{proc.stdout[-3000:]}"
+    )
+    assert "[connect/send]" in proc.stdout, (
+        "the suite failed, but not on the conformance clause the mutation violates:\n"
+        f"{proc.stdout[-3000:]}"
+    )
+
+
+def test_the_generated_suite_surfaces_the_vendor_seam_advisories(tmp_path: Path) -> None:
+    """A scaffolded channel app declares one seam of four — the author must be TOLD.
+
+    This is the half of #2577 that the kit call buys: the same bundle used to report
+    ``7 passed`` with zero advisories, so nothing named the missing ``inbox`` and
+    ``trigger_source`` seams. Asserted on the real pytest run, not on the kit in isolation,
+    because the advisory only reaches an author through the warnings summary.
+    """
+    app = _generate("channel", tmp_path)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = SRC_ROOT
+    env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", str(app), "-q", "-p", "no:cacheprovider", "-W", "always"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert proc.returncode == 0, f"{proc.stdout[-4000:]}\n{proc.stderr[-2000:]}"
+    assert "vendor completeness" in proc.stdout, (
+        "the generated suite passed without raising the vendor-completeness advisory:\n"
+        f"{proc.stdout[-3000:]}"
+    )
+    # Two arms, reported SEPARATELY — one merged sentence would hide half the work.
+    assert "no inbox provider" in proc.stdout, proc.stdout[-3000:]
+    assert "no trigger_source provider" in proc.stdout, proc.stdout[-3000:]
+
+
+def test_a_kit_naming_a_symbol_the_sdk_lost_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A kit core renamed must break ``app new``, not the author's first test run."""
+    from personalclaw import cli_app_new
+
+    broken = cli_app_new.ConformanceKit(
+        type="channel",
+        sdk_module="personalclaw.sdk.channel",
+        assert_fn="assert_channel_contract_renamed_upstream",
+        error_name="ChannelContractError",
+    )
+    monkeypatch.setitem(cli_app_new._CONFORMANCE_KITS, "channel", broken)
+    with pytest.raises(ScaffoldError) as exc:
+        cli_app_new.resolve_kit("channel")
+    assert "scaffold bug" in str(exc.value)
+
+
 def test_the_generated_cli_seams_are_callable(tmp_path: Path) -> None:
     """A declared ``cli.doctor`` that cannot be imported is an inert control."""
     app = _generate("search", tmp_path)

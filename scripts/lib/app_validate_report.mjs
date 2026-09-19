@@ -14,7 +14,82 @@ export const LEGS = [
   { id: 'library-and-tools', title: 'Lands in the Library and its tools render on the Tools page' },
   { id: 'tool-invoke', title: 'Invoke a tool from the UI and capture the result' },
   { id: 'reactivate', title: 'Deactivate then reactivate round-trip' },
+  // LAST, not (as issue #2588 first sketched) straight after `tool-invoke`. It is the only
+  // destructive leg: it removes the app and puts it back, and its second arm force-removes
+  // it. Running it before `reactivate` would leave that leg asserting a toggle on an app
+  // this one had just uninstalled, and a mid-leg abort would report the absence as a
+  // reactivate defect. Everything it needs — a tool to write through and data on disk —
+  // exists from `tool-invoke` onward, so last satisfies the ordering requirement too.
+  { id: 'uninstall-preserves-data', title: "Uninstall keeps the app's data; force uninstall does not" },
 ]
+
+/** The data states core reports as SEPARATE facts, plus the two non-answers.
+ *
+ *  `describe_app_data()` returns `present` and `entries` as distinct fields on purpose:
+ *  "this app keeps no data" and "it has a data folder and it happens to be empty" are
+ *  different promises, and collapsing absent into declared-false is a bug this project has
+ *  now hit nine times. A leg that renders the two the same re-introduces it one level up,
+ *  so the classifier NAMES which state it saw and the driver reports that name verbatim.
+ *
+ *  `BLOCKED` and `UNKNOWN` are non-answers, not passes: the first is core refusing a
+ *  keep-data uninstall while an earlier unconsumed copy of the data is still on disk
+ *  (#2585), the second is the gateway telling us nothing at all. */
+export const APP_DATA = Object.freeze({
+  ABSENT: 'absent',
+  EMPTY: 'empty',
+  PRESENT: 'present',
+  BLOCKED: 'blocked',
+  UNKNOWN: 'unknown',
+})
+
+/** Classify `GET /api/apps/{name}/uninstall-preview`'s `data` block.
+ *
+ *  Returns `{ state, present, entries, unconsumed, reason }`. `reason` is empty for
+ *  `PRESENT` (the only state in which a preservation claim is observable) and a ready-to-use
+ *  skip reason for every other state — the reason text lives here rather than in the driver
+ *  because "a leg that could not run says why" is the harness's core honesty property, and
+ *  this module is the part of it that has tests. */
+export function classifyAppData(facts) {
+  const unknown = {
+    state: APP_DATA.UNKNOWN,
+    present: false,
+    entries: 0,
+    unconsumed: [],
+    reason: 'the gateway reported no data facts for this app, so the leg cannot state which '
+      + 'of the three data states it saw — and an unnamed state is not an answer',
+  }
+  if (!facts || typeof facts !== 'object' || typeof facts.present !== 'boolean') return unknown
+  const entries = Number.isInteger(facts.entries) ? facts.entries : 0
+  const unconsumed = Array.isArray(facts.unconsumed) ? facts.unconsumed.map(String) : []
+  const base = { present: facts.present, entries, unconsumed }
+  if (unconsumed.length) {
+    return {
+      ...base,
+      state: APP_DATA.BLOCKED,
+      reason: `an earlier unconsumed copy of this app's data is still on disk (${unconsumed.join(', ')}), `
+        + 'so core refuses a keep-data uninstall by design (#2585) — the refusal is correct '
+        + 'behaviour, but it means preservation cannot be observed on this run',
+    }
+  }
+  if (!facts.present) {
+    return {
+      ...base,
+      state: APP_DATA.ABSENT,
+      reason: 'the app declares no data directory (data=absent), so a removal has nothing to '
+        + 'preserve — this is the absence of an answer, not a passing preservation claim',
+    }
+  }
+  if (entries === 0) {
+    return {
+      ...base,
+      state: APP_DATA.EMPTY,
+      reason: 'the app declares a data directory and it is EMPTY (data=present, 0 entries), '
+        + 'which is a different fact from declaring none — but a preservation check that '
+        + 'preserves nothing cannot tell a working preserve from a broken wipe',
+    }
+  }
+  return { ...base, state: APP_DATA.PRESENT, reason: '' }
+}
 
 export const STATUS = Object.freeze({
   PASS: 'PASS',
