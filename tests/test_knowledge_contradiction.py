@@ -876,3 +876,179 @@ def test_supersedes_is_in_the_edge_vocabulary():
     from personalclaw.knowledge.contradiction import RELATION_VERBS
 
     assert "supersedes" in RELATION_VERBS
+
+
+# ── the INGEST seam (#329) ────────────────────────────────────────────────────
+#
+# 🔴 Detection was fully built, unit-tested, and reachable from exactly ONE place:
+# `KnowledgePersistActionProvider`. So only items an AGENT persisted with structured claims were
+# ever checked. Everything a user saves through the dashboard, a connector or a bookmark goes
+# through the enrichment pipeline, which never called it — so `GET /api/knowledge/conflicts`
+# (which scans `file_metadata` for a `"conflicts"` key) was permanently empty, and the
+# Conflicts tab's empty state read as "you have no contradictions" when the truth was
+# "contradictions from this path are never looked for".
+
+
+@pytest.fixture
+def ingest_store(tmp_path):
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    return KnowledgeStore(tmp_path / "ingest.db")
+
+
+def _ingested(store, title: str, key_points: list[str]) -> str:
+    """An item as the ENRICHMENT pipeline leaves it: content plus `insights.key_points`, and
+    NO `file_metadata.claims` — that field belongs to the agent path."""
+    item_id = store.create_typed_item(item_type="note", title=title, content=" ".join(key_points))
+    store.update_item(item_id, insights={"summary": title, "key_points": key_points})
+    return item_id
+
+
+def test_ui_ingested_contradiction_is_recorded(ingest_store):
+    """🔴 THE BUG, end to end: the exact pair from #329's repro, through the ingest path."""
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    _ingested(
+        ingest_store,
+        "Proxmox cluster: ZFS pool degraded",
+        [
+            "The pool tank on pve-01 is raidz2 with 6x 16TB Exos X18 drives",
+            "The FAULTED disks were in bay 3 and bay 5",
+        ],
+    )
+    correction = _ingested(
+        ingest_store,
+        "Correction: tank pool layout and failed bays",
+        [
+            "The pool tank on pve-01 is raidz1 with 4x 12TB drives",
+            "The FAULTED disks were in bay 1 and bay 6",
+        ],
+    )
+
+    recorded = run_ingest_conflict_pass(ingest_store, correction)
+
+    assert recorded, "a contradicting note ingested through the UI path must be flagged"
+    # BOTH claims kept — only the disagreement is recorded.
+    assert ingest_store.get_item(correction) is not None
+    assert all(c["left_item"] == correction for c in recorded)
+    assert all(c["basis"] == "deterministic" for c in recorded)
+
+
+def test_the_conflicts_endpoint_query_now_finds_an_ingested_item(ingest_store):
+    """The tab reads `file_metadata LIKE '%\"conflicts\"%'`. Asserting against that exact query is
+    the point: writing the conflict anywhere else would leave the tab empty and the bug live."""
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    _ingested(ingest_store, "Runbook", ["Resilver is fast on this pool"])
+    new_id = _ingested(ingest_store, "Correction", ["Resilver is not fast on this pool"])
+
+    assert run_ingest_conflict_pass(ingest_store, new_id), "polarity conflict must be found"
+
+    rows = ingest_store.db.execute(
+        "SELECT id FROM items WHERE file_metadata LIKE '%\"conflicts\"%'"
+    ).fetchall()
+    assert [str(r["id"]) for r in rows] == [new_id]
+
+
+def test_the_ingest_pass_writes_the_typed_edges_too(ingest_store):
+    """`edges_from_conflicts` and the supersedes/contradicts verbs were equally unreachable from
+    UI ingest, so the graph showed two mutually-exclusive claims as unrelated peers."""
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    old = _ingested(ingest_store, "Runbook", ["The FAULTED disks were in bay 3 and bay 5"])
+    new = _ingested(ingest_store, "Correction", ["The FAULTED disks were in bay 1 and bay 6"])
+
+    assert run_ingest_conflict_pass(ingest_store, new)
+
+    edges = ingest_store.db.execute(
+        "SELECT target_item_id, relation_type FROM item_relations WHERE source_item_id = ?",
+        (new,),
+    ).fetchall()
+    assert edges, "a recorded conflict must also leave a typed edge"
+    assert {str(e["relation_type"]) for e in edges} <= {"supersedes", "contradicts"}
+    assert all(str(e["target_item_id"]) == old for e in edges)
+
+
+def test_the_ingest_pass_does_not_promote_bullets_into_the_claims_field(ingest_store):
+    """Deliberate: a `key_points` bullet is a summary line, not a phenomenon-level
+    `semantics.Claim` with mentions and a validity window. Writing it into `claims` would put a
+    different kind of thing in a typed field and change the digest `updates.py` compares a
+    proposal against."""
+    import json
+
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    _ingested(ingest_store, "Runbook", ["The FAULTED disks were in bay 3 and bay 5"])
+    new = _ingested(ingest_store, "Correction", ["The FAULTED disks were in bay 1 and bay 6"])
+    run_ingest_conflict_pass(ingest_store, new)
+
+    row = ingest_store.db.execute("SELECT file_metadata FROM items WHERE id = ?", (new,)).fetchone()
+    meta = json.loads(row["file_metadata"] or "{}")
+    assert "conflicts" in meta
+    assert "claims" not in meta
+
+
+def test_an_agreeing_item_records_nothing(ingest_store):
+    """The guard that matters as much as detection: "a store full of false conflicts is worse
+    than one with none, because nobody reads the report"."""
+    import json
+
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    _ingested(ingest_store, "Runbook", ["The pool tank on pve-01 is raidz2 with 6x 16TB drives"])
+    agreeing = _ingested(ingest_store, "Notes", ["Scrubs are scheduled monthly on this cluster"])
+
+    assert run_ingest_conflict_pass(ingest_store, agreeing) == []
+    row = ingest_store.db.execute(
+        "SELECT file_metadata FROM items WHERE id = ?", (agreeing,)
+    ).fetchone()
+    assert "conflicts" not in json.loads(row["file_metadata"] or "{}")
+
+
+def test_an_item_with_no_insights_is_a_no_op(ingest_store):
+    """A raw-mode item has no model-derived key_points, so there is nothing to compare — and
+    that must be a quiet no-op, not a failure inside enrichment."""
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    bare = ingest_store.create_typed_item(item_type="note", title="Raw", content="text")
+    assert run_ingest_conflict_pass(ingest_store, bare) == []
+
+
+def test_the_ingest_pipeline_actually_calls_the_conflict_pass():
+    """🔴 THE RAIL FOR THE WHOLE CLASS OF BUG. Every behavioural test above calls the pass
+    directly, so all of them would still pass with the production call site deleted — which is
+    exactly the state #329 reported (a fully-built, unit-tested mechanism with no caller).
+
+    This asserts the seam itself: the enrichment runner must reach the shared pass.
+    """
+    from personalclaw.action_providers import knowledge_persist_provider as kpp
+    from personalclaw.knowledge.pipeline import runner
+
+    calls: list[str] = []
+    original = kpp.run_ingest_conflict_pass
+    kpp.run_ingest_conflict_pass = lambda store, item_id: calls.append(item_id) or []
+    try:
+        runner._run_conflict_pass(object(), "item-42")
+    finally:
+        kpp.run_ingest_conflict_pass = original
+    assert calls == ["item-42"], (
+        "knowledge/pipeline/runner.py no longer routes ingest through "
+        "run_ingest_conflict_pass — the Conflicts tab cannot populate from UI ingest"
+    )
+
+
+def test_the_conflict_pass_is_reachable_from_the_enrichment_stage_order():
+    """The call must sit where the claims EXIST: after the insights stage, since
+    `insights.key_points` is the ingest path's only claim-shaped output. Asserted on the source
+    so a refactor that moves it earlier (where key_points are not written yet) reds here rather
+    than silently detecting nothing."""
+    import inspect
+
+    from personalclaw.knowledge.pipeline import runner
+
+    src = inspect.getsource(runner.ingest_item)
+    assert "_run_conflict_pass" in src, "the conflict pass is not called from ingest_item"
+    assert src.index("_run_insights") < src.index("_run_conflict_pass"), (
+        "the conflict pass must run AFTER insights — before them there are no key_points to "
+        "compare, so it would find nothing and the tab would stay empty"
+    )
