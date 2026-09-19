@@ -289,11 +289,15 @@ class AuthConfigSection:
 
 @dataclass
 class SecurityConfig:
-    """Security controls for the agent's shell access.
+    """Security controls for the agent's shell access and third-party grants.
 
     The built-in credential-exfiltration / destructive-command denylist lives in
     :mod:`personalclaw.security` (always enforced, read-only). ``denied_commands``
     here holds USER-added regexes, appended to the built-ins at screening time.
+
+    ``mcp_elicitation_servers`` is the odd one out: not a denylist but an ALLOWLIST,
+    and it lives beside the others because it is the same kind of decision — what a
+    party other than the user is permitted to do on this machine.
     """
 
     denied_commands: list[str] = field(
@@ -335,6 +339,29 @@ class SecurityConfig:
             "{paths:[glob], actions:[class], verdict: block|needs_human}. Enforced at "
             "every action-dispatch seam, so an app-contributed provider inherits it. "
             "Composes with (never overrides) the always-on built-in denylists.",
+        ),
+    )
+    # MCP-BIDIRECTIONAL-REQUESTS MBR-1. The MCP spec lets a SERVER call back into the
+    # host mid-tool-call and ask the user a question (`elicitation/create`). That is a
+    # third party borrowing our confirmation boundary, so it is default-DENY and granted
+    # PER SERVER — never one global "MCP can interrupt me" switch. A server the user
+    # added for one read-only tool must not silently acquire the right to prompt them.
+    #
+    # An empty list (the shipped default) means the client advertises no `elicitation`
+    # capability at all, so a conformant server never even asks; one that asks anyway
+    # gets the SDK's typed `-32600 Elicitation not supported` back immediately. The read
+    # side is `personalclaw.mcp_elicitation.elicitation_granted`.
+    mcp_elicitation_servers: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "MCP Servers That May Ask You Questions",
+            "Names of configured MCP servers allowed to interrupt a tool call to ask "
+            "you a question (the MCP `elicitation/create` request). Empty by default: "
+            "with a server absent from this list PersonalClaw does not advertise the "
+            "capability to it, and refuses the request if it asks anyway. A granted "
+            "question is surfaced on the same approval card that gates tool calls, so "
+            "it is answered by you and by nothing else. Set per server on the Tools "
+            "page.",
         ),
     )
 

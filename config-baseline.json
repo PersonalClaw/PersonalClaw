@@ -1523,6 +1523,12 @@
     "type": "list[str]"
   },
   {
+    "default": [],
+    "path": "security.mcp_elicitation_servers",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
     "default": 30,
     "path": "session.auto_archive_days",
     "sensitive": false,

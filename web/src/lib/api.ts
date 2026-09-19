@@ -7225,6 +7225,17 @@ export const api = {
     post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
   setCredentialKeychain: (on: boolean) =>
     patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
+  // MBR-1 — which MCP servers may interrupt a tool call to ask the user a question
+  // (`elicitation/create`). The grant is per SERVER, so the wire value is the whole
+  // allowlist and the caller adds/removes one name: a boolean here would be the global
+  // "MCP can interrupt me" switch the security shape forbids. Read via the config blob
+  // rather than a bespoke GET — it is one plain field, and inventing an endpoint for it
+  // would put the grant behind two doors that could disagree.
+  mcpElicitationServers: () =>
+    get<Record<string, any>>('/api/config/personalclaw').then(
+      (c) => (c?.security?.mcp_elicitation_servers ?? []) as string[]),
+  setMcpElicitationServers: (names: string[]) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.mcp_elicitation_servers', value: names }),
   // EI-10 — the secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

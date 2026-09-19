@@ -18,7 +18,7 @@ import { join } from 'node:path'
 // happen" is a distinct defect from "a control showing a value the server refused", and it needs its own
 // rail because the optimistic-write sweeps cannot see it.
 //
-// Four sites, one file, one reporter — lifted from `removeServer`'s own pattern rather than invented:
+// Five sites, one file, one reporter — lifted from `removeServer`'s own pattern rather than invented:
 // unwrap a JSON error body, `notify(…, 'error')`, and (new) return the outcome so the caller can skip the
 // refetch when the write never landed.
 //
@@ -30,7 +30,12 @@ import { join } from 'node:path'
 const SRC = readFileSync(join(process.cwd(), 'src/pages/tools/ToolsPage.tsx'), 'utf8')
 const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider']
+// 🪤 `setMcpElicitationServers` is a TOGGLE, not an exception, and belongs in this list rather than
+// in `ALSO_ROUTED`. Its wire value is the whole allowlist because the grant is per server, but the
+// control over it is one data-driven switch per row whose pressed state reads the refetched list —
+// the exact shape the four above have, and the exact failure mode this file exists for: a failed
+// write leaves the switch where it was and says nothing.
+const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'setMcpElicitationServers']
 
 describe('a tool toggle that fails tells the user', () => {
   it('the reporter is the SHARED one, and this file keeps no copy of it', () => {
@@ -87,13 +92,13 @@ describe('a tool toggle that fails tells the user', () => {
   // went red the moment `reprobe` legitimately adopted it. Re-pointed, not relaxed.
   const ALSO_ROUTED = ['probeMcp']
 
-  it('all four toggles go through the one reporter, and nothing unexpected does', () => {
+  it('all five toggles go through the one reporter, and nothing unexpected does', () => {
     let toggles = 0
     for (const m of CODE.matchAll(/reportingWrite\([\s\S]{0,140}?api\.(\w+)\(/g)) {
       if ((TOGGLE_WRITES as readonly string[]).includes(m[1])) { toggles++; continue }
       expect(ALSO_ROUTED, `unexpected call routed: ${m[1]}`).toContain(m[1])
     }
-    expect(toggles, 'every toggle write routed through reportingWrite').toBe(4)
+    expect(toggles, 'every toggle write routed through reportingWrite').toBe(5)
   })
 
   it('the allowlist is not a dumping ground', () => {
@@ -108,7 +113,7 @@ describe('a tool toggle that fails tells the user', () => {
     // Refetching after a failure re-renders the same state and reads as "nothing happened twice".
     // Every caller must gate its `load` on the result.
     const gated = [...CODE.matchAll(/if \(ok\) setTimeout\(load, \d+\)/g)]
-    expect(gated.length, 'callers gating the refetch on success').toBe(3)
+    expect(gated.length, 'callers gating the refetch on success').toBe(4)
     // …and none of them refetch unconditionally right after a reportingWrite.
     expect(CODE).not.toMatch(/await reportingWrite\([\s\S]{0,160}?\)\s*\n\s*setTimeout\(load/)
   })
@@ -118,6 +123,10 @@ describe('a tool toggle that fails tells the user', () => {
     expect(CODE).toMatch(/\$\{s\.enabled \? 'disable' : 'enable'\} "\$\{s\.name\}"/)
     expect(CODE).toMatch(/\$\{enabled \? 'enable' : 'disable'\} "\$\{t\.name\}"/)
     expect(CODE).toMatch(/\$\{g\.providerDisabled \? 'enable' : 'disable'\} "\$\{g\.key\}"/)
+    // The elicitation grant names its server too, and its verb is the GRANT's direction rather
+    // than enable/disable — "stop X asking you questions" is what the user did, and reusing
+    // "disable" here would describe a switch the page does not have.
+    expect(CODE).toMatch(/\$\{granted \? 'stop' : 'let'\} "\$\{s\.name\}"/)
   })
 
   it('the switches are still DATA-DRIVEN — the premise of the whole finding', () => {

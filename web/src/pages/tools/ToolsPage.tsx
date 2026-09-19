@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight } from 'lucide-react'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -63,11 +63,14 @@ interface ToolsIndexData {
   importable: ImportableMcpServer[]
   poolStats: McpPoolStats
   groups: ToolGroupsData | null
+  // MBR-1: the names of servers granted `elicitation/create` — the per-server right to
+  // interrupt a tool call and ask the user a question. Empty on a fresh install.
+  elicitationServers: string[]
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data, error: loadErr, refresh } = useQuery<ToolsIndexData>('tools:index', async () => {
-    const [idx, servers, importable, poolStats, groups] = await Promise.all([
+    const [idx, servers, importable, poolStats, groups, elicitationServers] = await Promise.all([
       // 🔴 The four reads below are tolerated on purpose — a dead MCP server or an unreachable pool
       // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
       // this surface. The INDEX is different in kind: it IS the collection, so substituting `[]` for
@@ -79,14 +82,19 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
       api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
       api.toolGroups().catch(() => null),
+      // Same tolerated-rejection reasoning as the four above: an unreadable config must
+      // not hide the tool list. `[]` is also the FAIL-CLOSED answer here — it renders
+      // every grant as off, which understates rather than overstates what a server may do.
+      api.mcpElicitationServers().catch(() => [] as string[]),
     ])
-    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups }
+    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers }
   }, { persist: true })
   const tools = data?.tools ?? null
   const loadFailures = data?.loadFailures ?? []
   const servers = data?.servers ?? []
   const importable = data?.importable ?? []
   const poolStats = data?.poolStats ?? null
+  const elicitationServers = data?.elicitationServers ?? []
   const groupsInfo = data?.groups ?? null
   const groupsEnabled = !!groupsInfo?.enabled
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -125,6 +133,34 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   async function toggleServer(s: McpServer) {
     const ok = await reportingWrite(`${s.enabled ? 'disable' : 'enable'} "${s.name}"`,
       () => api.toggleMcpServer(s.name, !s.enabled))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // MBR-1 — grant or revoke ONE server's right to ask the user a question mid-tool-call.
+  //
+  // The wire value is the whole allowlist, so the name is spliced in or out here rather
+  // than sent as a per-server boolean: the backend field IS the list, and a server absent
+  // from it is not advertised the capability at all. Data-driven like the four toggles
+  // above (the pressed state reads the refetched list), so a failed write leaves the
+  // switch where it was instead of claiming a grant that never landed.
+  //
+  // Revoking takes effect on the server's NEXT handshake — the grant is read at session
+  // construction — which is why the confirmation copy says "reconnect", not "immediately".
+  async function toggleElicitation(s: McpServer) {
+    const granted = elicitationServers.includes(s.name)
+    const next = granted
+      ? elicitationServers.filter((n) => n !== s.name)
+      : [...elicitationServers, s.name]
+    if (!granted && !(await confirm({
+      title: `Let "${s.name}" ask you questions?`,
+      body: 'This MCP server will be able to interrupt its own tool calls to ask you something. '
+        + 'Each question appears as an approval card you answer yourself — the server never gets a default answer. '
+        + 'No other server is affected.',
+      confirmLabel: 'Allow questions',
+    }))) return
+    const ok = await reportingWrite(
+      `${granted ? 'stop' : 'let'} "${s.name}" ${granted ? 'asking' : 'ask'} you questions`,
+      () => api.setMcpElicitationServers(next))
     if (ok) setTimeout(load, 400)
   }
 
@@ -300,7 +336,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!!g.server && elicitationServers.includes(g.server.name)} onToggleElicitation={toggleElicitation} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
@@ -393,7 +429,7 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null }) {
+function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean; onToggleElicitation: (s: McpServer) => void }) {
   const health = g.server ? serverHealth(g.server) : null
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
@@ -420,6 +456,25 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
         )}
         {g.server && (
           <div className="ml-auto flex items-center gap-1">
+            {/* MBR-1 — the per-server elicitation grant, the ONE selector over the
+                capability. Without a control here the field would be config-file-only,
+                which is the exact trap the capability census recorded for the auth
+                selector: a complete verifier with nothing over it.
+
+                🪤 NOT a second bare `<Toggle>`. The enable/disable switch already sits two
+                nodes right, and two unlabelled switches on one row cannot say which one
+                grants what. `SquareIconButton`'s `on` gives the coral tint AND
+                `aria-pressed`, so the state is readable by sight and by screen reader, and
+                the accessible name states the grant rather than the verb. */}
+            <SquareIconButton label={elicitationGranted
+              ? `Stop ${g.server.name} asking you questions`
+              : `Let ${g.server.name} ask you questions`}
+              title={elicitationGranted
+                ? 'This server may interrupt a tool call to ask you a question. Each one comes to you as an approval card.'
+                : 'This server cannot ask you questions. PersonalClaw does not advertise the capability to it, and refuses if it asks anyway.'}
+              on={elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
+              <MessageCircleQuestion size={13} />
+            </SquareIconButton>
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored
                 provider without re-probing all. Spins while in flight. */}
             <SquareIconButton label={`Reconnect ${g.server.name}`} title="Reconnect this server"
