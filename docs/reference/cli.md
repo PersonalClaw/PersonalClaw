@@ -274,7 +274,8 @@ Get or set configuration values (see the [configuration reference](configuration
 | Subcommand | What it does |
 |---|---|
 | `config get [KEY]` | Get a value by dot-separated key, or the whole config with no key. |
-| `config set KEY VALUE` / `config set --file FILE` | Set a value (validated through the loader) or load a full config from JSON. |
+| `config set KEY VALUE` | Set one value (validated through the loader), merged into the existing `config.json` so keys the loader does not model — `providers`, `use_cases`, `slack`, `meta` — are preserved. Refuses (exit 1) if the existing file cannot be read or parsed, rather than overwriting content it could not see. |
+| `config set --file FILE` | REPLACE the whole config with a JSON document. Unlike the single-key form this is a wholesale overwrite: anything absent from `FILE` is gone. |
 | `config edit` | Open `config.json` in `$EDITOR`. |
 
 ## `personalclaw skills`
