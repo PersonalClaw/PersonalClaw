@@ -171,10 +171,29 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         if (!active) return null
         const nl = nodeLook(active.state)
         const NIcon = nl.icon
+        const label = active.node_id || active.instance_path
         return (
           <div data-type="caption" className="flex min-w-0 items-center gap-s text-on-surface-low">
             <NIcon size={12} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
-            <span className="min-w-0 flex-1 truncate">{active.node_id || active.instance_path}</span>
+            {/* ROUTES to the one inspector (WV-10); it does not host a second. `NodeInspectorDrawer`
+                is owned by the run view, and the hash grammar already reserves `?query` for "which
+                detail panel is open" — so the node rides the SAME destination the `Open` link above
+                uses, with `?node=<id>` appended, and the drawer opens ON it instead of the user
+                landing on the run with nothing open. Mounting a second drawer here would make two
+                inspectors for one job, which is the coherence defect this routing avoids.
+                Plain text when the node carries no id: there would be nothing to deep-link to. */}
+            {active.node_id ? (
+              <TextLink
+                href={`#/workflows/runs/${refObj.runId}?node=${encodeURIComponent(active.node_id)}`}
+                className="min-w-0 flex-1 truncate"
+                title="Inspect this step in the run — resolved prompt, inputs, output"
+                aria-label={`Inspect the current step: ${label}`}
+              >
+                {label}
+              </TextLink>
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+            )}
           </div>
         )
       })()}
