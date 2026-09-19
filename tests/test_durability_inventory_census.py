@@ -21,11 +21,21 @@ have missed exactly the bug that prompted this.
 records how many of those exist so the number cannot grow unnoticed. The primary defence for
 those is `inventory.audit_home()` against a real home.
 
-**The exception list is a BACKLOG, not an approval.** Thirty-two locations are undeclared
-today, and roughly twenty of them are real state (`auth`, `inbox`, `sources`, `packs`,
-`onboarding`, `session_key`, …). Declaring one demands a per-entry `kind`/`domain`/`merge`
-decision, and a wrong `merge` on a live store is worse than an absent one — so they are pinned
-here to make the debt visible and to stop a thirty-third arriving unnoticed, not to bless them.
+**"Accounted for" is the inventory's question, not this file's.** A location is settled when
+`inv.is_accounted` says so — an entry CLAIMS it, or `IGNORED` deliberately excludes it. This
+file used to re-derive a NARROWER version that read only the claims, plus its own copy of
+IGNORED's rows. Two things followed (#2217): five locations settled the *correct* way for
+machine-local state (`session_key`, `sessions.json`, `update_check.json`, `update_releases.json`,
+`doctor`) were still counted as undeclared debt, and the ratchet could only notice a pin that
+became *declared* — so the debt set could shrink by declaring and never by ignoring. Both
+surfaces now ask one predicate.
+
+**The exception list is a BACKLOG, not an approval.** `_UNDECLARED_DEBT` holds the locations
+that are real, genuinely-undecided state (`inbox`, `sources`, `packs`, `onboarding`, `history`,
+…). Declaring one demands a per-entry `kind`/`domain`/`merge` decision, and `merge` is live — a
+wrong value silently corrupts on convergence, which is worse than an absent entry that merely
+omits a backup. They are pinned here to make the debt visible and to stop the next one arriving
+unnoticed, not to bless them.
 """
 
 from __future__ import annotations
@@ -60,39 +70,14 @@ def _censused() -> tuple[dict[str, set[str]], set[str]]:
     return resolved, unresolved
 
 
-#: Undeclared home locations, pinned. Each line is debt or a deliberate non-state file.
-#:
-#: DELIBERATE — logs, pids and locks are runtime noise, re-created on demand, and a backup
-#: that restored a stale lock or a dead pid would be worse than one that omits them:
-_NOT_STATE = frozenset(
-    {
-        "agent_pids.txt",
-        "session_pids.txt",
-        "audit.log",
-        "gateway.log",
-        "gateway-restart.log",
-        "locks",
-        "loop.md",  # a rendered prompt, re-rendered per run
-        # The socket this gateway bound + the pid that bound it (`gateway_base.RUNTIME_FILE`,
-        # #2539). Not state: written after bind, removed on shutdown, ignored once its pid is
-        # gone. Carrying it in a snapshot would be the exact bug it exists to fix — a restored
-        # home would address its children at a port a DIFFERENT instance bound. Also in
-        # `durability.inventory.IGNORED`, for the same reason `machine_id` is.
-        "gateway.runtime.json",
-        # RUM-9's run-state file (`self_update._RUN_STATE_FILENAME`) — the version this
-        # install was running when a gateway last started. NOT_STATE rather than debt,
-        # because the kind/domain/merge question this set exists to defer has a determinate
-        # answer here: it is machine-local, re-created by the very next gateway start, and a
-        # restored copy would be actively WRONG, not merely stale. It is the input
-        # `record_running_version` compares against to derive `updates.last_version`, so a
-        # snapshot taken on 0.2.0 restored onto a 0.1.3 install would record
-        # `last_version = 0.2.0` and make the panel offer "Roll back to v0.2.0" — an UPGRADE,
-        # the exact mis-offer RUM-9 exists to prevent. Omitted, the recorder writes nothing on
-        # that first run and offers nothing until it sees a real change. Also in
-        # `durability.inventory.IGNORED`, for the same reason `gateway.runtime.json` is.
-        "update_run.json",
-    }
-)
+#: There is no second exception list here. "Deliberately not state" is a decision
+#: `durability.inventory.IGNORED` already owns, and `audit_home()` — the guard that runs against
+#: a REAL home — has always honoured it. This file used to keep its own `_NOT_STATE` copy of that
+#: list: eight of its nine rows duplicated IGNORED verbatim (three even said so in a comment),
+#: and the ninth (`loop.md`) was a decision this test file had made and the inventory had never
+#: heard about, so `audit_home()` reported it as unmanaged drift on every real home that had run
+#: a loop. `loop.md` is now one row in IGNORED, and the accounting question goes to
+#: `inv.is_accounted` (#2217).
 
 #: DEBT — real state that is not declared, so `personalclaw snapshot` does not carry it.
 #: Filed as its own issue; each needs a `kind`/`domain`/`merge` decision that must not be
@@ -107,9 +92,7 @@ _UNDECLARED_DEBT = frozenset(
         "browse_kill.json",
         "chat_plans",
         "control_bridge.json",
-        "credentials.json",
         "digest_queue.jsonl",
-        "doctor",
         "engagement.json",
         "graph_maintenance.json",
         "history",
@@ -134,19 +117,9 @@ _UNDECLARED_DEBT = frozenset(
         "recent_projects.json",
         "research_reports.json",
         "runners",
-        "session_key",
-        "sessions.json",
         "settings",
         "sources",
         "surfaces",
-        "update_check.json",
-        # RUM-2's releases-LIST cache — the direct twin of update_check.json above,
-        # written by the same self_update.py. It is the ETag-cached, offline-tolerant
-        # releases view the channel/pin resolver reads, refetched on the next poll, and
-        # (like its twin) it is IGNORED by the durability inventory. Pinned here for the
-        # same reason: it carries no unique truth, so a restored stale release list would
-        # be worse than the empty one the next check refills.
-        "update_releases.json",
     }
 )
 
@@ -172,17 +145,13 @@ def test_themes_is_declared_so_snapshot_carries_a_custom_theme():
 
 
 def test_every_censused_location_is_declared_or_pinned():
-    """The ratchet. A new home location must be declared in the inventory, or added to
-    `_NOT_STATE` / `_UNDECLARED_DEBT` with the reason — which is a decision someone makes,
-    rather than a directory that silently misses every backup."""
+    """The ratchet. A new home location must be ACCOUNTED FOR by the inventory — declared as
+    state, or deliberately ignored — or pinned in `_UNDECLARED_DEBT` with the reason. All three
+    are decisions someone makes, which is the point; a directory that silently misses every
+    backup is not."""
     resolved, _ = _censused()
-    declared = _declared_tops()
     unaccounted = sorted(
-        name
-        for name in resolved
-        if name.split("/", 1)[0] not in declared
-        and name not in _NOT_STATE
-        and name not in _UNDECLARED_DEBT
+        name for name in resolved if not inv.is_accounted(name) and name not in _UNDECLARED_DEBT
     )
     assert not unaccounted, (
         "these home locations are in neither the durability inventory nor a pinned exception, "
@@ -192,16 +161,32 @@ def test_every_censused_location_is_declared_or_pinned():
 
 
 def test_the_pinned_sets_have_no_stale_entries():
-    """A pin for a location nothing uses any more, or one that has since been declared, is a
-    row that pins nothing — and it would hide the next real gap behind a passing test."""
+    """A pin for a location nothing uses any more is a row that pins nothing — and it would hide
+    the next real gap behind a passing test."""
     resolved, _ = _censused()
-    declared = _declared_tops()
-    gone = sorted((_NOT_STATE | _UNDECLARED_DEBT) - set(resolved))
+    gone = sorted(_UNDECLARED_DEBT - set(resolved))
     assert not gone, f"nothing uses these any more — drop them from the pins: {gone}"
-    now_declared = sorted(n for n in _UNDECLARED_DEBT if n.split("/", 1)[0] in declared)
-    assert not now_declared, (
-        "these are declared in the inventory now — remove them from `_UNDECLARED_DEBT` so the "
-        f"debt set keeps shrinking: {now_declared}"
+
+
+def test_a_pin_the_inventory_already_accounts_for_is_not_debt():
+    """The ratchet could only see ONE of the inventory's two ways of accounting for a path.
+
+    `audit_home()` — the production guard — excuses a path if an entry CLAIMS it **or** if
+    `IGNORED` deliberately excludes it. The old `_declared_tops()` check read only the first, so
+    a location resolved the *correct* way for machine-local state (`session_key`,
+    `sessions.json`, `update_check.json`, `update_releases.json` and `doctor` are all in
+    `inventory.IGNORED`, each with a written argument) stayed pinned here as undecided debt for
+    good: the debt set could shrink by declaring and never by ignoring, which inflated the
+    number #2217 reports and left five pins standing for decisions somebody had already made.
+
+    That is the failure mode `test_the_pinned_sets_have_no_stale_entries` says it exists to
+    prevent — "a row that pins nothing … would hide the next real gap behind a passing test" —
+    reached through the one accounting mechanism it could not see.
+    """
+    settled = sorted(n for n in _UNDECLARED_DEBT if inv.is_accounted(n))
+    assert not settled, (
+        "the inventory already claims or deliberately ignores these, so they are decisions "
+        f"already made — drop them from `_UNDECLARED_DEBT`: {settled}"
     )
 
 
