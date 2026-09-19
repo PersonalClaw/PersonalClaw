@@ -24,7 +24,12 @@ from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
-from personalclaw.dashboard.chat_session_map import build_turn_telemetry, stamp_turn_telemetry
+from personalclaw.dashboard.chat_session_map import (
+    build_turn_telemetry,
+    stamp_turn_summary,
+    stamp_turn_telemetry,
+    summarize_session_turn,
+)
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
@@ -4239,6 +4244,11 @@ async def run_chat(
                 model=_turn_model,
             ),
         )
+        # Durable per-turn summary LABEL (SSM-3), stamped in the same window and under the
+        # same before-the-save constraint. Derived from the session buffer, which already
+        # holds the whole turn at this point — the user row, every tool row and every
+        # flushed assistant segment — so it needs no turn-scoped accumulator of its own.
+        stamp_turn_summary(session, summarize_session_turn(session))
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0

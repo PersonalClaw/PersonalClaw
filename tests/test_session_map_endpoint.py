@@ -32,11 +32,17 @@ from chat_test_helpers import _make_app, _make_state
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_session_map import (
     PERSISTED_MARK_KINDS,
+    PREVIEW_CAP,
     SESSION_MARK_KINDS,
+    SUMMARY_CAP,
+    TURN_SUMMARY_KEY,
     TURN_TELEMETRY_KEY,
+    build_turn_summary,
     build_turn_telemetry,
     preview_text,
+    stamp_turn_summary,
     stamp_turn_telemetry,
+    summarize_session_turn,
 )
 from personalclaw.dashboard.state import _ChatSession
 from personalclaw.history import ConversationLog
@@ -244,8 +250,8 @@ class TestDiskOnlySession:
 # ── the telemetry half: a real turn, then a real reload ──────────────────────────
 
 
-def _turn_state(tmp_path, event: AgentEvent):
-    """A DashboardState whose provider streams one text chunk then *event*."""
+def _turn_state(tmp_path, event: AgentEvent, text: str = "the answer"):
+    """A DashboardState whose provider streams *text* as one chunk then *event*."""
     sessions = MagicMock(count=0)
     sessions.get_pid = MagicMock(return_value=None)
     sessions.record_failure = AsyncMock()
@@ -276,7 +282,7 @@ def _turn_state(tmp_path, event: AgentEvent):
     state.push_sessions_update = MagicMock()
 
     async def _stream(*_a, **_kw):
-        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="the answer")
+        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text=text)
         yield event
 
     client.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
@@ -432,6 +438,264 @@ class TestTelemetryShapeIsHonest:
         s.append("user", "q", "msg msg-u")
         assert stamp_turn_telemetry(s, {"events": 1}) is False
         assert stamp_turn_telemetry(s, None) is False
+
+
+# ── the summary label: SSM-3 ─────────────────────────────────────────────────────
+#
+# The clause is "``meta.summary`` is non-empty and distinct from the raw first line",
+# and BOTH halves are cheatable on their own. Non-empty passes on the string "turn";
+# distinct-from-the-first-line passes on ANY other message's text — including a verbatim
+# copy of the user's request pasted onto the assistant mark, which does no summarizing at
+# all. So the assertions below pin the two things that make the label worth persisting:
+# it names WHAT THE TURN DID (information no raw transcript line contains), and it reads
+# the WHOLE request rather than its opening words (the filler opener is gone). A summary
+# that merely echoed another line would satisfy the clause and fail here.
+
+
+def _seed_tool_turn(state, name: str = "s20") -> _ChatSession:
+    """One realistic completed turn: a chatty request, two tools (one failing), a reply."""
+    s = state.get_or_create_session(name)
+    s.append(
+        "user",
+        "Hey! Quick question — can you check how the config round-trip works in loader.py?\n"
+        "Take your time, no rush.",
+        "msg msg-u",
+        ts="2026-09-19T05:00:00+00:00",
+    )
+    s.append(
+        "tool",
+        "Read",
+        "msg msg-tool",
+        ts="2026-09-19T05:00:01+00:00",
+        meta={"tool_call_id": "t1", "input": "loader.py", "done": True},
+    )
+    # A result UPDATE for a call already seen — must not count as a second call.
+    s.append(
+        "tool",
+        "Read",
+        "msg msg-tool",
+        ts="2026-09-19T05:00:02+00:00",
+        meta={"tool_call_id": "t1", "input": "loader.py", "done": True},
+    )
+    s.append(
+        "tool",
+        "Grep",
+        "msg msg-tool",
+        ts="2026-09-19T05:00:03+00:00",
+        meta={"tool_call_id": "t2", "input": "to_dict", "done": True, "ok": False},
+    )
+    s.append(
+        "assistant",
+        "Sure thing. Let me walk through it.\n\nThe loader reads the dataclass first.",
+        "msg msg-a",
+        ts="2026-09-19T05:00:04+00:00",
+    )
+    s.drain()
+    return s
+
+
+class TestSummaryLabel:
+    def test_a_seeded_turn_gets_a_label_that_is_non_empty_and_not_the_raw_first_line(self, _state):
+        """The clause, with its two cheap readings closed off."""
+        session = _seed_tool_turn(_state, "s20")
+
+        summary = summarize_session_turn(session)
+        assert summary  # non-empty
+        assert stamp_turn_summary(session, summary) is True
+        stamped = [m for m in session.messages if m.get("role") == "assistant"][-1]
+        assert stamped["meta"][TURN_SUMMARY_KEY] == summary
+
+        # DISTINCT from the raw first line — asserted against BOTH readings of "first
+        # line": the turn's rendered preview, and the literal first physical line.
+        reply = "Sure thing. Let me walk through it.\n\nThe loader reads the dataclass first."
+        assert summary != preview_text(reply, PREVIEW_CAP)
+        assert summary != reply.splitlines()[0]
+        request_first_physical_line = (
+            "Hey! Quick question — can you check how the config round-trip works in loader.py?"
+        )
+        assert summary != request_first_physical_line
+        assert summary != preview_text(request_first_physical_line, PREVIEW_CAP)
+
+        # NON-VACUITY 1: it states what the turn DID. No raw line says this.
+        assert "ran Read, Grep" in summary
+        assert "(1 failed)" in summary  # the failing Grep, counted once
+        assert summary.count("Read") == 1, "a repeat tool_call_id must not count twice"
+
+        # NON-VACUITY 2: it read the WHOLE request, not its opening words — the greeting
+        # and the politeness clause are gone, the subject survives.
+        assert "Hey" not in summary
+        assert "Quick question" not in summary
+        assert "no rush" not in summary
+        assert "config round-trip" in summary
+
+    @pytest.mark.asyncio
+    async def test_the_label_becomes_the_marks_preview_and_survives_a_reload(self, _state):
+        """ "Surfaced via SSM-2's preview" — through the endpoint, after a real reload."""
+        from personalclaw.dashboard.chat_persistence import save_session_to_history
+
+        session = _seed_tool_turn(_state, "s21")
+        summary = summarize_session_turn(session)
+        assert stamp_turn_summary(session, summary) is True
+
+        async with TestClient(TestServer(_make_app(_state))) as client:
+            resident = await (await client.get("/api/chat/sessions/s21/map")).json()
+            save_session_to_history(_state, session)
+            _state._sessions.pop("s21")  # simulated reload: nothing in memory
+            r = await client.get("/api/chat/sessions/s21/map")
+            assert r.status == 200
+            reloaded = await r.json()
+        assert "s21" in _state._sessions  # went through the rehydrate-from-disk path
+
+        assistant_marks = [m for m in reloaded if m["kind"] == "assistant"]
+        assert len(assistant_marks) == 1
+        assert assistant_marks[0]["preview"] == summary
+        assert reloaded == resident  # buffer and disk derive the same map
+
+        # The USER mark keeps the user's own words: a person scanning the rail for their
+        # own question must still find it. Only the assistant mark trades its opening
+        # words for the label.
+        user_marks = [m for m in reloaded if m["kind"] == "user"]
+        assert len(user_marks) == 1
+        assert "Hey! Quick question" in user_marks[0]["preview"]
+        assert user_marks[0]["preview"] != summary
+
+    @pytest.mark.asyncio
+    async def test_a_turn_with_no_outcome_persists_no_label_and_keeps_its_preview(self, _state):
+        """Absence is the honest answer — the same gate telemetry applies to a row of zeros.
+
+        A label with no outcome clause could only echo words already on the rail, so it is
+        not written at all and the mark falls back to ``preview_text``.
+        """
+        s = _state.get_or_create_session("s22")
+        s.append("user", "what is 2 + 2", "msg msg-u", ts="2026-09-19T06:00:00+00:00")
+        s.append("assistant", "4", "msg msg-a", ts="2026-09-19T06:00:01+00:00")
+        s.drain()
+
+        assert summarize_session_turn(s) is None
+        assert stamp_turn_summary(s, None) is False
+        for m in s.messages:
+            assert TURN_SUMMARY_KEY not in (m.get("meta") or {})
+
+        async with TestClient(TestServer(_make_app(_state))) as client:
+            marks = await (await client.get("/api/chat/sessions/s22/map")).json()
+        assert [m["preview"] for m in marks] == ["what is 2 + 2", "4"]
+
+    def test_a_credential_in_the_request_is_redacted_at_the_write(self):
+        """``_prepare_messages`` scrubs ``content`` on the way out but NEVER ``meta``.
+
+        So a label composed from raw text and persisted unredacted would be served
+        verbatim, bypassing the scrub the preview it replaces gets for free. The redaction
+        therefore has to happen at the write, and this is the test that says so.
+        """
+        secret = "sk-ant-api03-" + "A" * 95
+        summary = build_turn_summary(
+            request=f"deploy with {secret} please",
+            reply="done",
+            tool_names=["Bash"],
+        )
+        assert summary
+        assert secret not in summary
+        assert "sk-ant-api03" not in summary
+
+    def test_no_user_row_means_no_turn_to_summarize(self):
+        session = MagicMock()
+        session.messages = [{"role": "assistant", "content": "# Heading\n\nbody"}]
+        assert summarize_session_turn(session) is None
+
+
+class TestSummaryOutcomeClause:
+    """The outcome clause is the half no raw line contains, so its shape is pinned."""
+
+    def test_distinct_tools_are_named_then_counted(self):
+        summary = build_turn_summary(
+            request="refactor the loader",
+            reply="ok",
+            tool_names=["Read", "Read", "Grep", "Edit", "Bash", "Write"],
+        )
+        assert summary == "refactor the loader — ran Read, Grep, Edit +2 more"
+
+    def test_a_toolless_turn_borrows_the_replys_own_heading(self):
+        """A heading is the reply summarizing itself — the best a tool-less turn can do."""
+        summary = build_turn_summary(
+            request="compare RAIDZ2 and dRAID",
+            reply="## RAIDZ2 wins under 12 disks\n\nBecause resilver time…",
+            tool_names=[],
+        )
+        assert summary == "compare RAIDZ2 and dRAID — RAIDZ2 wins under 12 disks"
+
+    def test_an_errored_turn_says_so(self):
+        summary = build_turn_summary(
+            request="run the suite", reply="", tool_names=["Bash"], errored=True
+        )
+        assert summary == "run the suite — ran Bash — ended in an error"
+        # …and an error alone is an outcome, even with no tool and no heading.
+        assert build_turn_summary(
+            request="run the suite", reply="", tool_names=[], errored=True
+        ) == ("run the suite — ended in an error")
+
+    def test_no_outcome_is_none_not_an_echo(self):
+        assert build_turn_summary(request="hello there", reply="hi", tool_names=[]) is None
+
+    def test_a_label_is_capped_below_the_preview_budget(self):
+        summary = build_turn_summary(
+            request="investigate " + "the persistent loader regression " * 12,
+            reply="ok",
+            tool_names=["Read"],
+        )
+        assert summary
+        assert len(summary) <= SUMMARY_CAP
+        assert SUMMARY_CAP < PREVIEW_CAP
+
+    def test_a_filler_only_request_keeps_its_words_rather_than_going_blank(self):
+        """Stripping must never empty the subject — "thanks" is all the subject there is."""
+        summary = build_turn_summary(request="thanks!", reply="ok", tool_names=["Read"])
+        assert summary == "thanks! — ran Read"
+
+    def test_a_leading_word_that_merely_starts_like_filler_is_not_eaten(self):
+        summary = build_turn_summary(
+            request="Highlight the diff in loader.py", reply="ok", tool_names=["Read"]
+        )
+        assert summary == "Highlight the diff in loader.py — ran Read"
+
+
+@pytest.mark.asyncio
+async def test_run_chat_stamps_the_summary_before_the_save(tmp_path, monkeypatch):
+    """The production call site FIRES — the label is not a function without a caller.
+
+    Driven through the real ``run_chat``, then read back OFF DISK: a stamp placed after
+    ``save_session_to_history`` would be in-memory only and would red the on-disk half.
+
+    The user row is appended BEFORE ``run_chat``, because that is the real call order:
+    ``run_chat`` never appends it — ``chat_handlers.py:354`` (HTTP) and ``state.py:659``
+    (``start_or_queue``) both do, immediately before dispatching. A harness that skips it
+    hands the runner a buffer with no turn boundary, which no production path produces.
+    """
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state, _client = _turn_state(tmp_path, _COMPLETE, text="## Loader audit\n\nTwo gaps found.")
+    session = state.get_or_create_session("s23")
+    session._trust = True
+    session.model = "claude-sonnet-4-5"
+    session.append("user", "please audit loader.py", "msg msg-u")
+    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+        await run_chat(state, session, "please audit loader.py")
+
+    live = [m for m in session.messages if m.get("role") == "assistant"][-1]
+    label = live["meta"][TURN_SUMMARY_KEY]
+    assert label == "audit loader.py — Loader audit"
+
+    log_file = ConversationLog(base_dir=tmp_path)._path("dashboard:s23")
+    on_disk = [
+        json.loads(line)
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    persisted = [e for e in on_disk if e.get("role") == "assistant"]
+    assert persisted and persisted[-1]["meta"][TURN_SUMMARY_KEY] == label
+
+    state._sessions.pop("s23")
+    async with TestClient(TestServer(_make_app(state))) as client:
+        marks = await (await client.get("/api/chat/sessions/s23/map")).json()
+    assert [m["preview"] for m in marks if m["kind"] == "assistant"] == [label]
 
 
 # ── the cross-language mirror (one contract, two producers) ──────────────────────
