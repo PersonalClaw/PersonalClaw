@@ -728,6 +728,63 @@ def _restore_knowledge_provider_registry() -> object:
     _kp_registry._providers.update(before)
 
 
+@pytest.fixture(autouse=True)
+def _restore_pipeline_node_registry() -> object:
+    """Snapshot + restore the process-global INGESTION-NODE registry around every test.
+
+    `knowledge.pipeline.registry.NODE_REGISTRY` is one module-level dict keyed by
+    `(node_type, backend)`, and `register_node` mutates it in place — the same class of
+    cross-test hazard as the registry guards above. What made this one worse is that the
+    leak was *known* and worked around three times instead of fixed once: two test modules
+    carry comments explaining that "`NODE_REGISTRY` is process-global and another test
+    module registers its own `ocr` stub into it", and one of them popped the leaked
+    `("ocr", "stub")` / `("vision", "stub")` keys from inside an unrelated test body. That
+    cleanup reasoned "each executor test registers its own stubs immediately before use, so
+    removing them here cannot affect any other test" — true only for one worker running one
+    file in order, which is not how this suite runs: `--splits 4` partitions per TEST, and
+    `--dist worksteal` then hands tests to workers greedily, so the registering test and the
+    popping test routinely land on different workers and the stubs escape the file entirely.
+
+    Measured on clean `origin/main`, deterministic, two tests, `-n0` — no xdist needed to
+    show it once the order is forced:
+
+        pytest tests/test_knowledge_pipeline.py::test_executor_conditional_branch_taken \\
+               tests/test_knowledge_searchability.py::test_an_image_only_pdf_persists_a_named_failure_not_done
+
+    The second test asserts an image-only scan cannot ingest to `done`, and it got `done`
+    with `content == "O"` and `node_phases.ocr == "done"` — literally the text of
+    `_StubNode("ocr", text="O")` registered by the first. The same leak is what made
+    `test_knowledge_pipeline::test_runner_records_skip_reason_on_partial` see `done` instead
+    of `partial`: its premise is "no model → the ocr node skips", and a stub node declares
+    `uses_use_case = None`, so it runs no matter what the model bindings say. Both failures
+    showed up on CI shard 2 of PRs whose diffs cannot own them (one has no Python at all),
+    which is the tell that the polluter is a third file sharing the shard.
+
+    Snapshot-and-restore the whole dict rather than dropping a list of known keys, for the
+    reason the guards above record: a key list silently stops covering the next stub someone
+    registers.
+
+    `ensure_nodes_registered()`'s `_REGISTERED` memo is rewound WITH the dict, and that pair
+    is the whole subtlety here. Core's backends are not registered at import time — they land
+    the first time some test calls `ensure_nodes_registered()`, which then latches the memo.
+    Rewinding the dict alone therefore un-registers core's own nodes permanently for that
+    worker, because the next `ensure_nodes_registered()` sees the latch and returns early:
+    measured, `test_runner_records_skip_reason_on_partial` went to `failed` (nothing ran at
+    all) and `test_runner_synthesizes_descriptor_for_textless_image` lost its exif dimensions.
+    Restoring both together means the registry and the memo that describes it can never
+    disagree — the registry is left exactly as the test found it, never emptied.
+    """
+    from personalclaw.knowledge import pipeline as _pipeline
+    from personalclaw.knowledge.pipeline import registry as _node_registry
+
+    before = dict(_node_registry.NODE_REGISTRY)
+    before_registered = _pipeline._REGISTERED
+    yield
+    _node_registry.NODE_REGISTRY.clear()
+    _node_registry.NODE_REGISTRY.update(before)
+    _pipeline._REGISTERED = before_registered
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
 
