@@ -86,6 +86,9 @@ export function layoutPlanDag(
       // plan-review graph is a preview, so nothing is `done`.
       state: step.pending ? 'active' : 'todo',
       content: label(step),
+      // Accessible name (#474). This graph is read-only (no `onNodeClick`), so its nodes are
+      // named `img`s rather than buttons — but unnamed they were announced as nothing at all.
+      label: step.pending ? `${label(step)} — still being written` : label(step),
     })
   }
 

@@ -412,6 +412,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                   edges={dag.edges}
                   width={dag.width}
                   height={dag.height}
+                  label={`Run graph — ${dag.nodes.length} ${dag.nodes.length === 1 ? 'step' : 'steps'}`}
                   onNodeClick={(id) => toggle(id)}
                   // The declared-but-unwired seam, finally bound (TASKS-SOPS §7 R6). Passed only
                   // when the run can still be answered: a terminal run's gate cannot be resolved,
