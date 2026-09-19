@@ -1128,6 +1128,27 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
             logger.warning("SEL logging failed", exc_info=True)
         return web.json_response({"error": "authentication required"}, status=401)
     name = request.match_info["name"]
+    # The PARENT is the agent (#2995). This door checked auth and the body shape, then wrote
+    # routing metadata for an agent that does not exist — answering `{"ok": true, "name": ...}`
+    # and leaving an `.md` file that is in the durability inventory (so it rides into snapshots
+    # and sync) and that no surface lists or reaps. Measured with zero agents installed: a PUT to
+    # `no-such-agent-zz9` reported success and the note was simply gone, because the only reader
+    # (`orchestrator_skill`) walks `cfg.agents` and never sees a file keyed to a name that is not
+    # one. A misspelling in the metadata editor silently discarded the user's text.
+    #
+    # EXACT membership, deliberately, not `_resolve_agent_name`'s case-insensitive resolve: the
+    # reader looks these notes up by the literal `cfg.agents` key, so admitting a case variant
+    # would save a file no reader can find — the same lost write this refusal exists to stop.
+    # Same predicate as the sibling write doors `PUT`/`DELETE /api/agents/{name}`, and the same
+    # `not_found` code its own `DELETE .../metadata` sibling answers, so the family cannot drift.
+    #
+    # The DELETE sibling deliberately does NOT gain this check: it 404s on a missing FILE, which
+    # is what lets an orphaned note left by an agent that has since been deleted still be cleaned
+    # up. Requiring the agent there would strand exactly the files this door stops creating.
+    if name not in AppConfig.load().agents:
+        return json_error(
+            "not_found", message=f"No agent named {name!r} is configured.", status=404
+        )
     body = await json_object_body(request)
     content = string_field(body, "content")
     from personalclaw.agent_metadata import delete, save  # noqa: F811
