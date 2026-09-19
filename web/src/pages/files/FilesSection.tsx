@@ -9,6 +9,7 @@ import { EmptyState, Loading } from '../../ui/ListScaffold'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
+import { PartialCount } from '../../ui/MoreRow'
 import { Segmented, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
@@ -83,6 +84,8 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   const [include, setInclude] = useQueryParam(routeQuery, setQuery, 'include', '', { replace: true })
   const [results, setResults] = useState<ContentMatch[]>([])
   const [searchEngine, setSearchEngine] = useState<'rg' | 'python' | ''>('')
+  /** The server hit its match cap, so these results are a prefix of the answer, not the answer. */
+  const [searchCapped, setSearchCapped] = useState(false)
   const [searchBusy, setSearchBusy] = useState(false)
   /** A failed content search used to render "No matches." — a claim about the user's files that a
    *  rejected request cannot make. Kept so the panel can say the search itself failed. */
@@ -146,12 +149,16 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   // Debounced content search under the active root.
   useEffect(() => {
-    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); setSearchErr(null); return }
+    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); setSearchErr(null); setSearchCapped(false); return }
     setSearchBusy(true)
     const t = setTimeout(() => {
       api.fileContentSearch(activeRoot, grep.trim(), include.trim() || undefined)
-        .then((r) => { setResults(r.results); setSearchEngine(r.engine); setSearchErr(null) })
-        .catch((e) => { setResults([]); setSearchEngine(''); setSearchErr(e) })
+        // 🔴 `truncated` HAS SHIPPED IN THIS RESPONSE ALL ALONG and was dropped here, so a search
+        // that stopped at the server's 500-match cap was summarised as "500 matches" — a stated
+        // count that was not the answer. Same silence as the knowledge graph's edge thinning
+        // (issue 808); this one is sharper, because a capped search looks like a complete one.
+        .then((r) => { setResults(r.results); setSearchEngine(r.engine); setSearchCapped(!!r.truncated); setSearchErr(null) })
+        .catch((e) => { setResults([]); setSearchEngine(''); setSearchCapped(false); setSearchErr(e) })
         .finally(() => setSearchBusy(false))
     }, 250)
     return () => clearTimeout(t)
@@ -372,8 +379,11 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                     "N matches" and the zero state says "No matches.", so announcing "lines" gave a
                     screen-reader user different vocabulary for the same screen. "matches" breaks
                     both ResultAnnouncement defaults ("No matching matches", "1 matche"), which is
-                    what `empty`/`singular` exist for — not a reason to announce a different word. */}
-                <ResultAnnouncement count={results.length} noun="matches" singular="match" empty="No matches" active={showResults} />
+                    what `empty`/`singular` exist for — not a reason to announce a different word.
+                    🪤 And the CAVEAT is part of that vocabulary: the counter now says "first 500
+                    matches" when the server capped the search, so announcing a flat "500 matches"
+                    would leave the screen-reader user the only one still told it had finished. */}
+                <ResultAnnouncement count={results.length} noun="matches" singular="match" empty="No matches" active={showResults} partial={searchCapped} />
                 {showResults && (
                   <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
                     name="workspace-grep-include" aria-label="Restrict search to files matching glob"
@@ -394,7 +404,15 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 {(branch || searchEngine) && (
                   <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
                     {showResults
-                      ? <span>{searchBusy ? 'searching…' : `${results.length} match${results.length === 1 ? '' : 'es'}`}{searchEngine && ` · ${searchEngine === 'rg' ? 'ripgrep' : 'python'}`}</span>
+                      ? <span className="inline-flex items-center gap-1">
+                          {searchBusy
+                            ? 'searching…'
+                            /* `of="more"` rather than a total: the cap makes rg STOP, so nothing
+                               ever counted the rest and a denominator here would be invented. */
+                            : <PartialCount shown={results.length} of={searchCapped ? 'more' : results.length} noun="matches" singular="match" />}
+                          {searchEngine && <span>· {searchEngine === 'rg' ? 'ripgrep' : 'python'}</span>}
+                          {searchCapped && !searchBusy && <span>· narrow the search to see the rest</span>}
+                        </span>
                       : branch && <span className="inline-flex items-center gap-1"><GitBranch size={11} /> {branch}</span>}
                   </div>
                 )}
