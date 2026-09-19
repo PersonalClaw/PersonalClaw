@@ -302,15 +302,16 @@ export interface SubagentCard {
   tokens?: number        // per-child total tokens (on done)
 }
 
-// ── activity-panel derivation (Index / Files / Links) — all client-side from turns ──
-/** An Activity → Index row. `visibleIndex`, not an array position: the page's turn-node
- *  registry is keyed by the Session Map's coordinate (`markCoordOf`), so a jump anchor has to
- *  speak the same coordinate the rail and the drawer do — one scroll handler, one coordinate,
- *  no per-consumer translation to keep in step. */
-export interface IndexEntry { visibleIndex: number; label: string }
+// ── activity-panel derivation (Files / Links) — all client-side from turns ──
+//
+// There is no `index` here. The panel used to derive a user-message outline whose rows jumped to
+// a turn; the Session Map (SSM-1's `sessionMapMarks`) is that index now — it marks tool calls,
+// approvals, errors and subagents as well as user turns, and it is always on screen rather than
+// behind a panel tab. SSM-13 deleted the outline and this model with it, so the session has ONE
+// index rather than two that have to be kept saying the same thing.
 export interface FileEntry { path: string; name: string }
 export interface LinkEntry { url: string; label: string }
-export interface ChatActivity { index: IndexEntry[]; files: FileEntry[]; links: LinkEntry[] }
+export interface ChatActivity { files: FileEntry[]; links: LinkEntry[] }
 
 // file-ish path: /a/b.ext, ~/a/b.ext, or workspace-relative a/b.ext (has an ext).
 const ACT_FILE_RE = /(?:^|[\s(`'"])((?:~|\/)[\w./\-]+\.\w{1,8}|[\w./\-]+\/[\w./\-]+\.\w{1,8})/g
@@ -320,12 +321,12 @@ const baseNameOf = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p
 const DIFF_NOISE = /^(?:[ab]\/|\/dev\/null$)/
 
 /** Derive the activity-panel data from the conversation turns:
- *   - Index: each user turn → a jump anchor (preview label).
  *   - Files: file paths from tool inputs/outputs + paths mentioned in assistant
  *     text (deduped, first-seen order).
- *   - Links: http(s) URLs surfaced in assistant text (deduped). */
+ *   - Links: http(s) URLs surfaced in assistant text (deduped).
+ *  User turns contribute neither (they are the reader's own text), so they are skipped
+ *  whole — see the `role === 'user'` early return below. */
 export function deriveActivity(turns: ChatTurn[]): ChatActivity {
-  const index: IndexEntry[] = []
   const files = new Map<string, FileEntry>()
   const links = new Map<string, LinkEntry>()
 
@@ -336,14 +337,9 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
     if (!files.has(p)) files.set(p, { path: p, name: baseNameOf(p) })
   }
 
-  turns.forEach((t, i) => {
-    if (t.role === 'user') {
-      // keep the FULL single-line text (CSS truncates visually) — don't slice the
-      // string, or markdown rendering of the label could cut mid-syntax (`**bo`).
-      const txt = turnText(t).replace(/\s+/g, ' ').trim()
-      if (txt) index.push({ visibleIndex: markCoordOf(t, i), label: txt })
-      return
-    }
+  turns.forEach((t) => {
+    // A user turn carries no tool output and no assistant prose, so neither tab reads it.
+    if (t.role === 'user') return
     for (const seg of t.segments) {
       if (seg.kind === 'tool') {
         // tool input/output often carry file paths (read/edit/write/terminal).
@@ -360,7 +356,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
       }
     }
   })
-  return { index, files: [...files.values()], links: [...links.values()] }
+  return { files: [...files.values()], links: [...links.values()] }
 }
 
 export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; is_read_only?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }

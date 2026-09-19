@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hydrateTurns, markCoordOf, deriveActivity, type HistMsg } from './chatTypes'
+import { hydrateTurns, markCoordOf, type HistMsg } from './chatTypes'
 import { sessionMapMarks } from './sessionMap'
 
 // ── SSM-11 — THE JUMP COORDINATE (the defect that made the keystone's jump land wrong) ──────
@@ -57,18 +57,11 @@ describe('the Session Map jump coordinate', () => {
     }
   })
 
-  it('🔑 the Activity Index anchors speak the SAME coordinate, so one handler serves both', () => {
-    const turns = hydrateTurns(COLLAPSING)
-    const registryKeys = new Set(turns.map((t, i) => markCoordOf(t, i)))
-    const { index } = deriveActivity(turns)
-    expect(index).toHaveLength(2) // one per user turn
-    for (const entry of index) {
-      expect(registryKeys.has(entry.visibleIndex), `Index anchor "${entry.label}" points at ${entry.visibleIndex}, which no turn node is registered under`).toBe(true)
-    }
-    // And they agree with the map's own user marks — not merely "both valid", but the same value.
-    const userMarks = sessionMapMarks(turns).filter((m) => m.kind === 'user').map((m) => m.visibleIndex)
-    expect(index.map((e) => e.visibleIndex)).toEqual(userMarks)
-  })
+  // The Activity → Index anchors used to be asserted here too, as a SECOND list that had to carry
+  // the identical coordinates (SSM-12's clause). SSM-13 deleted that list — the map is the session's
+  // only index now — so there is no second coordinate to keep in step and the claim retired with it.
+  // The `🔑` case above still covers every `user` mark, which is what those anchors mirrored.
+  // `indexTabRetired.test.tsx` is the rail that fails if a second index surface comes back.
 
   it('falls back to the array position for a live turn that carries no coordinate yet', () => {
     // Turns appended from WS frames have no `visibleIndex` until a refetch stamps them. The
