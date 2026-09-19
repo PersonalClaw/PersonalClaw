@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from personalclaw import agent_metadata
-from personalclaw.dashboard.handlers.agents import api_agent_metadata_put
+from personalclaw.dashboard.handlers.agents import api_agent_metadata_delete, api_agent_metadata_put
 
 
 @pytest.fixture(autouse=True)
@@ -86,3 +86,30 @@ def test_clearing_an_agent_with_no_note_is_an_idempotent_200(home):
     resp = _run(api_agent_metadata_put(_req("router-d", {"content": ""})))
     assert resp.status == 200
     assert agent_metadata.load("router-d") == ""
+
+
+# ── DELETE /api/agent-metadata/{name}: an unknown name is a 404, not a phantom
+# ── success (#2936) ──
+
+
+def _delete_req(name: str) -> MagicMock:
+    r = MagicMock()
+    r.match_info = {"name": name}
+    r.get = lambda key, default=None: "tester" if key == "user" else default
+    return r
+
+
+def test_delete_of_unknown_name_404s_not_phantom_200(home):
+    resp = _run(api_agent_metadata_delete(_delete_req("router-never-existed")))
+    assert resp.status == 404
+    body = _body(resp)
+    assert body["error"]["code"] == "not_found"
+
+
+def test_delete_of_a_real_note_still_200s_and_removes_it(home):
+    agent_metadata.save("router-e", "prefers concise diffs")
+    resp = _run(api_agent_metadata_delete(_delete_req("router-e")))
+    assert resp.status == 200
+    assert _body(resp) == {"ok": True, "name": "router-e"}
+    assert agent_metadata.load("router-e") == ""
+    assert not (home / "router-e.md").exists()
