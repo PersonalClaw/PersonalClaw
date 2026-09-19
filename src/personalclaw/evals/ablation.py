@@ -257,9 +257,19 @@ def live_state_digest(extra_refs: list[str] | None = None) -> dict[str, str]:
     """sha256 of every live spec/config file an ablation could plausibly toggle.
 
     Always: ``config.json`` and ``active_models.json`` (the two stores the overlay kinds
-    reach) plus every ``use_case_settings/*.json``. ``extra_refs`` adds a component's own
-    declared spec files. Keys are config-dir-relative so the map is comparable across
-    calls; a missing file digests to :data:`ABSENT`, so a file the run CREATED is drift too.
+    reach) plus every ``extensions/use_case_settings/*.json``. ``extra_refs`` adds a
+    component's own declared spec files. Keys are config-dir-relative so the map is comparable
+    across calls; a missing file digests to :data:`ABSENT`, so a file the run CREATED is drift
+    too.
+
+    🔴 The use-case-settings half read the wrong path until #2217. It globbed a TOP-LEVEL
+    ``use_case_settings/``, but the only writer is
+    :func:`personalclaw.providers.use_cases.save_use_case_settings`, which spells it
+    ``extensions/use_case_settings/{use_case}.json``. So ``ucs.is_dir()`` was false on every
+    home, the loop never ran, and this digest silently covered two files instead of two plus
+    the per-use-case settings — an ablation that retuned a use case read as no drift at all.
+    Found by the durability census once it learned to follow a home bound to a local name:
+    the mismatched path was a home location nothing declared, because nothing wrote it.
     """
     from personalclaw.config.loader import config_dir
 
@@ -267,10 +277,11 @@ def live_state_digest(extra_refs: list[str] | None = None) -> dict[str, str]:
     digests: dict[str, str] = {}
     for rel in ("config.json", "active_models.json"):
         digests[rel] = _digest_file(root / rel)
-    ucs = root / "use_case_settings"
+    ucs_rel = "extensions/use_case_settings"
+    ucs = root / ucs_rel
     if ucs.is_dir():
         for path in sorted(ucs.glob("*.json")):
-            digests[f"use_case_settings/{path.name}"] = _digest_file(path)
+            digests[f"{ucs_rel}/{path.name}"] = _digest_file(path)
     for rel in extra_refs or []:
         key = str(rel).lstrip("/")
         digests.setdefault(key, _digest_file(root / key))

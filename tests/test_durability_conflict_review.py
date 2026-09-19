@@ -166,16 +166,33 @@ class TestResolvePrimitive:
 # ── §4.2 item 3 routing, as it actually stands ───────────────────────────────
 
 
-def test_no_memory_or_knowledge_entry_can_currently_conflict():
-    """The measured reason the review screen is the Durability one.
+def test_which_memory_or_knowledge_entries_can_conflict_is_exactly_one():
+    """The measured reason the review screen is the Durability one — and the day it changed.
 
     `detect_conflicts` fires only for an id-keyed merge (`union_by_id`/`lww`) on a row kind
-    that `reconcile` handles. No memory- or knowledge-domain entry is BOTH: the memory and
-    knowledge stores are sqlite (ATTACH-OR-IGNORE, no conflict concept), `memory_ids` is
-    `replace_only`, and `knowledge_files`/`learning_proposals` are `tree` kinds reconcile
-    declines. So those two surfaces are reachable by routing but structurally unfed today —
-    which is why this atom ships their COUNTS rather than two screens for a population of
-    zero. If a future entry changes that, this test fails and the screens become real work.
+    that `reconcile` handles. This used to assert that NO memory- or knowledge-domain entry was
+    both: the memory and knowledge stores are sqlite (ATTACH-OR-IGNORE, no conflict concept),
+    `memory_ids` is `replace_only`, and `knowledge_files`/`learning_proposals` are `tree` kinds
+    reconcile declines. So both surfaces were reachable by routing but structurally unfed, which
+    is why this atom ships their COUNTS rather than two screens for a population of zero. Its
+    closing line was "if a future entry changes that, this test fails and the screens become
+    real work."
+
+    🔴 #2217 is that future entry. `research_reports.json` is a list of `ReportDefinition` rows
+    each carrying `id`, so it is `json_file` + `union_by_id` — the same shape and the same merge
+    as `triggers.json` — and its domain is `knowledge`. It was one of ~20 home stores declared
+    nowhere, so `personalclaw snapshot` silently dropped every standing research report;
+    declaring it closes that, and feeds this detector for the first time.
+
+    **What that does and does not cost.** `surface` is a LABEL on the `ConflictRecord`, and
+    `conflict_resolve.resolve_conflict` keys off `entry_id`/`entity_id`, not the surface — so a
+    knowledge-domain conflict is fully detectable, recorded and RESOLVABLE today. What is still
+    missing is a knowledge-side review screen, so the count surfaces under Knowledge while the
+    resolution happens in Durability. That is a real (small) gap and it is NOT #2217's subject,
+    so it is recorded here rather than improvised.
+
+    The population is pinned as a SET, not just "non-empty": a second knowledge entry, or any
+    memory entry at all, is still a visible change that lands here first.
     """
     conflictable = [
         e
@@ -183,9 +200,12 @@ def test_no_memory_or_knowledge_entry_can_currently_conflict():
         if e.merge in (inv.MERGE_UNION_BY_ID, inv.MERGE_LWW) and reconcile.handles_kind(e.kind)
     ]
     assert conflictable, "no entry can conflict at all — the detector is unreachable"
-    domains = {e.domain for e in conflictable}
-    assert inv.DOMAIN_MEMORY not in domains
-    assert inv.DOMAIN_KNOWLEDGE not in domains
+    assert {e.id for e in conflictable if e.domain == inv.DOMAIN_KNOWLEDGE} == {
+        "research_reports"
+    }, "the knowledge conflict population changed — a review screen may now be owed"
+    assert not [
+        e for e in conflictable if e.domain == inv.DOMAIN_MEMORY
+    ], "a memory entry can now conflict, and the memory surface still has no screen"
     # The routing itself is still correct, and stays tested for the day an entry moves.
     assert conflicts_mod.surface_for_domain(inv.DOMAIN_MEMORY) == conflicts_mod.SURFACE_MEMORY
     assert conflicts_mod.surface_for_domain(inv.DOMAIN_KNOWLEDGE) == conflicts_mod.SURFACE_KNOWLEDGE
