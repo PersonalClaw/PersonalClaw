@@ -885,7 +885,19 @@ async def api_terminal_list(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"count={len(sessions)}",
     )
-    return web.json_response({"enabled": True, "sessions": sessions})
+    # `persist_available` is the HOST FACT behind `_persist_enabled`'s second conjunct, published
+    # so the client can stop deriving its promise from the config flag alone. Without it the
+    # terminal header read the flag it had just written and claimed "Sessions are tmux-backed, so
+    # they survive a restart." on a host with no tmux binary — where `_persist_enabled` is False
+    # and every session dies with the gateway (issue 545). The flag is the user's INTENT; this is
+    # whether that intent can be honoured, and only both together mean persistence.
+    return web.json_response(
+        {
+            "enabled": True,
+            "persist_available": _tmux_available(),
+            "sessions": sessions,
+        }
+    )
 
 
 async def _list_tmux_sessions() -> list[str]:

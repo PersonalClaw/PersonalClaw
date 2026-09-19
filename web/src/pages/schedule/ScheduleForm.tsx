@@ -6,6 +6,7 @@ import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { Field, TextInput, TextArea, Segmented, ChipInput } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
+import { epochSeconds } from '../../lib/epoch'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
   secsToInterval, intervalToSecs, INTERVAL_UNITS, CRON_PRESETS,
@@ -107,9 +108,20 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
   }
 }
 
-/** Build the create/update payload. The backend create handler today accepts
- *  every/cron + agent fields; `at`, `script`, `command` ride along so the
- *  payload is forward-compatible once the backend lands them (gated SoonTag). */
+/** Build the create/update payload. The backend create handler accepts every/cron/at + agent
+ *  fields; `script` and `command` ride along so the payload is forward-compatible once the
+ *  backend lands them (gated SoonTag).
+ *
+ *  🔴 `at` SHIPS AS EPOCH SECONDS, CONVERTED HERE IN THE BROWSER — never as the raw
+ *  `datetime-local` string. The handler wants a Unix timestamp (`'at' must be a Unix timestamp in
+ *  seconds`, `handlers/triggers.py`), so sending `"2026-09-20T14:30"` made One-shot uncreatable
+ *  from this form for its whole life — a 400 on every submit (issue 530).
+ *
+ *  And the conversion belongs on THIS side of the wire, not in the handler: a `datetime-local`
+ *  value carries no zone, so parsing it server-side would resolve it in the gateway's OS zone
+ *  rather than the zone the user typed it in — which is issue 497's live defect on the week-grid
+ *  window. `epochSeconds` resolves it against the BROWSER's zone (`Date.parse` on a date-TIME
+ *  form is local), which is the only reading that matches what the picker showed. */
 export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // 🔴 `message` is omitted in 'other' mode, and that omission is the signal. This form cannot
   // edit a non-agent action provider, so it must send nothing that describes one — otherwise
@@ -153,7 +165,10 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
       && secsToInterval(orig).unit === d.intervalUnit
     body.every = untouched ? orig : intervalToSecs(d.intervalValue, d.intervalUnit)
   }
-  else if (d.kind === 'at') body.at = d.at  // backend-soon
+  // Omitted (not sent as NaN/null) when the picker is empty or unreadable: the handler's
+  // "every, cron, or at required" 400 is the honest answer, and `scheduleWhenMet` gates Save so a
+  // user does not reach it by accident.
+  else if (d.kind === 'at') { const at = epochSeconds(d.at); if (at !== undefined) body.at = at }
   if (d.mode !== 'other') body.message = d.message.trim()
   // 🔴 `approval_mode` rides with the AGENT fields, not with the delivery block it is drawn next
   // to. It is `invoke-agent` action config (`schedule.py`'s `approval_mode` property returns ''
