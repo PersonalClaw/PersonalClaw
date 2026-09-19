@@ -199,6 +199,19 @@ class CatalogEntry:
     # registry-index card (pointer-only, manifest not yet fetched — surfaced post-clone).
     permissions: dict[str, Any] = field(default_factory=dict)
     crons: list[dict[str, Any]] = field(default_factory=list)
+    # #492. Whether this app ships browser code — the one consent fact the permission
+    # block cannot state. A UI bundle is imported into the DASHBOARD PAGE
+    # (`appSdk.loadContributedModule`, no iframe), so it runs with the host DOM, the
+    # owner's session and same-origin `/api/*` reach, and the `api` allowlist above
+    # bounds its backend and its SDK client rather than its page code
+    # (docs/security/limitations.md §4). Consent has to be able to SAY that before the
+    # install, so these are the same two field names the installed-app wire uses
+    # (`dashboard/handlers/apps.py`) and the same meanings: `hasUI` is a declared page,
+    # `uiComponents` the genui module the SHELL loads for an enabled app with no page
+    # visit at all. Both empty/False for a registry-index pointer, whose manifest is not
+    # read until install — `consentKnown` is what says which of those two silences it is.
+    hasUI: bool = False  # noqa: N815
+    uiComponents: str = ""  # noqa: N815
     # APE-4: the app's DECLARED quality block, rendered as the card's badge row. Only
     # the axes the manifest actually declared appear here — an empty dict means the app
     # claimed nothing, which the card renders as no badges, NOT as a row of misses.
@@ -745,6 +758,8 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     permissions=_perms,
                     consentKnown=True,
                     crons=_crons,
+                    hasUI=bool(m.ui.pages),
+                    uiComponents=m.ui.components,
                     coreCompatibility=m.core_compatibility().to_dict(),
                 )
             )
@@ -1279,6 +1294,8 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     permissions=_perms,
                     consentKnown=True,
                     crons=_crons,
+                    hasUI=bool(m.ui.pages),
+                    uiComponents=m.ui.components,
                     coreCompatibility=m.core_compatibility().to_dict(),
                 )
             )
@@ -1380,6 +1397,8 @@ def available_bundled() -> list[CatalogEntry]:
                 permissions=_perms,
                 consentKnown=True,
                 crons=_crons,
+                hasUI=bool(m.ui.pages),
+                uiComponents=m.ui.components,
                 coreCompatibility=m.core_compatibility().to_dict(),
             )
         )

@@ -3,6 +3,15 @@ import { render, screen } from '@testing-library/react'
 import { ConsentModal, consentPermissions } from './installConsent'
 import type { GuardedResult } from '../../lib/useGuardedInstall'
 
+// #492 made `hostUi` a REQUIRED ConsentModal prop: every consent surface has to answer
+// whether the app ships browser code that runs in the dashboard page, and an optional prop
+// would let a new surface silently drop the disclosure. These cases are about other
+// disclosures, so they pass the "caller supplied no reading" value — `PermissionList` then
+// renders no host-page row at all, which is the deliberate fail-silent (never a false "no
+// browser code" about an app nobody read). The row and the pass-through are covered by
+// `hostPageConsent.test.tsx`.
+const NOT_SUPPLIED = undefined
+
 // ── The install-consent modal's BLOCKED states have to read correctly ──────────────────────────────
 //
 // SH-3 landed this surface with no rail of its own, and it is the surface a user consents over a
@@ -71,7 +80,7 @@ const footerButtons = () =>
 
 describe('the consent modal offers an override only when one exists', () => {
   it('a consentable warning keeps Cancel, because there is a pending action to abandon', () => {
-    render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ needsConsent: true, scan: scan({ signature: { state: 'unsigned', signer: '', reason: '' } }) })} />)
     const names = footerButtons()
@@ -81,7 +90,7 @@ describe('the consent modal offers an override only when one exists', () => {
   })
 
   it('a dangerous verdict is dismiss-only, so its button says Done', () => {
-    render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ scan: scan({ verdict: 'dangerous' }) })} />)
     const names = footerButtons()
@@ -91,7 +100,7 @@ describe('the consent modal offers an override only when one exists', () => {
   })
 
   it('an invalid signature is dismiss-only too — a refusal by PROVENANCE, not content', () => {
-    render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ scan: scan({ verdict: 'clean', signature: { state: 'invalid', signer: 'PersonalClaw Apps', reason: 'digest mismatch for server/provider.py' } }) })} />)
     const names = footerButtons()
@@ -110,7 +119,7 @@ describe('the client-install branch reads as two sentences', () => {
   const CI = { shell: 'curl -fsSL https://example.invalid/install.sh | sh', postInstall: 'open -a "Demo"' }
 
   it("closes the server's unpunctuated reason before appending the instruction", () => {
-    const { container } = render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ clientInstall: CI, error: "'demo-app' installs on your local machine, not this server" })} />)
     const text = (container.ownerDocument.body.textContent || '').replace(/\s+/g, ' ')
@@ -120,7 +129,7 @@ describe('the client-install branch reads as two sentences', () => {
 
   it('does not double-punctuate a reason that already ends in one', () => {
     // The hard-coded fallback already ends in a period; the helper must be idempotent.
-    const { container } = render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ clientInstall: CI, error: '' })} />)
     const text = (container.ownerDocument.body.textContent || '').replace(/\s+/g, ' ')
@@ -129,7 +138,7 @@ describe('the client-install branch reads as two sentences', () => {
   })
 
   it('is dismiss-only, and already said Done before this cycle', () => {
-    render(<ConsentModal label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={undefined} crons={undefined}
       result={guarded({ clientInstall: CI, error: 'x' })} />)
     // This branch is the precedent the refusal branches were converged onto.
@@ -149,7 +158,7 @@ const UNSIGNED = { state: 'unsigned', signer: '', reason: '' }
 
 describe('the unsigned note agrees with the verdict beside it', () => {
   const modalText = (verdict: string) => {
-    const { container } = render(<ConsentModal label="demo-app" busy={false}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false}
       permissions={undefined} crons={undefined} onConfirm={() => {}} onClose={() => {}}
       result={guarded({ needsConsent: verdict === 'warning', scan: scan({ verdict, signature: UNSIGNED }) })} />)
     return (container.ownerDocument.body.textContent || '').replace(/\s+/g, ' ')
@@ -180,7 +189,7 @@ describe('the unsigned note agrees with the verdict beside it', () => {
 // the same screen as "Install anyway".
 describe('the consent modal discloses the grants, not only the scan', () => {
   it('renders the enforced permissions and the scheduled jobs beside the findings', () => {
-    const { container } = render(<ConsentModal label="demo-app" busy={false}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false}
       permissions={{ api: ['/api/knowledge'], cron: true, network: true }}
       crons={[{ name: 'digest', cron_expr: '23 * * * *', cadence: 'At 23 minutes past the hour', agent: 'researcher', message: 'summarise' }]}
       onConfirm={() => {}} onClose={() => {}}
@@ -197,7 +206,7 @@ describe('the consent modal discloses the grants, not only the scan', () => {
   it('says the grants are unknown rather than rendering silence', () => {
     // A bare source URL the catalog has not indexed genuinely has no manifest yet. An empty
     // permission list there would read as "this app is granted nothing", which is a claim.
-    const { container } = render(<ConsentModal label="demo-app" busy={false}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false}
       permissions={undefined} crons={undefined} onConfirm={() => {}} onClose={() => {}}
       result={guarded({ needsConsent: true, scan: scan({ verdict: 'warning' }) })} />)
     const text = (container.ownerDocument.body.textContent || '').replace(/\s+/g, ' ')
@@ -207,7 +216,7 @@ describe('the consent modal discloses the grants, not only the scan', () => {
   })
 
   it('discloses the grants on a REFUSAL too — they are why the findings matter', () => {
-    const { container } = render(<ConsentModal label="demo-app" busy={false}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false}
       permissions={{ agent: true }} crons={undefined} onConfirm={() => {}} onClose={() => {}}
       result={guarded({ scan: scan({ verdict: 'dangerous' }) })} />)
     const text = (container.ownerDocument.body.textContent || '').replace(/\s+/g, ' ')
@@ -220,7 +229,7 @@ describe('the consent modal discloses the grants, not only the scan', () => {
 describe('the scheduled-job row reads as a schedule', () => {
   // The modal renders into a portal, so the assertions read the document body, not `container`.
   const row = (cron: Record<string, unknown>) => {
-    const { container } = render(<ConsentModal label="demo-app" busy={false}
+    const { container } = render(<ConsentModal hostUi={NOT_SUPPLIED} label="demo-app" busy={false}
       permissions={{ cron: true }} crons={[cron as never]}
       onConfirm={() => {}} onClose={() => {}}
       result={guarded({ needsConsent: true, scan: scan({ verdict: 'warning' }) })} />)
@@ -279,7 +288,7 @@ describe('consentPermissions separates declared-none from not-known-yet', () => 
   })
 
   it('the modal says the grants are unreadable for a pointer, not that there are none', () => {
-    render(<ConsentModal label="remote-thing" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="remote-thing" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={consentPermissions({ consentKnown: false, permissions: {} })} crons={undefined}
       result={guarded({ needsConsent: true, scan: scan() })} />)
     expect(screen.getByText(/could not read this app's declared permissions/i)).toBeTruthy()
@@ -287,7 +296,7 @@ describe('consentPermissions separates declared-none from not-known-yet', () => 
   })
 
   it('and it DOES say "none" for a manifest that really declared nothing', () => {
-    render(<ConsentModal label="silent-app" busy={false} onConfirm={() => {}} onClose={() => {}}
+    render(<ConsentModal hostUi={NOT_SUPPLIED} label="silent-app" busy={false} onConfirm={() => {}} onClose={() => {}}
       permissions={consentPermissions({ consentKnown: true, permissions: {} })} crons={undefined}
       result={guarded({ needsConsent: true, scan: scan() })} />)
     expect(screen.getByText(/granted no gateway capability/i)).toBeTruthy()
