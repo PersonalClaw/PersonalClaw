@@ -10,10 +10,11 @@ Two halves, and the split is the point:
 * **The provider stub is DERIVED from the SDK contract.** For a type whose contract is
   published on the app boundary (``personalclaw.sdk.<type>``), the ABC and its abstract
   methods are introspected and the stub is generated from those real signatures. A type
-  with no published SDK ABC (``agent``, ``notification``, ``task``, ``workflow``,
-  ``duty_gate`` today) gets an honestly-labelled duck-typed stub instead of a fabricated
-  import — apps import core ONLY via ``personalclaw.sdk.*``, so the generator refuses to
-  teach a boundary violation.
+  with no published SDK ABC (``agent``, ``task``, ``workflow``, ``duty_gate`` today) gets an
+  honestly-labelled duck-typed stub instead of a fabricated import — apps import core ONLY
+  via ``personalclaw.sdk.*``, so the generator refuses to teach a boundary violation.
+  (``notification`` left that list with `TSE2-5`: ``sdk/notification.py`` now publishes
+  ``NotificationDeliveryProvider``, so the stub is derived like any other contract's.)
 
 Generated output is MIT-licensed, carries no credentials or placeholder secrets, and is
 validated against the REAL manifest validator (:meth:`AppManifest.validate`) before
@@ -57,9 +58,16 @@ SCAFFOLD_FILES = (
 _KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # A name-ish abstract property returns the app's own identity rather than "" — the
-# per-type registries key providers by `.name`/`.source_name`, so an empty string there
-# registers the provider under a key nothing can resolve.
-_NAME_PROPERTIES = ("name", "source_name", "provider_name")
+# per-type registries key providers by `.name`/`.source_name`/`.delivery_name`, so an empty
+# string there registers the provider under a key nothing can resolve.
+#
+# `delivery_name` joins for exactly the reason `source_name` is here (`TSE2-5`): this is a
+# CLOSED vocabulary matched by exact name, so a contract whose identity property is spelled
+# any other way falls through to `_body_for`, whose neutral `-> str` return is `return ""`.
+# Measured: `test_app_scaffold[notification]` refused the generated provider with
+# *"must expose a non-empty delivery_name"* — the generator produced a stub the handler
+# rejects, which looks like an app bug and is a generator bug.
+_NAME_PROPERTIES = ("name", "source_name", "provider_name", "delivery_name")
 _DISPLAY_PROPERTIES = ("display_name", "displayName")
 
 # (member name, is async, signature, one-line doc) for a type whose runtime handler

@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
 
-from personalclaw import notification_kinds
+from personalclaw import notification_addressing, notification_kinds
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -843,7 +843,23 @@ def emit_attention_item(
                 notification_kinds.kind_for_legacy_pair(source, kind),
                 title,
                 body,
-                meta={"inbox_item": item_id, "item_kind": resolved_kind, **dict(refs or {})},
+                meta={
+                    "inbox_item": item_id,
+                    "item_kind": resolved_kind,
+                    # WHO the notification is for (`TSE2-5`): the item's OWN owner, read back
+                    # off the row `target.add` just stamped. The notification is a *view* of
+                    # the item (see this function's docstring), so it is addressed to whoever
+                    # the item is — anything else would make the view disagree with the thing
+                    # it views. This is the whole production path: `TSE2-3`'s shared inbox
+                    # renders a teammate's item, and before this the toast for it landed on
+                    # the local owner's screen because `notify` had no way to be told.
+                    #
+                    # Read from `item`, not `_local_username()`: on a locally-created item the
+                    # two are equal and the note is addressed here as it always was, while a
+                    # shared source's item carries the teammate it actually belongs to.
+                    notification_addressing.ADDRESSEE_KEY: item.owner_username,
+                    **dict(refs or {}),
+                },
             )
         except Exception:
             logger.warning("attention item: notify failed", exc_info=True)

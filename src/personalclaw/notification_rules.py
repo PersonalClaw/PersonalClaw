@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import notification_addressing
 from personalclaw import notification_kinds as nk
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
@@ -602,8 +603,16 @@ def run_digest(state: Any = None) -> str:
     smaller harm than a queue that never clears.
     """
     entries = drain_digest_queue()
+    # Keep only what is addressed HERE (`TSE2-5`). The digest is one more local delivery, and
+    # ``DashboardState.notify`` already withholds a foreign-addressed note before the ``digest``
+    # branch — so this filter is not that decision repeated, it is the one the QUEUE FILE needs.
+    # ``digest_queue.jsonl`` is durable state under the home: it can hold rows appended by a
+    # build that predates the addressee, and DURABILITY-AND-SYNC can put a teammate's rows in a
+    # synced home. Filtering at drain is what makes "a foreign note is never summarized at the
+    # local owner" a property of the digest rather than of one writer's good behaviour.
+    entries = notification_addressing.locally_addressed(entries)
     if not entries:
-        logger.debug("digest: queue empty, nothing to summarize")
+        logger.debug("digest: nothing addressed here to summarize")
         return ""
     body = build_digest_body(entries)
     if not body:
