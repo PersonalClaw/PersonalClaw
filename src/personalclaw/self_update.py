@@ -76,6 +76,12 @@ _RELEASES_LATEST_URL = "https://api.github.com/repos/PersonalClaw/PersonalClaw/r
 _CACHE_FILENAME = "update_check.json"
 _HTTP_TIMEOUT_S = 10.0
 
+# The version this install was running the last time a gateway started, kept OUTSIDE
+# `config.json` because it is machine state, not a user preference: nothing should
+# offer it as a setting, and a `config set` of it would be meaningless. It is the
+# input `record_running_version` compares against to derive `updates.last_version`.
+_RUN_STATE_FILENAME = "update_run.json"
+
 # apply_method per kind (C2 wire shape).
 _APPLY_METHOD: dict[str, str] = {
     "git": "pipeline",
@@ -216,6 +222,164 @@ def write_release_cache(data: dict[str, object]) -> None:
         logger.debug("could not persist update-check cache", exc_info=True)
 
 
+# ── Rollback: who writes `updates.last_version`, and how a pin is set (RUM-9) ──
+#
+# A rollback needs exactly one fact the product did not previously keep: *which
+# version was I on before this one?* `updates.last_version` is the field that holds
+# it, and until RUM-9 NOTHING wrote it — so its own `_meta` ("Maintained by the
+# updater") was false and any "Roll back to v<last_version>" control would have read
+# an always-empty string.
+#
+# The writer is a STARTUP recorder, not an instrumented apply path, and that choice
+# is load-bearing. Writing "the version I am leaving" inside each apply would need
+# the write repeated in five places (the dashboard's git + pip applies, the CLI's
+# git + pip applies, the staged auto-apply), each AFTER its own "already current"
+# short-circuit — and it would still miss the three ways a version changes without
+# our apply code running at all: a container recreated onto a new image tag, a
+# desktop app replaced by its own installer, and a plain `pip install -U
+# personalclaw` typed by hand. Comparing the running version against the version
+# that ran last is one call site that catches all of them, and it cannot fire when
+# nothing changed.
+
+
+def _run_state_path() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _RUN_STATE_FILENAME
+
+
+def read_run_state() -> dict[str, object]:
+    """The last recorded run view (``{"version": ...}``), or ``{}``. Never raises."""
+    try:
+        data = json.loads(_run_state_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_run_state(version: str) -> None:
+    """Persist *version* as the version this install is running. Never raises."""
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        atomic_write(
+            _run_state_path(),
+            json.dumps({"version": version, "recorded_at": time.time()}, indent=2) + "\n",
+            fsync=True,
+        )
+    except Exception:
+        logger.debug("could not persist update run state", exc_info=True)
+
+
+def write_updates_fields(fields: dict[str, str]) -> bool:
+    """Persist ``updates.<key> = value`` for each of *fields* into ``config.json``.
+
+    A read-modify-write of the raw JSON, exactly as ``PATCH
+    /api/config/personalclaw`` does it — deliberately NOT ``AppConfig.save()``,
+    which serialises the whole dataclass tree and so would rewrite every block from
+    an in-memory view. Touching only the keys named here means an app-owned block
+    this build does not model (``providers``, ``use_cases``, ``slack``) is carried
+    through untouched, and a concurrent settings edit to an unrelated field is not
+    clobbered by a stale snapshot.
+
+    Returns ``True`` on a completed write. Returns ``False`` — never raises — when
+    the existing file cannot be read or parsed: an unreadable config is exactly when
+    you cannot know what you are about to overwrite, and losing a user's providers to
+    record a rollback hint would be a catastrophic trade. The caller degrades to "no
+    rollback offer", which is the safe direction.
+    """
+    from personalclaw.atomic_write import atomic_write
+    from personalclaw.config.loader import config_path
+
+    path = config_path()
+    data: dict[str, object] = {}
+    if path.exists():
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("refusing to write updates state: %s exists but is unreadable", path)
+            return False
+        if raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("refusing to write updates state: %s is not valid JSON", path)
+                return False
+            if not isinstance(parsed, dict):
+                logger.warning("refusing to write updates state: %s is not a JSON object", path)
+                return False
+            data = parsed
+
+    block = data.get("updates")
+    if not isinstance(block, dict):
+        block = {}
+    block.update(fields)
+    data["updates"] = block
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+    except OSError:
+        logger.warning("could not write updates state to %s", path, exc_info=True)
+        return False
+    return True
+
+
+def record_running_version(current: str) -> str:
+    """Record *current* as the running version; return the version it REPLACED.
+
+    The single writer of ``updates.last_version``. Called once per gateway start:
+
+    * first ever recorded start — remember *current*, write nothing to config and
+      return ``""`` (there is no earlier version, so there is nothing to offer);
+    * same version as last start — nothing changed, so nothing is written;
+    * a DIFFERENT version — the version that ran last becomes
+      ``updates.last_version`` (what "Roll back to v…" offers) and *current* becomes
+      the new run state.
+
+    Returns the newly recorded previous version, or ``""`` when nothing was
+    recorded. Never raises: a failed record costs a rollback offer, and must never
+    cost a gateway start.
+    """
+    current = normalize_version(current)
+    if not current:
+        return ""
+    previous = normalize_version(str(read_run_state().get("version") or ""))
+    if previous == current:
+        return ""
+    if not previous:
+        write_run_state(current)
+        return ""
+    if not write_updates_fields({"last_version": previous}):
+        # Config unwritable — do NOT advance the run state, or the previous version
+        # is lost for good and the next start reads "nothing changed".
+        return ""
+    write_run_state(current)
+    logger.info(
+        "recorded rollback point: updates.last_version=%s (now running %s)", previous, current
+    )
+    return previous
+
+
+def set_version_pin(version: str) -> bool:
+    """Pin ``updates.pin`` to *version* so every apply path targets that release.
+
+    The one write behind ``personalclaw update --to <version>`` and the dashboard's
+    rollback control (which reaches the same field through the config PATCH). A pin
+    already OVERRIDES the channel in every resolver — :func:`select_target`,
+    :func:`resolve_wheel_target`, :func:`select_image_tag` — so pinning IS the
+    rollback mechanism; nothing else needs a downgrade-specific code path.
+
+    *version* is normalized (a leading ``v`` stripped) to match what the resolvers
+    compare and what ``_EDITABLE_CONFIG`` accepts on the same field. Returns
+    ``False`` without writing when it is empty or longer than the field's 64-char
+    bound, so the CLI and the PATCH boundary refuse the same values.
+    """
+    version = normalize_version(version)
+    if not version or len(version) > 64:
+        return False
+    return write_updates_fields({"pin": version})
+
+
 async def fetch_latest_release() -> dict[str, object]:
     """Return the latest GitHub release view, ETag-cached and offline-tolerant.
 
@@ -277,13 +441,53 @@ async def build_update_status(current: str) -> dict[str, object]:
     """Assemble the C2 update-check payload for the running install.
 
     ``current`` is ``importlib.metadata.version("personalclaw")`` (the caller
-    passes ``personalclaw.__version__``). ``latest`` comes from the tag-driven
-    release probe; ``update_available`` compares the two numerically. The git
-    kind additionally surfaces ``commits_behind`` as secondary info; the
-    container kind carries ``instructions``.
+    passes ``personalclaw.__version__``). ``latest`` names the release this
+    install's channel/pin RESOLVES to, and ``release_name``/``release_notes``
+    describe that same release; ``update_available`` compares it with ``current``
+    numerically. The git kind additionally surfaces ``commits_behind`` as secondary
+    info; the container kind carries ``instructions``.
+
+    **Why the resolved release and not ``releases/latest``** (RUM-10). The probe
+    ``releases/latest`` answers only "the newest NON-prerelease", so on the ``beta``
+    channel, and under any ``pin``, it names a release the apply would not install —
+    the panel would report "update available — 0.3.0" and then render 0.3.0's notes
+    while ``POST /api/update`` installed 0.3.1-rc.1. Resolving here is the same
+    correction the ``nightly``/``commits_behind`` clause in ``api_update_check``
+    makes for branch-tracking: the check has to agree with the apply.
+
+    The extra releases-list fetch happens ONLY when the resolution can differ — a
+    non-empty ``pin`` or the ``beta`` channel. ``stable`` is ``releases/latest`` by
+    definition, and ``nightly`` tracks a branch with no release tag at all, so
+    neither pays for a second call.
     """
+    from personalclaw.config.loader import AppConfig
+
     kind = detect_install_kind()
+    cfg = AppConfig.load()
+    channel, pin = cfg.updates.channel, cfg.updates.pin
     release = await fetch_latest_release()
+    if pin or channel == "beta":
+        # 🔴 THE EGRESS KILL SWITCH COVERS THIS SECOND PROBE TOO (RUM-3). `check_enabled=false`
+        # promises ZERO outbound calls from the check, and `fetch_releases` — unlike its sibling
+        # `fetch_latest_release` — carries no guard of its own, because until now it was only
+        # reached from a user-typed apply. Reading the cache here keeps the promise without
+        # giving up the resolution: a pinned user who disabled checking still sees their pinned
+        # release named, from whatever the last fetch stored.
+        releases = (
+            await fetch_releases()
+            if cfg.updates.check_enabled
+            else _releases_from_cache(read_releases_cache())
+        )
+        resolved_tag = select_target(releases, channel, pin)
+        if resolved_tag:
+            release = next(
+                (r for r in releases if str(r.get("tag") or "") == resolved_tag),
+                {"tag": resolved_tag},
+            )
+        elif pin:
+            # A pin naming no release: report nothing available rather than the
+            # stable latest, which is the release the pin exists to refuse.
+            release = {}
     latest_tag = str(release.get("tag") or "")
     latest = normalize_version(latest_tag)
 
@@ -305,10 +509,7 @@ async def build_update_status(current: str) -> dict[str, object]:
     image_tag = ""
     instructions: list[str] = []
     if kind == "container":
-        from personalclaw.config.loader import AppConfig
-
-        cfg = AppConfig.load()
-        image_tag = await resolve_image_tag(cfg.updates.channel, cfg.updates.pin)
+        image_tag = await resolve_image_tag(channel, pin)
         instructions = container_instructions(image_tag) if image_tag else []
 
     return {

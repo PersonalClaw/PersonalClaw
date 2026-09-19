@@ -1682,6 +1682,31 @@ async def start_dashboard(
 
     app.on_startup.append(_mcp_migrate_startup)
 
+    async def _record_running_version_startup(app_: web.Application) -> None:
+        """RUM-9: remember which version ran last, so a rollback has a target.
+
+        The ONE writer of ``updates.last_version``. It fires here — once per gateway
+        start, before anything can serve ``/api/update/check`` — because a version
+        change is only ever observable across a restart, and because this is the one
+        place that sees the change no matter HOW it happened: our own apply, a
+        container recreated onto a new image tag, a desktop app replaced by its own
+        installer, or a plain ``pip install -U personalclaw`` typed by hand.
+
+        Writes nothing on the first recorded start (there is no earlier version to
+        offer) and nothing when the version is unchanged, so the steady state is a
+        single cheap file read.
+        """
+        from personalclaw import __version__ as _running_version
+        from personalclaw import self_update as _self_update
+
+        try:
+            _self_update.record_running_version(_running_version)
+        except Exception:
+            # A missed rollback offer is a cosmetic loss; a failed gateway start is not.
+            logger.debug("could not record the running version", exc_info=True)
+
+    app.on_startup.append(_record_running_version_startup)
+
     async def _action_providers_startup(app_: web.Application) -> None:
         """Register the bundled action providers (bash, webhook, run-script, …)."""
         from personalclaw.action_providers.registry import _ensure_default_providers_registered

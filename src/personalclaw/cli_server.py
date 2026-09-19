@@ -675,7 +675,36 @@ def _install(args: list[str], *, cwd: str, label: str) -> None:
         sys.exit(1)
 
 
-def _update() -> None:
+def _pin_before_update(to: str) -> None:
+    """`--to <version>`: pin ``updates.pin`` so this and every later apply target it.
+
+    RUM-9's rollback entry point, and it is a PIN rather than a one-shot install for
+    the reason the pin exists: a bare downgrade would be undone by the next scheduled
+    check, which would resolve the channel's newest release and offer to jump straight
+    back to the version the user just left. Pinning first means the resolvers already
+    in place — :func:`select_target`, ``resolve_wheel_target``, ``select_image_tag`` —
+    do the work on every surface, so there is no downgrade-specific install path
+    anywhere.
+
+    Exits 1 without touching config on an unusable version, and on a failed write: a
+    silent fall-through would run the CHANNEL's apply instead, i.e. upgrade the user
+    who asked to roll back.
+    """
+    target = self_update.normalize_version(to)
+    if not self_update.set_version_pin(target):
+        print(f"❌ Not a usable version to pin: {to!r}")
+        print("   Give a release version, e.g. `personalclaw update --to 0.2.1`.")
+        sys.exit(1)
+    print(f"  📌 Pinned updates.pin = {target} (clear it to follow the channel again)")
+    if self_update.version_tuple(target) < self_update.version_tuple(__version__):
+        # A downgrade can meet state written by the newer build. Pre-1.0 there is no
+        # migration machinery either way, so the honest advice is a snapshot.
+        print(f"  ⏪ Rolling BACK: v{__version__} → v{target}")
+        print("     Take a snapshot first if you have not: `personalclaw snapshot`")
+    print()
+
+
+def _update(to: str = "") -> None:
     """`personalclaw update` — advance this install, per how it was installed.
 
     | kind | what happens | exit |
@@ -688,6 +717,11 @@ def _update() -> None:
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |
 
+    ``--to <version>`` (*to*) pins ``updates.pin`` first and then runs the same
+    branch, which is how a ROLLBACK works: the pin overrides the channel in every
+    resolver, so the git branch checks out that tag, the pip branch installs
+    ``personalclaw==<version>``, and the container branch prints the ``:X.Y.Z`` pull.
+
     **Why container/desktop exit 0.** The status answers "did the command do its
     job?", not "did bytes change?" — the git branch already exits 0 on "Already up
     to date", so 0 has never meant "something changed" here. For these kinds the job
@@ -699,6 +733,12 @@ def _update() -> None:
     distinction should read `apply_method` from `GET /api/update/check`.
     """
     print("Updating PersonalClaw…\n")
+
+    # `--to <version>` pins BEFORE the kind dispatch, so every branch below resolves the
+    # pinned release through the resolver it already uses (RUM-9). Pinning is what makes
+    # this a rollback and not just a one-time install of an older wheel.
+    if to:
+        _pin_before_update(to)
 
     kind = self_update.detect_install_kind()
     if kind not in _UPDATE_HANDLED_KINDS:

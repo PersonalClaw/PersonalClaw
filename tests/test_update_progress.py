@@ -814,13 +814,24 @@ class TestCheckAgreesWithApplyUnderNightly:
     """
 
     @staticmethod
-    def _run(monkeypatch, *, channel: str, behind, kind: str = "git") -> dict:
+    def _run(
+        monkeypatch, *, channel: str, behind, kind: str = "git", last_version: str = ""
+    ) -> dict:
         import types
 
         from personalclaw.dashboard.handlers import updates as U
 
+        # The fake carries EVERY `updates` field the handler reads, so a field added to
+        # the payload reds this helper rather than silently AttributeError-ing one arm.
         cfg = types.SimpleNamespace(
-            updates=types.SimpleNamespace(channel=channel, pin="", auto="off"),
+            updates=types.SimpleNamespace(
+                channel=channel,
+                pin="",
+                auto="off",
+                check_enabled=True,
+                check_interval_hours=12,
+                last_version=last_version,
+            ),
         )
         monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
         monkeypatch.setattr(U, "_do_update_check", AsyncMock())
@@ -855,3 +866,25 @@ class TestCheckAgreesWithApplyUnderNightly:
 
     def test_non_git_kind_ignores_commits_behind(self, monkeypatch) -> None:
         assert self._run(monkeypatch, channel="nightly", behind=1, kind="pip")["available"] is False
+
+    def test_check_carries_every_field_the_updates_screen_edits(self, monkeypatch) -> None:
+        """RUM-9/RUM-10: the panel renders all six controls from THIS one payload.
+
+        Without these keys the Settings > Updates screen would need a second
+        `GET /api/config/personalclaw`, and could show a channel from one read beside an
+        interval from another. `last_version` is additionally the rollback offer — the
+        panel has no other source for it.
+        """
+        body = self._run(monkeypatch, channel="beta", behind=0, last_version="0.1.2")
+        assert body["channel"] == "beta"
+        assert body["pin"] == ""
+        assert body["auto"] == "off"
+        assert body["check_enabled"] is True
+        assert body["check_interval_hours"] == 12
+        assert body["last_version"] == "0.1.2"
+
+    def test_check_reports_an_empty_rollback_target_when_none_was_recorded(
+        self, monkeypatch
+    ) -> None:
+        """Vacuity guard: an install that never changed version offers no rollback."""
+        assert self._run(monkeypatch, channel="stable", behind=0)["last_version"] == ""

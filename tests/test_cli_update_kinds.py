@@ -94,6 +94,14 @@ def _channel(monkeypatch: pytest.MonkeyPatch, channel: str = "stable", pin: str 
     monkeypatch.setattr(cli_server.AppConfig, "load", classmethod(lambda cls: cfg))
 
 
+#: The REAL ``AppConfig.load``, captured at IMPORT — before the autouse ``_channel``
+#: fixture replaces it with a no-disk fake. The RUM-9 rollback tests are the one group
+#: here that needs the loader to actually READ the ``config.json`` that ``--to`` just
+#: wrote: the whole claim under test is that the pin round-trips through the file, so a
+#: fake that returns a hard-coded pin would prove nothing.
+_REAL_APPCONFIG_LOAD = cli_server.AppConfig.load
+
+
 def _fake_resolve(monkeypatch: pytest.MonkeyPatch, tag: str) -> None:
     """Make `self_update.resolve_target` return *tag* without any network."""
 
@@ -595,3 +603,105 @@ def test_container_env_beats_a_git_tree(
 
     assert "container install" in capsys.readouterr().out
     assert not git.calls and not spawns
+
+
+# ── rollback: `personalclaw update --to <version>` (RUM-9) ───────────────────
+
+# A releases list ADVERSARIAL to every implementation that ignores `--to`: the channel's
+# newest release (0.2.0) is NEWER than the running version, so a build that resolved the
+# channel — or that treated `--to` as a no-op — installs `personalclaw==0.2.0`, an
+# UPGRADE, for a user who asked to roll back. The pinned 0.1.2 is older than both.
+_ROLLBACK_RELEASES = [
+    {"tag": "v0.2.0", "prerelease": False},
+    {"tag": "v0.1.3", "prerelease": False},
+    {"tag": "v0.1.2", "prerelease": False},
+]
+
+
+def _real_config_home(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Give these tests a REAL, writable config in a tmp home.
+
+    Restores the genuine ``AppConfig.load`` (the autouse fixture's fake never touches
+    disk) and points the home at *tmp_path*, so `--to`'s write and `_update_pip`'s read
+    are the same file. Nothing here can reach the developer's real ``~/.personalclaw``:
+    ``PERSONALCLAW_HOME`` is set explicitly, on top of conftest's autouse isolation.
+    """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(cli_server.AppConfig, "load", _REAL_APPCONFIG_LOAD)
+
+    async def _list() -> list:
+        return [dict(r) for r in _ROLLBACK_RELEASES]
+
+    monkeypatch.setattr(su, "fetch_releases", _list)
+
+
+def test_pip_rollback_installs_the_older_pinned_spec(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """RUM-9 core: `update --to <older>` installs `personalclaw==<older>`, a DOWNGRADE.
+
+    Drives the whole path for real — `_pin_before_update` writes `updates.pin` to a
+    config file, `AppConfig.load()` reads it back, and the REAL
+    `resolve_wheel_target`/`select_target` resolve it over `_ROLLBACK_RELEASES`. Only
+    two seams are faked: the releases list (network) and the installer argv, so nothing
+    downloads or mutates this environment — the assertion is on the argv that WOULD have
+    run, which is also the exact thing the atom names ("the older `==` spec").
+
+    Non-vacuous: the channel's newest is 0.2.0, NEWER than the running 0.1.3, so an
+    implementation that ignored `--to` would install `personalclaw==0.2.0` and fail here.
+    """
+    _real_config_home(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_server, "__version__", "0.1.3")
+    _fake_installer(monkeypatch)
+
+    cli_server._update(to="0.1.2")
+
+    assert any(
+        a[:5] == ["FAKE-INSTALLER", "install", "-U", "personalclaw==0.1.2", "--quiet"]
+        for a in spawns
+    ), f"expected the older pinned wheel; spawns={spawns}"
+    # and NOT the channel's newest — the upgrade a `--to`-blind build would have done
+    assert not any("personalclaw==0.2.0" in arg for a in spawns for arg in a)
+    out = capsys.readouterr().out
+    assert "Pinned updates.pin = 0.1.2" in out
+    assert "personalclaw snapshot" in out  # docs advise a snapshot before a rollback
+
+
+def test_rollback_pin_persists_in_config(monkeypatch: pytest.MonkeyPatch, tmp_path, spawns) -> None:
+    """The pin is PERSISTED, so the next scheduled check stays on the rolled-back release.
+
+    This is the difference between a rollback and a one-shot install: without the stored
+    pin, the next check resolves the channel's newest (0.2.0 here) and offers to jump
+    straight back to the version the user just left.
+    """
+    import json as _json
+
+    _real_config_home(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_server, "__version__", "0.1.3")
+    _fake_installer(monkeypatch)
+
+    cli_server._update(to="v0.1.2")  # a leading `v` is normalized away
+
+    stored = _json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert stored["updates"]["pin"] == "0.1.2"
+    assert cli_server.AppConfig.load().updates.pin == "0.1.2"
+
+
+def test_rollback_to_an_unusable_version_refuses_before_installing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    """An unusable `--to` exits 1 and installs NOTHING.
+
+    Falling through would be the worst outcome available: the channel's apply would run
+    instead, i.e. it would UPGRADE the user who asked to pin.
+    """
+    _real_config_home(monkeypatch, tmp_path)
+    _fake_installer(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update(to="   ")
+
+    assert exc.value.code == 1
+    assert "Not a usable version to pin" in capsys.readouterr().out
+    assert not spawns
+    assert not (tmp_path / "config.json").exists()  # nothing was written either

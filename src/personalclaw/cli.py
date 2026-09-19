@@ -1085,7 +1085,19 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         "--label", default="", help="Apply a completed hand-label card (a JSON file)"
     )
 
-    sub.add_parser("update", help="Update PersonalClaw to the latest version")
+    update_parser = sub.add_parser("update", help="Update PersonalClaw to the latest version")
+    # RUM-9: `--to` is the rollback (and the "stay on 0.2.x") entry point. It PINS
+    # `updates.pin` before applying, so the pin survives the install and the next
+    # scheduled check/apply stays on that release instead of jumping forward again.
+    update_parser.add_argument(
+        "--to",
+        default="",
+        metavar="VERSION",
+        help=(
+            "Install an exact release (e.g. 0.2.1) instead of the channel's newest — "
+            "pins updates.pin, so it also rolls BACK. Snapshot first: personalclaw snapshot"
+        ),
+    )
 
     # stop
     stop_parser = sub.add_parser("stop", help="Stop a running PersonalClaw gateway")
@@ -1550,7 +1562,7 @@ def main() -> None:
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
-        _update()
+        _update(to=getattr(args, "to", "") or "")
     elif args.command == "stop":
         _stop(resolve_client_port(args.port))
     elif args.command == "restart":

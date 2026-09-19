@@ -79,6 +79,18 @@ _NOT_STATE = frozenset(
         # home would address its children at a port a DIFFERENT instance bound. Also in
         # `durability.inventory.IGNORED`, for the same reason `machine_id` is.
         "gateway.runtime.json",
+        # RUM-9's run-state file (`self_update._RUN_STATE_FILENAME`) — the version this
+        # install was running when a gateway last started. NOT_STATE rather than debt,
+        # because the kind/domain/merge question this set exists to defer has a determinate
+        # answer here: it is machine-local, re-created by the very next gateway start, and a
+        # restored copy would be actively WRONG, not merely stale. It is the input
+        # `record_running_version` compares against to derive `updates.last_version`, so a
+        # snapshot taken on 0.2.0 restored onto a 0.1.3 install would record
+        # `last_version = 0.2.0` and make the panel offer "Roll back to v0.2.0" — an UPGRADE,
+        # the exact mis-offer RUM-9 exists to prevent. Omitted, the recorder writes nothing on
+        # that first run and offers nothing until it sees a real change. Also in
+        # `durability.inventory.IGNORED`, for the same reason `gateway.runtime.json` is.
+        "update_run.json",
     }
 )
 
