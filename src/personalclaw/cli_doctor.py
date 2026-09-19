@@ -14,8 +14,7 @@ from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
 from personalclaw.auth.modes import classify_auth_mode_request
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.credentials import credential_backend, credential_backend_warning
-from personalclaw.config.loader import env_path
+from personalclaw.config.credentials import credential_backend_warning, credential_store_state
 from personalclaw.dashboard.origin import (
     auth_is_off,
     is_local_bind,
@@ -160,6 +159,76 @@ def _doctor_rebuild_routing_stats() -> None:
         print("  (no attempt rows in the audit log — the fold is empty, not broken)")
 
 
+def _git_is_inside_work_tree(path: Path) -> bool | None:
+    """Ask git whether *path* sits in a work tree. ``None`` when git could not answer.
+
+    ``None`` is a real third outcome, not a swallowed error: git missing from PATH, a git
+    that refuses the directory (``safe.directory`` dubious-ownership), a timeout, or output
+    this function does not recognise all leave the question OPEN. The caller must not turn
+    an unanswered question into a verdict — doing exactly that is #2907.
+
+    ``exit 128`` with ``not a git repository`` is an ANSWER, not a failure: it is how git
+    says no.
+    """
+    if not shutil.which("git"):
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    answer = (result.stdout or "").strip()
+    if answer == "true":
+        return True
+    # "false" is git's answer for a bare repo or the inside of a .git dir — a real no.
+    if answer == "false" or "not a git repository" in (result.stderr or "").lower():
+        return False
+    return None
+
+
+def _git_work_tree_row(proj: Path) -> str:
+    """The ``git repo:`` row for *proj* — three states, none of them assumed (#2907).
+
+    The check used to be ``(proj / ".git").is_dir()`` with a flat ``not a git repo`` on the
+    false branch. In a linked worktree or a submodule ``.git`` is a FILE holding a
+    ``gitdir:`` pointer, so a fully valid checkout — the layout this project's own dev flow
+    runs on — reported as no repo at all. The same false branch also answered a question it
+    never asked: ``proj`` being a SUBDIRECTORY of a checkout, where there is no marker here
+    and git is still inside a work tree.
+
+    So git is the authority (it is the thing that actually knows, and it is right about
+    worktrees, submodules, subdirectories and bare repos), and the ``.git`` marker names the
+    SHAPE plus answers alone when git cannot be asked. When neither establishes anything the
+    row SAYS so: a doctor that reports "cannot tell" is correct, and one that reports "not a
+    git repo" about a worktree is not.
+
+    Advisory either way — no branch here appends to ``issues``, so doctor's exit status is
+    unchanged by what it finds.
+    """
+    marker = proj / ".git"
+    shape = ""
+    try:
+        if marker.is_dir():
+            shape = "✅"
+        elif marker.is_file():
+            shape = "✅ linked worktree or submodule (.git is a gitdir pointer)"
+    except OSError:
+        shape = ""
+
+    inside = _git_is_inside_work_tree(proj)
+    if inside is True:
+        return shape or "✅ inside a git work tree (no .git at the project dir itself)"
+    if inside is False:
+        # Covers both of git's noes — "not a git repository" and the bare-repo/inside-.git
+        # `false` — so the sentence claims only what `--is-inside-work-tree` answers.
+        return "⚠️  not a git work tree (git reports no work tree here)"
+    return shape or "⏭  cannot tell — no .git here, and git could not be asked"
+
+
 def _doctor_credentials() -> list[str]:
     """Print which credential store is holding the secrets; return any issues (SH-1).
 
@@ -167,11 +236,39 @@ def _doctor_credentials() -> list[str]:
     reason this line exists: an install that asks for a keychain on a box with no OS
     secret service keeps its credentials in ``.env`` at 0600, and echoing the request
     would tell that operator their secrets are somewhere they are not.
+
+    It reports the ``.env`` file the same way — as observed. The row used to print the
+    literal ``.env 0600`` for every non-keychain install without stat-ing anything, so a
+    fresh home was told its credentials were stored in a file that did not exist, at a mode
+    nothing had read, and a ``.env`` left at 0640 read as 0600 too (#2922). 0600 is the
+    floor the fallback PROMISES; the promise is only ever printed in the future tense.
+    Three observations, three sentences — no file yet, a file at the mode we measured, or a
+    file we could not inspect.
     """
-    if credential_backend() == "keychain":
+    state = credential_store_state()
+    if state.backend == "keychain":
         print("  credentials: 🔐 OS keychain (keyring)")
+    elif not state.env_readable:
+        print(f"  credentials: ⏭  could not read {state.env_path} — its mode is unknown")
+    elif not state.env_exists:
+        print(
+            "  credentials: ⏹  none stored yet — the file is created at 0600 on the "
+            f"first write ({state.env_path})"
+        )
     else:
-        print(f"  credentials: 🔐 .env 0600 — {env_path()}")
+        print(f"  credentials: 🔐 .env {state.env_mode} — {state.env_path}")
+        if state.env_group_or_world_readable:
+            # Now that the row prints the mode it MEASURED, a loose one shows up here for
+            # the first time — and a bare `.env 0640` reads as fine. The
+            # `security.credential_backend` probe already calls this actionable, so the
+            # same sentence belongs on this surface rather than only in the dashboard.
+            # Legibility only: this prints, it does not gate. Same call as SL-8's auth-mode
+            # line — the fallback repairs the mode on the next credential read, so doctor's
+            # exit status must not start failing installs it used to pass.
+            print(
+                f"               ⚠️  mode {state.env_mode} is group/world readable —"
+                " repaired to 0600 on the next credential read"
+            )
     warning = credential_backend_warning()
     if not warning:
         return []
@@ -235,12 +332,20 @@ def _doctor() -> None:
                 print(
                     f"  node:        ⚠️  v{major} < {_MIN_NODE_VERSION} (frontend needs Node {_MIN_NODE_VERSION}+)"  # noqa: E501
                 )
-                print("               Fix: install Node.js >= 16")
+                # Both halves of the sentence come from the one constant the comparison
+                # above uses. The Fix line hardcoded `>= 16` while the warning interpolated
+                # 18, so the pair stated one requirement as two numbers and neither the
+                # reader nor a future edit could tell which was enforced (#2908).
+                print(f"               Fix: install Node.js >= {_MIN_NODE_VERSION}")
         except Exception:
-            print(f"  node:        ✅ {node}")
+            # `node -v` answered something this cannot parse, so the version — the only
+            # thing this check exists to establish — is unknown. A ✅ here claimed the
+            # check had passed on evidence it never got.
+            print(f"  node:        ⏭  {node} (version unknown: `node -v` did not parse)")
+            print(f"               Fix: confirm Node.js >= {_MIN_NODE_VERSION} is installed")
     else:
         print(f"  node:        ⚠️  not found (frontend needs Node {_MIN_NODE_VERSION}+)")
-        print("               Fix: install Node.js >= 16")
+        print(f"               Fix: install Node.js >= {_MIN_NODE_VERSION}")
 
     # SQLite driver + capabilities (PLATFORM-REACH PR-1): FTS5/JSON1 are what the
     # knowledge + memory search paths need, and the bundled stdlib build lacks them
@@ -277,11 +382,7 @@ def _doctor() -> None:
                 stale_project = True
     if proj and Path(proj).is_dir():
         print(f"  project dir: ✅ {proj}")
-        git_dir = Path(proj) / ".git"
-        if git_dir.is_dir():
-            print("  git repo:    ✅")
-        else:
-            print("  git repo:    ⚠️  not a git repo")
+        print(f"  git repo:    {_git_work_tree_row(Path(proj))}")
     elif not stale_project:
         # Only a source checkout has a project root (a dir holding both agents/ and
         # skills/). Wheel, uv, pipx and Docker installs never have one, and `setup`
