@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { reportingWrite } from '../../../app/reportingWrite'
+import { approvalDestination } from '../../../app/approvalDestination'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
@@ -102,7 +103,13 @@ export function ActionCenter({ navigate }: RouteProps) {
   const icon = { approval: ShieldCheck, inbox: Inbox, proposal: Sparkles }
   const tone = { approval: 'var(--color-warn)', inbox: 'var(--color-secondary)', proposal: 'var(--color-primary)' }
   const routeFor = (e: Entry) => {
-    if (e.kind === 'approval' && e.session) return `chat/${encodeURIComponent(e.session)}`
+    // The row's OPEN target, through the one parse of an approval session key
+    // (`approvalDestination`). This used to spell `chat/<session>` for every approval, which
+    // #258 names as the third place that 404s: a workflow stage's key is
+    // `workflow:<run>:<node>`, not a chat, so the only row in this widget that could resolve
+    // the approval also sent the user nowhere if they opened it instead of pressing Approve.
+    // `navigate` strips the leading `#/` and preserves the `?node=` verbatim (`useHashRoute`).
+    if (e.kind === 'approval' && e.session) return approvalDestination(e.session).href
     if (e.kind === 'approval') return 'chat'
     if (e.kind === 'inbox') return 'inbox'
     return 'skills?mode=proposals'

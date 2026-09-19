@@ -3,8 +3,28 @@ import { AnimatePresence, motion, type Transition } from 'framer-motion'
 import { Info, CheckCircle2, AlertCircle, X } from 'lucide-react'
 import { dragElastic, spring, swipeDismiss } from '../design/motion'
 import { playCue } from '../design/soundCues'
+import { TextLink } from './TextLink'
 
-interface Toast { id: number; message: string; level: 'info' | 'success' | 'error' }
+interface Toast {
+  id: number
+  message: string
+  level: 'info' | 'success' | 'error'
+  /** An in-app hash route this toast is ABOUT, rendered as a link (#258).
+   *
+   *  A toast whose sentence tells the reader to go somewhere used to leave them to find it: the
+   *  approval nudge said *"open workflow:…:… to respond"* — a session key with no route behind
+   *  it. Naming an outcome the surface does not deliver is the defect, so the fix is a
+   *  mechanism rather than nicer wording: a toast may carry its destination, and the
+   *  destination is a route the SPA actually serves. Hash-only by construction — `external` is
+   *  not plumbed, so this cannot become an off-app link surface.
+   *
+   *  Optional, and most toasts have no destination. The notification toast
+   *  (`lib/notificationToasts.ts`) is deliberately left alone here: #343 closed without a link,
+   *  and giving it one is its own change, not a rider on this one. */
+  href?: string
+  /** The link's text. It must say where it goes; "Open" alone is what a toast is replacing. */
+  hrefLabel?: string
+}
 
 const ICONS = { info: Info, success: CheckCircle2, error: AlertCircle }
 const TONES = { info: 'text-on-surface-var', success: 'text-ok', error: 'text-danger' }
@@ -44,7 +64,13 @@ export function Toaster() {
       // every gate lives inside playCue, so this call site carries no policy.
       if (level === 'error') playCue('error')
       const id = ++seq
-      setToasts((prev) => [...prev, { id, message, level }])
+      // Only a HASH route is accepted. A dispatcher that hands over an `http(s)`/`javascript:`
+      // target gets no link at all rather than one the host renders: this is a global event any
+      // contributed app can fire (`appSdk.notify`), so the host decides what a toast may link to.
+      const href = String(d.href ?? '')
+      const linked = href.startsWith('#/') ? href : ''
+      const hrefLabel = String(d.hrefLabel ?? '').trim() || 'Open'
+      setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel }])
       window.setTimeout(() => dismiss(id), 5000)
     }
     window.addEventListener('ne:toast', onToast as EventListener)
@@ -111,7 +137,21 @@ export function Toaster() {
                   twice. The card itself must stay exposed — it contains the focusable Dismiss
                   button, and hiding an ancestor of a focusable control is `aria-hidden-focus`
                   (serious). Measured: doing that produced exactly that violation. */}
-              <span aria-hidden data-type="body-m" className="min-w-0 flex-1 text-on-surface">{t.message}</span>
+              <div className="min-w-0 flex-1">
+                <span aria-hidden data-type="body-m" className="text-on-surface">{t.message}</span>
+                {/* The DESTINATION, when the dispatcher named one. `ink="emphasis"` because the
+                    card's ground is `.glass`, not `--color-surface` (see TextLink's contrast
+                    table). Not aria-hidden: the live regions own the message, but a link is a
+                    control and must stay in the tree — and its own label is where the a11y tree
+                    learns where it goes, since the sentence around it is hidden. */}
+                {t.href && (
+                  <div className="mt-1">
+                    <TextLink href={t.href} size="xs" ink="emphasis" aria-label={`${t.hrefLabel}: ${t.message}`}>
+                      {t.hrefLabel}
+                    </TextLink>
+                  </div>
+                )}
+              </div>
               {/* Named by its MESSAGE. Toasts stack up to 4, and a bare "Dismiss" gave every
                   one the same name — measured 3 identical buttons with 3 toasts up, so a
                   screen-reader user choosing between them had nothing to go on. The card's

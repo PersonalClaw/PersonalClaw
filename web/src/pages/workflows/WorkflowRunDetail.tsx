@@ -20,6 +20,7 @@ import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
 import { revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
+import { RunToolApprovals } from './RunToolApprovals'
 import { readAttention } from './attentionMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
@@ -386,6 +387,15 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
             {conts.map((c) => (
               <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer} />
             ))}
+
+            {/* …and beside them, the run's pending TOOL approvals (issue 258). A stage that
+                spawns a subagent blocks on the global approvals queue rather than on an engine
+                gate, so it rendered nothing here while a gate rendered the card above — two shapes
+                of "the run is waiting on you", one of them invisible on the surface the user is
+                watching. Spelled "issue 258" rather than with a hash: `token-lint` skips lines
+                opening `//`, `*` or `/*` but not a `{/*` JSX comment, so a three-digit ref there
+                reads as a raw CSS hex. */}
+            <RunToolApprovals runId={runId} />
 
             {run.error && (
               <p data-type="body-s" className="text-danger">{run.error}</p>
