@@ -51,6 +51,10 @@ function mockApi(tools: unknown[]) {
       importableMcp: () => Promise.resolve([]),
       mcpPoolStats: () => Promise.resolve({ available: false }),
       toolGroups: () => Promise.resolve(null),
+      // The page's sixth read (MBR-1's per-server elicitation grant). This mock replaces
+      // `api` wholesale, so an omitted member is `undefined` and throws before its own
+      // `.catch` runs, failing the fetcher instead of rendering the badges under test.
+      mcpElicitationServers: () => Promise.resolve([] as string[]),
     },
   }))
 }

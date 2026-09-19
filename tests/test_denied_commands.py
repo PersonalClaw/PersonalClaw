@@ -81,6 +81,9 @@ def test_config_round_trips_security_section(tmp_path: Path, monkeypatch):
         # SH-2's credential-store gate. Default False = `.env` at 0600, the fail-closed side.
         "credential_keychain": False,
         "autonomy_denylist": [],
+        # MBR-1's per-server elicitation allowlist. Empty default = the client never
+        # advertises the capability, so a server cannot ask the user anything.
+        "mcp_elicitation_servers": [],
     }
 
 

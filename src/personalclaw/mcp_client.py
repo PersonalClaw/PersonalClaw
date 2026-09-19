@@ -264,9 +264,24 @@ class McpServerConn:
 
             from mcp import ClientSession
 
+            from personalclaw.mcp_elicitation import elicitation_callback_for
+
             async with AsyncExitStack() as stack:
                 read, write = await self._open_transport(stack)
-                session = await stack.enter_async_context(ClientSession(read, write))
+                # MBR-1: the ONE place the elicitation grant is consulted, resolved per
+                # server at handshake time. `None` (the default — the grant list ships
+                # empty) leaves the SDK's own default callback in place, and
+                # `ClientSession.initialize` then sends `elicitation=None`, so the
+                # capability is absent from THIS server's advertised set while a granted
+                # sibling's session advertises it. One expression, both behaviours: a
+                # branch here would be two session-construction paths to keep in step.
+                session = await stack.enter_async_context(
+                    ClientSession(
+                        read,
+                        write,
+                        elicitation_callback=elicitation_callback_for(self.name),
+                    )
+                )
                 await session.initialize()
                 await self._refresh_tools(session)
                 self._ready.set()

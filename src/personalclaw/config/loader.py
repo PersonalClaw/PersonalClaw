@@ -4237,6 +4237,15 @@ class AppConfig:
                     for d in (security_data.get("autonomy_denylist", []) or [])
                     if isinstance(d, dict)
                 ],
+                # MBR-1. An ALLOWLIST of MCP server names, so the filter direction is the
+                # fail-closed one: a non-string entry is dropped rather than coerced, and
+                # a blank name is dropped too — `""` would otherwise sit in the list
+                # matching nothing while making the grant list look non-empty.
+                mcp_elicitation_servers=[
+                    s.strip()
+                    for s in (security_data.get("mcp_elicitation_servers", []) or [])
+                    if isinstance(s, str) and s.strip()
+                ],
             ),
             auth=AuthConfigSection(
                 login_enabled=bool(auth_data.get("login_enabled", False)),

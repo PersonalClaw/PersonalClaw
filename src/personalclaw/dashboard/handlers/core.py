@@ -637,6 +637,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # consented `credentials_to_keychain` action (`/api/security/credentials/migrate`). A
     # PATCH that silently rewrote the credential store would be an unconfirmed data move.
     "security.credential_keychain": {"type": "bool"},
+    # MBR-1. The per-server elicitation grant. A `str_list` and not a bool, because the
+    # whole point is that consent is per SERVER: one boolean here would be the global
+    # "MCP can interrupt me" switch the plan forbids. `max_items` is generous rather than
+    # tight — it bounds the list, and a home with 60 configured MCP servers is a real
+    # shape, so a low cap would refuse a legitimate grant.
+    "security.mcp_elicitation_servers": {"type": "str_list", "max_items": 100},
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is
     # NOT here — it's its own endpoint (a later session). Budgets/breaker/scan are
     # plain scalars edited via Settings.

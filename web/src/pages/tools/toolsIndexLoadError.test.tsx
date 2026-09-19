@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 // ── Four tolerant reads and one that is the collection ───────────────────────────────────────────
 //
-// `#/tools` composes FIVE reads inside one cached fetcher, each with its own `.catch`. That pattern is
+// `#/tools` composes SIX reads inside one cached fetcher, each with its own `.catch`. That pattern is
 // deliberate here and this cycle keeps it: a dead MCP server, an unreachable pool or a missing groups
 // config must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
 // this very surface. Partial tolerance is the design.
@@ -34,6 +34,11 @@ function mockApi(over: Record<string, unknown>) {
       importableMcp: () => Promise.resolve([]),
       mcpPoolStats: () => Promise.resolve({ available: false }),
       toolGroups: () => Promise.resolve(null),
+      // MBR-1's per-server elicitation grant is the sixth read. Stubbed here rather than
+      // left off: this mock REPLACES `api` wholesale, so an absent member is `undefined`
+      // and calling it throws before its own `.catch` can attach — which would fail the
+      // page's whole fetcher and read as "the index read broke" on every case below.
+      mcpElicitationServers: () => Promise.resolve([] as string[]),
       ...over,
     },
   }))
