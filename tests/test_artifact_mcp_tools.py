@@ -150,3 +150,90 @@ class TestArtifactMcpTools:
         assert "saved artifact" in out.lower()
         saved = wired.list()
         assert any(a.kind == "react" for a in saved)
+
+    def test_collection_roundtrips_through_the_tools(self, wired) -> None:
+        """ARTIFACTS S1 (AE-1): `collection` round-trips through the MCP tools.
+
+        The write is `artifact_save`/`artifact_update`; the read-back is the
+        `artifact_list` filter narrowing (the rows deliberately carry no `collection`
+        field — the filter IS the read side, matching the `?collection=` REST query).
+        Regression: all three tools ADVERTISED `collection` in `_list_tools()` and read
+        it in the dispatch, but no schema in `MCP_CORE_SCHEMAS` declared it, so the
+        strict unknown-field check refused every call before it reached the store.
+        """
+        out = _call_tool(
+            "artifact_save",
+            {"name": "Q3 Review", "content": "<div/>", "kind": "widget", "collection": "Reports"},
+        )
+        assert "saved artifact" in out.lower(), out
+        assert wired.get("q3-review").collection == "Reports"
+
+        # A second artifact elsewhere, so the filter has something to exclude.
+        _call_tool(
+            "artifact_save",
+            {"name": "Other", "content": "<div/>", "kind": "widget", "collection": "Scratch"},
+        )
+        rows = json.loads(_call_tool("artifact_list", {"collection": "Reports"}))
+        assert [r["slug"] for r in rows] == ["q3-review"]
+
+        # Reassign, and the filter follows the new label (and drops the old one).
+        assert (
+            "updated artifact"
+            in _call_tool("artifact_update", {"slug": "q3-review", "collection": "Archive"}).lower()
+        )
+        assert wired.get("q3-review").collection == "Archive"
+        assert (
+            "no artifacts found" in _call_tool("artifact_list", {"collection": "Reports"}).lower()
+        )
+        rows = json.loads(_call_tool("artifact_list", {"collection": "Archive"}))
+        assert [r["slug"] for r in rows] == ["q3-review"]
+
+    def test_force_escapes_the_dedup_hint(self, wired) -> None:
+        """`force` was advertised and read by the dispatch but absent from the schema, so
+        the dedup hint's own instruction ("call artifact_save again with force=true") was
+        unreachable — the escape hatch answered with a validation error instead."""
+        _call_tool("artifact_save", {"name": "Dup", "content": "<div/>", "kind": "widget"})
+        hint = _call_tool("artifact_save", {"name": "Dup", "content": "<div/>", "kind": "widget"})
+        assert "already exists" in hint.lower() and "force=true" in hint.lower()
+
+        forced = _call_tool(
+            "artifact_save", {"name": "Dup", "content": "<div/>", "kind": "widget", "force": True}
+        )
+        assert "saved artifact" in forced.lower(), forced
+        assert len(wired.list()) == 2
+
+
+def test_every_advertised_property_is_accepted_by_the_validator() -> None:
+    """No advertised tool argument may be refused by the schema that actually guards it.
+
+    `_list_tools()` is what an MCP client reads; `MCP_CORE_SCHEMAS` is what
+    `_validate_args` enforces. They are two hand-maintained lists, and a property present
+    in the first but missing from the second is strictly worse than undocumented: the
+    dispatch reads it, the docs promise it, and the call fails closed on a confusing
+    "unknown field". Derived from both sources rather than enumerated, so a newly
+    advertised argument is covered the day it is added.
+
+    Scope note: this asserts nothing about tools with NO entry in `MCP_CORE_SCHEMAS`
+    (those skip argument validation altogether, which `validated_tool_names()` already
+    reports) — it only checks tools that claim to be validated.
+    """
+    from personalclaw.mcp_artifacts import _list_tools
+    from personalclaw.validation import MCP_CORE_SCHEMAS
+
+    offenders: dict[str, list[str]] = {}
+    checked: set[str] = set()
+    for tool in _list_tools():
+        schema = MCP_CORE_SCHEMAS.get(tool["name"])
+        if schema is None:
+            continue
+        checked.add(tool["name"])
+        advertised = set((tool.get("inputSchema") or {}).get("properties", {}) or {})
+        rejected = sorted(advertised - {f.name for f in schema.fields})
+        if rejected:
+            offenders[tool["name"]] = rejected
+
+    # Vacuity floor: the loop must actually have examined the artifact tools this
+    # regression was found in, so a refactor that empties `_list_tools()` fails here
+    # instead of passing silently.
+    assert {"artifact_save", "artifact_update", "artifact_list"} <= checked, checked
+    assert not offenders, f"advertised but refused by the validator: {offenders}"
