@@ -25,9 +25,12 @@ path with extra steps.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: One `{{ … }}` occurrence. Non-greedy so adjacent refs don't merge.
 _REF_RE = re.compile(r"\{\{(.+?)\}\}")
@@ -235,14 +238,15 @@ def _pipe_window(value: Any, size: Any = None) -> Any:
     reader needs: a window BOUNDS growth, and naming it that way is what makes a template
     review notice its absence on an unbounded sibling read.
     """
-    from personalclaw.workflows import longrun
-
     if value is None:
         return []
     if not isinstance(value, list):
         raise BindingError("window expects a list")
     try:
-        n = longrun.DEFAULT_SYNTHESIS_WINDOW if size is None else int(size)
+        # A bare `| window` means "the default window", which is the user's configured one —
+        # the same value `_default_sibling_view` applies. An explicit `| window(N)` is the
+        # template overriding it, and stays exactly that.
+        n = _synthesis_window() if size is None else int(size)
     except (TypeError, ValueError) as exc:
         raise BindingError("window size must be an integer") from exc
     if n <= 0:
@@ -599,18 +603,46 @@ def _flatten_sibling(value: Any) -> Any:
     return longrun._flatten_outputs(value)
 
 
+def _synthesis_window() -> int:
+    """`knowledge.synthesis_window`, or `longrun.DEFAULT_SYNTHESIS_WINDOW`. Its FIRST reader.
+
+    `longrun`'s own note on that constant said "`KnowledgeConfig.synthesis_window` overrides
+    it" — and nothing did. The field round-tripped and sat on the PATCH allowlist while every
+    sibling read used the module default, so the one knob for the cost regression its `_meta`
+    describes ("a run that gets slower and more expensive until it hits a context limit") could
+    not be turned. The reader lives HERE rather than in `longrun` because that module is pure
+    over explicit state by contract; this is already the impure boundary that defaults the view.
+
+    Falls back to the module default when config is unreadable: an unbounded sibling view is
+    the failure the window exists to prevent, so a bad read must not remove the bound.
+    """
+    from personalclaw.workflows import longrun
+
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        configured = int(getattr(AppConfig.load().knowledge, "synthesis_window", 0) or 0)
+    except Exception:
+        logger.debug("synthesis window config unreadable — using the default", exc_info=True)
+        return longrun.DEFAULT_SYNTHESIS_WINDOW
+    return configured if configured > 0 else longrun.DEFAULT_SYNTHESIS_WINDOW
+
+
 def _default_sibling_view(value: Any) -> Any:
     """The bounded, significance-filtered default for a sibling read.
 
     Bounded by default because the unbounded failure is invisible: nothing errors, the run
     just costs more every cycle until it hits a context limit hours in. An explicit `| full`
     is a template author saying they accept that.
+
+    The window comes from `knowledge.synthesis_window` (see `_synthesis_window`), so the
+    user's configured bound is what a sibling read actually applies.
     """
     from personalclaw.workflows import longrun
 
     if not isinstance(value, list):
         return value
-    return longrun.sibling_view(value)
+    return longrun.sibling_view(value, window=_synthesis_window())
 
 
 def _stringify(value: Any) -> str:

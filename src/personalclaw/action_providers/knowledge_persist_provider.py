@@ -41,6 +41,7 @@ from personalclaw.knowledge.semantics import (
     Mention,
     check_persist,
     decide_write,
+    max_mentions_per_claim,
 )
 
 logger = logging.getLogger(__name__)
@@ -974,7 +975,13 @@ def _merge_claims(
 
     A claim already present gains a mention from this source and re-aggregates its
     confidence; a new one is added. Returns (merged, mentions_appended).
+
+    `knowledge.max_mentions_per_claim` is read ONCE here and handed to every `add_mention`
+    below — this is the knob's production call site. Once per merge rather than once per claim
+    because a persist can carry dozens of claims and `AppConfig.load()` re-reads config.json;
+    a per-claim read would also let the ceiling change mid-merge.
     """
+    max_mentions = max_mentions_per_claim()
     by_id: dict[str, Claim] = {}
     for raw in existing or []:
         claim = Claim.from_dict(raw)
@@ -990,11 +997,17 @@ def _merge_claims(
         if found is None:
             # First sighting: seed a mention from this source so support_count starts at 1
             # rather than 0 — a claim nobody is recorded as having said reads as unsourced.
+            # Uncapped deliberately: a fresh claim holds no mentions, so the ceiling cannot
+            # bind here, and passing it would make a cap of 0 from an unreadable config able
+            # to create the unsourced claim this seeding exists to prevent.
             claim.add_mention(Mention(source_ref=source_ref, confidence=claim.confidence, quote=""))
             by_id[claim.id] = claim
             appended += 1
             continue
-        if found.add_mention(Mention(source_ref=source_ref, confidence=claim.confidence, quote="")):
+        if found.add_mention(
+            Mention(source_ref=source_ref, confidence=claim.confidence, quote=""),
+            max_mentions=max_mentions,
+        ):
             appended += 1
     return [c.to_dict() for c in by_id.values()], appended
 

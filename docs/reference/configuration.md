@@ -69,15 +69,32 @@ Models, or per agent on the Agents page.
 
 ## Goal loops (`loops.*`)
 
-All backend-only operator knobs; per-loop values (set in the loop creation form)
-override the defaults, and the hard cap binds everything.
+Per-loop values (set in the loop creation form) override the defaults, and the hard cap
+binds everything. The four runtime knobs are on **Settings → Autonomous loops**; the rest
+are operator knobs with no control.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
 | `loops.max_cycles_hard_cap` | integer | `100` | backend-only | Absolute ceiling on any loop's cycle budget, regardless of the per-loop limit. Safety brake against runaway cost. |
 | `loops.default_idle_secs` | integer | `120` | backend-only | Seconds between worker cycles when a loop doesn't specify its own idle timer. |
 | `loops.trust_ttl_secs` | integer | `86400` | backend-only | How long a loop worker keeps auto-approved tool trust before the supervisor expires it and requires re-authorization. |
-| `loops.worktree_sparse` | boolean | `true` | backend-only | When a parallel task's plan names the files it will touch, hydrate only those directories in its git worktree instead of the whole repo — most of a worktree's setup cost on a large codebase. A task that writes outside its stated scope widens its own worktree automatically, a task with no usable scope gets a full checkout, and the merged result is identical either way. Set `false` to always hydrate the full repo. |
+| `loops.judge_use_case` | enum: `reasoning`, `chat`, `code_tools`, `background`, `orchestration`, `loops` | `reasoning` | Settings → Autonomous loops | Which model use case the loop JUDGE rides — deliberately not the `loops` axis the worker rides, so a reviewer mistake is not correlated with the mistake it is reviewing. Set to `loops` to put judge and worker back on one binding. |
+| `loops.stagnation_window` | integer (2–50) | `5` | Settings → Autonomous loops | How many consecutive cycles of no progress stall a loop. The supervisor compares the last N findings: byte-identical reports, an identical source set, or N cycles with no new findings all mean the loop is spinning. Minimum 2 — a window of 1 can only compare a cycle with itself. |
+| `loops.check_work_stages` | boolean | `false` | Settings → Autonomous loops | After an SDLC stage's gate passes, re-derive 2–4 executable checks from what the stage CLAIMED and run them. Catches "the gate command passed but the claim was broader than the command". Off by default: it adds a filesystem pass per stage advance. |
+| `loops.worktree_sparse` | boolean | `true` | Settings → Autonomous loops | When a parallel task's plan names the files it will touch, hydrate only those directories in its git worktree instead of the whole repo — most of a worktree's setup cost on a large codebase. A task that writes outside its stated scope widens its own worktree automatically, a task with no usable scope gets a full checkout, and the merged result is identical either way. Set `false` to always hydrate the full repo. |
+
+## AI feedback (`feedback.*`)
+
+The 👍/👎 capture on AI judgment outputs and the deterministic per-producer accuracy
+thresholds. All four have a control in **Settings → AI feedback**. No model call anywhere
+and no telemetry: every number here is counted locally.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `feedback.enabled` | boolean | `true` | Settings → AI feedback | Show 👍/👎 on AI judgment outputs (inbox classifications, drafted replies, digests, loop findings) and track per-source accuracy. Off is a full kill switch — every `/api/feedback` route 404s and the thumbs stop rendering. Verdicts already collected are kept. |
+| `feedback.retire_threshold` | number (0.1–0.9) | `0.4` | Settings → AI feedback | Accuracy below which a judgment source earns a "retire this rule?" proposal, once it has at least `min_n` verdicts — and stops surfacing where that kind of source has a surfacing gate (today, skills). Higher retires sooner. |
+| `feedback.min_n` | integer (3–50) | `5` | Settings → AI feedback | Verdicts required before a source's accuracy is shown or acted on. Below this its row reads "collecting" and no number is displayed. |
+| `feedback.window_days` | integer (7–365) | `90` | Settings → AI feedback | How far back verdicts count toward a source's rolling accuracy. Shorter forgets an old mistake faster. |
 
 ## Memory (`memory.*`)
 
@@ -137,12 +154,37 @@ The continuous self-improvement review that runs after learning-worthy turns
 | `learning.surface_chip` | boolean | `true` | backend-only | Show the quiet "Learned: …" chip in chat when something is captured. |
 | `learning.skill_ladder` | boolean | `true` | backend-only | Allow the review to PROPOSE reusable skills — never auto-installed; proposals land in the Skill-proposals inbox for approval. |
 
-## Workflow surfacing (`workflows.*`)
+## Workflows (`workflows.*`)
+
+The engine's runtime knobs live on **Settings → Workflows**. Workflow definitions, runs and
+triggers are the `#/workflows` page, not this file.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `workflows.enabled` | boolean | `true` | backend-only | Kill switch for SOP surfacing (auto-inject the best-matching workflow above threshold). |
-| `workflows.match_threshold` | number (0–1) | `0.62` | backend-only | Cosine-similarity gate for a workflow match. The keyword fallback uses a fixed 0.7 word-overlap. |
+| `workflows.enabled` | boolean | `true` | Settings → Workflows | Master switch. Off stops new runs from starting and leaves stored definitions untouched. |
+| `workflows.self_schedule_max_outstanding` | integer (0–200) | `20` | Settings → Workflows | How many enabled automations the agent may hold at once via its own scheduling tools. Counted over ENABLED agent-created automations, so pausing one frees a slot without deleting it. |
+| `workflows.max_concurrent_llm_nodes` | integer (1–32) | `4` | Settings → Workflows | How many model-backed nodes may run at once in one workflow. |
+| `workflows.max_concurrent_io_nodes` | integer (1–32) | `2` | Settings → Workflows | How many action nodes may run at once. Kept low on purpose: a fan-out over minutes-long local-model actions would otherwise starve the run's model calls. |
+| `workflows.default_node_timeout_total_secs` | integer (0–86400) | `900` | Settings → Workflows | Wall-clock cap for one node. `0` disables it. |
+| `workflows.default_node_timeout_stall_secs` | integer (0–86400) | `300` | Settings → Workflows | Stop a node after this long with NO progress, even under the total cap. Progress events reset the clock. `0` disables it. |
+| `workflows.lease_ttl_secs` | integer (30–3600) | `900` | Settings → Workflows | How long a session's exclusive claim on a task lasts before another may take it. Deliberately short: a worker that needs longer renews, which proves it is alive. |
+| `workflows.model_tier_reasoning` | string | `reasoning` | Settings → Workflows | Which model use case a node asking for the `reasoning` tier resolves to. Templates name an intent, never a model, so they stay portable. |
+| `workflows.model_tier_standard` | string | `orchestration` | Settings → Workflows | Use case for the `standard` tier. Distinct from `fast` on purpose: collapsed onto one use case, the three tiers are decorative. |
+| `workflows.model_tier_fast` | string | `background` | Settings → Workflows | Use case for the `fast` tier. |
+| `workflows.surface_mode_default` | enum: `off`, `passive`, `suggest` | `off` | Settings → Workflows | What a NEWLY authored workflow does before you opt it in. `off` never surfaces itself (explicit invocation always works), `passive` injects its guidance, `suggest` may propose running itself. |
+| `workflows.match_threshold` | number (0–1) | `0.62` | Settings → Workflows | How confident the embedding tie-breaker must be to override a keyword tie when two templates score alike. Only consulted on a tie — keyword matches decide first. |
+| `workflows.max_materialized_per_foreach` | integer (1–500) | `20` | Settings → Workflows | The most Tasks one `foreach` node may put on your board. The run still executes every item; only the board rows are capped, and the run reports what it withheld. |
+| `workflows.retention_per_def` | integer (1–10000) | `100` | Settings → Workflows | Oldest runs beyond this are pruned. Matches the per-job cap schedules use. |
+| `workflows.confirmation_ttl_secs` | integer (0–2592000) | `604800` | Settings → Workflows | How long a pending approval stays live. A week, because the realistic case is being away. `0` never expires. A destructive confirmation auto-REJECTS on expiry; an ordinary one keeps waiting. |
+| `workflows.default_quiet_windows` | string (`HH:MM-HH:MM`) | `""` | Settings → Workflows | A quiet window applied to new automations that set none of their own. May wrap midnight. Empty means no default. Per-trigger settings always win. |
+| `workflows.duty_gate_default` | string | `""` | Settings → Workflows | The is-the-user-on-duty check applied to new automations that name none. Empty means no gate; `manual` is the built-in toggle and apps can supply others. The gate always fails OPEN. |
+| `workflows.workspace_default_mode` | enum: `scratch`, `worktree`, `in_place`, `container` | `scratch` | Settings → Workflows | Where a run works when its template declares no `workspace.mode`. A template's own declaration always wins. `in_place` is deliberately never the default — that is the mode in which a destructive step runs against real state. |
+| `workflows.workspace_teardown_on_expiry` | boolean | `true` | Settings → Workflows | Run a workspace's declared `teardown` before its directory is deleted by retention or an explicit delete. On, because teardown's job is to stop services while the directory still exists. |
+| `workflows.max_active_runs` | integer (1–100) | `10` | ⚠️ no control — see note | Documented as "how many workflow runs may execute at once", but **nothing reads it**: `watchdog.py` adopts every active run with no cap check. Tracked as an inert path in issue #465; deliberately given no Settings control, because a control would make a promise the code does not keep. |
+
+`workflows.max_concurrent_nodes` was **removed** in this release (#465). It claimed to be the
+per-run total "partitioned across typed lanes", and `lane_caps()` never consulted it — the two
+`max_concurrent_*_nodes` rows above are the live partition. A stored value for it is ignored.
 
 ## Security (`security.*`)
 
@@ -177,6 +219,8 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 | `tools.projection_rules[].name` | string | `""` | Settings → Tool output | Short label for the rule. |
 | `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
 | `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
+| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Continuously compress old, idle conversation history in the background (topic-segmented, attention-weighted) so long sessions stay fast. Every dropped span is archived first and stays recoverable, and the summary names its archive. Incognito/temporary chats are never touched. |
+| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only compress sessions untouched for at least this long — an active session is never compressed. |
 
 ## Voice (`voice.*`)
 

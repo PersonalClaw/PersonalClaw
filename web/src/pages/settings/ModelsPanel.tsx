@@ -23,7 +23,7 @@ import { TextInput } from '../../ui/forms'
 import { StatusPill } from '../../ui/StatusPill'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
-import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
 import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -272,8 +272,64 @@ export function ModelsPanel() {
       </Section>
       <HfTokenSection />
       <LoadedModelsSection />
+      <LocalRuntimeSection />
       <PromptCacheSection />
     </div>
+  )
+}
+
+/** The `local_models.*` config section — how the local inference runtime is bounded and how the
+ *  catalog is filtered.
+ *
+ *  All six were PATCH-editable, bounded, `_meta`-labelled and read (`fit.py`, `sidecar.py`,
+ *  `residency.py`, `hf_token.py`, `model_downloads.py`) with NO control anywhere in `web/` — the
+ *  section reads the values (`lib/residency.ts` applies `pressure_warn_pct` to the loaded-models
+ *  bar) and had no way to write any of them. It lives HERE because this panel already owns the
+ *  local stack: the loaded-models bar those two memory knobs govern, and the HuggingFace token
+ *  whose check interval is one of them, are both directly above. */
+function LocalRuntimeSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:local-models', () =>
+    api.personalclawConfig().then((c) => (c.local_models ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  if (!data && loadErr) return <LoadError what="local-model settings" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="local-model settings" />
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`local_models.${key}`, value).then(() => {
+      onSaved?.()
+      // `hide_unrunnable_models` and `memory_reserve_gb` both change the model-fit verdict this
+      // panel's catalog is filtered by, so the list must revalidate rather than keep a snapshot
+      // taken under the old thresholds.
+      invalidateKeys('settings:models')
+    }).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Local runtime" hint="Memory headroom for local inference, what the browse list shows, and the timeouts around a model sidecar.">
+      <RowGroup>
+        <ToggleRow label="Hide models this device cannot run" cfg={cfg} field="hide_unrunnable_models" patch={patch}
+          hint="Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog." />
+        <NumberRow label="Memory reserve (GB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
+          hint="Memory held back for your OS and the inference runtime, subtracted before any model-fit verdict. Raise it if models fit on paper but your machine struggles — verdicts get more cautious. It never blocks anything." />
+        <NumberRow label="Memory pressure warning (%)" cfg={cfg} field="pressure_warn_pct" min={1} max={100} patch={patch}
+          hint="Percent of system RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you." />
+        <NumberRow label="Sidecar restart limit" cfg={cfg} field="sidecar_restart_max" min={0} max={20} patch={patch}
+          hint="How many times in a row a crashed model sidecar is respawned before the runner gives up and reports the failure instead." />
+        <NumberRow label="Model selftest timeout (seconds)" cfg={cfg} field="selftest_timeout_s" min={5} max={600} patch={patch}
+          hint="How long a per-capability selftest may run before it is stopped and reported as timed out. A selftest runs a real inference on click, so this bounds a model that hangs while loading." />
+        <NumberRow label="HuggingFace token check interval (seconds)" cfg={cfg} field="whoami_ttl_s" min={0} max={86400} step={60} patch={patch}
+          hint="How long a HuggingFace token's validity is cached after a successful check, so listing models does not re-call HuggingFace every time. 0 re-checks on every read." />
+      </RowGroup>
+    </Section>
   )
 }
 

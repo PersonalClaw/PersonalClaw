@@ -821,12 +821,6 @@
     "type": "int"
   },
   {
-    "default": true,
-    "path": "knowledge.idempotent_persist",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
     "default": 12,
     "path": "knowledge.lint_every_n_persists",
     "sensitive": false,
@@ -1828,12 +1822,6 @@
   {
     "default": 4,
     "path": "workflows.max_concurrent_llm_nodes",
-    "sensitive": false,
-    "type": "int"
-  },
-  {
-    "default": 6,
-    "path": "workflows.max_concurrent_nodes",
     "sensitive": false,
     "type": "int"
   },

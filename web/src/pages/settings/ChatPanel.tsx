@@ -26,6 +26,7 @@ export function ChatPanel() {
   const [routing, setRouting] = useState<Record<string, unknown> | null>(null)
   const [resilience, setResilience] = useState<Record<string, unknown> | null>(null)
   const [checkpoints, setCheckpoints] = useState<Record<string, unknown> | null>(null)
+  const [tools, setTools] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -49,20 +50,21 @@ export function ChatPanel() {
       routing: (plaw.agents_routing ?? {}) as Record<string, unknown>,
       resilience: (plaw.resilience ?? {}) as Record<string, unknown>,
       checkpoints: (plaw.checkpoints ?? {}) as Record<string, unknown>,
+      tools: (plaw.tools ?? {}) as Record<string, unknown>,
     }
   }, { persist: true })
 
   useEffect(() => {
     if (data) {
       setCfg(data.cfg); setSession(data.session); setRouting(data.routing)
-      setResilience(data.resilience); setCheckpoints(data.checkpoints)
+      setResilience(data.resilience); setCheckpoints(data.checkpoints); setTools(data.tools)
     }
   }, [data])
 
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg || !session || !routing || !resilience || !checkpoints) return <FormSkeleton sections={3} what="settings" />
+  if (!data || !cfg || !session || !routing || !resilience || !checkpoints || !tools) return <FormSkeleton sections={3} what="settings" />
 
   return (
     <div>
@@ -73,6 +75,7 @@ export function ChatPanel() {
       <MidTurnSection resilience={resilience} setResilience={setResilience} />
       <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
+      <BackgroundCompressionSection tools={tools} setTools={setTools} />
       <CheckpointsSection checkpoints={checkpoints} setCheckpoints={setCheckpoints} />
       <StartersSection />
     </div>
@@ -397,6 +400,52 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
             </Row>
             <NumberRow label="Warm pool TTL" hint="Recycle a warm session after this long unused." value={Number(session.pool_ttl_secs ?? 1800)} min={0} max={7200} step={60} suffix="s" onCommit={(n, l) => patch('pool_ttl_secs', n, undefined, l)} saved={saved} />
           </>
+        )}
+      </RowGroup>
+    </Section>
+  )
+}
+
+// ── Background compression (tools.bg_compress_* config) ──────────────────────
+/** The always-on complement to the auto-compact threshold above: old, idle, at-rest history is
+ *  topic-segmented and compressed on the maintenance cadence, with no manual trigger.
+ *
+ *  Its two allowlisted paths (`tools.bg_compress_enabled`, `tools.bg_compress_idle_days`) were
+ *  PATCH-editable and read by `bg_compress.py` with NO control anywhere in `web/` — one of the
+ *  sections issue #2801 counted. They sit here, beside the compaction threshold they complement,
+ *  rather than on the Tool-output page: that panel is about PROJECTING a single tool result, and
+ *  this is about a session's stored history.
+ *
+ *  🪤 `tools.*` IS A DIFFERENT SECTION FROM `session.*`, so this owns its own state and its own
+ *  patch. One setter reaching into both would roll a failed save back into the wrong object — the
+ *  reason `SourcesPanel` declares `patchKnowledge` separately from `patch`. */
+function BackgroundCompressionSection({ tools, setTools }: {
+  tools: Record<string, unknown>; setTools: (t: Record<string, unknown>) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const patch = (key: string, value: unknown, _cb?: () => void, label?: string) => {
+    const prev = tools[key]
+    setTools({ ...tools, [key]: value })
+    api.patchConfig(`tools.${key}`, value).then(flash).catch((e) => {
+      setTools({ ...tools, [key]: prev })
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  const on = tools.bg_compress_enabled !== false
+  return (
+    <Section title="Background compression" hint="Old, idle chats are compressed in the background so long sessions stay fast — no manual compaction needed.">
+      <RowGroup>
+        <Row label="Background compression"
+          hint="Continuously compress old, idle conversation history (topic-segmented, attention-weighted). Every dropped span is archived first and stays fully recoverable, and the summary names its archive. Incognito and temporary chats are never touched.">
+          <div className="flex items-center gap-2">
+            <SavedToast show={saved} />
+            <Toggle on={on} onChange={(v) => patch('bg_compress_enabled', v, undefined, 'Background compression')} label="Background compression" />
+          </div>
+        </Row>
+        {on && (
+          <NumberRow label="Idle window before compressing" hint="Only compress chats untouched for at least this long. An active chat is never compressed."
+            value={Number(tools.bg_compress_idle_days ?? 7)} min={0} max={365} step={1} suffix="d"
+            onCommit={(n, l) => patch('bg_compress_idle_days', n, undefined, l)} saved={saved} />
         )}
       </RowGroup>
     </Section>

@@ -993,7 +993,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.enabled": {"type": "bool"},
     "workflows.max_active_runs": {"type": "int", "min": 1, "max": 100},
     "workflows.self_schedule_max_outstanding": {"type": "int", "min": 0, "max": 200},
-    "workflows.max_concurrent_nodes": {"type": "int", "min": 1, "max": 64},
+    # No `workflows.max_concurrent_nodes`: the two per-lane caps below are the live partition,
+    # and the bare total that claimed to be "partitioned across typed lanes" was read by
+    # nothing (#465). Cap a lane, not a total that no lane consults.
     "workflows.default_node_timeout_total_secs": {"type": "int", "min": 0, "max": 86400},
     "workflows.default_node_timeout_stall_secs": {"type": "int", "min": 0, "max": 86400},
     "workflows.retention_per_def": {"type": "int", "min": 1, "max": 10000},
@@ -1084,7 +1086,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # KNOWLEDGE-SYNTHESIS: the write-semantics knobs worth changing without a restart.
     # `require_citations` is here deliberately — an owner mid-research may need to store an
     # unsourced note and should not have to restart the gateway to do it.
-    "knowledge.idempotent_persist": {"type": "bool"},
+    # No `knowledge.idempotent_persist`: content-derived write identity is an invariant, not a
+    # switch — see `KnowledgeConfig`'s docstring. It was allowlisted and read by nothing (#465).
     "knowledge.require_citations": {"type": "bool"},
     "knowledge.report_budget_chars": {"type": "int", "min": 1000, "max": 500000},
     "knowledge.max_mentions_per_claim": {"type": "int", "min": 1, "max": 200},
