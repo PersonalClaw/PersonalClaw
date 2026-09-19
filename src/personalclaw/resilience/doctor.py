@@ -889,6 +889,12 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
       genuine misconfiguration: anything that reaches the interface walks in.
       (``effective_bind`` forces NONE to loopback, so this only arises when
       ``PERSONALCLAW_BIND_HOST`` overrode the bind.)
+    * **bypass behind a declared proxy** → not ok (RUA-5). The opt-in
+      ``PERSONALCLAW_BYPASS_LOCAL_NETWORKS`` bypass is armed on an instance that
+      also declares ``trusted_proxies`` or a ``public_url``. See the comment block
+      at the branch itself for why the *combination* is the hazard when neither
+      half alone is. **Reported, never enforced** — this row changes no admission
+      decision.
     * **local-only** → ok. Normal local install, no tailnet — informational: see
       remote-access.md to reach it from a phone.
 
@@ -897,7 +903,9 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
     """
     from personalclaw.dashboard.origin import (
         auth_is_off,
+        declared_proxy_front,
         is_local_bind,
+        local_network_bypass_enabled,
         resolve_bind_host,
         tailnet_ip,
         tailscale_cli_present,
@@ -931,6 +939,60 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
                 "guide": "docs/guides/remote-access.md",
             },
         )
+
+    # ── The bypass-behind-a-proxy hazard (RUA-5) ──
+    #
+    # DIAGNOSTIC ONLY. This row reports; it does not gate. Who is admitted is decided
+    # entirely by the token-auth middleware and is byte-identical with or without this
+    # block. Whether that admission behaviour *should* change is an owner fork
+    # (product-roadmap:structural_block:security-control-fork-…), not this probe's call —
+    # so the probe makes the hazard VISIBLE and stops there.
+    #
+    # Why the COMBINATION is the hazard when neither half alone is. With the bypass armed
+    # the middleware grants token-free access to any request whose resolved client address
+    # is private (`is_private_network(_resolved_client_ip(request))`, token_auth.py:943-946).
+    # That is defensible on a home LAN, where "private address" really does mean "someone in
+    # my house". Behind a reverse proxy it stops meaning that: the address the middleware
+    # resolves is the PROXY's — 127.0.0.1 for a local tunnel daemon, 172.18.x.x on a compose
+    # bridge — and both are private. So every request the proxy forwards, from anywhere on
+    # the internet, is admitted without a token. Declaring `trusted_proxies` or `public_url`
+    # is precisely the operator saying "my traffic arrives through a proxy", which is what
+    # makes the pair reportable while either half alone is not.
+    #
+    # MIRRORED, not re-derived (cli_doctor.py:344-349 asks for this, #2860): both facts come
+    # from `dashboard/origin` — the module that already mirrors the middleware's short-circuits
+    # for `loopback_requires_token` — the bypass via `local_network_bypass_enabled()` and the
+    # config side via `declared_proxy_front()`, which reads `dashboard/exposure`, the single
+    # module that owns the exposure signal. This row spells neither the env var nor the config
+    # keys itself, so it cannot drift from the behaviour it reports on. Going through `origin`
+    # rather than importing `exposure` here is also what keeps `structural-import-direction`
+    # honest: core must not import the HTTP surface, `origin` is doctor's ONE grandfathered
+    # `dashboard` edge, and `dashboard` importing itself is exempt by construction.
+    #
+    # Placed before the tailnet branch because a tailnet does not make the bypass safe behind
+    # a proxy, and after the auth-OFF branch so that broader, already-shipped case keeps its
+    # own message. Guarded on the bypass FIRST: not armed ⇒ no config is read and this row is
+    # byte-identical to what it returned before this block existed.
+    if local_network_bypass_enabled():
+        declared_proxies, has_public_url = await asyncio.to_thread(declared_proxy_front)
+        if declared_proxies or has_public_url:
+            return ProbeResult(
+                ok=False,
+                detail=(
+                    "PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 on an instance that declares a "
+                    "proxy in front of it: the bypass admits any client whose address is "
+                    "private, and behind a proxy that address is the proxy's own — so "
+                    "requests arriving through it are never asked for a token. Unset the "
+                    "variable, or clear trusted_proxies/public_url "
+                    "(see docs/guides/remote-access.md)"
+                ),
+                evidence={
+                    "bypass_local_networks": True,
+                    "trusted_proxies": declared_proxies,
+                    "public_url_declared": has_public_url,
+                    "guide": "docs/guides/remote-access.md",
+                },
+            )
 
     if tnet:
         base_url = f"http://{tnet}:{port}" if port else f"http://{tnet}"

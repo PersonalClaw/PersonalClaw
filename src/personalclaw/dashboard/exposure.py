@@ -11,10 +11,20 @@ send to Slack", and people legitimately set it to a LAN address or an `http://` 
 user would be silently unable to log in, with nothing pointing at the cause. Exposure has to be
 its own deliberate statement.
 
-**Trusted proxies are the load-bearing part.** `X-Forwarded-Proto`/`X-Forwarded-For` are
-attacker-controlled unless the peer that set them is one you named. Trusting them by shape
-("looks like a private address") is the classic mistake: any container neighbour, any LAN
-device, any SSRF-able local service is on a private address.
+**Trusted proxies are the load-bearing part.** `X-Real-IP` — the one client-IP header
+`token_auth._resolved_client_ip` reads — is attacker-controlled unless the peer that set it is
+one you named. Trusting it by shape ("looks like a private address") is the classic mistake:
+any container neighbour, any LAN device, any SSRF-able local service is on a private address.
+
+**Why not `X-Forwarded-For`/`-Proto` (RUA-6).** Neither is read anywhere in `src/`, and this
+docstring used to claim otherwise — the third surface carrying that stale promise after
+`config/loader.py` and `docs/guides/remote-access.md`, which
+`tests/test_forwarded_header_docs_match_code.py` now keeps honest. `X-Forwarded-For` is a *list*
+whose trustworthy element depends on a hop count, and the resolved address feeds an admission
+decision (the `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` grant reads it through `is_private_network`),
+so honoring it would widen who gets in — an owner call, not a docs fix. `X-Forwarded-Proto` has
+no consumer to inform: `is_https()` below derives the `Secure`/`wss` posture from the operator's
+own declared `public_url`, deliberately, so a caller cannot assert it per-request.
 """
 
 from __future__ import annotations
