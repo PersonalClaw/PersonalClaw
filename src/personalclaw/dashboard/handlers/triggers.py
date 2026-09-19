@@ -386,11 +386,39 @@ def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
     }
 
 
-def _serialize_store(
-    trigger: Any, *, broken: list[str] | None = None, owner: str = ""
-) -> dict[str, Any]:
-    """A `TriggerStore` trigger in the shared list shape. Id is `store:<kind>:<slug>` so the
-    mutation routes back to the store; `raw_id` is the store's own id."""
+def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
+    """A loaded row's ``(errors, warnings)`` as plain messages, for the wire.
+
+    🔴 ONE OWNER FOR BOTH SEVERITIES (issue 531). `LoadedTrigger` has carried `errors` AND `warnings`
+    since S87 — `validate_spec` raises the `MIN_CLOCK_INTERVAL_SECS` warning for any interval under
+    900s, and its own comment promises "it fires, and it is visibly flagged". It was not flagged:
+    every projection below passed `row.errors` only, so the wire had a `broken` key and no
+    `warnings` key at all. Measured on a live gateway, on the trigger the create page produces for
+    Interval / 1 / minutes::
+
+        row.warnings           ['60s is below the 900s floor for an LLM-invoking trigger; …']
+        wire 'broken'          []
+        'warnings' on the wire False
+
+    A computed-then-discarded signal is a producer with no consumer, and a floor warning nobody can
+    see is the same as no floor at all. Derived here from the row rather than passed in per call
+    site, because four call sites each remembering to forward a second list is how one of them
+    doesn't — three of them already forwarded NO errors (the create, update and toggle responses all
+    answered `broken: []` for a row the list showed as broken).
+    """
+    return ([i.message for i in row.errors], [i.message for i in row.warnings])
+
+
+def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
+    """A `TriggerStore` row in the shared list shape. Id is `store:<kind>:<slug>` so the
+    mutation routes back to the store; `raw_id` is the store's own id.
+
+    Takes the `LoadedTrigger`, not its `.trigger`: the issues belong to the READ (see
+    `LoadedTrigger`'s own docstring), so a projection handed a bare entity cannot report them and
+    has to be told — which is how the write responses ended up reporting every row as clean.
+    """
+    trigger = row.trigger
+    errors, warnings = _issue_messages(row)
     return {
         "kind": _STORE,
         "store_kind": trigger.kind,
@@ -412,7 +440,8 @@ def _serialize_store(
         "state": trigger.state,
         "run_count": trigger.run_count,
         "last_error": _redact(trigger.last_error_summary or ""),
-        "broken": list(broken or []),
+        "broken": errors,
+        "warnings": warnings,
         **_attribution(trigger, owner=owner),
     }
 
@@ -453,28 +482,28 @@ def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
     owner = owner_username()
     clock_rows = [row for row in all_rows(store) if row.trigger.kind == "clock"]
     if clock_rows:
-        return [
-            _schedule_row_for(
-                state, row.trigger, issues=[i.message for i in row.errors], owner=owner
-            )
-            for row in clock_rows
-        ]
+        return [_schedule_row_for(state, row, owner=owner) for row in clock_rows]
     return []
 
 
-def _schedule_row_for(
-    state: DashboardState, trigger: Any, *, issues: list[str] | None = None, owner: str = ""
-) -> dict[str, Any]:
+def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
     """ONE schedule row, projected and redacted (S101).
 
     Factored out of `_schedule_rows` so the list and the single-row write responses (create,
     update) answer in exactly the same shape. Two projections would drift, and a create that
     returned a different shape than the list is how a UI ends up with two ideas of one trigger.
+
+    Takes the `LoadedTrigger` for the reason `_issue_messages` explains: `issues` used to be a
+    caller-supplied list, and the two write responses that did not supply it answered `broken: []`
+    for a row the list showed as broken — so "the same shape" held for the KEYS and not for their
+    contents. Deriving both severities from the row makes that impossible to get wrong again.
     """
     import time as _time
 
     from personalclaw.triggers.schedule_view import to_schedule_row
 
+    trigger = row.trigger
+    errors, warnings = _issue_messages(row)
     store = _trigger_store()
     projected = to_schedule_row(
         trigger,
@@ -486,7 +515,8 @@ def _schedule_row_for(
     for key in ("message", "last_error", "schedule"):
         if projected.get(key):
             projected[key] = _redact(str(projected[key]))
-    projected["broken"] = list(issues or [])
+    projected["broken"] = errors
+    projected["warnings"] = warnings
     projected.update(_attribution(trigger, owner=owner))
     return projected
 
@@ -702,11 +732,7 @@ async def api_triggers(request: web.Request) -> web.Response:
         owner = owner_username()
         for row in all_rows(_trigger_store()):
             if row.trigger.kind in _STORE_ONLY_KINDS:
-                triggers.append(
-                    _serialize_store(
-                        row.trigger, broken=[i.message for i in row.errors], owner=owner
-                    )
-                )
+                triggers.append(_serialize_store(row, owner=owner))
 
     from personalclaw.schedule import get_local_tz
     from personalclaw.triggers.ownership import owner_username
@@ -992,7 +1018,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         source="dashboard",
         resources=f"trigger:schedule:{raw_id}:{name}",
     )
-    projected = _schedule_row_for(state, row.trigger) if row is not None else {}
+    projected = _schedule_row_for(state, row) if row is not None else {}
     return web.json_response({"ok": True, "trigger": projected})
 
 
@@ -1263,31 +1289,36 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
         from personalclaw.triggers import tools as _tools
         from personalclaw.triggers.schedule_view import channel_of
 
-        spec = dict(row.trigger.spec or {})
-        cadence_changed = False
+        before = dict(row.trigger.spec or {})
+        spec = dict(before)
         if "cron_expr" in kwargs and kwargs["cron_expr"]:
             spec = {"kind": "cron", "expr": str(kwargs["cron_expr"]).strip(), **_carried(spec)}
-            cadence_changed = True
         elif "every_secs" in kwargs and kwargs["every_secs"]:
             spec = {
                 "kind": "interval",
                 "interval_secs": int(kwargs["every_secs"]),
                 **_carried(spec),
             }
-            cadence_changed = True
         if "timezone" in kwargs:
             spec["timezone"] = kwargs["timezone"]
-            cadence_changed = True
         if "strict_schedule" in kwargs:
             spec["strict"] = bool(kwargs["strict_schedule"])
         if "skip_dates" in kwargs:
             spec["skip_dates"] = kwargs["skip_dates"]
-            # A CADENCE change, not a cosmetic one. `arm.cadence_next_fire` steps past `skip_dates`
-            # when it computes `next_fire_at`, so a row already armed for a date the user just
-            # blacked out would fire on it anyway — the armed instant predates the new list. Adding
-            # today to the skip list has to invalidate today's armed fire, which is the entire
-            # point of asking for it.
-            cadence_changed = True
+        # 🔴 DERIVED FROM THE VALUES, not from which keys the body happened to carry (issue 531).
+        # Four separate `cadence_changed = True` lines used to fire on PRESENCE, and the edit form
+        # sends `timezone` on every save — so a name-only edit cleared `next_fire_at` and re-armed.
+        # Measured live: two consecutive renames of one 3600s trigger, changing nothing but the
+        # name, moved its next fire 04:33:08 → 04:34:21, each save re-phasing the interval by the
+        # wall time since the last one. A trigger 59 minutes into an hourly cadence lost the hour.
+        #
+        # Comparing the resulting spec against the one on disk means only a real change re-arms, and
+        # it holds for every field at once instead of four hand-set flags. The EXCLUSION is the
+        # list, not the inclusion: `strict` is the one spec key that does not move the armed instant
+        # (it governs jitter at fire time, matching the old code, which never flagged it), so a NEW
+        # spec key defaults to "re-arm" — the safe direction, since a stale armed fire is a wrong
+        # fire while a redundant re-arm only re-phases a cadence the user just changed anyway.
+        cadence_changed = _cadence_fingerprint(spec) != _cadence_fingerprint(before)
 
         patch: dict[str, Any] = {"spec": spec}
         if "name" in kwargs:
@@ -1327,11 +1358,40 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
             store.upsert(updated)
             _arm_if_needed(store, raw)
         state.push_refresh("crons")
-        return web.json_response(
-            {"ok": True, "trigger": _schedule_row_for(state, store.get(raw).trigger)}
-        )
+        return web.json_response({"ok": True, "trigger": _schedule_row_for(state, store.get(raw))})
 
     return web.json_response({"error": "not found"}, status=404)
+
+
+#: Spec keys that do NOT move a trigger's armed instant, and so must not force a re-arm. `strict`
+#: governs jitter at FIRE time (`arm.cadence_next_fire` never reads it when it computes
+#: `next_fire_at`), which is why the pre-issue-531 code already left it out of its flags. Everything
+#: else — `kind`, `expr`, `interval_secs`, `at`, `timezone`, `skip_dates` and any key added later —
+#: changes when the next fire lands, so it belongs on the re-arm side by default.
+_NON_CADENCE_SPEC_KEYS: frozenset[str] = frozenset({"strict"})
+
+
+def _cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
+    """The part of a clock spec that decides WHEN the next fire lands, canonicalized.
+
+    Used to answer "did this edit actually change the cadence?" by comparing before against after,
+    rather than by asking which keys the request body happened to carry (issue 531).
+
+    🔴 AN ABSENT KEY AND ITS EMPTY VALUE ARE THE SAME STATE, and collapsing them is the whole reason
+    this is a function. The edit form posts `timezone: ""` and `skip_dates: []` on every save, so a
+    row stored as `{kind, interval_secs}` comes back as `{kind, interval_secs, timezone: "",
+    skip_dates: []}` — different dicts, identical schedules. A raw `!=` would call that a cadence
+    change and re-arm on every cosmetic edit, which is the defect. Sound because it matches how the
+    ARM path reads them: `arm.cadence_next_fire` resolves the zone through
+    `str(spec.get("timezone", "") or "")` and the skip list through `list(spec.get(...) or [])`, so
+    missing and empty are indistinguishable there too. `0` is deliberately NOT collapsed — an
+    `interval_secs` of 0 is a broken value, not an absent one.
+    """
+    return {
+        key: value
+        for key, value in spec.items()
+        if key not in _NON_CADENCE_SPEC_KEYS and value is not None and value != "" and value != []
+    }
 
 
 def _carried(spec: dict[str, Any]) -> dict[str, Any]:
@@ -1366,7 +1426,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         result = T.set_paused(store, trigger_id=raw, paused=paused)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
-        return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw).trigger)})
+        return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw))})
     if kind == _LIFECYCLE:
         hook = _hook_store(state).toggle(raw)
         if not hook:
@@ -2268,7 +2328,8 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
     # that does not exist on a cron at all. The orphan-workflow and broad-glob checks were therefore
     # scanning blanks for every schedule trigger: present, reviewed, and diagnosing nothing.
     store = _trigger_store()
-    store_rows = [row for row in store.load() if row.trigger.kind == "clock"]
+    loaded_rows = store.load()
+    store_rows = [row for row in loaded_rows if row.trigger.kind == "clock"]
     if store_rows:
         for row in store_rows:
             rows.append(
@@ -2315,6 +2376,38 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
                         "trigger cannot do what it says"
                         if is_error
                         else "confirm this is intended, or adjust the schedule/skip date"
+                    ),
+                )
+            )
+    # 🔴 THE LOAD-TIME ISSUES, which this doctor could not see either (issue 531). `diagnose` reads
+    # projected dicts and `semantic_spec_issues` owns the fire-path semantics; NEITHER re-runs
+    # `models.validate_spec`, so the whole structural half — every unknown spec key, every missing
+    # required field, and the `MIN_CLOCK_INTERVAL_SECS` floor warning — stopped at the store. The
+    # doctor answered `healthy: true, findings: []` on a home holding a 60-second LLM-invoking
+    # trigger whose own `row.warnings` named the problem.
+    #
+    # Folded from `row.issues` rather than by re-deriving the checks here: a second copy of the
+    # floor rule is a second owner, and the two would drift the first time the number moved. Every
+    # kind, not just `clock` — the store-only kinds validate through the same function, and a doctor
+    # that covered one kind's parse issues would be a doctor whose silence means nothing.
+    for loaded in loaded_rows:
+        # The same namespace the LIST route gives this row, so a UI can join a finding back onto the
+        # trigger it is about: `_schedule_rows` serves clock rows under `schedule:` and
+        # `_serialize_store` serves the store-only kinds under `store:`.
+        ns = _SCHEDULE if loaded.trigger.kind == "clock" else _STORE
+        for issue in loaded.issues:
+            is_error = issue.severity == "error"
+            report.findings.append(
+                Finding(
+                    trigger_id=f"{ns}:{loaded.trigger.id}",
+                    code="invalid_spec" if is_error else "spec_warning",
+                    detail=f"{issue.path}: {issue.message}",
+                    fix=(
+                        "correct the field named above — the store kept this row but refuses to "
+                        "arm it, so the automation exists and cannot fire"
+                        if is_error
+                        else "confirm this is intended — the row runs as authored, this is an "
+                        "advisory the store recorded and no surface used to show"
                     ),
                 )
             )

@@ -481,29 +481,15 @@ def _carry_runtime_state(existing: Trigger, incoming: Trigger) -> None:
             setattr(incoming, name, value)
 
 
-def health(store: TriggerStore) -> dict[str, Any]:
-    """A one-glance summary: how many rows, how many broken, and which.
-
-    Names the broken IDS rather than only counting them. "3 triggers have problems" sends the user
-    hunting; naming them is the difference between a report and a chore. Same rule
-    `inbox.InboxView.unrenderable` follows.
-    """
-    rows = store.load()
-    broken = [r for r in rows if not r.ok]
-    return {
-        "path": str(store.path),
-        "exists": store.exists(),
-        "total": len(rows),
-        "enabled": sum(1 for r in rows if r.trigger.enabled),
-        "broken": len(broken),
-        "broken_ids": [r.trigger.id for r in broken if r.trigger.id],
-        "warnings": sum(len(r.warnings) for r in rows),
-        "by_kind": _by_kind(rows),
-    }
-
-
-def _by_kind(rows: list[LoadedTrigger]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for row in rows:
-        counts[row.trigger.kind] = counts.get(row.trigger.kind, 0) + 1
-    return dict(sorted(counts.items()))
+#: 🔴 `health(store)` USED TO LIVE HERE, and it was the third place this store's warnings went to
+#: die (issue 531). It summed `r.warnings` across every row — the one function in the package that
+#: acknowledged them — and had **zero production callers**: measured across `src/`, the only two
+#: were `tests/test_triggers_store.py`, testing the function on itself.
+#:
+#: Deleted rather than given a caller. The signal it counted now reaches two surfaces that a user
+#: actually looks at, per row and by name: `warnings` rides the wire beside `broken`
+#: (`dashboard/handlers/triggers.py::_issue_messages`), and `GET /api/triggers/doctor` folds every
+#: loaded row's issues into its findings. A COUNT is strictly weaker than either — the function's
+#: own docstring argued that naming the broken ids beats counting them, and the same argument
+#: retires it. Inventing a caller to justify a producer is the defect this issue is about, one
+#: level up.

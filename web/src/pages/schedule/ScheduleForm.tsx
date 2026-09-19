@@ -9,7 +9,7 @@ import { SoonTag } from '../tasks/taskMeta'
 import { epochSeconds } from '../../lib/epoch'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
-  secsToInterval, intervalToSecs, INTERVAL_UNITS, CRON_PRESETS,
+  secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
 } from './scheduleMeta'
 
 /** The draft mirrors the create/update payload but keeps the kind/mode axes
@@ -210,14 +210,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       <Field label="When" right={km.soon ? <SoonTag /> : undefined} hint={km.hint}>
         <Segmented options={KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={draft.kind} onChange={(v) => set('kind', v as ScheduleKind)} />
       </Field>
-      {draft.kind === 'every' && (
-        <div className="flex items-center gap-s">
-          <input type="number" min={1} value={draft.intervalValue} onChange={(e) => set('intervalValue', Math.max(1, Number(e.target.value) || 1))}
-            name="interval-value" aria-label="Run every — interval count"
-            className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-          <NativeSelect value={draft.intervalUnit} onChange={(v) => set('intervalUnit', v)} options={INTERVAL_UNITS.map((u) => ({ value: u.key, label: u.label }))} label="Run every — interval unit" name="interval-unit" />
-        </div>
-      )}
+      {draft.kind === 'every' && <IntervalField draft={draft} set={set} />}
       {draft.kind === 'cron' && <CronField value={draft.cron} onChange={(v) => set('cron', v)} />}
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
@@ -350,6 +343,39 @@ function CheckRow({ label, hint, checked, onChange }: { label: string; hint: str
         <span className="block text-on-surface-low text-[0.75rem]">{hint}</span>
       </span>
     </label>
+  )
+}
+
+/** The interval composer — a count, a unit, and the cadence floor said out loud.
+ *
+ *  The floor line is the ONLY guard this control has, and deliberately so: `MIN_INTERVAL_SECS`
+ *  mirrors the backend's `MIN_CLOCK_INTERVAL_SECS`, which WARNS rather than refuses (R1 makes it
+ *  overridable — a fast local-model poll is a legitimate choice), so gating Save on it here would
+ *  refuse a cadence the API accepts. Before this, `min={1}` was the whole story and the floor was
+ *  mentioned nowhere, so the one thing standing between a typo and a per-minute LLM invocation was a
+ *  warning the backend computed and every surface then dropped (issue 531).
+ */
+function IntervalField({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void }) {
+  const secs = intervalToSecs(draft.intervalValue, draft.intervalUnit)
+  const belowFloor = secs > 0 && secs < MIN_INTERVAL_SECS
+  return (
+    <div className="flex flex-col gap-s">
+      <div className="flex items-center gap-s">
+        <input type="number" min={1} value={draft.intervalValue} onChange={(e) => set('intervalValue', Math.max(1, Number(e.target.value) || 1))}
+          name="interval-value" aria-label="Run every — interval count"
+          aria-describedby={belowFloor ? 'interval-floor-hint' : undefined}
+          className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        <NativeSelect value={draft.intervalUnit} onChange={(v) => set('intervalUnit', v)} options={INTERVAL_UNITS.map((u) => ({ value: u.key, label: u.label }))} label="Run every — interval unit" name="interval-unit" />
+      </div>
+      {/* `role="status"`, not `role="alert"`: this is an advisory the user may knowingly accept,
+          and an assertive interruption on every keystroke under fifteen minutes would train them
+          to ignore it. Same reason it is warn-toned rather than danger-toned. */}
+      {belowFloor && (
+        <p role="status" id="interval-floor-hint" data-type="caption" className="text-warn">
+          Every {secs}s is below the {MIN_INTERVAL_SECS}s floor for an LLM-invoking trigger. It will still run — confirm this is what you want.
+        </p>
+      )}
+    </div>
   )
 }
 
