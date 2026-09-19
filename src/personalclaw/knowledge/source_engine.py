@@ -6,7 +6,9 @@ whose interval has elapsed, and sleeps until the next is due (capped, like the t
 scheduler, so an external edit is picked up within one poll). It enrolls the poll-capable
 providers registered in ``knowledge_providers.registry`` — a provider is poll-capable when
 it subclasses :class:`~personalclaw.knowledge_providers.base.KnowledgeSourceProvider` (the
-``poll`` contract, §1.1) — and drives ``provider.poll(source_id, cursor)`` per due source.
+``poll`` contract, §1.1) — and drives ``provider.poll(source_id, cursor)`` per due source,
+plus whichever of the optional engine-supplied extras (``spec``, ``policy``) that provider's
+own signature declares (:meth:`SourceEngine._poll_kwargs`).
 
 Crash-safety is the whole design (SC#4). Per new item the engine calls the source-aware
 :meth:`~personalclaw.knowledge.store.KnowledgeStore.create_typed_item`, which folds the
@@ -274,6 +276,58 @@ class SourceEngine:
 
     # ── one poll ───────────────────────────────────────────────────────────────────
 
+    def _poll_kwargs(self, provider: Any, sid: str) -> dict[str, Any]:
+        """The engine-supplied extras THIS provider's ``poll`` declares (§1.1, AECO-2).
+
+        ONE negotiation for the whole of
+        :data:`~personalclaw.knowledge_providers.base.ENGINE_POLL_KWARGS`, feeding the ONE
+        ``provider.poll(...)`` call site in :meth:`poll_source`. Previously the engine
+        branched on ``policy`` alone and called ``poll`` twice, in two shapes; adding the
+        spec the same way would have made four shapes for one contract. A provider opts in
+        by naming a keyword, so a provider that names neither is called exactly as before —
+        which is what keeps this additive rather than a break across the SDK boundary into
+        already-installed apps.
+
+        Driven BY the declared list rather than re-listing the names here, so the contract's
+        vocabulary has one home and a name added to it with no supplier below is a loud
+        ``KeyError`` instead of a keyword the ABC documents and no provider can ever be
+        handed. Suppliers are lazy: a provider that wants neither pays for neither, and
+        ``spec`` in particular costs a store read.
+        """
+        import inspect
+
+        from personalclaw.knowledge_providers.base import ENGINE_POLL_KWARGS
+
+        params = inspect.signature(provider.poll).parameters
+        suppliers: dict[str, Callable[[], Any]] = {
+            "spec": lambda: self._source_spec(sid),
+            "policy": self.egress_policy,
+        }
+        return {name: suppliers[name]() for name in ENGINE_POLL_KWARGS if name in params}
+
+    def _source_spec(self, sid: str) -> dict[str, Any]:
+        """This source's persisted spec, for a provider that cannot read it itself.
+
+        Re-read from the store HERE rather than taken from the ``source`` dict
+        :meth:`poll_source` was handed, and the difference is not cosmetic: :meth:`tick`
+        snapshots every due row once and then polls them in sequence, so a row edited while
+        a long tick is in flight would reach a late provider stale. A core provider never
+        sees that skew because it does its own ``get_source`` inside ``poll`` — delivering
+        the snapshot instead would have handed apps a second-class version of the same
+        value, which is the shape of bug where the thread is right and the SOURCE is wrong.
+
+        The read is also what makes the delivered dict PRIVATE, which matters because it
+        crosses into provider code: ``KnowledgeStore._serialize_source`` ``json.loads`` the
+        column on every read, so a provider that mutates what it was given (a ``pop`` while
+        parsing its own options) is mutating an object nothing else holds. No defensive copy
+        here — one would be unreachable code, and a copy standing in for that property would
+        hide the day the store started handing out a cached row (which
+        ``test_source_spec_delivery`` pins).
+        """
+        row = self._store.get_source(sid) or {}
+        spec = row.get("spec")
+        return spec if isinstance(spec, dict) else {}
+
     async def poll_source(self, source: dict, cfg: Any) -> int:
         """Poll one source once; return how many items were (re-)indexed this pass — new
         items plus re-enqueued edits, excluding archives (:meth:`_persist`). Never raises —
@@ -306,15 +360,7 @@ class SourceEngine:
             return 0
         cursor = self._store.get_source_cursor(sid)
         try:
-            # Hand the SOURCE egress policy to a provider whose poll() accepts one (the
-            # WS-3+ fetching providers), so its net.fetch runs under the engine-owned
-            # posture; the base corpus contract (source_id, cursor) is called as-is.
-            import inspect
-
-            if "policy" in inspect.signature(provider.poll).parameters:
-                result = await provider.poll(sid, cursor, policy=self.egress_policy())
-            else:
-                result = await provider.poll(sid, cursor)
+            result = await provider.poll(sid, cursor, **self._poll_kwargs(provider, sid))
         except Exception as exc:  # noqa: BLE001 — a provider that raises must not kill the loop
             logger.warning("source %s poll raised", sid, exc_info=True)
             self._store.record_poll(

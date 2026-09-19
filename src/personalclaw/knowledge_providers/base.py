@@ -9,6 +9,7 @@ contract-owner-before-consumer rule.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -226,6 +227,17 @@ class KnowledgeProvider(ABC):
         return {"name": self.name, "display_name": self.display_name}
 
 
+#: The keywords the engine may hand a poll on top of ``(source_id, cursor)``. A provider
+#: OPTS IN to each one by naming it on its own ``poll``, and the engine passes exactly the
+#: ones that signature declares (:meth:`SourceEngine._poll_kwargs`) — one negotiation for
+#: every extra, so ``poll`` stays a single contract rather than a family of shapes.
+#:
+#: Named here, on the contract owner, rather than left implicit in the engine: ``policy``
+#: was an undeclared extension only the engine's own branch knew about, so an app author
+#: reading the ABC could not discover it. This is the declared list.
+ENGINE_POLL_KWARGS = ("spec", "policy")
+
+
 class KnowledgeSourceProvider(KnowledgeProvider):
     """A knowledge provider that a scheduler can POLL for new items (§1.1).
 
@@ -237,6 +249,19 @@ class KnowledgeSourceProvider(KnowledgeProvider):
     it to its own floor). A provider that only serves an owned corpus stays a
     plain :class:`KnowledgeProvider`; implementing this is what enrolls it in the
     polling loop.
+
+    **The per-source spec, and why the engine has to hand it over (AECO-2).** Every
+    poll-capable provider in core is constructed with a
+    :class:`~personalclaw.knowledge.store.KnowledgeStore` handle, so it reads its own
+    source row — and with it the row's validated ``spec`` — for itself. An APP-bundled
+    provider cannot: an app reaches core only through ``personalclaw.sdk.*`` and holds no
+    store, so all it ever received was a ``source_id`` it could not resolve. The only
+    configuration left to it was therefore a per-INSTALL setting, which caps one install at
+    one watched source — a Notion app could never watch two workspaces, a git app never two
+    repositories. Declaring ``spec`` on ``poll`` is what lifts that ceiling: the engine
+    re-reads the row at poll time and hands over a private copy, so what a provider sees is
+    the spec persisted NOW (not a snapshot from the top of the tick) and mutating it cannot
+    corrupt the engine's row. Resolve it with :func:`resolve_source_spec`.
     """
 
     #: Provider's requested seconds between polls; the engine clamps to its floor.
@@ -245,5 +270,59 @@ class KnowledgeSourceProvider(KnowledgeProvider):
     @abstractmethod
     async def poll(self, source_id: str, cursor: str = "") -> SourcePollResult:
         """Pull items newer than ``cursor`` for ``source_id`` (never raises to the
-        engine — report a soft failure via ``SourcePollResult.error`` instead)."""
+        engine — report a soft failure via ``SourcePollResult.error`` instead).
+
+        Two OPTIONAL keyword-only extras are available, both listed in
+        :data:`ENGINE_POLL_KWARGS`; name either one on your own ``poll`` and the engine
+        passes it. They are not declared here because declaring them would force every
+        existing override to restate them (a narrower override is a typing error), and a
+        provider that needs neither must stay a two-argument method:
+
+        ``spec``
+            ``dict`` — this source's persisted spec, re-read at poll time and handed over as
+            a private copy. The row is MUTABLE data an MCP tool or a hand-edit can change
+            after the save, so re-validate it here as well as at save time; that is the same
+            poll-time re-validation ``dir_source``/``feed_source``/``web_source``/
+            ``connector_pack`` do from their own store read. :func:`resolve_source_spec`
+            does the merge-and-refuse.
+        ``policy``
+            the engine-owned egress posture a fetching provider must run its
+            ``sdk.net`` calls under, so no provider chooses its own network stance.
+        """
         ...
+
+
+def resolve_source_spec(
+    spec: Mapping[str, Any] | None,
+    *,
+    defaults: Mapping[str, Any] | None = None,
+    allowed: Iterable[str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """One source's spec resolved over a provider's per-install defaults, fail-CLOSED.
+
+    The merge every multi-source provider needs and none should hand-roll (AECO-2): an app
+    has per-install settings (the app's own ``settingsSchema``) AND, now, a per-source
+    ``spec``, and the two have to compose the one way that makes a second source possible —
+    the row wins where it says something, the install fills in the rest.
+
+    Returns ``(resolved, error)``. A NON-EMPTY ``error`` means refuse: return it from
+    ``validate_spec`` at save time *and* from ``poll``, because the spec is a mutable row
+    and a guard that only ran at save time is one out-of-band edit from being bypassed.
+
+    ``allowed`` closes the key set. Passing it is what turns an unknown key into a refusal
+    instead of a silently-ignored typo — a source configured with ``repos`` when the
+    provider reads ``repo`` would otherwise poll the install default forever and look like
+    it was working. A blank value (``None`` or ``""``) does NOT override its default: an
+    empty field in a create form means "inherit", not "clear".
+    """
+    if spec is None:
+        spec = {}
+    if not isinstance(spec, Mapping):
+        return {}, "spec must be an object"
+    if allowed is not None:
+        unknown = sorted(set(spec) - set(allowed))
+        if unknown:
+            return {}, f"spec: unknown key(s) {unknown}"
+    resolved: dict[str, Any] = dict(defaults or {})
+    resolved.update({k: v for k, v in spec.items() if v not in (None, "")})
+    return resolved, ""
