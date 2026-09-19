@@ -136,7 +136,7 @@ async def api_lexicon_corrections(request: web.Request) -> web.Response:
 
 async def api_lexicon_add_correction(request: web.Request) -> web.Response:
     """POST /api/lexicon/corrections {heard, meant, always?} — record a learned fix
-    (LEX.5). Called by the Vocabulary UI + the Minutes transcript-edit flow."""
+    (LEX.5). Called by the Vocabulary UI's add-a-fix form."""
     try:
         body = await request.json()
     except Exception:

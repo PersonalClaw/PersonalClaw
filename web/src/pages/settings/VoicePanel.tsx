@@ -6,7 +6,8 @@ import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { ChipInput } from '../../ui/forms'
+import { ChipInput, TextInput } from '../../ui/forms'
+import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -440,6 +441,8 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
   }, { persist: true })
 
   const [adding, setAdding] = useState('')
+  const [heard, setHeard] = useState('')
+  const [meant, setMeant] = useState('')
   const [busy, setBusy] = useState(false)
   const reload = () => { invalidateKeys('settings:lexicon'); refresh() }
 
@@ -456,6 +459,12 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
     if (!v || busy) return
     setBusy(true)
     try { await api.lexiconAddTerm(v); setAdding(''); reload() } finally { setBusy(false) }
+  }
+  const addFix = async () => {
+    const h = heard.trim(); const m = meant.trim()
+    if (!h || !m || busy) return
+    setBusy(true)
+    try { await api.lexiconAddCorrection(h, m); setHeard(''); setMeant(''); reload() } finally { setBusy(false) }
   }
   const rebuild = async () => {
     if (busy) return
@@ -509,10 +518,39 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 after the panel's skeleton clears but BEFORE this nested, separately-fetched block
                 renders, so the h4 is not in the DOM it measures. A static rail catches it instead. */}
             <h3 data-type="label-s" className="mt-6 mb-1 text-on-surface" style={fvs(600)}>Learned corrections</h3>
-            <p data-type="caption" className="mb-2 text-on-surface-low">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
+            <p data-type="caption" className="mb-2 text-on-surface-low">Teach the transcriber a fix — when it hears the first word, it writes the second. Toggle “always” to auto-apply next time.</p>
+            {/* 🔴 The shell primitives, not raw <input>/<button>: `primitiveAdoption` is a CEILING
+                (241 buttons / 140 inputs, measured through the scanner's own walk) and its baseline
+                file is explicit that the ceiling may only shrink — a new bespoke row would have to
+                raise it, which is the one resolution that file forbids. TextInput + Button take the
+                stock look here anyway: this is a labelled text field and a centred pill "Add", which
+                is exactly what the primitives are shaped for. */}
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex-1">
+                <TextInput value={heard} onChange={setHeard} size="md"
+                  ariaLabel="Mis-heard word" placeholder="Heard (e.g. cube control)…" />
+              </div>
+              <div className="flex-1">
+                <TextInput value={meant} onChange={setMeant} size="md"
+                  ariaLabel="Correct word" placeholder="Meant (e.g. kubectl)…"
+                  onKeyDown={(e) => { if (e.key === 'Enter') addFix() }} />
+              </div>
+              {/* 🔴 `loading={busy}`, NOT `disabled={busy}`. `Button` publishes `aria-busy` from
+                  `loading` alone, so folding the in-flight state into `disabled` would add one more
+                  busy-gated button that announces nothing — the exact population `busyIsNotAnnounced`
+                  ratchets DOWN. Bare `loading` (no `loadingLabel`) is right here: the note on that
+                  rail reserves the labelled form for multi-second verbs, and every verb it accepts
+                  is no longer than the label it overlays — "Add" is 3 characters, so "Adding…" would
+                  truncate inside an overlay sized by the original label rather than widen the pill. */}
+              <Button onClick={addFix} shape="squircle" loading={busy}
+                disabled={!heard.trim() || !meant.trim()}
+                disabledReason={!heard.trim() || !meant.trim() ? 'Enter both words first' : undefined}>
+                <Plus size={15} /> Add
+              </Button>
+            </div>
             {data.corrections.length === 0 ? (
               <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
-                No learned corrections yet. When you fix a mis-heard term in a transcript, it shows up here.
+                No learned corrections yet. Teach one above — it applies to mic dictation and knowledge audio alike.
               </div>
             ) : (
               // Same unbounded-growth guard as the terms list, with its own (shorter) cap.
