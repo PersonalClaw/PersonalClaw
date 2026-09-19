@@ -37,6 +37,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import require_string
 from personalclaw.secrets_vault import (
     SCOPE_HOST,
     SecretPresence,
@@ -157,7 +158,7 @@ async def api_secrets_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return json_error("invalid_body", status=400)
 
-    name = str(body.get("name") or "").strip()
+    name = require_string(body, "name")
     project_id = str(body.get("project_id") or "").strip()
     # `value` is read into a local exactly once, handed to the store, and never put in a response,
     # a log line or an error message. The `str()` is not a coercion of convenience — a JSON number

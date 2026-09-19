@@ -7,6 +7,7 @@ from aiohttp import web
 from personalclaw.dashboard.chat_utils import persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY
@@ -306,9 +307,7 @@ async def api_chat_session_rename(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "invalid JSON"}, status=400)
-    title = body.get("title", "").strip()[:200]
-    if not title:
-        return web.json_response({"error": "title required"}, status=400)
+    title = require_string(body, "title")[:200]
     _apply_title(state, session, title)
     sel().log_api_access(
         caller="dashboard",

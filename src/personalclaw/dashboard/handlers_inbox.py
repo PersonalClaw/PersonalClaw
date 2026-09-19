@@ -19,7 +19,7 @@ from personalclaw.inbox import (
     redact_item,
     validate_updatable_fields,
 )
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
@@ -1068,7 +1068,7 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
         callback["app"] = app_name
 
     proposal = pc.Proposal(
-        title=str(body.get("title") or declared.label or kind_suffix),
+        title=string_field(body, "title") or declared.label or kind_suffix,
         preview=str(body.get("preview") or ""),
         preview_kind=str(body.get("preview_kind") or "text"),
         provenance=pc.app_source(app_name),

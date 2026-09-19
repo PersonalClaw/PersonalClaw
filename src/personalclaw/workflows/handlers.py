@@ -34,7 +34,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
@@ -268,8 +268,9 @@ async def api_def_save(request: web.Request) -> web.Response:
             {"error": {"code": "invalid_request", "message": "'root' must be an object"}},
             status=400,
         )
+    name = require_string(body, "name")
     result = await service.author_def(
-        name=str(body.get("name", "") or ""),
+        name=name,
         root=root,
         description=str(body.get("description", "") or ""),
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
@@ -289,7 +290,7 @@ async def api_def_save(request: web.Request) -> web.Response:
         request,
         "workflow_def_save",
         "success" if result.get("ok") else "failure",
-        str(body.get("name", "")),
+        name,
     )
     return _reply(result, status=201 if result.get("saved") else 200)
 
@@ -685,8 +686,9 @@ async def api_run_start(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     body = await json_object_body(request)
+    name = require_string(body, "name")
     result = await service.start_run(
-        name=str(body.get("name", "") or ""),
+        name=name,
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         mode=str(body.get("mode", "background") or "background"),
         supervisor=_supervisor(request),
@@ -701,7 +703,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         request,
         "workflow_run_start",
         "success" if result.get("ok") else "failure",
-        str(body.get("name", "")),
+        name,
     )
     return _reply(result, status=202 if result.get("ok") and not result.get("blocking") else 200)
 

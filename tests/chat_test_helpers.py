@@ -21,6 +21,31 @@ def _make_state(tmp_path, **kwargs):
     )
 
 
+def _api_app(state: DashboardState) -> web.Application:
+    """A bare app carrying the ONE middleware every `/api/*` route runs behind in production.
+
+    🔴 Every builder below must go through this, and the reason is a fidelity gap that answered
+    500 where the gateway answers 400. `server.py` installs `request_boundary_middleware()` for
+    the whole `/api` surface, so a handler may raise `RequestValidationError` from the shared
+    write-path validator and the boundary serves its field-naming 400 envelope — that is the
+    entire point of validating in one line instead of a `try`/`except` per handler. These
+    builders constructed a plain `web.Application()`, so the refusal propagated uncaught and
+    aiohttp answered its bare `500 text/plain`: a test app that disagreed with the gateway about
+    the wire contract, and therefore a rail that fails a handler for adopting the validator the
+    codebase is moving TO.
+
+    Only the boundary, not the full `server.py` stack: auth, the SPA fallback and the version
+    gate are not what a chat handler test is about, and pulling them in would make these
+    builders a second copy of the server. This one is included because it is part of the
+    request/response CONTRACT the assertions below read, not part of the environment.
+    """
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
+    app["state"] = state
+    return app
+
+
 def _make_app(state: DashboardState) -> web.Application:
     """Minimal aiohttp app with chat endpoints."""
     from personalclaw.dashboard.chat import (
@@ -44,8 +69,7 @@ def _make_app(state: DashboardState) -> web.Application:
         api_chat_task_mode,
     )
 
-    app = web.Application()
-    app["state"] = state
+    app = _api_app(state)
     app.router.add_post("/api/chat", api_chat)
     app.router.add_get("/api/chat/sessions", api_chat_sessions)
     app.router.add_post("/api/chat/sessions/cleanup", api_chat_sessions_cleanup)
@@ -85,8 +109,7 @@ def _make_app_with_agent_routes(state: DashboardState) -> web.Application:
         api_chat_sessions,
     )
 
-    app = web.Application()
-    app["state"] = state
+    app = _api_app(state)
     app.router.add_get("/api/chat/sessions", api_chat_sessions)
     app.router.add_post("/api/chat/sessions", api_chat_session_create)
     app.router.add_get("/api/chat/sessions/{session}", api_chat_session_detail)
@@ -111,8 +134,7 @@ def _make_folder_app(state: DashboardState) -> web.Application:
         api_chat_session_pin,
     )
 
-    app = web.Application()
-    app["state"] = state
+    app = _api_app(state)
     app.router.add_get("/api/chat/folders", api_chat_folders)
     app.router.add_post("/api/chat/folders", api_chat_folder_create)
     app.router.add_patch("/api/chat/folders/{id}", api_chat_folder_update)
@@ -139,15 +161,11 @@ def _make_tags_app(state: DashboardState) -> web.Application:
         api_chat_tags,
     )
 
-    # `request_boundary_middleware` is installed here because `dashboard/server.py`
-    # installs it on the real gateway: a route that raises `RequestValidationError` (every
-    # route reading a body through `personalclaw.request_validation`) answers its 400
-    # THERE, so a test app without it does not model the gateway and turns a deliberate
-    # refusal into a 500.
-    from personalclaw.dashboard.request_boundary import request_boundary_middleware
-
-    app = web.Application(middlewares=[request_boundary_middleware()])
-    app["state"] = state
+    # This builder is where the boundary was FIRST installed, one caller at a time. It now goes
+    # through `_api_app` with the other three, which is the whole fix: the reasoning in the
+    # comment that used to sit here applied to every one of them equally, and leaving it local
+    # meant the next builder answered 500 for the same refusal (`/title` did, measured in CI).
+    app = _api_app(state)
     app.router.add_get("/api/chat/tags", api_chat_tags)
     app.router.add_post("/api/chat/tags", api_chat_tag_create)
     app.router.add_patch("/api/chat/tags/{id}", api_chat_tag_update)
