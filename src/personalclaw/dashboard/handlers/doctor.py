@@ -20,6 +20,7 @@ from typing import Any, Optional
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.resilience import degraded
 from personalclaw.resilience.doctor import DoctorContext, run_capability, run_doctor
 from personalclaw.safety_flags import confirm_granted
@@ -132,10 +133,7 @@ async def api_doctor_fix_apply(request: web.Request) -> web.Response:
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
     fix_id = request.match_info.get("fix_id", "")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return json_error("confirm_required", status=400)
     from personalclaw.resilience import fixes as _fixes
@@ -155,10 +153,7 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
     inclusion/exclusion reason. Runs the SAME deterministic scorer a real turn runs."""
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     text = str(body.get("text", "")) if isinstance(body, dict) else ""
     if not text.strip():
         return json_error("text_required", status=400)
@@ -419,10 +414,7 @@ async def api_doctor_simulate_automation(request: web.Request) -> web.Response:
 
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     trigger_id = str(body.get("trigger_id", "")).strip() if isinstance(body, dict) else ""
     if not trigger_id:
         return json_error("trigger_id_required", status=400)
@@ -662,10 +654,7 @@ async def api_doctor_remediation_run(request: web.Request) -> web.Response:
     """POST /api/doctor/remediation/run — run the engine now (confirm-gated). SEL-audited."""
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not confirm_granted(body):
         return json_error("confirm_required", status=400)
 

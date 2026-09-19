@@ -7,6 +7,7 @@ from aiohttp import web
 from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_and_truncate
 from personalclaw.sel import sel
 from personalclaw.sync_bridge import handoff_to_channel
@@ -121,12 +122,8 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    channel = None
-    try:
-        body = await request.json()
-        channel = body.get("channel")
-    except Exception:
-        pass
+    body = await json_object_body(request)
+    channel = body.get("channel")
 
     history_key = _history_key_for(session.key)
     thread_ts = await handoff_to_channel(

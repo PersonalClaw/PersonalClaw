@@ -31,15 +31,9 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.request_validation import json_object_body
+
 logger = logging.getLogger(__name__)
-
-
-async def _body(request: web.Request) -> dict:
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 async def api_autonomy(request: web.Request) -> web.Response:
@@ -72,7 +66,7 @@ async def api_autonomy_grant(request: web.Request) -> web.Response:
     from personalclaw.guardrails.autonomy import grant_rung, promotion_eligibility
     from personalclaw.guardrails.rungs import ensure_core_action_types
 
-    body = await _body(request)
+    body = await json_object_body(request)
     key = str(body.get("key", "") or "").strip()
     rung = str(body.get("rung", "") or "").strip()
     if not key or not rung:
@@ -106,7 +100,7 @@ async def api_autonomy_demote(request: web.Request) -> web.Response:
     from personalclaw.guardrails.autonomy import action_type, demote
     from personalclaw.guardrails.rungs import ensure_core_action_types
 
-    body = await _body(request)
+    body = await json_object_body(request)
     key = str(body.get("key", "") or "").strip()
     if not key:
         return web.json_response({"error": "key is required"}, status=400)
@@ -136,7 +130,7 @@ async def api_autonomy_undo(request: web.Request) -> web.Response:
     """
     from personalclaw.guardrails.ladder import reverse_action
 
-    body = await _body(request)
+    body = await json_object_body(request)
     record_id = str(body.get("id", "") or "").strip()
     if not record_id:
         return web.json_response({"error": "id is required"}, status=400)

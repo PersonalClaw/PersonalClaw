@@ -18,6 +18,7 @@ from personalclaw.inbox import (
     redact_item,
     validate_updatable_fields,
 )
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
@@ -708,10 +709,7 @@ async def api_inbox_favorite(request: web.Request) -> web.Response:
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     item_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     if not isinstance(body, dict):
         # Same tolerance as an unparseable body above: favoriting has a sensible default,
         # so a junk body means "favorite it" rather than an error.
@@ -1090,10 +1088,7 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
 
     edited = None
     if request.can_read_body:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await json_object_body(request)
         if isinstance(body, dict) and isinstance(body.get("proposal"), dict):
             edited = dict(body["proposal"])
 

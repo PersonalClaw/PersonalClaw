@@ -30,6 +30,7 @@ from personalclaw.loop.loop import (
     LoopStatus,
 )
 from personalclaw.loop.watchdog import registry_key
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +90,6 @@ def _refuse_replan(cid: str) -> web.Response | None:
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
     return _refuse_source_state("replan", loop.status, PRELAUNCH_STATUSES)
-
-
-async def _json_body(request: web.Request) -> dict | web.Response:
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
-    return body
 
 
 def _agent_exists(body: dict) -> bool:
@@ -273,9 +264,7 @@ async def api_loop_validate(request: web.Request) -> web.Response:
     """POST /api/loops/validate — deterministic pre-flight on a create payload
     (can_start + errors/warnings + cycle/duration estimate). Kind-aware via the
     strategy's validate_config; the composer calls it before launch."""
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = validation.validate(body, agent_exists=_agent_exists(body))
     return web.json_response(result.to_dict())
 
@@ -287,9 +276,7 @@ async def api_loop_classify(request: web.Request) -> web.Response:
     """POST /api/loops/classify {kind, task|goal} — the kind-aware intake analyze
     pass. Dispatches to the kind strategy's classifier; returns the NORMALIZED
     classification (every field a recommendation the user overrides on Plan Review)."""
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     kinds.ensure_loaded()
     kind = str(body.get("kind", "goal")).strip().lower() or "goal"
     if kind not in KINDS:
@@ -423,9 +410,7 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 
 async def api_loop_create(request: web.Request) -> web.Response:
     """POST /api/loops {kind, task|goal, …} — create a READY loop of any kind."""
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     kind = str(body.get("kind", "goal")).strip().lower() or "goal"
     if kind not in KINDS:
         return web.json_response({"error": f"Unknown loop kind: {kind!r}"}, status=400)
@@ -559,9 +544,7 @@ async def api_loop_update(request: web.Request) -> web.Response:
     """PUT /api/loops/{id} — edit a pre-launch spec, or a name-only rename in any
     state (frozen spec → 409 unless it's just a name)."""
     cid = request.match_info["id"]
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     existing = store.get(cid)
     if existing is None:
         return web.json_response({"error": "Not found"}, status=404)
@@ -616,9 +599,7 @@ async def api_loop_action(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     action = str(body.get("action", ""))
     if action not in ACTION_SOURCE_STATES:
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
@@ -712,9 +693,7 @@ async def api_loop_delete(request: web.Request) -> web.Response:
 async def api_loop_nudge(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/nudge {text, task_id?} — steer; resume if awaiting input."""
     cid = request.match_info["id"]
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     text = str(body.get("text", "")).strip()
     if not text:
         return web.json_response({"error": "text required"}, status=400)
@@ -820,9 +799,7 @@ async def api_loop_queue(request: web.Request) -> web.Response:
     loop = store.get(cid)
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     task_ids = [str(t) for t in _as_list(body.get("task_ids")) if str(t).strip()]
     if not task_ids:
         return web.json_response({"error": "task_ids required"}, status=400)
@@ -879,9 +856,7 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     loop = store.get(cid)
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
@@ -996,9 +971,7 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)
@@ -1021,9 +994,7 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)
@@ -1052,9 +1023,7 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)

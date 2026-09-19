@@ -27,6 +27,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.dashboard.desktop_registry import CAPABILITIES
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -85,14 +86,6 @@ def _require_shell_token(request: web.Request, operation: str) -> web.Response |
     return None
 
 
-async def _json_body(request: web.Request) -> dict:
-    try:
-        body = await request.json()
-    except Exception:
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
 # ── Shell-side writes (loopback only) ─────────────────────────────────
 
 
@@ -127,7 +120,7 @@ async def api_desktop_register(request: web.Request) -> web.Response:
             message="invalid secret",
         )
 
-    body = await _json_body(request)
+    body = await json_object_body(request)
     shell = body.get("shell")
     reg = _registry(request)
     token = reg.register(
@@ -162,7 +155,7 @@ async def api_desktop_state_push(request: web.Request) -> web.Response:
     )
     if denied is not None:
         return denied
-    body = await _json_body(request)
+    body = await json_object_body(request)
     reg = _registry(request)
     if not reg.update(
         token=request.headers.get("X-Shell-Token", ""), capabilities=body.get("capabilities")

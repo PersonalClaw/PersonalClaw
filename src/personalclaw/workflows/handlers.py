@@ -34,6 +34,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
@@ -152,21 +153,6 @@ def _reply(body: dict[str, Any], *, status: int = 200) -> web.Response:
     return _ok(body, status=status) if body.get("ok") else _fail(body)
 
 
-async def _json_body(request: web.Request) -> dict[str, Any] | web.Response:
-    try:
-        raw = await request.json()
-    except Exception:
-        return web.json_response(
-            {"error": {"code": "invalid_request", "message": "invalid JSON body"}}, status=400
-        )
-    if not isinstance(raw, dict):
-        return web.json_response(
-            {"error": {"code": "invalid_request", "message": "body must be a JSON object"}},
-            status=400,
-        )
-    return raw
-
-
 def _guard(request: web.Request, operation: str) -> web.Response | None:
     """Refuse a mutation from a restricted session, and audit either way.
 
@@ -247,9 +233,7 @@ async def api_def_save(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_def_save")
     if denied is not None:
         return denied
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     root = body.get("root")
     if not isinstance(root, dict):
         return web.json_response(
@@ -293,9 +277,7 @@ async def api_def_a2a_publish(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_def_save")
     if denied is not None:
         return denied
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     name = request.match_info.get("name", "")
     result = await service.set_a2a_published(name, body.get("published") is True)
     _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
@@ -536,9 +518,7 @@ async def api_def_repin(request: web.Request) -> web.Response:
     from personalclaw.workflows import versions
 
     name = request.match_info.get("name", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     try:
         version = int(str(body.get("version", "")).strip())
     except ValueError:
@@ -666,9 +646,7 @@ async def api_run_start(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_start")
     if denied is not None:
         return denied
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = await service.start_run(
         name=str(body.get("name", "") or ""),
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
@@ -980,9 +958,7 @@ async def api_run_edit(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     ops = body.get("ops")
     if not isinstance(ops, list) or not ops:
         return web.json_response(
@@ -1035,9 +1011,7 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = service.set_policy_overrides(run_id, body)
     _audit(
         request,
@@ -1079,10 +1053,7 @@ async def api_run_steer(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     result = service.steer_run(run_id, str((body or {}).get("text", "")))
     _audit(request, "workflow_run_steer", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
@@ -1108,9 +1079,7 @@ async def api_run_review_triage(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_review_triage")
     if denied is not None:
         return denied
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     run_id = request.match_info.get("run_id", "")
     result = await apply_triage(
         run_id,
@@ -1150,9 +1119,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = service.resume_run(
         run_id,
         supervisor=_supervisor(request),
@@ -1175,9 +1142,7 @@ async def api_run_confirm(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = service.resolve_confirmation(
         run_id,
         supervisor=_supervisor(request),
@@ -1207,9 +1172,7 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     node_id = str(body.get("node_id", "") or "")
     if not node_id:
         return web.json_response(
@@ -1229,9 +1192,7 @@ async def api_run_fork(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    body = await _json_body(request)
-    if isinstance(body, web.Response):
-        return body
+    body = await json_object_body(request)
     result = service.fork_run(
         run_id,
         checkpoint_id=str(body.get("checkpoint_id", "") or ""),

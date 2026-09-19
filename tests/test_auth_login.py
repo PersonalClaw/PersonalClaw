@@ -53,7 +53,14 @@ def _enable_login(home, **overrides) -> None:
 
 
 def _app() -> web.Application:
-    app = web.Application()
+    # `request_boundary_middleware` is installed here for the same reason `server.py` installs
+    # it unconditionally for every route: it is what turns a handler's deliberate
+    # `RequestValidationError` into the wire envelope. Without it this double answered 500 for
+    # a malformed body while production answered 400, so the double was the weaker of the two
+    # and the test could not see the real behaviour of the route it names.
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app["port"] = PORT
     app["allowed_origins"] = {"http://localhost:10000"}
     app.router.add_get("/login", auth_h.login_page)
@@ -198,14 +205,28 @@ async def test_a_corrupt_credential_file_refuses_rather_than_falling_open(_isola
 
 @pytest.mark.asyncio
 async def test_a_malformed_body_is_a_refusal_not_a_crash(_isolated) -> None:
+    """A malformed body is 400, not 401 and not 500.
+
+    It used to be 401: the handler swallowed the parse failure into `body = {}`, found no
+    username, and answered "unauthorized" — which is a lie about what went wrong. No
+    credentials were rejected because none were ever read, and a caller told 401 retries with
+    the same broken payload forever. The shared reader refuses the SHAPE first, so each of
+    these three is a 400 that names its own reason, and `null`/`[1,2,3]` (which parse, but not
+    to an object) are distinguished from `not json` (which does not parse at all).
+    """
     creds.set_password("jordan", GOOD_PASSWORD)
     _enable_login(_isolated)
     async with TestClient(TestServer(_app())) as client:
-        for payload in (b"not json", b"[1,2,3]", b"null"):
+        for payload, code in (
+            (b"not json", "invalid_json"),
+            (b"[1,2,3]", "invalid_body"),
+            (b"null", "invalid_body"),
+        ):
             resp = await client.post(
                 "/api/auth/login", data=payload, headers={"Content-Type": "application/json"}
             )
-            assert resp.status == 401
+            assert resp.status == 400, payload
+            assert (await resp.json())["error"]["code"] == code, payload
 
 
 @pytest.mark.asyncio

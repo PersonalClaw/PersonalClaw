@@ -22,6 +22,7 @@ import logging
 from aiohttp import web
 
 from personalclaw import feedback as fb
+from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +177,7 @@ async def api_feedback_snooze(request: web.Request) -> web.Response:
     """POST /api/feedback/producers/snooze — 30-day snooze for one producer."""
     if not _enabled():
         return _disabled_response()
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     parsed = _producer_body(body if isinstance(body, dict) else {})
     if parsed is None:
         return web.json_response(
@@ -194,10 +192,7 @@ async def api_feedback_clear(request: web.Request) -> web.Response:
     """POST /api/feedback/producers/clear — un-suppress after an artifact edit."""
     if not _enabled():
         return _disabled_response()
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await json_object_body(request)
     parsed = _producer_body(body if isinstance(body, dict) else {})
     if parsed is None:
         return web.json_response(

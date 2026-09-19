@@ -12,6 +12,7 @@ Uses the `AGENTS.md` §"Shared conventions" error envelope
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from aiohttp import web
 
@@ -19,6 +20,7 @@ from personalclaw import session_organize
 from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,8 @@ async def api_session_organize_suggest(request: web.Request) -> web.Response:
     return web.json_response({"proposal": proposal.to_dict() if proposal else None})
 
 
-async def _proposal_from_body(
-    request: web.Request, state: DashboardState
+def _proposal_from_body(
+    request: web.Request, state: DashboardState, body: dict[str, Any]
 ) -> tuple[object, session_organize.OrganizeProposal | None, web.Response | None]:
     """Resolve the session and rebuild the proposal the client is answering.
 
@@ -49,26 +51,28 @@ async def _proposal_from_body(
     re-deriving would let the applied value differ from the value the user actually saw
     (the vocabulary can change between the GET and the click). Every field is still
     validated at apply time against the live folder/tag lists, so echoing is not trust.
+
+    Takes the already-read *body* and is therefore SYNC: reading the request here made this
+    the module's own body reader, with its own two spellings of the malformed-body refusal.
+    Both moved up to :func:`json_object_body`, which is why the two remaining early returns
+    are the ones genuinely specific to this route (unknown session, empty proposal).
     """
     session = resolve_session(state, request.match_info["session"])
     if not session:
         return None, None, json_error("not_found", message="session not found", status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        return None, None, json_error("bad_request", message="invalid JSON body", status=400)
-    if not isinstance(body, dict):
-        return None, None, json_error("bad_request", message="body must be an object", status=400)
     raw_tags = body.get("tags")
     tag_names = (
         [str(t) for t in raw_tags if isinstance(t, str) and t] if isinstance(raw_tags, list) else []
     )
+    # `string_field`, not `str(body.get(...) or "")`: the old coercion could not fail, so
+    # `{"folder_name": {"a": "b"}}` echoed back Python's repr as the folder to apply —
+    # #3001's defect on the organize path. A non-string is now refused by name.
     proposal = session_organize.OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
-        folder_id=str(body.get("folder_id") or ""),
-        folder_name=str(body.get("folder_name") or ""),
+        folder_id=string_field(body, "folder_id"),
+        folder_name=string_field(body, "folder_name"),
         tag_names=tag_names,
-        source=str(body.get("source") or ""),
+        source=string_field(body, "source"),
     )
     if proposal.is_empty:
         return (
@@ -88,7 +92,7 @@ async def api_session_organize_accept(request: web.Request) -> web.Response:
     explicit user click.
     """
     state: DashboardState = request.app["state"]
-    session, proposal, err = await _proposal_from_body(request, state)
+    session, proposal, err = _proposal_from_body(request, state, await json_object_body(request))
     if err is not None:
         return err
     assert proposal is not None  # narrowed by err is None
@@ -112,7 +116,7 @@ async def api_session_organize_decline(request: web.Request) -> web.Response:
     a nag.
     """
     state: DashboardState = request.app["state"]
-    _session, proposal, err = await _proposal_from_body(request, state)
+    _session, proposal, err = _proposal_from_body(request, state, await json_object_body(request))
     if err is not None:
         return err
     assert proposal is not None  # narrowed by err is None

@@ -62,6 +62,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_request": "The request was well-formed JSON but failed validation.",
     "invalid_json": "The request body is not valid JSON.",
     "invalid_body": "The request body is valid JSON but not the expected object.",
+    # ── the shared write-path field checks (personalclaw/request_validation.py) ──
+    # Two codes, not one, because the two failures need different fixes on the
+    # caller's side: `field_not_a_string` means "you sent the wrong TYPE" (the
+    # `{"name": {"a":"b"}}` family that used to be `str()`-coerced and stored as
+    # Python's repr), `field_required` means "you sent nothing usable" (absent, or
+    # blank once stripped). Both messages NAME the field — the generic `bad_request`
+    # the request boundary answers for an unguarded fault deliberately does not, and
+    # that missing field name is what made the coercion so hard to notice.
+    "field_not_a_string": "A request field must be a JSON string; the message names it.",
+    "field_required": "A required request field is missing or blank; the message names it.",
     "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
     # ── dashboard file I/O (handlers/files.py) ──
     # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard
@@ -80,6 +90,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── session deletion (dashboard/handlers/sessions.py) ──
+    # A LIVE session carries no history file, so `delete_session` declines it. That is a
+    # real resource this route refuses, which is a DIFFERENT fact from a key that never
+    # existed — and until #2941 both shared one 200 `{"ok": false}`, indistinguishable
+    # from each other and from success. 409 rather than 404 for the same reason
+    # `collection_name_taken` is 409: the request is well-formed and would be valid at
+    # another moment (once the session is closed).
+    "session_live": "The session is live and has no history to delete; close it first.",
     # ── model resolution (first-run legibility, ONBOARDING-UX OU-12) ──
     # A model-dependent route was driven before any model provider was bound. The wire
     # peer of the agent-session `ERR_MODEL_UNRESOLVED` (errors.py): an HTTP route answers
