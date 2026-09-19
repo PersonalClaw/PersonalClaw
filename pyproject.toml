@@ -364,13 +364,18 @@ addopts = [
     "--ignore=build",
     "-n", "auto",
     # worksteal (greedy per-test work distribution — the fastest balancer). The
-    # cross-worker flakiness that once forced loadscope here (#8/#10) is fixed at the
-    # root by two autouse fixtures in tests/conftest.py: _reset_sel_singleton clears
-    # the SecurityEventLog process singleton around every test (no test inherits
-    # another's audit dir), and _isolate_single_flight_locks gives each test its own
-    # single-flight lock dir (sibling tests reusing a consolidation key can no longer
-    # contend for one lock file across workers). Both shared-state hazards are gone,
-    # so the suite is deterministic under worksteal with no reruns.
+    # cross-worker flakiness that once forced loadscope here (#8/#10) is FENCED — not
+    # closed — by autouse fixtures in tests/conftest.py that snapshot-and-restore
+    # process-global state around every test: _reset_sel_singleton (the
+    # SecurityEventLog singleton), _isolate_single_flight_locks (the cross-process
+    # single-flight lock dir) and _restore_pipeline_node_registry (the ingestion
+    # NODE_REGISTRY) — three of the 23 autouse fixtures now carrying that load.
+    #
+    # This is NOT a determinism guarantee and must not be read as one. The set grows as
+    # new process-global state is found: #3124 added the third guard AFTER this comment
+    # previously declared the class closed, following two CI shards going red on PRs
+    # whose diffs could not own them. So a red local run is not by itself evidence of
+    # your own diff — see #684 before assuming it is.
     "--dist", "worksteal",
     "--timeout=120",
     "--cov", "personalclaw",
