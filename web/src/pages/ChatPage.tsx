@@ -88,7 +88,14 @@ import { CheckWorkChip } from './chat/CheckWorkChip'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
 import { SessionMapRail } from './chat/SessionMapRail'
 import { SessionMapDrawer } from './chat/SessionMapDrawer'
-import { sessionMapMarks } from './chat/sessionMap'
+import {
+  sessionMapMarks,
+  sessionMapDensityMarks,
+  asSessionMapDensity,
+  SESSION_MAP_DENSITY_VAR,
+} from './chat/sessionMap'
+import { useAppearance } from '../app/appearance'
+import { TOKENS } from '../design/tokenRegistry'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
@@ -318,6 +325,13 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
  *  turns plus a compact composer for quick replies without opening the full chat
  *  UI. Streams over the shared WS; "Continue" (full page) is a small control in
  *  the composer's action row. */
+/** The registry entry behind the Session Map's density preference (SSM-14). Resolved once,
+ *  from the registry, so the preference has exactly ONE declared default — `selectValue`
+ *  reads `token.value` when the user has set no override. */
+const SESSION_MAP_DENSITY_TOKEN = TOKENS.find(
+  (t) => t.kind === 'select' && t.varName === SESSION_MAP_DENSITY_VAR,
+)
+
 function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: () => void }) {
   const [detail, setDetail] = useState<{ title: string; messages: ChatHistoryMsg[] } | null>(null)
   const [failed, setFailed] = useState(false)
@@ -509,6 +523,9 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '' }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string }) {
   const data = useComposerData()
   const { name } = useIdentity()
+  // SSM-14: the Session Map's persisted mark-density preference, read off the appearance
+  // store (the `--bg-style` → `DotGlow` pattern — a `select` token consumed in JS, not CSS).
+  const { selectValue } = useAppearance()
   // The project this chat scopes under. Seeded from the launch URL (?project=<id> from a
   // project page's Chat button), but ALSO user-pickable on a bare new chat via the
   // composer's project chooser (the vision's "optional project chooser"). Frozen once the
@@ -2280,7 +2297,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // The Session Map's ordered marks (SSM-1) — one per turn plus one per typed sub-event inside
   // it. Memoised on the same inputs the rail and the drawer both read, so the two forms index
   // the identical array and the observer in SSM-5 is not rebuilt per render.
-  const sessionMarks = useMemo(() => sessionMapMarks(turns, subagents), [turns, subagents])
+  const allSessionMarks = useMemo(() => sessionMapMarks(turns, subagents), [turns, subagents])
+  // The persisted mark-density preference (SSM-14) is applied HERE, once, rather than inside
+  // either form: the rail and the coarse-pointer drawer must index the IDENTICAL array (a
+  // "Turn 3 of 7" that means a different 7 in each form is two maps), and it keeps the rail a
+  // pure renderer of the marks it is handed. Validated on read — localStorage is untrusted
+  // input and a stale value must degrade to the named default, not to a blank rail.
+  const mapDensity = asSessionMapDensity(
+    SESSION_MAP_DENSITY_TOKEN ? selectValue(SESSION_MAP_DENSITY_TOKEN) : undefined,
+  )
+  const sessionMarks = useMemo(
+    () => sessionMapDensityMarks(allSessionMarks, mapDensity),
+    [allSessionMarks, mapDensity],
+  )
   /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
    *  rail's tick, the drawer's row and the Activity Index list. */
   function jumpToTurn(coord: number) {
