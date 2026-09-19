@@ -229,6 +229,202 @@ test.describe('Session Map — the coarse-pointer form (SSM-10)', () => {
   })
 })
 
+// ── THE RAIL IS OPERABLE FROM THE KEYBOARD ALONE (atom SSM-15) ────────────────────────────────
+//
+// 🔑 WHY A BROWSER TIER WHEN `SessionMapRail.keyboard.test.tsx` ALREADY COVERS SSM-7. That file is
+// honest and stays — but everything it can assert is a jsdom fact. It reaches the roving cursor by
+// `fireEvent.keyDown` on the tick it computed to be the tab stop, so it never asks the question a
+// keyboard user asks first: is the rail REACHABLE by Tab at all, in the real focus order, sitting
+// where it sits between the transcript and the composer? And it proves a jump by a `vi.fn()` spy
+// and a stubbed `scrollIntoView`, because jsdom computes no layout — so "Enter jumped" there means
+// "a mock was called", not "the transcript moved". Both gaps are the SAME shape as the one
+// `sessionMap.spec.ts`'s header records for the other clauses, and neither can be closed under
+// jsdom at any effort.
+//
+// 🪤 MOUSE-FREE MEANS THE WALKTHROUGH, AND THE BOUNDARY IS EXACT. Getting a session to exist runs
+// `driveScriptedTurns`, the shared recipe every spec here uses, and it clicks the composer and the
+// send control. From the moment the rail is on screen this test touches NO pointer API: no click,
+// no hover, no tap, no `mouse.*`. Every rail interaction below is `page.keyboard.press`, which is
+// what makes "a keyboard user can operate the session map" a claim this test actually supports.
+test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () => {
+  test.describe.configure({ timeout: 180_000 })
+  // The SSM-11 block's geometry, for its reasons: short enough that the scripted turns OVERFLOW
+  // (so an activation has somewhere to travel), wide enough to stay the pointer form.
+  test.use({ viewport: { width: 1280, height: 420 } })
+
+  /** The tick indices carrying `tabIndex=0`. The rail's contract is that this is always exactly
+   *  one (§A.6), so it is read as a LIST and asserted to be a singleton rather than searched for. */
+  const tabStops = (page: Page) => page.evaluate((sel) => [...document.querySelectorAll(sel)]
+    .map((el, i) => [el.getAttribute('tabindex'), i] as const)
+    .filter(([t]) => t === '0')
+    .map(([, i]) => i), MARK)
+
+  /** Which tick has focus, or -1 when focus is anywhere else. Doubles as the "are we on the rail"
+   *  reading, so reach and cursor position are one measurement and cannot disagree. */
+  const focusedMark = (page: Page) => page.evaluate((sel) =>
+    [...document.querySelectorAll(sel)].indexOf(document.activeElement as Element), MARK)
+
+  test('Tab reaches the rail, the arrows rove the cursor, and Enter and Space each move the transcript', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    // Six turns for SSM-13's reason: enough marks that a cursor move is a real step and the
+    // activations below land away from the transcript's ends.
+    await driveScriptedTurns(page, PROMPT, 6)
+    await expect(page.locator(RAIL), 'the rail never mounted, so there is nothing to operate').toBeVisible()
+    const total = await page.locator(MARK).count()
+    expect(total, 'the rail carries too few marks for a cursor walk to prove anything').toBeGreaterThan(3)
+
+    // ── REACH: Tab from the top of the document, no pointer ───────────────────────────────────
+    // Focus is dropped first so the walk starts where a fresh keyboard user starts. The rail sits
+    // AFTER the transcript in the focus order, so the count is not small — it is reported rather
+    // than asserted, because the clause is "reachable", not "reachable in N".
+    await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur() })
+    const MAX_TABS = 400
+    let tabs = 0
+    let at = -1
+    while (tabs < MAX_TABS) {
+      await page.keyboard.press('Tab')
+      tabs++
+      at = await focusedMark(page)
+      if (at >= 0) break
+    }
+    expect(
+      at,
+      `THE RAIL IS UNREACHABLE BY KEYBOARD: ${MAX_TABS} Tab presses from the top of the document\n` +
+        'never landed on a session mark. The rail is the session\'s only in-session index on a\n' +
+        'pointer device, so a keyboard user would have no way into it (WCAG 2.1.1).',
+    ).toBeGreaterThanOrEqual(0)
+    // …and it is ONE tab stop, which is what makes a 200-tick rail tabbable at all (§A.6).
+    expect(await tabStops(page), `the rail is not a single tab stop (reached after ${tabs} tabs)`).toEqual([at])
+    // A 4px cursor parked outside the viewport is not a cursor. Browser-only: jsdom has no layout.
+    await expect(page.locator(MARK).nth(at), 'the focused tick is off screen').toBeInViewport()
+
+    // ── ROVE: the cursor keys move BOTH focus and the tab stop ────────────────────────────────
+    // `Home` first, deliberately: the slot seeds on the CURRENT region, which at the bottom of a
+    // six-turn transcript is near the last mark — so a bare `ArrowDown` would clamp and the
+    // assertion would be measuring the clamp instead of the step.
+    await page.keyboard.press('Home')
+    expect(await focusedMark(page), 'Home did not move the cursor to the first mark').toBe(0)
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedMark(page), 'ArrowDown moved no focus').toBe(1)
+    expect(await tabStops(page), 'the roving tab stop did not travel with focus').toEqual([1])
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedMark(page)).toBe(2)
+    await page.keyboard.press('ArrowUp')
+    expect(await focusedMark(page), 'ArrowUp did not step back').toBe(1)
+    await page.keyboard.press('End')
+    expect(await focusedMark(page), 'End did not land on the last mark').toBe(total - 1)
+    expect(await tabStops(page)).toEqual([total - 1])
+
+    /** Park the transcript at its newest turn and return that offset — the "from" a jump leaves. */
+    const parkAtBottom = async (): Promise<number> => {
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel)
+        if (el) el.scrollTop = el.scrollHeight
+      }, SCROLLER)
+      await page.waitForTimeout(250)
+      return (await scrollBox(page)).top
+    }
+
+    const from = await parkAtBottom()
+    expect(
+      from,
+      'the transcript does not overflow, so no activation can move it and both assertions below\n' +
+        'are vacuous. Drive more turns or shorten the viewport rather than letting it pass.',
+    ).toBeGreaterThan(40)
+
+    // ── ACTIVATE (1): ENTER, on the OLDEST mark, travels UP ───────────────────────────────────
+    // `scrollIntoView({behavior:'smooth'})` animates, so movement is polled rather than sampled —
+    // the early-read mode SSM-13's block documents in full.
+    await page.keyboard.press('Home')
+    expect(await focusedMark(page), 'the cursor left the rail before Enter').toBe(0)
+    await page.keyboard.press('Enter')
+    await expect
+      .poll(async () => (await scrollBox(page)).top, {
+        message: `ENTER REACHED NO HANDLER: the transcript never left ${from} after Enter on the oldest ` +
+          'mark. Keyboard activation of the session map is broken (WCAG 2.1.1).',
+        timeout: 10_000,
+      })
+      .toBeLessThan(from - 40)
+    await expect(
+      page.getByText(`${PROMPT} (1)`, { exact: false }).first(),
+      'Enter moved the transcript but did not bring the oldest turn on screen',
+    ).toBeInViewport({ timeout: 10_000 })
+
+    // ── ACTIVATE (2): SPACE, on the NEWEST mark, travels back DOWN ────────────────────────────
+    // The opposite direction from a DIFFERENT key, so neither activation can be satisfied by the
+    // other's scroll: Enter's pass requires the offset to fall, Space's requires it to rise.
+    const landed = (await scrollBox(page)).top
+    await page.keyboard.press('End')
+    expect(await focusedMark(page), 'the cursor left the rail before Space').toBe(total - 1)
+    await page.keyboard.press(' ')
+    await expect
+      .poll(async () => (await scrollBox(page)).top, {
+        message: `SPACE REACHED NO HANDLER: the transcript never left ${landed} after Space on the ` +
+          'newest mark, though Enter had just moved it — so the rail handles Enter and not Space.',
+        timeout: 10_000,
+      })
+      .toBeGreaterThan(landed + 40)
+    await expect(
+      page.getByText(`${PROMPT} (6)`, { exact: false }).first(),
+      'Space moved the transcript but did not bring the newest turn on screen',
+    ).toBeInViewport({ timeout: 10_000 })
+  })
+
+  // ── THE GROUND `schemeContrast.test.ts` MEASURES THE MARK TONES AGAINST ────────────────────
+  // SSM-15's contrast half asserts both mark tones over `--color-canvas` in all 12 schemes, and
+  // that ground is a claim about LAYOUT: it is only the right number while nothing between the
+  // rail and the shell paints a surface of its own. A vitest file cannot check that (jsdom
+  // computes no backgrounds), so a re-parent of the rail onto `bg-surface` would leave 24 green
+  // assertions quietly measuring the wrong backdrop. Read from the real paint here instead, so
+  // the drift reds ONCE, loudly, next to the thing that moved.
+  test('the rail is painted on the ground the 12-scheme contrast guard measures', async ({ page }) => {
+    await gotoRoute(page, 'chat')
+    await driveScriptedTurns(page, PROMPT, 3)
+    await expect(page.locator(RAIL)).toBeVisible()
+
+    const ground = await page.evaluate((railSel) => {
+      const hexToRgb = (hex: string) => {
+        const h = hex.trim().replace('#', '')
+        const n = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16))
+        return `rgb(${n[0]}, ${n[1]}, ${n[2]})`
+      }
+      // The nearest ancestor that actually PAINTS. `transparent` and a zero-alpha rgba both mean
+      // "the layer below shows through", so both are walked past rather than reported.
+      const opaque = (c: string) => !!c && c !== 'transparent' && !/^rgba\(.*,\s*0\s*\)$/.test(c)
+      let el: Element | null = document.querySelector(railSel)
+      const chain: string[] = []
+      while (el) {
+        const bg = getComputedStyle(el).backgroundColor
+        chain.push(`${el.tagName.toLowerCase()}=${bg}`)
+        if (opaque(bg)) {
+          return {
+            painted: bg,
+            paintedBy: el.tagName.toLowerCase(),
+            canvas: hexToRgb(getComputedStyle(document.documentElement).getPropertyValue('--color-canvas')),
+            chain,
+          }
+        }
+        el = el.parentElement
+      }
+      return { painted: null, paintedBy: null, canvas: null, chain }
+    }, RAIL)
+
+    expect(
+      ground.painted,
+      `nothing between the Session Map rail and the document root paints a background, so the\n` +
+        `contrast guard has no ground at all. Chain: ${ground.chain.join(' → ')}`,
+    ).not.toBeNull()
+    expect(
+      ground.painted,
+      `THE RAIL'S GROUND MOVED. \`src/design/schemeContrast.test.ts\` asserts both session map mark\n` +
+        `tones over --color-canvas (${ground.canvas}) in all 12 schemes, but the rail is now painted\n` +
+        `on ${ground.painted} by <${ground.paintedBy}>. Point that guard's RAIL_GROUND at the token\n` +
+        `this really is and re-measure — do not delete either assertion.\n` +
+        `Chain: ${ground.chain.join(' → ')}`,
+    ).toBe(ground.canvas)
+  })
+})
+
 test.describe('Session Map — it is the session\'s ONLY index (SSM-13)', () => {
   test.describe.configure({ timeout: 180_000 })
   // Same geometry as the SSM-11 block: short enough that the scripted turns overflow, wide enough

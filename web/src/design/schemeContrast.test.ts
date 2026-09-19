@@ -458,3 +458,157 @@ describe('tonal tint: the ink clears AA over the scheme\'s OWN composited tint, 
     })
   }
 })
+
+// ── THE SESSION MAP RAIL'S MARK TONES, in every scheme (atom SSM-15) ──────────────────────────
+//
+// 🔴 THE POPULATION GAP THIS CLOSES. Every block above measures INK — a label, a chip, an accent
+// word — which is why every threshold in this file is 4.5. `pages/chat/SessionMapRail.tsx` paints
+// something none of those rows describes: a 4×4px tick that IS a control (one per transcript mark,
+// the session's only in-session index), whose TONE is the sole thing separating the CURRENT region
+// from history. Neither tone was asserted in any scheme, so a surface retint could sink the session
+// map's navigation targets into the canvas in eleven schemes without turning anything red.
+//
+// ── THE THRESHOLD IS 3:1, AND THAT IS THE APPLICABLE NUMBER, NOT A CONCESSION ─────────────────
+// A mark is a user-interface component, not text, so WCAG 2.1 **SC 1.4.11 Non-text Contrast**
+// governs it at 3:1; 1.4.3's 4.5 governs text and a 4px tick is none. The distinction is
+// load-bearing here rather than a rounding, and this file already holds the proof: the block at the
+// top MEASURED `primary → canvas` at 4.37-4.41, failing AA in 7 of 12 schemes, which is exactly why
+// accent TEXT on the canvas uses the emphasis shade. Asserting 4.5 on a non-text tick would
+// therefore manufacture a failure in 9 of 12 light schemes, and the fix the next person would reach
+// for — repainting the tick `primary-emphasis` — would break the One-Voice rule the rail's own
+// header states (coral means "the agent / live / current"). Measured across the grid below: worst
+// **4.37** (light / coral / current), best 10.87. Real margin over 3:1, and a retint that spends it
+// reds here.
+//
+// ── TWO THINGS THIS BLOCK DELIBERATELY DOES NOT ASSERT, both MEASURED and both real ──────────
+// Recorded rather than silently omitted, because each needs a design ruling this atom does not own,
+// and an assertion invented here would either be red on arrival or would bless the defect:
+//
+//  1. THE TWO TONES ARE ALL BUT LUMINANCE-IDENTICAL. `primary` vs `on-surface-low` measures
+//     **1.004:1** (dark / coral) and never exceeds 1.944 in any scheme × mode. So the current
+//     region is distinguished from history by HUE ALONE — and `sessionMapMarkName` is
+//     "Turn N of M: …", which never says "current", while the halo only paints on hover/focus. A
+//     reader with achromatopsia therefore cannot locate the current region at all. That is an
+//     SC 1.4.1 (Use of Color) question about the rail's ENCODING, not about either tone's contrast,
+//     and fixing it means adding a second visual channel (size/shape/ring) — a design decision.
+//     What IS asserted below is the floor that makes the question answerable at all: the two tones
+//     must remain two DIFFERENT tokens, so an edit that collapses them to one reds here.
+//  2. THE TRACK IS INVISIBLE IN LIGHT MODE. `--color-rail` is `#f0f4f8` and so is
+//     `--color-canvas` — byte-identical, **1.000:1** — so the hairline spine the rail's §A.1 wants
+//     to "read as rail" is literally not there in light (1.163 in dark). No WCAG rule is broken:
+//     the track is `aria-hidden` and documented as decorative ("the marks are the targets"), and
+//     the tone is shared with `ui/NavRail`, which uses it as a BACKGROUND rather than a hairline —
+//     so a retint is a cross-surface change with visual baselines attached, not a local fix.
+//     Asserting a floor the shipped default cannot meet is the one thing the top of this file
+//     forbids, so this is reported instead of rounded up.
+
+/** The rail's ground: what is painted BEHIND the marks. `app/App.tsx` paints the shell
+ *  `--color-canvas` and the chat transcript column adds no surface of its own, so the ticks sit on
+ *  the canvas. Pinned in the BROWSER as well — `e2e/sessionMap.spec.ts`'s desktop keyboard
+ *  walkthrough reads the rail's real computed backdrop and asserts it is this token's value, so
+ *  re-parenting the rail onto a painted surface reds there instead of leaving this guard quietly
+ *  measuring the wrong ground. */
+const RAIL_GROUND = '--color-canvas'
+
+/** WCAG 2.1 SC 1.4.11 Non-text Contrast — the floor for a UI component's own visual boundary. */
+const NON_TEXT = 3
+
+/** The mode's token block in tokens.css: the `@theme` default block is dark, `.light` overrides. */
+function modeScope(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  return mode === 'dark'
+    ? css.slice(0, css.search(/\.light\s*\{/))
+    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+}
+
+/** Resolve a token for one scheme × mode THE WAY THE BROWSER DOES: a scheme override when the
+ *  scheme carries one (the appearance store sets those inline on `<html>`), otherwise the mode's
+ *  tokens.css value. The asymmetry is the reason this is resolved rather than assumed —
+ *  `--color-primary` is per-scheme, while `--color-on-surface-low` and `--color-canvas` are one
+ *  value per mode — and it is what makes the history tone's row honest in all twelve. */
+function resolvedToken(varName: string, s: (typeof SCHEMES)[number], mode: 'dark' | 'light'): string {
+  const fromScheme = s.colors[varName]?.[mode]
+  if (fromScheme) return fromScheme
+  const m = modeScope(mode).match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
+  if (!m) throw new Error(`${varName} is neither a scheme token nor a ${mode} value in tokens.css`)
+  return m[1]
+}
+
+/** The rail's two mark tones, PARSED OUT OF THE COMPONENT rather than restated here — the same
+ *  discipline `tonalAlphas()` applies to `Button.tsx`, and for the same reason. A restated pair
+ *  keeps measuring the tones the rail used to paint: repaint a tick and this rail follows, rename
+ *  or delete the declaration and it throws rather than iterating nothing and reporting green. */
+function markTones(): Array<[string, string]> {
+  const src = readFileSync(join(process.cwd(), 'src/pages/chat/SessionMapRail.tsx'), 'utf8')
+  const m = /const tone = isCurrent \? '([^']+)' : '([^']+)'/.exec(src)
+  if (!m) {
+    throw new Error(
+      'could not parse the mark tone pair out of SessionMapRail.tsx — the `const tone = isCurrent ? … : …`\n' +
+      'declaration this guard reads is gone or reshaped. Do not delete this rail: point it at the new\n' +
+      'declaration, or the session map ships unmeasured in 12 schemes.',
+    )
+  }
+  const varOf = (decl: string): string => {
+    const v = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(decl.trim())
+    if (!v) throw new Error(`the rail's mark tone "${decl}" is not a token reference — a raw colour cannot track 12 schemes`)
+    return v[1]
+  }
+  return [['current', varOf(m[1])], ['history', varOf(m[2])]]
+}
+
+describe('session map rail: both mark tones clear SC 1.4.11 on the rail\'s ground, every scheme × mode', () => {
+  const TONES = markTones()
+  const MODES = ['dark', 'light'] as const
+
+  type Row = { scheme: string; mode: 'dark' | 'light'; role: string; token: string; ratio: number }
+  const ROWS: Row[] = []
+  for (const s of SCHEMES) {
+    for (const mode of MODES) {
+      const ground = resolvedToken(RAIL_GROUND, s, mode)
+      for (const [role, token] of TONES) {
+        ROWS.push({ scheme: s.id, mode, role, token, ratio: contrast(resolvedToken(token, s, mode), ground) })
+      }
+    }
+  }
+
+  // ── VACUITY FLOOR ──────────────────────────────────────────────────────────────────────────
+  // Every input below is DERIVED: the schemes are imported, the ground and the history tone are
+  // parsed out of tokens.css, and the tone PAIR is parsed out of the component. Each of those can
+  // come back empty, and an empty parse iterates nothing while every `it` still reports green — so
+  // the population is pinned by COUNT, exactly as the tonal-tint grid above pins its 144.
+  it('parsed the rail\'s OWN tone pair and walked the full population — 12 schemes × 2 modes × 2 tones', () => {
+    expect(TONES.map(([role]) => role), 'the current tone and the history tone, in that order').toEqual(['current', 'history'])
+    for (const [role, token] of TONES) {
+      expect(token, `the ${role} tone must be a --color-* token`).toMatch(/^--color-[a-z0-9-]+$/)
+    }
+    expect(SCHEMES.length, 'the curated scheme set').toBe(12)
+    expect(ROWS.length, '12 × 2 × 2 — the whole grid was walked').toBe(48)
+    expect(new Set(ROWS.map((r) => `${r.scheme}/${r.mode}/${r.role}`)).size,
+      'and every row is distinct (no scheme silently measured twice)').toBe(48)
+    for (const r of ROWS) {
+      expect(r.ratio, `${r.scheme}/${r.mode}/${r.role} produced no real ratio`).toBeGreaterThan(1)
+    }
+  })
+
+  it('the region encoding exists: the current tone and the history tone are different tokens', () => {
+    // The floor under finding (1) in the header. Collapse both branches of the `tone` ternary onto
+    // one token and the current region stops being visible at all — a change no contrast threshold
+    // above or below would notice, because each tone would still clear its ground perfectly.
+    expect(TONES[0][1], 'the current mark and the history mark paint the SAME token — the rail no longer shows which region is current')
+      .not.toBe(TONES[1][1])
+  })
+
+  for (const s of SCHEMES) {
+    describe(`scheme '${s.id}'`, () => {
+      for (const mode of MODES) {
+        it(`${mode}: the current AND history mark tones ≥ 3:1 on the rail's ground`, () => {
+          const rows = ROWS.filter((r) => r.scheme === s.id && r.mode === mode)
+          expect(rows.length, 'the current tone and the history tone').toBe(2)
+          const fails = rows.filter((r) => r.ratio < NON_TEXT)
+            .map((r) => `${r.role} (${r.token}) = ${r.ratio.toFixed(2)}`)
+          expect(fails, `a session map mark is below SC 1.4.11 on ${RAIL_GROUND}:\n  ${fails.join('\n  ')}`).toEqual([])
+        })
+      }
+    })
+  }
+})
