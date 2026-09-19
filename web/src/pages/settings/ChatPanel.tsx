@@ -437,7 +437,7 @@ export function AutoArchiveRow({ days, onCommit, saved }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         {shown > 0 && preview?.enabled && (
-          <span data-type="caption" className="text-on-surface-variant tabular-nums">
+          <span data-type="caption" className="text-on-surface-var tabular-nums">
             {preview.count === 0 ? 'none stale now' : `${preview.count} stale now`}
           </span>
         )}
@@ -445,7 +445,7 @@ export function AutoArchiveRow({ days, onCommit, saved }: {
           value={shown} min={0} max={3650} step={1} ariaLabel="Auto-archive after (days)"
           onChange={(n) => { setPending(n); onCommit(n, 'Auto-archive after (days)') }}
         />
-        <span data-type="caption" className="text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
+        <span data-type="caption" className="text-on-surface-var">{shown > 0 ? 'days' : 'off'}</span>
       </div>
     </Row>
   )

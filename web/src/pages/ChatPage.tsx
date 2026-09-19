@@ -73,6 +73,7 @@ import { readOnlyCommandOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
+import { optimizeFailure, optimizeOutcome } from '../ui/composer/optimizeOutcome'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { usePlatform } from '../app/usePlatform'
 import { SnipOverlay } from '../ui/SnipOverlay'
@@ -1930,9 +1931,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setOptimizing(true)
     try {
       const ctx = buildOptimizerContext(turns)
-      const r = await api.optimizePrompt(t, ctx)
-      if (r.changed && r.optimized) { setPreOptimize(input); setInput(r.optimized) }
-    } catch { /* keep the draft on failure */ }
+      // #277: every answer now says something. The `if` here used to have no else and the
+      // catch was a bare comment, so `changed:false` (a ~15s wait, byte-identical text) and
+      // an unreachable optimizer both rendered as nothing at all. See `optimizeOutcome`.
+      const out = optimizeOutcome(await api.optimizePrompt(t, ctx))
+      if (out.kind === 'rewritten') { setPreOptimize(input); setInput(out.optimized) }
+      else notify(out.message, out.level)
+    } catch (e) { const f = optimizeFailure(e); notify(f.message, f.level) }
     finally { setOptimizing(false) }
   }
   // /optimize one-shot: optimize `raw` in the background, then send the optimized
@@ -1943,8 +1948,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     let optimized = ''
     try {
       const ctx = buildOptimizerContext(turns)
-      const r = await api.optimizePrompt(raw, ctx)
-      if (r.changed && r.optimized && r.optimized.trim() !== raw) optimized = r.optimized.trim()
+      // Same classifier as the button, so `changed` is read in exactly ONE place (#277) — but
+      // deliberately NO toast on this path: `/optimize` SENDS either way, so the turn appearing
+      // in the transcript is already the answer to "what did my click do". A toast here would
+      // announce a non-event beside a visible one. The extra `!== raw` guard stays: an optimizer
+      // that returns the input with `changed:true` must not be recorded as an "original".
+      const out = optimizeOutcome(await api.optimizePrompt(raw, ctx))
+      if (out.kind === 'rewritten' && out.optimized.trim() !== raw) optimized = out.optimized.trim()
     } catch { /* fall through — send the original unchanged */ }
     finally { setOptimizing(false) }
     if (optimized) await send(optimized, { original: raw })

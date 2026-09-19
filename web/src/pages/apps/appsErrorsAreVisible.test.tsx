@@ -170,14 +170,21 @@ describe('the allowlist shrank, which is the only direction it may move', () => 
     }
   })
 
-  it('🪤 the four unrelated entries are UNTOUCHED — they are a different change', () => {
-    // Deliberately not swept in. `bg-surface-2` and `bg-surface-container-high` need a per-site
-    // choice from the surface ramp (the allowlist's own note offers three candidates and picks
-    // none), which is a design decision, not a rename. Leaving them keeps this diff arguable.
-    for (const f of [
-      'pages/loops/LoopCockpitPage.tsx', 'pages/settings/ChatPanel.tsx',
-      'pages/settings/DurabilityPanel.tsx', 'pages/settings/OllamaModelManager.tsx',
-    ]) expect(Object.keys(allow.allow), `${f} is still listed`).toContain(f)
+  it('🟢 the four unrelated entries are GONE TOO — the list is now empty (#563)', () => {
+    // This assertion used to pin those four as deliberately deferred ("they are a different
+    // change"), because `bg-surface-2` and `bg-surface-container-high` needed a per-site choice
+    // from the surface ramp that the allowlist's own note declined to make. #563 made it: both
+    // sites sit on `bg-surface-container`, and 25 other hovers on that exact base already resolve
+    // to `surface-high`, so the ramp step was measurable rather than a taste call. The deferral is
+    // discharged, so the pin inverts.
+    //
+    // 🔑 EMPTY IS STRICTLY STRONGER THAN SHRINKING, and it is the assertion that matters. The
+    // rail's skip predicate is `allow[file]?.includes(base)` — a set membership test with no
+    // count — so an already-listed (file, utility) pair could add unlimited further occurrences
+    // and stay green. It did: `border-outline-var` went 3 → 9 in DurabilityPanel while listed.
+    // With `allow` empty there is no pair to hide behind, so every inert utility in web/src is a
+    // failure. Keep it that way: a new entry here is a regression, not a deferral.
+    expect(allow.allow, 'no file may be listed any more').toEqual({})
   })
 
   it('the rule that makes this the right direction is still written down', () => {
