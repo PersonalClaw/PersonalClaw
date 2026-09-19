@@ -1449,15 +1449,32 @@ class DashboardState:
     #: `kind`/`title`/`body`/`ts` are deliberately NOT listed: they are assigned unconditionally
     #: after the merge, which protects them structurally and keeps this set from having to grow in
     #: step with the happy path.
+    #:
+    #: `withheld_reason`/`routed_to` are the addressing VERDICT (`TSE2-5`) — this method's
+    #: conclusion about a note, computed from the addressee below, not an input. They ride out
+    #: on the note through `GET /api/notifications`, so an emitter that could supply them could
+    #: label its own note "already routed to Dana" while it was in fact fired at the local
+    #: owner. The `addressee` ITSELF is deliberately NOT reserved: naming who a notification is
+    #: for is the emitter's job (see `inbox.emit_attention_item`).
     _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
-        {"mode", "targets", "source", "escalated_by", "badge_only", "native", "acked"}
+        {
+            "mode",
+            "targets",
+            "source",
+            "escalated_by",
+            "badge_only",
+            "native",
+            "acked",
+            "withheld_reason",
+            "routed_to",
+        }
     )
 
     def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None:
         """Push a notification to ALL connected SSE clients and persist to disk.
 
         THE single delivery choke point for every emitter (crons, loops, hooks, inbox
-        alerts, heartbeats, app actions). Two layers of policy, in this order:
+        alerts, heartbeats, app actions). Three layers of policy, in this order:
 
         1. **The global gate** (`notification_allowed`) — mute-all, minimum severity,
            quiet hours. Unchanged, and still outermost: mute means mute, whatever a rule
@@ -1465,11 +1482,24 @@ class DashboardState:
         2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
            immediate / digest, plus conditions that escalate a quieter mode when the text
            matches a keyword or names the operator.
+        3. **The addressee** (`notification_addressing`, `TSE2-5`) — WHO the note is for.
+           The first two layers answer "should this be delivered" and "how loudly"; neither
+           could answer "to whom", so every note went to *this* dashboard by construction.
+           A note addressed to somebody else is recorded here and fired nowhere here, and is
+           offered to a `type=notification` delivery provider that says it can reach them.
 
-        With no rules file, every registered kind resolves to ``immediate`` and this
-        behaves exactly as it did before rules existed — that equivalence is the safety
-        property of shipping without a gate, and `test_notification_rules.py` pins it.
+        The three are ordered by whose instruction they carry: the user's own settings, then
+        the user's own rules, then the note's own attribution. The addressee sits *inside*
+        the rules layer (after `never`, before the delivery modes) because `digest` and
+        `badge` are local deliveries too — a foreign note in the morning digest is a foreign
+        note fired, one day late.
+
+        With no rules file and no addressee, every registered kind resolves to ``immediate``
+        and this behaves exactly as it did before either layer existed — that equivalence is
+        the safety property of shipping without a gate, and `test_notification_rules.py` /
+        `test_notification_addressing.py` pin the two halves of it.
         """
+        from personalclaw import notification_addressing as addressing
         from personalclaw import notification_rules as rules
         from personalclaw.providers.entity_routes import notification_allowed
 
@@ -1543,6 +1573,43 @@ class DashboardState:
         if mode == "never":
             logger.debug("Notification dropped by rule %s: %r", rule.key if rule else kind, title)
             return
+
+        # 🔴 THE ADDRESSEE (`TSE2-5`). Everything below this point is a LOCAL fire — a toast on
+        # this dashboard, a row in this digest, a ping to this owner's phone, a banner on this
+        # desktop. A note addressed to somebody else has no business in any of them, and before
+        # this it reached all four: `TSE2-3`'s shared inbox renders a teammate's item, and when
+        # that item wanted attention `emit_attention_item` fired at whoever happened to be
+        # sitting here.
+        #
+        # Placed after `never` and before the three delivery modes deliberately. `never` is the
+        # user's own instruction and outranks everything, as it already did. The modes below are
+        # all *local* deliveries — including `digest`, which is why the addressing decision
+        # cannot live inside the `immediate` branch: a foreign note queued for the morning
+        # digest is a foreign note fired, one day late.
+        #
+        # This is the trigger posture, not a second mechanism: `triggers/ownership.py` withholds
+        # a foreign row from the ARM read (`triggers/provider.py::armable`) while the LISTING
+        # read keeps it visible. Here the notification log is the listing — `_append_notification`
+        # still runs, so the note appears in the bell and `GET /api/notifications` — and the fire
+        # half (`_broadcast`, `native`, `push`, the digest) is what the addressee gates.
+        if not addressing.is_locally_addressed(note):
+            # Route it where it actually belongs FIRST, so `routed_to` is recorded on the row
+            # the user sees. With no `type=notification` provider installed this returns "" and
+            # the note is simply visible-but-inert — "nobody could reach them" must never read
+            # as "delivered".
+            from personalclaw.notification_providers.registry import deliver_to_addressee
+
+            addressee = addressing.addressee_of(note)
+            note[addressing.WITHHELD_REASON_KEY] = addressing.FOREIGN_ADDRESSEE
+            note[addressing.ROUTED_TO_KEY] = deliver_to_addressee(note, addressee)
+            logger.debug(
+                "Notification addressed to %r, not this owner — visible, not fired (routed_to=%r)",
+                addressee,
+                note[addressing.ROUTED_TO_KEY],
+            )
+            self._append_notification(note)
+            return
+
         if mode == "digest":
             rules.queue_for_digest(note)
             return

@@ -12,9 +12,10 @@ Each submodule re-exports one provider-type's ABC + its data types from the live
     def create_provider(config): ...
 
 Submodules: ``search``, ``channel``, ``model``, ``memory``, ``embedding``, ``inbox``,
-``knowledge``, ``prompt``, ``tool``, ``action`` (the 10 provider ABCs) + ``manifest``
-(AppManifest/ProviderConfig, type-only) + ``util`` (the few cross-cutting helpers apps
-need: config_dir / app_data_dir / sandbox wrap).
+``knowledge``, ``prompt``, ``tool``, ``action`` (the 10 provider ABCs) + ``notification``
+(`TSE2-5`'s delivery backend, the route for a note addressed to somebody this harness cannot
+reach) + ``manifest`` (AppManifest/ProviderConfig, type-only) + ``util`` (the few
+cross-cutting helpers apps need: config_dir / app_data_dir / sandbox wrap).
 
 The ~4 AMBIGUOUS action providers (run-prompt/run-workflow/invoke-agent/create-task)
 need a ``personalclaw.sdk.runtime`` (stable spawn/run/create calls) before they can

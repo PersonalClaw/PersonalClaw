@@ -936,6 +936,55 @@ class InboxTypeHandler(_TypeHandler):
             unregister_source(str(name))
 
 
+class NotificationTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'notification'`` extensions (`TSE2-5`).
+
+    Builds a
+    :class:`~personalclaw.notification_providers.base.NotificationDeliveryProvider` via the
+    manifest factory and registers it in ``notification_providers.registry`` so
+    ``deliver_to_addressee`` can route a foreign-addressed note to whoever it is actually for
+    — the same ``load_factory`` + ``ProviderSettings`` path every other app provider type uses.
+
+    This graduates ``notification`` from an :class:`EntitySeamHandler` no-op to a real handler,
+    exactly as ``inbox``, ``knowledge`` and ``channel`` graduated before it. The seam it
+    replaced said out loud that it was empty — *"No provider declares type=notification;
+    pluggable delivery backends remain a future design"* — and that made the type
+    declarable-but-dead: the factory ran at enable-time and its result was discarded, so an
+    app's backend could never be reached. That is the #47 class the manifest-vs-handler guard
+    exists to prevent.
+
+    **Deregistration is load-bearing, and more so here than for a source.** A phantom inbox
+    source makes the inbox appear to poll something that is gone; a phantom *delivery* backend
+    makes a note record ``routed_to: <uninstalled app>``, which reads as delivered when
+    nothing was. ``deregister`` therefore removes it by the same key ``register`` used — the
+    provider's own ``delivery_name``.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.notification_providers.registry import register_provider
+
+        register_provider(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.notification_providers.registry import unregister_provider
+
+        # Key by the provider's own delivery_name (what register_provider used), falling back
+        # to the extension name. Computed without a getattr default so ``ext`` is not
+        # dereferenced when the instance already carries a name (ext may be absent in direct
+        # handler tests) — the InboxTypeHandler pattern.
+        name = getattr(instance, "delivery_name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_provider(str(name))
+
+
 class EntitySeamHandler(_TypeHandler):
     """Handler for provider types that are *enable/disable + Settings* seams only.
 
@@ -1176,16 +1225,7 @@ def get_provider_registry() -> ProviderRegistry:
         # cannot contribute to). Graduated from an EntitySeamHandler no-op — the seam
         # now has a consumer, so dropping the instance would be the #47 dead end.
         _registry.register_type_handler("inbox", InboxTypeHandler())
-        _registry.register_type_handler(
-            "notification",
-            EntitySeamHandler(
-                source_of_truth="delivery preferences live in entity_settings/"
-                "notifications.json, enforced by DashboardState.notify()'s gate "
-                "(providers.entity_routes.notification_allowed). No provider "
-                "declares type=notification; pluggable delivery backends remain "
-                "a future design.",
-            ),
-        )
+        _registry.register_type_handler("notification", NotificationTypeHandler())
         _registry.register_type_handler("channel", ChannelTypeHandler())
         _registry.register_type_handler("sync", SyncTypeHandler())
         _registry.register_type_handler("sandbox", SandboxTypeHandler())
