@@ -2456,15 +2456,18 @@ async def update_collection(request: web.Request) -> web.Response:
     """PATCH /api/knowledge/collections/{id} — rename / re-icon / re-query / reorder."""
     cid = request.match_info["id"]
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        body = await json_object_body(request)
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     store = _store(request)
     if not store.get_collection(cid):
         return web.json_response({"error": "collection not found"}, status=404)
     fields = {k: v for k, v in body.items() if k in ("name", "kind", "query", "icon", "position")}
+    if "name" in fields:
+        try:
+            fields["name"] = require_string(body, "name")
+        except RequestValidationError as exc:
+            return web.json_response({"error": exc.message}, status=exc.status)
     if not fields:
         return web.json_response(
             {

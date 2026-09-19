@@ -1153,15 +1153,14 @@ async def api_artifact_folder_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "unknown provider"}, status=400)
     fid = request.match_info["id"]
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        body = await json_object_body(request)
+        name = require_string(body, "name") if "name" in body else None
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     try:
         folder = _folder_store(prov).update(
             fid,
-            name=str(body["name"]) if "name" in body else None,
+            name=name,
             parent_id=str(body["parent_id"] or "") if "parent_id" in body else None,
             order=int(body["order"]) if "order" in body else None,
             icon=str(body["icon"] or "") if "icon" in body else None,

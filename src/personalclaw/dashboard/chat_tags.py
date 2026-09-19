@@ -18,6 +18,7 @@ from personalclaw.dashboard.chat_persistence import resolve_session, save_sessio
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.request_validation import (
     MISSING,
+    RequestValidationError,
     json_object_body,
     optional_string,
     require_string,
@@ -147,13 +148,11 @@ async def api_chat_tag_update(request: web.Request) -> web.Response:
     if not tag:
         return web.json_response({"error": "not found"}, status=404)
     try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if "name" in body:
-        new_name = str(body["name"]).strip()[:_NAME_MAX]
-        if not new_name:
-            return web.json_response({"error": "name required"}, status=400)
+        body = await json_object_body(request)
+        new_name = require_string(body, "name")[:_NAME_MAX] if "name" in body else None
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
+    if new_name is not None:
         tag["name"] = new_name
     if "color" in body:
         tag["color"] = _valid_color(str(body["color"]))
