@@ -1,8 +1,25 @@
 import { useSyncExternalStore } from 'react'
+import { api, type WireDocComment } from '../../../lib/api'
+import { notify } from '../../../app/appSdk'
 
 /** A single comment anchored to a passage of a file/artifact preview. Comments
  *  collect across ALL documents (files + artifacts) into one cross-document deck
- *  that surfaces at the bottom of whichever preview is open. */
+ *  that surfaces at the bottom of whichever preview is open.
+ *
+ *  🔴 THE STORE BEHIND THIS IS THE SERVER (`/api/doc-comments`, #429). It used to be one
+ *  `localStorage` key — `doc-comments-v1` — and nothing else, which made annotations the
+ *  only thing a user creates in this app that a cleared cache destroys, that
+ *  `personalclaw snapshot` cannot carry (the server never saw them, so they were absent
+ *  from the durability inventory too), and that are invisible on a second device or in the
+ *  desktop app. Task comments next door were a real server-side store the whole time, so
+ *  the two comment systems had opposite durability guarantees and nothing said which one
+ *  you were using.
+ *
+ *  The module-level list below is a RENDER CACHE of server state, not a second copy of
+ *  record: every verb writes through, and a write that fails resyncs from the server and
+ *  says so. That distinction is the whole point — the old `try/catch { ignore }` around
+ *  both the read and the write was appropriate for a cache and wrong for the only copy of
+ *  user-authored content. */
 export interface DocComment {
   id: string
   docId: string        // file path or artifact slug — the anchor document
@@ -17,7 +34,7 @@ export interface DocComment {
   // a short source-context snippet captured at comment time (~20 chars each side
   // of the quote) so the AI can disambiguate short/repeated anchors.
   context?: string
-  ts: number
+  ts: number           // epoch MILLISECONDS (the wire carries seconds; see `fromWire`)
 }
 
 /** Resolve a selected passage to a 1-based (line, column) in the source content.
@@ -69,55 +86,144 @@ export function formatCommentsMessage(comments: DocComment[], instructions: stri
   return out.join('\n').trim()
 }
 
-const KEY = 'doc-comments-v1'
-
-function load(): DocComment[] {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (raw) { const v = JSON.parse(raw); if (Array.isArray(v)) return v }
-  } catch { /* ignore */ }
-  return []
+/** The server's row → the deck's record. `ts` crosses a UNIT boundary here: the wire
+ *  carries `time.time()` seconds, this interface has always been milliseconds, and the
+ *  field feeds ordering, so multiplying at the one seam beats auditing every reader. */
+function fromWire(w: WireDocComment): DocComment {
+  return {
+    id: w.id,
+    docId: w.doc_id,
+    docLabel: w.doc_label || '',
+    docPath: w.doc_path || undefined,
+    quote: w.quote || '',
+    comment: w.comment || '',
+    line: w.line ?? undefined,
+    column: w.column ?? undefined,
+    context: w.context || undefined,
+    ts: (w.ts || 0) * 1000,
+  }
 }
 
-let comments: DocComment[] = load()
+function toWire(c: Omit<DocComment, 'id' | 'ts'>): Omit<WireDocComment, 'id' | 'ts'> {
+  return {
+    doc_id: c.docId,
+    doc_label: c.docLabel ?? '',
+    doc_path: c.docPath ?? '',
+    quote: c.quote ?? '',
+    comment: c.comment ?? '',
+    line: c.line ?? null,
+    column: c.column ?? null,
+    context: c.context ?? '',
+  }
+}
+
+let comments: DocComment[] = []
 const listeners = new Set<() => void>()
+let hydrated = false
 
-function emit() {
-  try { localStorage.setItem(KEY, JSON.stringify(comments)) } catch { /* ignore */ }
-  listeners.forEach((l) => l())
+function emit() { listeners.forEach((l) => l()) }
+
+/** Re-read the server's list. The recovery path for a failed write: the deck must not keep
+ *  showing an optimistic row the server rejected, which is the shape that made the old
+ *  swallowed write invisible. */
+async function resync(): Promise<void> {
+  const { comments: rows } = await api.docCommentsList()
+  comments = rows.map(fromWire)
+  emit()
 }
 
-let _seq = 0
-function newId(): string {
-  // Date/random are fine in the browser (this isn't a workflow script).
-  _seq += 1
-  return `c-${Date.now().toString(36)}-${_seq}`
+/** Report a failed write AND put the deck back on the server's truth. Both halves matter:
+ *  the toast is what tells the user their note did not land, and the resync is what stops
+ *  the UI from implying it did. */
+async function failed(what: string, e: unknown): Promise<void> {
+  notify(`Couldn't ${what}: ${e instanceof Error ? e.message : String(e)}`, 'error')
+  try { await resync() } catch { /* the notify above already reported the write */ }
+}
+
+/** First read populates the deck. Kicked from `subscribe`, so a surface that never mounts
+ *  the comment layer never fetches. */
+function hydrate(): void {
+  if (hydrated) return
+  hydrated = true
+  void resync().catch((e) => {
+    notify(`Couldn't load document comments: ${e instanceof Error ? e.message : String(e)}`, 'error')
+  })
 }
 
 export const commentStore = {
   all(): DocComment[] { return comments },
-  add(c: Omit<DocComment, 'id' | 'ts'>): DocComment {
-    const full: DocComment = { ...c, id: newId(), ts: Date.now() }
-    comments = [...comments, full]
+  /** Optimistic: the card appears immediately, then takes the server's id. A rejected write
+   *  removes it again and says why — it does not linger looking saved. */
+  async add(c: Omit<DocComment, 'id' | 'ts'>): Promise<DocComment | null> {
+    const optimistic: DocComment = { ...c, id: `pending-${Date.now()}`, ts: Date.now() }
+    comments = [...comments, optimistic]
     emit()
-    return full
+    try {
+      const { comment } = await api.docCommentCreate(toWire(c))
+      const saved = fromWire(comment)
+      comments = comments.map((row) => (row.id === optimistic.id ? saved : row))
+      emit()
+      return saved
+    } catch (e) {
+      comments = comments.filter((row) => row.id !== optimistic.id)
+      emit()
+      await failed('save that comment', e)
+      return null
+    }
   },
-  update(id: string, patch: Partial<Pick<DocComment, 'comment'>>) {
+  async update(id: string, patch: Partial<Pick<DocComment, 'comment'>>): Promise<void> {
+    const before = comments
     comments = comments.map((c) => (c.id === id ? { ...c, ...patch } : c))
     emit()
+    try {
+      await api.docCommentUpdate(id, patch.comment ?? '')
+    } catch (e) {
+      comments = before
+      emit()
+      await failed('save that edit', e)
+    }
   },
-  remove(id: string) {
+  async remove(id: string): Promise<void> {
+    const before = comments
     comments = comments.filter((c) => c.id !== id)
     emit()
+    try {
+      await api.docCommentDelete(id)
+    } catch (e) {
+      comments = before
+      emit()
+      await failed('remove that comment', e)
+    }
   },
-  removeMany(ids: string[]) {
+  async removeMany(ids: string[]): Promise<void> {
+    if (!ids.length) return
+    const before = comments
     const set = new Set(ids)
     comments = comments.filter((c) => !set.has(c.id))
     emit()
+    try {
+      await api.docCommentsDeleteMany(ids)
+    } catch (e) {
+      comments = before
+      emit()
+      await failed('remove those comments', e)
+    }
   },
-  clear() { comments = []; emit() },
+  async clear(): Promise<void> {
+    const before = comments
+    comments = []
+    emit()
+    try {
+      await api.docCommentsClear()
+    } catch (e) {
+      comments = before
+      emit()
+      await failed('clear the comments', e)
+    }
+  },
   subscribe(fn: () => void): () => void {
     listeners.add(fn)
+    hydrate()
     return () => { listeners.delete(fn) }
   },
 }

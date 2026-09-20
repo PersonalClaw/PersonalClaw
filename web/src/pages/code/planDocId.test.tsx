@@ -1,13 +1,16 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { commentStore } from '../files/comments/commentStore'
+import { installFakeDocCommentServer, type FakeDocCommentServer } from '../files/comments/fakeDocCommentServer'
 
 // ── A planning comment docId must identify ONE document ────────────────────────
 //
 // `CommentLayer`'s `docId` is the comment store's DOCUMENT IDENTITY, and that store is a single
-// global localStorage key (`doc-comments-v1`) shared by every surface that can be commented on:
-// files (`entry.path`), artifacts (`art.slug`), and the two planning walkthroughs.
+// global collection shared by every surface that can be commented on: files (`entry.path`),
+// artifacts (`art.slug`), and the two planning walkthroughs. (It was one global localStorage key,
+// `doc-comments-v1`, until #429 moved it server-side to `/api/doc-comments` — the sharing that
+// makes this test necessary is unchanged, only the durability of it.)
 //
 // So the id has to be unique per document, and one of the two planning views was not:
 //
@@ -34,19 +37,21 @@ const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
 describe('the comment store keys documents by docId alone', () => {
-  beforeEach(() => { commentStore.clear() })
+  let server: FakeDocCommentServer
+  beforeEach(async () => { server = installFakeDocCommentServer(); await commentStore.clear() })
+  afterEach(() => { server.restore() })
 
-  it('two documents with the SAME id are one document — the defect, reproduced', () => {
+  it('two documents with the SAME id are one document — the defect, reproduced', async () => {
     // This is what `code-plan-requirements` did across two projects.
-    commentStore.add({ docId: 'code-plan-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from project A' })
+    await commentStore.add({ docId: 'code-plan-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from project A' })
     const forProjectB = commentStore.all().filter((c) => c.docId === 'code-plan-requirements')
     expect(forProjectB).toHaveLength(1)
     expect(forProjectB[0].comment).toBe('from project A')
   })
 
-  it('project-scoped ids keep two projects apart', () => {
-    commentStore.add({ docId: 'code-plan-projA-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from A' })
-    commentStore.add({ docId: 'code-plan-projB-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from B' })
+  it('project-scoped ids keep two projects apart', async () => {
+    await commentStore.add({ docId: 'code-plan-projA-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from A' })
+    await commentStore.add({ docId: 'code-plan-projB-requirements', docLabel: 'requirements plan', quote: 'q', comment: 'from B' })
     const a = commentStore.all().filter((c) => c.docId === 'code-plan-projA-requirements')
     const b = commentStore.all().filter((c) => c.docId === 'code-plan-projB-requirements')
     expect(a).toHaveLength(1)

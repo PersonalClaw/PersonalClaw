@@ -235,6 +235,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/devices/pair/complete` — redeem a code for a durable device session.
 - `POST /api/devices/pair/start` — mint a single-use pairing code + QR payload.
 - `POST /api/devices/{id}/revoke` — lock one device out.
+- `DELETE /api/doc-comments` — empty the deck.
+- `GET /api/doc-comments` — the whole cross-document deck, oldest first.
+- `POST /api/doc-comments` — append one comment.
+- `POST /api/doc-comments/delete` — drop several by id.
+- `DELETE /api/doc-comments/{comment_id}` — drop one comment.
+- `PATCH /api/doc-comments/{comment_id}` — edit one comment's body.
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.

@@ -196,6 +196,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_SQLITE_ATTACH_IGNORE,
         help="learned vocabulary / term lexicon",
     ),
+    # 🔴 The annotation layer over the documents above — comments anchored to a passage of
+    # a file, artifact or planning doc. Declared here because it USED to be undeclarable:
+    # the layer was one `localStorage` key in the browser, so there was no server-side
+    # state to name, and a snapshot could not carry what the server never saw (#429).
+    # `knowledge` rather than `work`: an annotation travels with the document it is about,
+    # and "Export knowledge" is the button a user presses to get their documents out.
+    StateEntry(
+        id="doc_comments",
+        kind=KIND_JSON_FILE,
+        path="doc_comments.json",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_UNION_BY_ID,
+        help="comments anchored to file, artifact and planning-doc passages",
+    ),
     # ── work ──
     StateEntry(
         id="tasks",

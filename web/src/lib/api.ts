@@ -3459,6 +3459,23 @@ export interface SessionTemplate {
   reasoning_effort: string; first_prompt: string; created_at: number
 }
 export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
+/** One document comment AS THE SERVER SPELLS IT (`personalclaw.doc_comments.DocComment`).
+ *  `commentStore` maps this to/from its own camelCase `DocComment`; the two are kept
+ *  separate so the wire shape is stated once and the deck's consumers never see it. */
+export interface WireDocComment {
+  id: string
+  doc_id: string
+  doc_label: string
+  doc_path: string
+  quote: string
+  comment: string
+  /** 1-based anchor, when the quote resolved against the rendered source. */
+  line: number | null
+  column: number | null
+  context: string
+  /** Epoch SECONDS (the server's `time.time()`), not the browser's milliseconds. */
+  ts: number
+}
 // Portability (import/export archive). Manifest is the zip's MANIFEST.json;
 // preview validates without applying, import returns what was merged/replaced.
 export interface PortabilityManifest {
@@ -7324,6 +7341,22 @@ export const api = {
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
       .then(async (r) => { if (!r.ok) throw await apiError(r); return r.text() }),
+  // ── document comments: the annotation layer over files, artifacts and planning docs ──
+  // 🔴 These routes are why the layer is DURABLE. It persisted to one `localStorage` key, so
+  // clearing site data destroyed the only copy and `personalclaw snapshot` could not carry
+  // what the server never saw — while TASK comments next door were a real store the whole
+  // time (#429). The wire is snake_case (the server's shape); `commentStore` owns the
+  // mapping to its camelCase record so its consumers did not have to change.
+  docCommentsList: () => get<{ comments: WireDocComment[] }>('/api/doc-comments'),
+  docCommentCreate: (body: Omit<WireDocComment, 'id' | 'ts'>) =>
+    post<{ comment: WireDocComment }>('/api/doc-comments', body),
+  docCommentUpdate: (id: string, comment: string) =>
+    patch<{ comment: WireDocComment }>(`/api/doc-comments/${encodeURIComponent(id)}`, { comment }),
+  docCommentDelete: (id: string) => del(`/api/doc-comments/${encodeURIComponent(id)}`),
+  /** One call rather than N so a bulk dismiss cannot half-fail. */
+  docCommentsDeleteMany: (ids: string[]) =>
+    post<{ ok: boolean; removed: number }>('/api/doc-comments/delete', { ids }),
+  docCommentsClear: () => del('/api/doc-comments'),
   // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
