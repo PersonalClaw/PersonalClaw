@@ -902,6 +902,14 @@ def _plan(args: dict[str, Any]) -> str:
     # be built loses grounding, never the plan.
     proposed = _prepend_grounding_preamble(goal, proposed)
 
+    # Hoisted out of the body literal so `_review_surface` reads the SAME dict the caller is
+    # shown. Rebuilding it there would let the announce block's intent chips drift from the
+    # reported routing, which is the one disagreement a reader has no way to detect.
+    routing = {
+        "intent": classified.to_dict(),
+        "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
+    }
+
     body = {
         "ok": True,
         # Renamed: this is no longer a bare structural stub. It carries the live grounding bundle,
@@ -912,10 +920,7 @@ def _plan(args: dict[str, Any]) -> str:
         "rigor": rigor,
         # The routing is reported even when nothing matched: "no template fit, and here is why"
         # is the answer that tells a reader whether to add a template or fix a keyword list.
-        "routing": {
-            "intent": classified.to_dict(),
-            "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
-        },
+        "routing": routing,
         "proposed_root": proposed,
         # S45: which rigor path ran and why. A user who got a thin plan needs to know it was the
         # fast path rather than the planner doing badly.
@@ -924,6 +929,15 @@ def _plan(args: dict[str, Any]) -> str:
         # mining produced something — an empty block would read as "that session did nothing".
         **_mined_surface(mined, source_session_id),
         **({"grounding": grounded} if grounded else {}),
+        # WF2UNI-4: the announce block, the cost shape, the markdown artifact — and the REVISION
+        # GRAMMAR. Measured: this path's `next_step` tells the model to adapt the tree while the
+        # `NO_UPDATE` sentinel and the merge-by-id ops that make an adaptation safe only ever
+        # reached the template path, so the instruction arrived without its vocabulary.
+        **_review_surface(goal, {"root": proposed, "inputs": {}}, routing),
+        # UP-R3: the same run-start checker, on this path too. A generated tree resolves model
+        # tiers and can name action providers exactly as a template does, so leaving preflight on
+        # one path would reproduce the asymmetry above with a different key.
+        **_preflight_surface({"root": proposed, "inputs": {}}),
         **_grill_surface(goal, classified, {"root": proposed}, topics=_plan_topics(goal)),
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
@@ -1250,6 +1264,39 @@ def _review_surface(goal: str, definition: dict, routing: dict | None) -> dict:
         }
     except Exception:
         logger.debug("review surface unavailable", exc_info=True)
+        return {}
+
+
+def _preflight_surface(definition: dict) -> dict:
+    """UP-R3: what this plan needs that this system does not have — BEFORE approval.
+
+    The same `workflows/preflight` the run-start gate uses, so a plan-time green and a run-start
+    green cannot disagree about credentials, binaries, models or action providers. Reached from
+    the planner is the whole point: preflight at run start only tells the user their *approved*
+    plan cannot run, which is the `plan-approved-run-dies-at-step-1` class this closes.
+
+    The WHOLE definition is passed, not the narrowed `{inputs, root}` the other surfaces build:
+    preflight reads `metadata.requirements` and `defaults.model_tiers`, and the secret scan walks
+    every string, so narrowing would silently drop a `{{secret:KEY}}` reference living outside the
+    tree. That also makes this call identical to the two run-start ones.
+
+    `provider_requirement_gap` is appended because preflight cannot see one hop past a provider
+    NAME — the plan's own execution log recorded that aggregation as blocked on requirement data
+    the grounding bundle does not carry, and it still is: `ActionProvider` declares no
+    requirements. Reporting that as a typed warning is the honest shape; letting the report say
+    `ok` with a class unexamined is the inertness this plan family exists to catch.
+
+    Best-effort like the other surfaces, and deliberately non-blocking: at plan time nothing has
+    started, so a missing credential is advice about what approval commits to, not a refusal.
+    """
+    try:
+        from personalclaw.workflows import preflight as preflight_mod
+
+        report = preflight_mod.preflight(definition)
+        report.findings.extend(preflight_mod.provider_requirement_gap(definition))
+        return {"preflight": report.to_dict()}
+    except Exception:
+        logger.debug("preflight surface unavailable", exc_info=True)
         return {}
 
 
@@ -1683,6 +1730,9 @@ def _plan_from_template(
         # ordering — detection and risk decide whether to read on; the pipeline is what they read
         # if they do.
         **_review_surface(goal, definition, routing),
+        # UP-R3: and whether this system can actually RUN it. Same checker as the run-start gate,
+        # so approving this plan is not approving a run that dies at node one.
+        **_preflight_surface(definition),
         # UP-R4/R6: what autonomy this plan may be RUN at, and what it will stop for. Computed at
         # plan time so "this will stop you twice" is a fact before approval rather than a discovery
         # made while waiting.
