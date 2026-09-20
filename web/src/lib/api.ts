@@ -3353,13 +3353,23 @@ export interface AuditFilters {
 }
 // `ok` = every checked record's HMAC verified. `windowed` = only the recent window was
 // checked (the default; `full` walks the whole chain).
+//
+// 🔴 EXACTLY the six keys `api_security_audit_verify` emits — nothing this endpoint cannot
+// produce. This type used to also declare `broken_at` and `error`, and the handler has never
+// sent either, so the panel's failure line read two fields that could only ever be `undefined`.
+// `error` was worse than dead: the only thing that ever filled it was the panel MANUFACTURING
+// one in its own catch, and a `SelVerify` that a transport failure can construct is a verdict
+// object holding a non-verdict. Measured — a rejected fetch rendered
+// "Chain broken — ? of all 0 events altered (verify failed)", i.e. a tamper finding from zero
+// examined entries, in the same red as two genuinely altered records. `get()` rejects with
+// `ApiError` on any non-2xx and on a dead connection, so "the check did not run" is a
+// REJECTION and never a `SelVerify`. Locked by `auditVerifyScope.test.tsx`.
 export interface SelVerify {
   ok: boolean; checked: number; valid?: number; tampered?: number; windowed?: boolean
   /** The entry cap the server applied (`null` for an exhaustive check). `windowed` says a cap was
    *  SET; this says how big it was — the only way a consumer can tell "stopped at 5000" from
    *  "5000 is the whole log". */
   window?: number | null
-  error?: string
 }
 // ── Desktop computer-use live view (DCU-7) ─────────────────────────────────────
 // One trail point of the cursor-motion overlay: where an APPROVED acting call was about to
