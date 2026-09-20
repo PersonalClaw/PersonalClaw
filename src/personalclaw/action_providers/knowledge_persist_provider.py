@@ -754,6 +754,146 @@ def _detect_conflicts(
         return ConflictPass([], [])
 
 
+#: Bound on the neighbour scan for the ingest pass, mirroring `_claim_bearing_ids`. Recency
+#: order for the same reason: a contradiction with something saved last week is more actionable
+#: than one with a two-year-old note, and the cap keeps cost independent of store size.
+_INGEST_NEIGHBOUR_LIMIT = 40
+
+
+def _insight_statements(store, item_id: str) -> list[str]:
+    """An item's `insights.key_points`, the ingest path's only claim-shaped output.
+
+    `insights` is its own column (not `file_metadata`), so this is a separate read from
+    `_stored_claims` — and the two are complementary, not alternatives: the agent path writes
+    `file_metadata.claims` and the ingest path writes `insights.key_points`, so a conflict
+    between a UI-saved note and an agent-persisted claim needs both sides read.
+    """
+    try:
+        row = store.db.execute("SELECT insights FROM items WHERE id = ?", (item_id,)).fetchone()
+    except Exception:
+        return []
+    if not row or not row["insights"]:
+        return []
+    try:
+        insights = json.loads(row["insights"])
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(insights, dict):
+        return []
+    points = insights.get("key_points")
+    if not isinstance(points, list):
+        return []
+    return [s.strip() for s in points if isinstance(s, str) and s.strip()]
+
+
+def _ingest_neighbour_claims(store, *, exclude: str) -> list:
+    """Stored claims to judge an ingesting item against — from BOTH writers.
+
+    Recently-updated items that carry either `file_metadata.claims` (the agent path) or
+    `insights.key_points` (the ingest path). A LIKE prefilter, newest first, bounded.
+    """
+    from personalclaw.knowledge import contradiction
+
+    try:
+        rows = store.db.execute(
+            "SELECT id FROM items WHERE is_archived = 0 AND id != ? "
+            "AND (file_metadata LIKE '%\"claims\"%' OR insights LIKE '%\"key_points\"%') "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (exclude or "", _INGEST_NEIGHBOUR_LIMIT),
+        ).fetchall()
+    except Exception:
+        logger.debug("ingest neighbour scan failed", exc_info=True)
+        return []
+
+    out: list = []
+    for row in rows:
+        neighbour = str(row["id"])
+        statements = [str(c.get("statement", "") or "") for c in _stored_claims(store, neighbour)]
+        statements.extend(_insight_statements(store, neighbour))
+        for statement in statements:
+            if not statement.strip():
+                continue
+            out.append(
+                contradiction.Claim.from_dict({"statement": statement, "source_ref": neighbour})
+            )
+            if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+                return out[: contradiction.MAX_CONFLICT_CANDIDATES]
+    return out
+
+
+def run_ingest_conflict_pass(store, item_id: str) -> list[dict]:
+    """§3.2's deterministic conflict pass for the INGEST pipeline. Returns what it recorded.
+
+    🔴 **Why this exists.** Contradiction detection was reachable from exactly one place —
+    `KnowledgePersistActionProvider`, i.e. only items an AGENT persisted with structured claims.
+    Everything a user saves through the dashboard (`POST /api/knowledge/items`, every connector,
+    every bookmark) went through the enrichment pipeline instead, which never called it. So the
+    Knowledge **Conflicts** tab could not populate from normal use at all: it reads
+    `file_metadata.conflicts`, and no ingest route ever wrote that key (#329). Its empty state
+    read as "you have no contradictions" when the truth was "contradictions from this path are
+    never looked for". `create_item`'s own comment states the intended contract — "contradictions
+    are flagged at ingest and both claims kept" — and UI ingest is ingest.
+
+    **One seam, two callers, so they cannot drift.** This shares `find_conflicts`, the conflict
+    record shape and `_write_conflict_edges` with the provider path rather than reimplementing
+    them; the ONLY thing it does differently is where the claims come from, because the two paths
+    genuinely differ there (see :func:`_insight_statements`).
+
+    **It does NOT write `file_metadata.claims`.** A `key_points` bullet is a summary line, not a
+    phenomenon-level claim with mentions and a validity window — `semantics.Claim`'s own contract.
+    Promoting bullets into that slot would put a different kind of thing in a typed field, and
+    change the digest `updates.py` compares a proposal against. Conflicts are recorded; claims
+    are left to the writers that own them.
+
+    Best-effort, like the provider's pass: a conflict pass that failed the ENRICHMENT would lose
+    the knowledge rather than the annotation, and the annotation is the cheaper thing to lose.
+    """
+    from personalclaw.knowledge import contradiction
+
+    try:
+        statements = _insight_statements(store, item_id)
+        if not statements:
+            return []
+        incoming = [
+            contradiction.Claim.from_dict({"statement": s, "source_ref": item_id})
+            for s in statements
+        ]
+        existing = _ingest_neighbour_claims(store, exclude=item_id)
+        if not existing:
+            return []
+        found = contradiction.find_conflicts(incoming, existing)
+        if not found:
+            return []
+        conflicts = [c.to_dict() for c in found]
+        row = store.db.execute(
+            "SELECT file_metadata FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if not row:
+            return []
+        try:
+            metadata = json.loads(row["file_metadata"] or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        # BOTH claims kept — only the disagreement is recorded. Silently picking a winner is how
+        # a store becomes confidently wrong; the losing claim was evidence.
+        metadata["conflicts"] = conflicts
+        store.db.execute(
+            "UPDATE items SET file_metadata=? WHERE id=?",
+            (json.dumps(metadata, ensure_ascii=False), item_id),
+        )
+        store.db.commit()
+        # `updated_at` is deliberately NOT bumped: the body did not change, and a freshness
+        # check must not read an annotation as a rewrite.
+        _write_conflict_edges(store, conflicts, source_item=item_id)
+        logger.info("ingest conflict pass recorded %d conflict(s) for %s", len(conflicts), item_id)
+        return conflicts
+    except Exception:
+        logger.warning("ingest conflict pass failed — enrichment proceeds", exc_info=True)
+        return []
+
+
 def _unsettled_candidates(incoming: list, existing: list, *, settled: list) -> list[dict]:
     """The stored neighbours a model tier would have to judge, ranked, minus the settled ones.
 

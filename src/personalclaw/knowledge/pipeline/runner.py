@@ -245,6 +245,14 @@ async def ingest_item(
             insights_phase = "done" if insights_ok else "failed"
             _emit("node", node="insights", phase=insights_phase)
 
+            # KNOWLEDGE-SYNTHESIS §3.2 — contradictions are flagged AT INGEST. Runs here, right
+            # after insights, because `insights.key_points` is the claim-shaped output this path
+            # produces and the pass has nothing to compare before it exists. Deliberately NOT a
+            # new terminal stage: it emits no node and cannot fail the ingest (it is an
+            # annotation), so `TERMINAL_STAGES` and the phase map stay exactly as they are.
+            if insights_ok:
+                _run_conflict_pass(store, item_id)
+
             # Entity/relation extraction over the consolidated text → the entity graph
             # (one logical doc = one extraction; no per-chunk fan-out).
             _emit("node", node="entities", phase="running")
@@ -892,6 +900,28 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
     except Exception:
         logger.debug("entity graph write failed for %s", item_id, exc_info=True)
         return "failed"
+
+
+def _run_conflict_pass(store, item_id: str) -> None:
+    """Flag contradictions between this item's claims and what is already stored (§3.2).
+
+    Delegates to `knowledge_persist_provider.run_ingest_conflict_pass`, which is the SAME seam
+    the action-provider persist path uses — the detector, the conflict record shape and the typed
+    `supersedes`/`contradicts` edges are shared, not reimplemented. That indirection is the
+    substantive part: detection previously had exactly one caller (the provider), so the Conflicts
+    tab could never populate from UI/API/connector ingest (#329).
+
+    Same import direction as `maintenance_passes._consolidation_pass`, and for the same reason:
+    the behaviour worth sharing lives inside the provider module, and a second copy here is how
+    the two paths would drift apart.
+    """
+    from personalclaw.action_providers import knowledge_persist_provider as kpp
+
+    try:
+        kpp.run_ingest_conflict_pass(store, item_id)
+    except Exception:
+        # Never fails the ingest: a missing annotation is recoverable, a lost item is not.
+        logger.debug("conflict pass failed for %s", item_id, exc_info=True)
 
 
 async def _run_insights(store, item_id: str, content: str, pool) -> bool:

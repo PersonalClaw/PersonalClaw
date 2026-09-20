@@ -4861,6 +4861,37 @@ class KnowledgeStore:
     VALID_READ_STATES = ("unread", "reading", "read")
     VALID_COLLECTION_KINDS = ("manual", "smart")
 
+    #: Ceiling on a shelf name. A shelf name renders as a chip in the Library filter rail, so an
+    #: unbounded one is a layout weapon rather than merely a long stored string — measured, a
+    #: 10,000-character name was accepted and rendered as a single pill ~15x the viewport width,
+    #: pushing every sibling shelf chip out of reach (#393).
+    #:
+    #: 200 is the ceiling `tasks/hierarchy.MAX_NAME_LEN` and `artifacts/models.MAX_NAME_LEN`
+    #: already enforce on a user-facing container name, so the three agree instead of each
+    #: inventing a number. Over-long is REFUSED, not truncated, for `clean_name`'s reason: the
+    #: user never asked for a name they did not type, and a silently truncated name can collide
+    #: with one that already exists — which this surface turns into a `collection_name_taken`.
+    MAX_COLLECTION_NAME_LEN = 200
+
+    def _clean_collection_name(self, name: str) -> str:
+        """A validated shelf name: stripped, non-empty, within :data:`MAX_COLLECTION_NAME_LEN`.
+
+        Shared by BOTH doors. `create_collection` and `update_collection` each repeated the
+        strip-and-reject-empty pair, and a cap added to only one of them would leave an
+        unusable name reachable through the other — exactly the argument `update_collection`
+        already makes for the clash guard ("guarding only create would leave the rail reachable
+        by the other door").
+        """
+        text = (name or "").strip()
+        if not text:
+            raise ValueError("collection name is required")
+        if len(text) > self.MAX_COLLECTION_NAME_LEN:
+            raise ValueError(
+                f"collection name must be at most {self.MAX_COLLECTION_NAME_LEN} characters "
+                f"(got {len(text)})"
+            )
+        return text
+
     def _collection_name_clash(self, name: str, *, exclude_id: str = "") -> bool:
         """Whether another shelf already carries ``name`` (case-insensitively).
 
@@ -4894,9 +4925,7 @@ class KnowledgeStore:
         backfill. A smart collection with no query would silently match nothing, so
         that is rejected rather than created as a shelf that looks broken.
         """
-        name = (name or "").strip()
-        if not name:
-            raise ValueError("collection name is required")
+        name = self._clean_collection_name(name)
         # Typed code, mirroring `rename_tag`'s `tag_name_taken:<name>` — the sibling guard this
         # surface was missing. The handler turns it into a 409 naming the shelf.
         if self._collection_name_clash(name):
@@ -4967,9 +4996,8 @@ class KnowledgeStore:
         # so re-saving a shelf under its own name (a no-op rename, or an icon change that
         # resends `name`) is not refused as a clash with itself.
         if "name" in sets:
-            renamed = str(sets["name"] or "").strip()
-            if not renamed:
-                raise ValueError("collection name is required")
+            renamed = self._clean_collection_name(str(sets["name"] or ""))
+            sets["name"] = renamed
             if self._collection_name_clash(renamed, exclude_id=collection_id):
                 raise ValueError(f"collection_name_taken:{renamed}")
         sets["updated_at"] = datetime.now().isoformat()

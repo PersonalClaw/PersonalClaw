@@ -806,3 +806,71 @@ def test_a_distinct_name_is_still_created(store):
     store.create_collection(name="First", kind="manual")
     assert store.create_collection(name="Second", kind="manual")
     assert len(store.list_collections()) == 2
+
+
+# ── shelf-name length cap (#393) ──────────────────────────────────────────────
+#
+# A shelf name renders as a chip in the Library filter rail, so an unbounded one is a layout
+# weapon, not merely a long stored string: a 10,000-character name was accepted and rendered
+# as one pill ~15x the viewport width, pushing every sibling shelf chip out of reach.
+# 200 is the ceiling `tasks/hierarchy` and `artifacts/models` already enforce on a user-facing
+# container name. Over-long is REFUSED, not truncated — a silently truncated name can collide
+# with one that already exists, which this surface turns into `collection_name_taken`.
+
+
+def test_an_over_long_shelf_name_is_refused_at_create(store):
+    """🔴 THE BUG: `POST /api/knowledge/collections` with a 10k-char name returned 201."""
+    with pytest.raises(ValueError) as exc:
+        store.create_collection(name="L" * 10_000, kind="manual")
+    # The handler maps a store ValueError straight to a 400, so the message IS the API error.
+    assert "at most 200 characters" in str(exc.value)
+    assert "10000" in str(exc.value), "the message should name what was actually sent"
+    assert store.list_collections() == [], "nothing may be stored when the name is refused"
+
+
+def test_an_over_long_shelf_name_is_refused_at_rename_too(store):
+    """The SECOND door. A cap on create alone leaves a 10k-char name reachable by PATCH —
+    the same argument `update_collection` already makes for the clash guard."""
+    cid = store.create_collection(name="ZFS evidence", kind="manual")
+    with pytest.raises(ValueError) as exc:
+        store.update_collection(cid, name="L" * 10_000)
+    assert "at most 200 characters" in str(exc.value)
+    assert store.get_collection(cid)["name"] == "ZFS evidence", "the rename must not land"
+
+
+def test_a_name_at_the_cap_is_accepted(store):
+    """The bound is inclusive — 200 is a legal name, 201 is not. A cap that refused its own
+    stated limit would be a different bug."""
+    at_limit = "L" * store.MAX_COLLECTION_NAME_LEN
+    cid = store.create_collection(name=at_limit, kind="manual")
+    assert store.get_collection(cid)["name"] == at_limit
+    with pytest.raises(ValueError):
+        store.create_collection(name="M" * (store.MAX_COLLECTION_NAME_LEN + 1), kind="manual")
+
+
+def test_the_cap_agrees_with_the_other_container_name_ceilings():
+    """Three surfaces, one number — so a future change moves them together instead of leaving
+    the shelf rail as the odd one out again."""
+    from personalclaw.artifacts.models import MAX_NAME_LEN as ARTIFACT_MAX
+    from personalclaw.tasks.hierarchy import MAX_NAME_LEN as TASK_MAX
+
+    assert KnowledgeStore.MAX_COLLECTION_NAME_LEN == TASK_MAX == ARTIFACT_MAX == 200
+
+
+def test_the_existing_empty_and_whitespace_rules_still_hold(store):
+    """The cap is added to a shared validator, so the rules it replaced must survive on BOTH
+    doors — including the whitespace-only case, which strips to empty."""
+    cid = store.create_collection(name="Keep", kind="manual")
+    for bad in ("", "   ", "\t\n"):
+        with pytest.raises(ValueError, match="collection name is required"):
+            store.create_collection(name=bad, kind="manual")
+        with pytest.raises(ValueError, match="collection name is required"):
+            store.update_collection(cid, name=bad)
+
+
+def test_a_renamed_shelf_is_stored_stripped(store):
+    """Create stripped its name and rename did not, so the same label could be stored two ways
+    — and the clash guard compares the STRIPPED form, so the two doors disagreed."""
+    cid = store.create_collection(name="Evidence", kind="manual")
+    store.update_collection(cid, name="  Renamed evidence  ")
+    assert store.get_collection(cid)["name"] == "Renamed evidence"
