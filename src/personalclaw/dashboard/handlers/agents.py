@@ -921,16 +921,229 @@ def _get_config_lock() -> asyncio.Lock:
     return _config_lock
 
 
+#: The canonical agent-name validator, shared by every path that can INTRODUCE a name into
+#: ``cfg.agents`` — ``POST /api/agents`` and the file-store sync below. Mirrors
+#: ``agents.marketplace._NAME_RE``, and is a constant rather than a literal inlined in the
+#: create handler because a name arriving from a FILE needs exactly the same guard as one
+#: arriving in a request body: the create path's own comment is "so names can't be later
+#: interpolated", and a JSON file on disk is not a more trustworthy source than a POST.
+_AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+#: Filenames under ``AGENTS_DIR`` that are NOT agent profiles.
+#:
+#: ``personalclaw.json`` (:data:`~personalclaw.agent.AGENT_FILENAME`) is the ACP RUNTIME
+#: config ``rebuild_agent_config()`` writes — ``mcpServers``, ``hooks``, a ``prompt`` URI,
+#: and a ``tools`` list of *MCP server refs* (``@personalclaw-core``), not tool-name
+#: patterns. Folding it in as a profile would copy those refs into an ``AgentProfile.tools``
+#: that means something else. The sibling DELETE path already special-cases this same
+#: filename (``:591``), so the rule is this file's, not a new one.
+_NON_PROFILE_AGENT_FILES = frozenset({"personalclaw.json"})
+
+#: The profile fields ``POST /api/agents/sync`` folds in from a file-store definition.
+#: A subset of :data:`_AGENT_FIELD_SPECS` — every key a per-file agent JSON or an
+#: ``AgentDefinition`` actually carries — so the sync validates with the SAME table the
+#: three write paths use rather than trusting a hand-edited file on disk. ``source`` is
+#: excluded deliberately: the sync STAMPS it (see :func:`_do_agents_sync`) rather than
+#: letting the file claim its own origin.
+_AGENT_SYNC_KEYS = (
+    "provider",
+    "provider_agent",
+    "acp_mode",
+    "default_dir",
+    "memory_store",
+    "description",
+    "system_prompt",
+    "voice",
+    "natural_voice",
+    "model",
+    "approval_mode",
+    "skills",
+    "tools",
+    "triggers",
+    "specialty",
+    "route_hints",
+)
+
+
+def _file_store_agents() -> tuple[list[tuple[str, dict]], list[str]]:
+    """Every agent that exists as a FILE under ``AGENTS_DIR``, with its raw fields.
+
+    ``AGENTS_DIR`` holds TWO on-disk layouts, and both are invisible to
+    ``GET /api/agents`` (which lists ``cfg.agents`` alone):
+
+    * ``AGENTS_DIR/<name>.json`` — the flat per-file layout. ``PATCH``/``DELETE
+      /api/agents/detail/{name}`` (``:570``), ``chat_persistence`` (``:48``),
+      ``session.py`` (``:923``) and ``skills.py`` (``:86``) all read it, and ``:584``'s
+      own comment names what materializes one: *"a marketplace activate, an app, a
+      restored snapshot."*
+    * ``AGENTS_DIR/<name>/agent.json`` — the local agent marketplace's layout
+      (``agents.marketplace.LocalAgentMarketplace._agent_path``). Read through the
+      REGISTRY rather than by globbing the directory, so a marketplace that stores its
+      definitions elsewhere is enumerated by its own ``list()``. This is the store the
+      old docstring's *"marketplace-installed agents"* meant.
+
+    Returns ``(entries, unreadable)`` — entries as ``(name, fields)`` in the order they
+    were found, first occurrence winning; ``unreadable`` names the files that could not be
+    parsed, so the response can say so instead of silently reporting a smaller scan.
+    """
+    from personalclaw.agent import AGENTS_DIR  # noqa: F811
+    from personalclaw.agents.marketplace import get_default_agent_registry
+
+    entries: list[tuple[str, dict]] = []
+    unreadable: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str, fields: dict) -> None:
+        key = name.lower()
+        if not name or key in seen:
+            return
+        seen.add(key)
+        entries.append((name, fields))
+
+    try:
+        files = sorted(AGENTS_DIR.glob("*.json"))
+    except OSError:
+        files = []
+    for f in files:
+        if f.name in _NON_PROFILE_AGENT_FILES:
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            unreadable.append(f.name)
+            continue
+        if not isinstance(data, dict):
+            unreadable.append(f.name)
+            continue
+        # Name by the file's own `name` field, falling back to the stem — the SAME rule
+        # the four other readers of this layout use, so detail/list/sync agree on the id.
+        _add(str(data.get("name") or f.stem), data)
+
+    registry = get_default_agent_registry()
+    for mp_name in registry.names():
+        try:
+            definitions = registry.get(mp_name).list()
+        except Exception:
+            logger.debug("agents sync: marketplace %r listing failed", mp_name, exc_info=True)
+            unreadable.append(f"marketplace:{mp_name}")
+            continue
+        for defn in definitions:
+            _add(defn.name, defn.to_dict())
+
+    return entries, unreadable
+
+
+def _reportable_agent_name(name: str) -> str:
+    """*name* clipped to a length safe to echo back in a sentence and an audit row.
+
+    Only ever shortens a name the sync REFUSED — an accepted one already passed
+    :data:`_AGENT_NAME_RE`, whose own bound is 63 characters, so a legal name is returned
+    untouched. A refused one came out of a JSON file's ``name`` field and is unbounded, and it
+    reaches a toast, a response body and a SEL ``resources`` column; echoing it verbatim would
+    let one file on disk decide the size of all three.
+    """
+    return name if len(name) <= 63 else name[:60] + "…"
+
+
+def _sync_sentence(synced: list[str], skipped: list[str], unreadable: list[str]) -> str:
+    """The one sentence the Agents header reports after a sync.
+
+    Composed HERE, not on the client: the outcome has four independent parts (what was
+    added, what was refused and why, what could not be read, and the "nothing to do" case),
+    and a client re-deriving that from three arrays is a second author for the same
+    sentence. The frontend renders this verbatim.
+    """
+    parts: list[str] = []
+    if synced:
+        noun = "agent" if len(synced) == 1 else "agents"
+        parts.append(f"Added {len(synced)} {noun} from your agent files: {', '.join(synced)}.")
+    else:
+        parts.append("Already up to date — no agent files were missing from your config.")
+    if skipped:
+        parts.append(f"Skipped {len(skipped)}: {', '.join(skipped)}.")
+    if unreadable:
+        parts.append(f"Could not read {len(unreadable)}: {', '.join(unreadable)}.")
+    return " ".join(parts)
+
+
 async def api_personalclaw_agents_sync(request: web.Request) -> web.Response:
-    """POST /api/agents/sync — auto-sync marketplace-installed agents into config.json."""
+    """POST /api/agents/sync — fold file-store agents into config.json and report what it did.
+
+    ``AGENTS_DIR`` is a real second agent store (see :func:`_file_store_agents`) and this is
+    the ONLY endpoint that reconciles it with ``config.json``'s ``agents`` map, which
+    ``GET /api/agents`` serves. An agent that arrives as a file — from the Store, from an app
+    bundle, from a restored snapshot — is therefore invisible everywhere in the UI until this
+    runs (#344).
+    """
     async with _get_config_lock():
         return await _do_agents_sync(request)
 
 
 async def _do_agents_sync(request: web.Request) -> web.Response:
     cfg = AppConfig.load()
-    cfg.save()
-    return web.json_response({"ok": True, "synced": []})
+    entries, unreadable = _file_store_agents()
+    synced: list[str] = []
+    skipped: list[str] = []
+    for name, fields in entries:
+        # Already in config.json — case-insensitively, the same resolution the CRUD paths
+        # use, so `personalclaw.json`'s "personalclaw" matches the seeded "PersonalClaw"
+        # instead of folding a duplicate profile in beside it.
+        if _resolve_agent_name(name, cfg) is not None:
+            continue
+        # The SAME name guard `POST /api/agents` applies, for the same stated reason ("so
+        # names can't be later interpolated"). A file's `name` field is attacker-shaped input
+        # on the install path — an app bundle or a restored snapshot writes it — so a
+        # traversal-looking or unbounded name must not become a config key here either.
+        if not _AGENT_NAME_RE.fullmatch(name):
+            skipped.append(_reportable_agent_name(name))
+            continue
+        # The two name classes a CREATE already refuses, refused here for the same reasons
+        # (`_unavailable_agent_name`): a RESERVED name is owned by the seeding migration, and
+        # a RETIRED one is pruned by the very next config load — so folding either in would
+        # report success and leave nothing behind.
+        if _unavailable_agent_name(name) is not None:
+            skipped.append(_reportable_agent_name(name))
+            continue
+        try:
+            staged = _staged_agent_fields(fields, _AGENT_SYNC_KEYS)
+        except ConfigValueError as exc:
+            # A file on disk is not a request: one bad field must not fail the whole sync,
+            # and it must not persist a wrong type into config.json either (the #349 defect
+            # class). Skip the file, name it in the response.
+            logger.info("agents sync: skipping %r — %s", name, exc)
+            skipped.append(_reportable_agent_name(name))
+            continue
+        # `source` is STAMPED, never read off the file: it records where PersonalClaw found
+        # the profile, and a file that named its own origin could claim "builtin".
+        cfg.agents[name] = AgentProfile(**staged, source="local")
+        synced.append(name)
+    # Only write when something changed. The old body was an unconditional `load(); save()`,
+    # which rewrote the user's whole config.json on every press to bump `lastTouchedAt` — a
+    # full-file write of the live config in answer to a control that reported nothing.
+    if synced:
+        cfg.save()
+        state: DashboardState = request.app["state"]
+        state.push_refresh("agents")
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="agents.sync",
+        outcome="success",
+        source="dashboard",
+        resources=f"synced={','.join(synced) or '-'} skipped={','.join(skipped) or '-'}",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            # A LIST of names, not a count — the deliverable is visibility, so the response
+            # says WHICH agents just became visible. `web/src/lib/api.ts` typed this
+            # `number` while the server has always returned a list; the type is what moved.
+            "synced": synced,
+            "skipped": skipped,
+            "unreadable": unreadable,
+            "scanned": len(entries),
+            "message": _sync_sentence(synced, skipped, unreadable),
+        }
+    )
 
 
 async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
@@ -951,13 +1164,10 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     # Restrict to a safe character set so names can't be later interpolated
     name = name.lower()
 
-    import re as _re
-
-    # The canonical agent name validator (matches marketplace.py)
-    if not _re.fullmatch(r"^[a-z0-9][a-z0-9-]{0,62}$", name):
+    if not _AGENT_NAME_RE.fullmatch(name):
         return web.json_response(
             {
-                "error": "Agent name must match ^[a-z0-9][a-z0-9-]{0,62}$ (lowercase letters, digits, dashes, no leading dash)"  # noqa: E501
+                "error": f"Agent name must match {_AGENT_NAME_RE.pattern} (lowercase letters, digits, dashes, no leading dash)"  # noqa: E501
             },
             status=400,
         )

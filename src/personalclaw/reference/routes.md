@@ -33,7 +33,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/agents/routing/dismiss` — {agent} — bump the dismissal counter; the
 - `GET /api/agents/routing/status` — enabled flag + muted/dismissal state.
 - `POST /api/agents/routing/unmute` — {agent} — clear an agent's mute + dismissals.
-- `POST /api/agents/sync` — auto-sync marketplace-installed agents into config.json.
+- `POST /api/agents/sync` — fold file-store agents into config.json and report what it did.
 - `DELETE /api/agents/{name}` — delete a PersonalClaw agent.
 - `PUT /api/agents/{name}` — update a PersonalClaw agent.
 - `GET /api/approvals` — list pending tool approvals.

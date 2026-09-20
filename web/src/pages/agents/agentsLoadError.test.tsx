@@ -29,7 +29,7 @@ function mockApi(over: Record<string, unknown>) {
     api: {
       agents: () => Promise.resolve(nativeOk),
       agentProviders: () => Promise.resolve([]),
-      syncAgents: () => Promise.resolve({ ok: true }),
+      syncAgents: () => Promise.resolve({ ok: true, synced: [], skipped: [], unreadable: [], scanned: 0, message: 'Already up to date.' }),
       ...over,
     },
   }))
