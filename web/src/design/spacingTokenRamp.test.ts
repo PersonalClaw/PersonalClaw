@@ -32,7 +32,8 @@ import { join } from 'node:path'
 // done in whatever slices fit, by whoever, without the count silently drifting back up in between —
 // which is exactly what happened to the earlier attempt at this, whose 2963 was measured 745
 // commits ago and had already been overtaken by 172. Slice 1 (`a96ec3d0c`) converted **66
-// utilities across 29 whole files** and re-stated the ceiling at 3069.
+// utilities across 29 whole files** and re-stated the ceiling at 3069. Slice 2 (`10313aa02`)
+// converted **14 utilities across 2 whole files** and re-stated it at 3055.
 //
 // Two hazards a converting pass will hit, recorded here because they are the reason a sweep is a
 // separate change and not a one-line regex replace:
@@ -72,13 +73,13 @@ const RAW = new RegExp(
 /** px → rung. Tailwind's numeric scale is n × 4px, so the mapping is arithmetic, not taste. */
 const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'xl', 24: '2xl', 28: '3xl' }
 
-/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `a96ec3d0c` — today's actual floor, not an aspiration.
+/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `10313aa02` — today's actual floor, not an aspiration.
  *  A new `gap-2` reds this; converting one lowers it. It may never be RAISED: a ceiling that moves
  *  up on demand is not a ratchet, it is a comment. (An earlier attempt at this rail carried 2963,
  *  measured 745 commits earlier; by the time it was read the tree was at 3135. That is the failure
  *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.)
- *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069. */
-const MAPPABLE_CEILING = 3069
+ *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069 → 3055. */
+const MAPPABLE_CEILING = 3055
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */

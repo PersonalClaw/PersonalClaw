@@ -119,9 +119,9 @@ function StartersSection() {
     <Section title="Chat starters" hint="Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.">
       <RowGroup>
         {items === null ? (
-          <p data-type="body-s" className="py-3 text-on-surface-low">Loading…</p>
+          <p data-type="body-s" className="py-m text-on-surface-low">Loading…</p>
         ) : items.length === 0 ? (
-          <p data-type="body-s" className="py-3 text-on-surface-low">
+          <p data-type="body-s" className="py-m text-on-surface-low">
             No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.
           </p>
         ) : items.map((t) => (
@@ -161,13 +161,13 @@ function MidTurnSection({ resilience, setResilience }: {
       <RowGroup>
         <Row label="Default handling"
           hint="Queue: deliver it as the next turn. Steer: fold it into the answer being written, where the running agent supports that — otherwise it queues. Replace: stop the current answer and start over with the new message. Unattended work (loops, cron, subagents) always queues.">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-s">
             <SavedToast show={saved} />
             <SegPills ariaLabel="Default handling" value={policy} onChange={patch} options={[...MID_TURN_POLICIES]} />
           </div>
         </Row>
         {policy === 'steer' && (
-          <p data-type="caption" className="pb-3 text-on-surface-low">
+          <p data-type="caption" className="pb-m text-on-surface-low">
             Steering reaches the running answer on the built-in agent. Connected CLI
             agents (ACP) don't expose a mid-turn seam yet, so a message there queues
             instead — either way it appears above the composer, never dropped.
@@ -194,7 +194,7 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
     <Section title="Agent routing" hint="Suggest a better-fit specialist agent when a message matches one — you always confirm before it re-targets the chat.">
       <RowGroup>
         <Row label="Suggest specialists" hint="When a message in a default-agent chat fits an installed specialist, show a one-click 'route to <agent>?' chip. Never routes silently.">
-          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={enabled} onChange={(v) => patch('enabled', v)} label="Suggest specialists" /></div>
+          <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={enabled} onChange={(v) => patch('enabled', v)} label="Suggest specialists" /></div>
         </Row>
         {enabled && (
           <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n, l) => patch('min_confidence', n, undefined, l)} saved={saved} />
@@ -251,7 +251,7 @@ function MutedAgentsField() {
         // One grid, not per-row flex: agent names vary in width, so a button placed after the
         // name landed at a different x on every row and the actions read as scattered rather
         // than as one column you can run down.
-        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-s gap-y-1.5">
           {muted.map((agent) => {
             const count = data.dismissals?.[agent]?.count
             return (
@@ -308,7 +308,7 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
       <RowGroup>
         {/* Same WCAG 2.5.3 fix as `NotificationsPanel`: the name was a truncation of the visible label. */}
         <Row label="Restore sessions on startup" hint="Re-open recently active sessions when the app starts.">
-          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.restore_sessions} onChange={(v) => save({ restore_sessions: v })} label="Restore sessions on startup" /></div>
+          <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={cfg.restore_sessions} onChange={(v) => save({ restore_sessions: v })} label="Restore sessions on startup" /></div>
         </Row>
         {cfg.restore_sessions && (
           <Row label="Restore window" hint="How recently active a session must be to re-open.">
@@ -361,7 +361,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
             real as of this change; the send route is the composer's button, so that is what it
             names. */}
         <Row label="Send on Enter" hint={cfg.send_on_enter ? 'Enter sends · Shift+Enter for a newline.' : 'Enter inserts a newline · sending is button-only.'}>
-          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
+          <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
         </Row>
         <Row label="Show timestamps" hint="Display a time on each message.">
           <Toggle on={cfg.show_timestamps} onChange={(v) => save({ show_timestamps: v })} label="Show timestamps" />
@@ -426,7 +426,7 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
     <Section title="File checkpoints" hint="Before the agent's first write to a file in a turn, its current bytes are saved so /rewind-to-turn can restore them. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either.">
       <RowGroup>
         <Row label="Back up files before an edit" hint={on ? 'A wrong edit is recoverable with /rewind-to-turn N.' : 'Off — a wrong edit is gone. Nothing is being recorded.'}>
-          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={on} onChange={(v) => patch('enabled', v)} label="Back up files before an edit" /></div>
+          <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={on} onChange={(v) => patch('enabled', v)} label="Back up files before an edit" /></div>
         </Row>
         {on && (
           <>
@@ -516,7 +516,7 @@ function BackgroundCompressionSection({ tools, setTools }: {
       <RowGroup>
         <Row label="Background compression"
           hint="Continuously compress old, idle conversation history (topic-segmented, attention-weighted). Every dropped span is archived first and stays fully recoverable, and the summary names its archive. Incognito and temporary chats are never touched.">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-s">
             <SavedToast show={saved} />
             <Toggle on={on} onChange={(v) => patch('bg_compress_enabled', v, undefined, 'Background compression')} label="Background compression" />
           </div>
@@ -562,7 +562,7 @@ export function AutoArchiveRow({ days, onCommit, saved }: {
       label="Auto-archive after"
       hint="Archive chats with no activity for this long. Archived chats stay searchable and restore in one click — nothing is deleted. 0 = off."
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-s">
         <SavedToast show={saved} />
         {shown > 0 && preview?.enabled && (
           <span data-type="caption" className="text-on-surface-var tabular-nums">
@@ -594,7 +594,7 @@ function NumberRow({ label, hint, value, min, max, step, suffix, onCommit, saved
 }) {
   return (
     <Row label={label} hint={hint}>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-s">
         <SavedToast show={saved} />
         <NumberField value={value} min={min} max={max} step={step} onChange={(n) => onCommit(n, label)} ariaLabel={label} />
         {suffix && <span data-type="caption" className="w-6 text-on-surface-low">{suffix}</span>}
