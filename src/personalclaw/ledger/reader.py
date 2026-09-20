@@ -88,9 +88,14 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
 
     ``tokens`` has the same absent-vs-zero shape and is deliberately NOT covered by ``priced``:
     ``priced`` is a claim about MONEY in both money surfaces, and widening it to mean "and the
-    token count is a floor too" would give one word two meanings. See #2566.
+    token count is unknown too" would give one word two meanings. It uses the nullable-scalar
+    representation owned by :mod:`personalclaw.evals.provenance` instead: ``tokens_recorded`` is
+    the state, ``None`` is the value when that state is false, and a genuine recorded ``0`` stays
+    zero. One absent or explicit-null constituent makes the aggregate unrecorded; an empty ledger
+    remains recorded-zero because no completed step claimed an unknown count.
     """
     tokens = 0
+    tokens_recorded = True
     cost = 0.0
     steps = 0
     failures = 0
@@ -100,7 +105,11 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
         kind = rec.get("kind")
         if kind == STEP_COMPLETED:
             steps += 1
-            tokens += int(rec.get("tokens", 0) or 0)
+            recorded_tokens = rec.get("tokens")
+            if recorded_tokens is None:
+                tokens_recorded = False
+            else:
+                tokens += int(recorded_tokens or 0)
             cost += float(rec.get("cost_usd", 0.0) or 0.0)
             # Absent AND explicit null both read unpriced — the same rule `introspection._carried`
             # applies, because "the key is missing" and "the key is there holding nothing" are the
@@ -112,7 +121,8 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
         elif kind == STEP_CACHED:
             cached += 1
     return {
-        "tokens": tokens,
+        "tokens": tokens if tokens_recorded else None,
+        "tokens_recorded": tokens_recorded,
         "cost_usd": round(cost, 6),
         "priced": priced,
         "steps_completed": steps,
