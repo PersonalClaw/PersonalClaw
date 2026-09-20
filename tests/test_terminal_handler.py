@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 
+from personalclaw import tmux_substrate
 from personalclaw.dashboard.handlers import terminal
 
 
@@ -912,7 +913,7 @@ class TestPersistence:
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
         monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal.shutil, "which", lambda _b: "/usr/bin/tmux")
+        monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: "/usr/bin/tmux")
         assert terminal._persist_enabled(_make_request()) is False
 
     def test_persist_requires_both_flag_and_tmux(self, tmp_path, monkeypatch):
@@ -920,10 +921,10 @@ class TestPersistence:
         cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"persist": True}}}))
         monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
         # flag on + tmux present → enabled
-        monkeypatch.setattr(terminal.shutil, "which", lambda _b: "/usr/bin/tmux")
+        monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: "/usr/bin/tmux")
         assert terminal._persist_enabled(_make_request()) is True
         # flag on + tmux ABSENT → falls back (disabled), graceful degradation
-        monkeypatch.setattr(terminal.shutil, "which", lambda _b: None)
+        monkeypatch.setattr(tmux_substrate.shutil, "which", lambda _b: None)
         assert terminal._persist_enabled(_make_request()) is False
 
     def test_tmux_session_name_maps_dots(self):
