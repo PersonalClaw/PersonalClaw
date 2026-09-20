@@ -570,6 +570,12 @@ def cleanup_orphaned_sessions() -> None:
     - Stale ``session_pid_*.txt`` files for processes that no longer exist.
     - Empty directories under ``sessions/`` left by subagents that produced
       no output before timing out.
+    - Session workspaces untouched for ``SESSION_MAX_AGE_SECS`` (7 days), via
+      :func:`context_management.cleanup_stale_sessions`. Emptiness and age are
+      separate axes: a workspace holding a ``history.jsonl`` or a
+      ``tool_results/`` dir is never empty, so before this pass existed the
+      age budget had no enforcer and retained tool output never expired
+      (#2994).
     """
     # Step 1: Read file under lock (fast I/O only)
     with _session_pid_file_lock():
@@ -641,6 +647,13 @@ def cleanup_orphaned_sessions() -> None:
                     pass  # directory became non-empty or was already removed
     if empty_dirs:
         logger.info("Cleaned up %d empty session workspace dirs", empty_dirs)
+
+    # Fifth pass: remove session workspaces past their age budget. The fourth
+    # pass only collects empty dirs, so this is the only enforcer of
+    # SESSION_MAX_AGE_SECS on disk.
+    from personalclaw.context_management import cleanup_stale_sessions
+
+    cleanup_stale_sessions()
 
 
 def _track_pid(pid: int) -> None:

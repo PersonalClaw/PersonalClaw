@@ -1,7 +1,9 @@
 """Tests for PID tracking and orphan cleanup in session_pid.py."""
 
+import ast
 import os
 import signal
+import time
 from collections import deque
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -396,6 +398,91 @@ class TestCleanupOrphanedSessions:
         # bad!name still exists (unlink failed gracefully), valid one cleaned up
         assert (tmp_path / "session_pid_bad!name.txt").exists()
         assert not (tmp_path / "session_pid_99999.txt").exists()
+
+
+class TestStaleSessionWorkspacesAreReaped:
+    """#2994: the age budget needs an enforcer, and emptiness is not it.
+
+    ``cleanup_stale_sessions()`` shipped with ``SESSION_MAX_AGE_SECS`` and zero
+    production callers, so the 7-day budget had never run on a real home. The pass
+    that WAS wired only collected *empty* dirs, so a workspace holding anything at
+    all — a ``history.jsonl``, a ``tool_results/`` dir — was immortal.
+    """
+
+    @pytest.fixture()
+    def sessions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Point BOTH reapers at a temp home — never the real one."""
+        monkeypatch.setattr("personalclaw.session_pid.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.context_management.config_dir", lambda: tmp_path)
+        d = tmp_path / "sessions"
+        d.mkdir()
+        return d
+
+    @staticmethod
+    def _workspace(sessions: Path, name: str, age_secs: float) -> Path:
+        """A NON-empty workspace whose newest file is ``age_secs`` old."""
+        ws = sessions / name
+        ws.mkdir()
+        (ws / "history.jsonl").write_text('{"role": "user"}\n', encoding="utf-8")
+        stamp = time.time() - age_secs
+        os.utime(ws / "history.jsonl", (stamp, stamp))
+        os.utime(ws, (stamp, stamp))
+        return ws
+
+    def test_a_stale_non_empty_workspace_is_collected(
+        self, sessions: Path, session_pid_file: Path
+    ) -> None:
+        from personalclaw.context_management import SESSION_MAX_AGE_SECS
+        from personalclaw.session_pid import cleanup_orphaned_sessions
+
+        stale = self._workspace(sessions, "dashboard:old", SESSION_MAX_AGE_SECS + 3600)
+        fresh = self._workspace(sessions, "dashboard:new", 60)
+        session_pid_file.write_text("")
+
+        with (
+            patch("personalclaw.session_pid._cleanup_orphaned_mcp_servers", return_value=0),
+            patch("os.kill", side_effect=ProcessLookupError),
+        ):
+            cleanup_orphaned_sessions()
+
+        assert not stale.exists(), "a workspace past the age budget must be reaped"
+        assert (fresh / "history.jsonl").exists(), "a live workspace must survive"
+
+    def test_the_age_budget_has_exactly_one_owner(self) -> None:
+        """The sweep must DELEGATE, not re-derive the budget.
+
+        An outcome test alone passes just as well if the sweep grows a second,
+        hand-rolled age comparison — and two budgets drift. So pin the shape:
+        ``cleanup_orphaned_sessions`` *calls* the ``context_management`` owner and
+        ``session_pid`` defines no age of its own.
+
+        Asserted over the AST, not the raw text: a substring census is satisfied by
+        the name appearing in a docstring, which is exactly what a revert of the
+        call site leaves behind.
+        """
+        from personalclaw import session_pid
+
+        src = Path(session_pid.__file__).read_text(encoding="utf-8")
+        sweep = next(
+            n
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.FunctionDef) and n.name == "cleanup_orphaned_sessions"
+        )
+        called = {
+            n.func.id
+            for n in ast.walk(sweep)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "cleanup_stale_sessions" in called, "the sweep must CALL the age reaper"
+        assigned = {
+            t.id
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Assign)
+            for t in n.targets
+            if isinstance(t, ast.Name)
+        }
+        assert "SESSION_MAX_AGE_SECS" not in assigned, "no second definition of the budget"
+        assert "86400" not in src, "the age budget lives in context_management, not here"
 
 
 class TestResetStateUntracksParentPid:

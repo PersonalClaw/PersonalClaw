@@ -3,9 +3,10 @@
 ``session_workspace.workspace_dir()`` mkdirs the path it resolves, and three read-only
 session GETs resolved through it — so a lookup of an id the caller invented wrote a
 workspace and answered `404` while doing it. The ``tool-result`` door was the worst of
-the three: its nested ``tool_results/`` made the ghost dir NON-empty, and the only reaper
-wired into the gateway (``session_pid.cleanup_orphaned_sessions``) removes empty dirs
-only, so it survived every restart.
+the three: its nested ``tool_results/`` made the ghost dir NON-empty, and the reaper wired
+into the gateway (``session_pid.cleanup_orphaned_sessions``) collected empty dirs only,
+so it survived every restart. That reaper grew an age pass in #2994, but a 7-day
+backstop is not a reason to create the ghost.
 
 🔴 THIS FILE IS A PARITY RAIL, NOT A PER-ROUTE ONE. A per-route test is exactly what
 passed on #2983 with 8 of 9 doors fixed: it can only ever see the doors someone thought

@@ -46,9 +46,11 @@ def _store_path(session_id: str) -> Path:
     ``GET /api/chat/sessions/{s}/tool-result/{rid}`` used to answer `404` *and* leave a
     ``sessions/dashboard:<invented-id>/tool_results/`` behind, for any id a caller made
     up (#2993). Worse than the two sibling doors: the nested ``tool_results/`` made the
-    ghost NON-empty, and the only reaper wired into the gateway
-    (``session_pid.cleanup_orphaned_sessions``) removes empty dirs only — so it survived
-    every restart.
+    ghost NON-empty, and the reaper wired into the gateway
+    (``session_pid.cleanup_orphaned_sessions``) collected empty dirs only — so it
+    survived every restart. Its age pass now also reaps a non-empty workspace past
+    ``SESSION_MAX_AGE_SECS`` (#2994), but that is a 7-day backstop, not a substitute
+    for not creating the ghost.
     """
     return workspace_path(session_id) / _DIRNAME
 
