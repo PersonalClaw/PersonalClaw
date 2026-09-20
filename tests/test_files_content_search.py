@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +22,9 @@ from personalclaw.dashboard.handlers import files as F
 def search_root(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("import os\nNEEDLE_here = 1\n")
     (tmp_path / "b.txt").write_text("nothing relevant\nNEEDLE_here too\n")
+    (tmp_path / "notes.md").write_text("NEEDLE_here at the root\n")
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "workspace" / "notes.md").write_text("NEEDLE_here below the root\n")
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "c.py").write_text("NEEDLE_here ignored\n")
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Root", str(tmp_path))])
@@ -51,6 +55,23 @@ def test_python_search_skips_ignored_dirs(search_root):
 def test_python_search_glob_filter(search_root):
     results, _ = F._content_search_python(str(search_root), "needle_here", "*.py")
     assert {r["file"].split("/")[-1] for r in results} == {"a.py"}
+
+
+@pytest.mark.parametrize(
+    ("include", "required_path"),
+    [
+        ("*.md", "workspace/notes.md"),
+        ("**/*.md", "notes.md"),
+        ("**/*.md", "workspace/notes.md"),
+        ("workspace/*.md", "workspace/notes.md"),
+        ("notes.md", "workspace/notes.md"),
+    ],
+)
+def test_python_search_glob_filter_matches_relative_paths(search_root, include, required_path):
+    results, _ = F._content_search_python(str(search_root), "needle_here", include)
+    paths = {Path(r["file"]).relative_to(search_root).as_posix() for r in results}
+
+    assert required_path in paths
 
 
 def test_python_search_reports_line_and_col(search_root):

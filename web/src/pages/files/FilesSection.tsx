@@ -416,7 +416,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                             /* `of="more"` rather than a total: the cap makes rg STOP, so nothing
                                ever counted the rest and a denominator here would be invented. */
                             : <PartialCount shown={results.length} of={searchCapped ? 'more' : results.length} noun="matches" singular="match" />}
-                          {searchEngine && <span>· {searchEngine === 'rg' ? 'ripgrep' : 'python'}</span>}
+                          {searchEngine === 'rg' && <span>· ripgrep</span>}
+                          {searchEngine === 'python' && (
+                            <span data-type="caption">
+                              · python fallback: substring matching, not regex · ignores .gitignore · approximate globs
+                            </span>
+                          )}
                           {searchCapped && !searchBusy && <span>· narrow the search to see the rest</span>}
                         </span>
                       : branch && <span className="inline-flex items-center gap-1"><GitBranch size={11} /> {branch}</span>}

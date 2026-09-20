@@ -2292,7 +2292,7 @@ def _content_search_python(
 
     if allowed_roots is None:
         allowed_roots = tuple(rp for _label, rp in _dashboard_roots())
-    globs = [g.strip() for g in include.split(",") if g.strip()]
+    globs = [g.strip().removeprefix("**/") for g in include.split(",") if g.strip()]
     needle = query.lower()
     results: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -2300,9 +2300,13 @@ def _content_search_python(
         dirnames[:] = [
             d for d in dirnames if d not in _CONTENT_SEARCH_IGNORE_DIRS and not d.startswith(".")
         ]
+        rel_dir = os.path.relpath(dirpath, root)
         for fn in filenames:
             _check_content_search_deadline(deadline, stop_event)
-            if globs and not any(fnmatch.fnmatch(fn, g) for g in globs):
+            relpath = fn if rel_dir == "." else f"{rel_dir.replace(os.sep, '/')}/{fn}"
+            if globs and not any(
+                fnmatch.fnmatch(relpath, glob) or fnmatch.fnmatch(fn, glob) for glob in globs
+            ):
                 continue
             fpath = os.path.join(dirpath, fn)
             if _validate_dashboard_path(fpath, allowed_roots) is None:
