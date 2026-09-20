@@ -39,6 +39,7 @@ from personalclaw.workflows.engine import (
     dispatch_wait,
     resolve_use_case,
 )
+from personalclaw.workflows.failure_taxonomy import classify_exception
 from personalclaw.workflows.judge_contract import hints_from_dict
 from personalclaw.workflows.models import FailureClass, InstanceState, Node, NodeKind
 
@@ -1048,3 +1049,42 @@ class TestTheJudgeStageSeam:
         out = apply_judge_contract(self._node(judge_contract=True), result, hints).output
         assert out["contract_valid"] is False
         assert out["shortfalls"] == ["the tests pass: 0 < 2"]
+
+
+class TestExceptionClassification:
+    """`RETRYABLE_CLASSES` is the ONE vocabulary for "may this be retried", so what the
+    classifier puts in TRANSIENT decides retry policy for every caller that reads it —
+    the scheduler, and (issue 385) subagent result delivery."""
+
+    def test_a_provider_server_fault_is_TRANSIENT_not_INTERNAL(self) -> None:
+        """The real occurrence in issue 385, verbatim. It used to fall through to INTERNAL,
+        which `RETRYABLE_CLASSES` excludes — so the only failure a retry fixes was the one
+        failure nobody retried."""
+
+        class InternalServerException(Exception):
+            pass
+
+        failure = classify_exception(
+            InternalServerException(
+                "An error occurred (InternalServerException) when calling the ConverseStream "
+                "operation (reached max retries: 0): The system encountered an unexpected "
+                "error during processing. Try your request again."
+            )
+        )
+        assert failure.failure_class is FailureClass.TRANSIENT
+        assert failure.retryable is True
+
+    def test_the_fault_is_recognised_from_the_CLASS_NAME_alone(self) -> None:
+        """A provider SDK puts the fault in the type and only sometimes in the message."""
+
+        class ServiceUnavailableError(Exception):
+            pass
+
+        assert classify_exception(ServiceUnavailableError("")).retryable is True
+
+    def test_an_ordinary_bug_is_still_INTERNAL_and_not_retryable(self) -> None:
+        """The bound: widening TRANSIENT must not make every exception retriable, or a real
+        defect burns the whole budget arriving at the same failure."""
+        failure = classify_exception(ValueError("the announce block is malformed"))
+        assert failure.failure_class is FailureClass.INTERNAL
+        assert failure.retryable is False

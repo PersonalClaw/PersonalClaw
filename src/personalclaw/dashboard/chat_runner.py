@@ -1365,6 +1365,16 @@ async def _describe_screen_frame(data_url: str) -> str:
     ``""`` on any failure, which makes the caller inject nothing at all: a turn that
     silently drops the frame is worse than one that says nothing, so the caller
     annotates only when this returns text.
+
+    This resolve deliberately gets NO call-failure chain advance (MODEL-USE-CASES-V2
+    T2.4): it runs on the INTERACTIVE chat turn, so it advances at call-start only —
+    the seam's own resolution-time walk already skips a breaker-OPEN or unbuildable
+    entry (``provider_bridge.resolve_provider_for_use_case``). Rebuilding from entry
+    N+1 here would stack a second provider's wall-clock timeout onto a turn a human is
+    watching, to salvage an OPTIONAL annotation the caller is designed to drop; the
+    non-interactive consumers that do walk the chain (``one_shot_completion``, the
+    knowledge-pipeline nodes, the loop stage-gate judge) are all unattended, where
+    latency buys correctness instead of costing it.
     """
     from personalclaw.llm.base import EVENT_TEXT_CHUNK
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case

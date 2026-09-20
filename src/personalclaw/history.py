@@ -2024,14 +2024,24 @@ class HistoryConsolidator:
         from personalclaw.llm_helpers import stream_and_collect_json
 
         session_key = BACKGROUND_KEY
+        # 🔴 Release only a session we actually took. `get_or_create` can return without
+        # acquiring — cancelled while blocked on the semaphore of a mid-turn session, or a
+        # raise between registering the session and acquiring it. `release()` is a no-op only
+        # when the key is ABSENT; on the warm `BACKGROUND_KEY` it releases an unbounded
+        # `Semaphore(1)`, so the permit count rises instead of raising and two turns interleave
+        # on one background ACP process (#3256). `recycle_background()` is inside the guard for
+        # the same reason: without a permit it can shut down a session another task is using.
+        acquired = False
         try:
             client, _is_new, _resumed = await self._sessions.get_or_create(
                 session_key, agent="personalclaw-lite"
             )
+            acquired = True
             return await stream_and_collect_json(client, prompt)
         except Exception:
             logger.warning("LLM consolidation call failed", exc_info=True)
             return None
         finally:
-            self._sessions.release(session_key)
-            await self._sessions.recycle_background()
+            if acquired:
+                self._sessions.release(session_key)
+                await self._sessions.recycle_background()

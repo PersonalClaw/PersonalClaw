@@ -229,8 +229,11 @@ def _load_store() -> dict:
     try:
         raw = _load_entity_settings(_STORE)
     except Exception:
-        return {}
-    if not isinstance(raw, dict):
+        logger.warning(
+            "Agent-routing suppression store load failed for entity %s; using empty settings",
+            _STORE,
+            exc_info=True,
+        )
         return {}
     raw["muted"] = list(dict.fromkeys(canonical_agent(m) for m in (raw.get("muted") or [])))
     raw["dismissals"] = {canonical_agent(k): v for k, v in (raw.get("dismissals") or {}).items()}

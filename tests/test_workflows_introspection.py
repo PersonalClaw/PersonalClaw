@@ -21,6 +21,7 @@ are different claims, and only the second is evidence.
 """
 
 import pathlib
+import re
 import tempfile
 
 import pytest
@@ -101,6 +102,97 @@ def test_run_stats_matches_the_engines_OWN_run_totals(journal_home):
     # …including the money DISCLOSURE, not just the money (#2566). Two aggregates that agreed on the
     # dollar and disagreed on whether it was measured would be the same defect one level up.
     assert stats.priced is official["priced"] is True
+    # …and the TOKEN disclosure, for the same reason (#3218). The case above records a count on
+    # every step, which is why this assertion alone cannot catch a twin that collapses an absent
+    # count to `0` — the parametrised cases below are the ones that discriminate.
+    assert stats.tokens_recorded is official["tokens_recorded"] is True
+
+
+#: The issue's own agreement table (#3218), as cases. `tokens` is what each step's `step_completed`
+#: carries — `None` means the key is written holding null, and `...` means the key is ABSENT — and
+#: `recorded` is the disclosure both aggregates must reach.
+#:
+#: The four `False` rows are the ones that diverged on `main`: `run_totals` reported `tokens: null`
+#: where `run_stats` reported a `0` or a floor. The last is the producer #2630 was filed about —
+#: `loop/journal.py::LoopJournal.cycle` writes no `tokens` key, so EVERY loop run is that row.
+TOKEN_AGREEMENT_CASES: list[tuple[str, list, int, bool]] = [
+    ("all recorded", [100, 50], 150, True),
+    ("a genuine recorded zero", [0], 0, True),
+    ("an absent tokens key", [...], 0, False),
+    ("an explicit null tokens", [None], 0, False),
+    ("mixed: recorded then absent", [100, ...], 100, False),
+    ("an empty ledger", [], 0, True),
+    ("a loop-shaped step: no cost, no tokens", [...], 0, False),
+]
+
+
+@pytest.mark.parametrize(
+    "label,step_tokens,floor,recorded",
+    TOKEN_AGREEMENT_CASES,
+    ids=[case[0] for case in TOKEN_AGREEMENT_CASES],
+)
+def test_run_stats_and_run_totals_agree_on_the_token_DISCLOSURE(
+    journal_home, label, step_tokens, floor, recorded
+):
+    """The two aggregates over one journal answer the token question the same way — including when
+    the answer is "nobody recorded it".
+
+    `#3216` fixed `run_totals` and left its twin summing the raw `event.get("tokens", 0)`, so four
+    of these seven cases disagreed: the ledger primitive said `null` and the projection a user
+    actually reads said `0` or a floor. Agreement on the VALUE alone is not the property — a floor
+    and a measurement can be the same int — so this asserts the disclosed shape, which is the only
+    form in which the two can be compared at all.
+    """
+    from personalclaw.workflows import journal as J
+
+    # Derived from the label, not `hash()`: `PYTHONHASHSEED` is randomised per interpreter, so a
+    # hash-derived id would give one case a different journal on every run and two cases could
+    # collide into one stream.
+    run_id = "r-tok-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    events = write_run(
+        run_id,
+        [
+            (
+                J.STEP_COMPLETED,
+                # A cost on EVERY step, deliberately: it isolates the token fact from the money
+                # fact, so a case failing here cannot be a `priced` regression wearing a disguise.
+                {"instance_path": f"n{i}", "node_id": f"n{i}", "cost_usd": 0.01}
+                | ({} if tok is ... else {"tokens": tok}),
+            )
+            for i, tok in enumerate(step_tokens)
+        ],
+    )
+    stats = run_stats(run_id, events)
+    official = J.run_totals(run_id)
+
+    assert stats.tokens_recorded is recorded, label
+    assert stats.tokens == floor, label
+    # The comparable form: `run_totals` nulls the value when it is not a measurement, so the
+    # projection's (int, flag) pair has to collapse the same way before the two can be equal.
+    assert (stats.tokens if stats.tokens_recorded else None) == official["tokens"], label
+    assert stats.tokens_recorded is official["tokens_recorded"], label
+    # The money fact is untouched in every case, which is what makes the token fact the only
+    # variable — and is #2630's ruling asserted rather than remembered.
+    assert stats.priced is True, label
+
+
+def test_the_token_disclosure_survives_the_wire(journal_home):
+    """`to_dict` is what the route returns and what `IntrospectPanel` reads, so a flag that exists
+    on the dataclass and not in the payload would leave the rendered cell exactly as wrong as
+    before — the whole reason #3218 is a separate issue from #3216."""
+    from personalclaw.workflows import journal as J
+
+    events = write_run(
+        "r-tok-wire",
+        [
+            (J.STEP_COMPLETED, {"instance_path": "a", "node_id": "a", "tokens": 100}),
+            (J.STEP_COMPLETED, {"instance_path": "b", "node_id": "b", "cost_usd": 0.02}),
+        ],
+    )
+    payload = run_stats("r-tok-wire", events).to_dict()
+    assert payload["tokens_recorded"] is False
+    assert payload["tokens"] == 100
+    assert payload["tokens_recorded"] is J.run_totals("r-tok-wire")["tokens_recorded"]
 
 
 def test_the_models_a_run_used_are_collected(journal_home):

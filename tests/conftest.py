@@ -1,6 +1,7 @@
 """Shared pytest configuration and fixtures."""
 
 import asyncio
+import importlib
 import os
 import shutil
 import sys
@@ -28,6 +29,23 @@ from hypothesis import HealthCheck, settings
 # it works: tests/test_pycache_guard.py.
 PYCACHE_PREFIX = pycache_guard.activate()
 
+# ── Imported-checkout provenance rail (#2634) ──────────────────────────
+# An editable install points at a mutable working tree. In a git worktree, that can make
+# pytest import ``personalclaw`` from the shared checkout while collecting tests from this
+# checkout, producing plausible results for the wrong branch. Import only after the
+# bytecode-cache rail above is active, then require the package root to belong to the
+# checkout whose conftest pytest loaded. Editable installs remain valid when they point
+# inside this same checkout.
+_INVOKING_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PERSONALCLAW = importlib.import_module("personalclaw")
+_IMPORTED_PACKAGE_ROOT = Path(_PERSONALCLAW.__file__).resolve().parent
+if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
+    raise RuntimeError(
+        "pytest imported personalclaw from outside the invoking repository root:\n"
+        f"  imported package root: {_IMPORTED_PACKAGE_ROOT}\n"
+        f"  invoking repository root: {_INVOKING_REPO_ROOT}"
+    )
+
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
 # package alone, with NO sibling apps/ directory. Channel/provider seams are
 # exercised against in-tree fakes (tests/fakes.py); tests of app-INTERNAL
@@ -48,6 +66,18 @@ settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 _HAS_GIT = shutil.which("git") is not None
 
 requires_git = pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+
+_WORKFLOWS_TEST_TIMEOUT_SECONDS = 46
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give workflow tests a measured ceiling without replacing an explicit one."""
+    for item in items:
+        if (
+            item.path.name.startswith("test_workflows_")
+            and item.get_closest_marker("timeout") is None
+        ):
+            item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
 
 
 @pytest.fixture(autouse=True)

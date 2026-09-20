@@ -129,35 +129,87 @@ async def judge_verdict(prompt: str) -> str:
     (MODEL-USE-CASES-V2; falls back to chat when unbound). The judge has NO write
     tools — any tool call it attempts is rejected. Returns the collected text (or ''
     on failure). Used by the code stage gate + any kind needing a conservative LLM
-    verdict."""
+    verdict.
+
+    The judge axis is NON-INTERACTIVE, so a >1-entry chain bound to it gets the
+    call-failure advance (MODEL-USE-CASES-V2 T2.4) through the ONE shared walk in
+    ``llm_helpers``: a provider failure from entry N rebuilds from N+1 instead of
+    returning no verdict at all. That matters more here than almost anywhere else — an
+    unrendered verdict is a can't-judge, and a can't-judge is what
+    :func:`verdict_rendered` exists to keep from reading as FAIL, so without the advance
+    a downed entry-0 provider silently converts a declared fallback into a permanently
+    unjudgeable stage. A one-entry/unbound axis takes the plain single-resolve path,
+    unchanged."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+    from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.loop.judge import judge_use_case
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
+    use_case = judge_use_case()
+    # The chunks of the most recent FAILED attempt. ``_drain`` must RE-RAISE so the walk
+    # can advance (a swallowed error would pin it to entry 0), so the partial text is
+    # stashed here for the degrade paths rather than returned from there.
+    partial: list[str] = []
+
+    async def _drain(provider) -> str:
+        """Collect one already-STARTED provider's verdict text, then shut it down."""
+        chunks: list[str] = []
+        try:
+            async for event in provider.stream(prompt):
+                if event.kind == EVENT_TEXT_CHUNK:
+                    chunks.append(event.text)
+                elif event.kind == EVENT_PERMISSION_REQUEST:
+                    # The judge must not act — deny any tool call (it should only reason).
+                    try:
+                        await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
+                    except Exception:
+                        pass
+                elif event.kind == EVENT_COMPLETE:
+                    break
+        except Exception:
+            partial[:] = chunks
+            raise
+        finally:
+            try:
+                await provider.shutdown()
+            except Exception:
+                pass
+        return "".join(chunks)
+
+    async def _start_and_drain(provider) -> str:
+        """What the WALK runs per entry: this entry owns its own start + shutdown, so a
+        provider that cannot even start is an advance rather than a dead verdict. Start
+        is outside ``_drain`` because the plain path below must keep reporting a
+        start failure at WARNING (unavailable provider) and a mid-stream failure at
+        DEBUG (transient) — two different operator actions."""
+        await provider.start()
+        return await _drain(provider)
+
+    chain = use_case_chain(use_case)
+    if len(chain) > 1:
+        try:
+            return await run_over_use_case_chain(
+                use_case, chain, _start_and_drain, label="loop gate judge chain"
+            )
+        except Exception:
+            # Every entry failed. ONE warning — the walk already logged each advance — and
+            # the last attempt's partial text still flows back, so ``verdict_rendered``
+            # keeps distinguishing a truncated verdict from no verdict at all.
+            logger.warning(
+                "loop gate: every entry in the %s judge chain failed (%d entries)",
+                use_case,
+                len(chain),
+                exc_info=True,
+            )
+            return "".join(partial)
     try:
         provider = resolve_provider_for_use_case(judge_use_case())
         await provider.start()
     except Exception:
         logger.warning("loop gate: judge provider unavailable", exc_info=True)
         return ""
-    chunks: list[str] = []
     try:
-        async for event in provider.stream(prompt):
-            if event.kind == EVENT_TEXT_CHUNK:
-                chunks.append(event.text)
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                # The judge must not act — deny any tool call (it should only reason).
-                try:
-                    await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
-                except Exception:
-                    pass
-            elif event.kind == EVENT_COMPLETE:
-                break
+        return await _drain(provider)
     except Exception:
         logger.debug("loop gate: judge stream errored", exc_info=True)
-    finally:
-        try:
-            await provider.shutdown()
-        except Exception:
-            pass
-    return "".join(chunks)
+        return "".join(partial)

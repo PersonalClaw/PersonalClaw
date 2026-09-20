@@ -779,12 +779,6 @@
     "type": "bool"
   },
   {
-    "default": true,
-    "path": "knowledge.conflict_model_pass",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
     "default": 5,
     "path": "knowledge.consolidate_min_cluster",
     "sensitive": false,
@@ -811,12 +805,6 @@
   {
     "default": 3,
     "path": "knowledge.embed_retry_budget",
-    "sensitive": false,
-    "type": "int"
-  },
-  {
-    "default": 12,
-    "path": "knowledge.lint_every_n_persists",
     "sensitive": false,
     "type": "int"
   },
@@ -943,12 +931,6 @@
   {
     "default": 0.5,
     "path": "learning.min_lesson_confidence",
-    "sensitive": false,
-    "type": "float"
-  },
-  {
-    "default": 0.0,
-    "path": "learning.min_session_score",
     "sensitive": false,
     "type": "float"
   },
@@ -1800,12 +1782,6 @@
     "path": "workflows.match_threshold",
     "sensitive": false,
     "type": "float"
-  },
-  {
-    "default": 10,
-    "path": "workflows.max_active_runs",
-    "sensitive": false,
-    "type": "int"
   },
   {
     "default": 2,

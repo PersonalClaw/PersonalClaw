@@ -180,11 +180,12 @@ triggers are the `#/workflows` page, not this file.
 | `workflows.duty_gate_default` | string | `""` | Settings → Workflows | The is-the-user-on-duty check applied to new automations that name none. Empty means no gate; `manual` is the built-in toggle and apps can supply others. The gate always fails OPEN. |
 | `workflows.workspace_default_mode` | enum: `scratch`, `worktree`, `in_place`, `container` | `scratch` | Settings → Workflows | Where a run works when its template declares no `workspace.mode`. A template's own declaration always wins. `in_place` is deliberately never the default — that is the mode in which a destructive step runs against real state. |
 | `workflows.workspace_teardown_on_expiry` | boolean | `true` | Settings → Workflows | Run a workspace's declared `teardown` before its directory is deleted by retention or an explicit delete. On, because teardown's job is to stop services while the directory still exists. |
-| `workflows.max_active_runs` | integer (1–100) | `10` | ⚠️ no control — see note | Documented as "how many workflow runs may execute at once", but **nothing reads it**: `watchdog.py` adopts every active run with no cap check. Tracked as an inert path in issue #465; deliberately given no Settings control, because a control would make a promise the code does not keep. |
-
 `workflows.max_concurrent_nodes` was **removed** in this release (#465). It claimed to be the
 per-run total "partitioned across typed lanes", and `lane_caps()` never consulted it — the two
 `max_concurrent_*_nodes` rows above are the live partition. A stored value for it is ignored.
+
+`workflows.max_active_runs` was also **removed** (#465). It had no reader and imposed no runtime
+cap, so removing it changes no run-start behaviour; a stored value is ignored.
 
 ## Security (`security.*`)
 

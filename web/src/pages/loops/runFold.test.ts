@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { effectiveLoopStatus } from '../../lib/loopStatus'
 import { foldRun, foldRunSnapshot, foldReducer, emptyRunFlags, type RunSnapshot } from './runFold'
 
 // A minimal PHASE-TRACKED (code/design) run snapshot. `phase_tracked` is the kind
@@ -36,6 +37,20 @@ const research = (over: Partial<RunSnapshot> = {}): RunSnapshot => ({
   ],
   phase_status: {},
   ...over,
+})
+
+describe('effectiveLoopStatus — persisted stop classification', () => {
+  it.each(['cycle_budget', 'cost_budget', 'deadline', 'worker_failed'])(
+    'maps complete + %s to ended_early', (stopReason) => {
+      expect(effectiveLoopStatus('complete', stopReason)).toBe('ended_early')
+    })
+
+  it('keeps genuine, historical and non-terminal states unchanged', () => {
+    expect(effectiveLoopStatus('complete', 'done')).toBe('complete')
+    expect(effectiveLoopStatus('complete', '')).toBe('complete')
+    expect(effectiveLoopStatus('complete', null)).toBe('complete')
+    expect(effectiveLoopStatus('running', 'cycle_budget')).toBe('running')
+  })
 })
 
 describe('foldRunSnapshot — phased kinds', () => {
@@ -222,6 +237,27 @@ describe('foldReducer — transient lifecycle flags', () => {
     expect(f.stall).toEqual({ stage: 'build', title: 'Build', findings: 2 })
     f = foldReducer(f, 'new_finding')
     expect(f.stall).toBeNull()
+  })
+
+  it('keeps the missing-binary cause so the cockpit gives the command-edit remedy', () => {
+    const f = foldReducer(emptyRunFlags(), 'stage_stalled', {
+      stage: 'verification',
+      title: 'Verify & QA',
+      findings: 5,
+      cause: 'binary',
+      label: 'build',
+      command: 'python -m py_compile bell_times.py',
+      binary: 'python',
+    })
+    expect(f.stall).toEqual({
+      stage: 'verification',
+      title: 'Verify & QA',
+      findings: 5,
+      cause: 'binary',
+      label: 'build',
+      command: 'python -m py_compile bell_times.py',
+      binary: 'python',
+    })
   })
 
   it('blocked KEEPS the stall (the stall is the reason for the block)', () => {

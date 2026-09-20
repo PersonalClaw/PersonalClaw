@@ -5,6 +5,7 @@ import {
   UNRECORDED_LABEL,
   provenanceRecorded,
   reportSchema,
+  runTokensStat,
   tokensUnrecorded,
 } from './unrecorded'
 
@@ -44,6 +45,24 @@ describe('the one vocabulary for "unrecorded"', () => {
     // rendering every legacy row as "not recorded" would replace one wrong claim with another, so
     // the caller falls through to the existing `null`/number handling for those.
     expect(tokensUnrecorded({})).toBe(false)
+  })
+
+  it('never renders a FLOOR token count as a measurement', () => {
+    // The defect (#3218): `IntrospectPanel` called `.toLocaleString()` on `stats.tokens`, so a run
+    // whose second step recorded no count printed "100" — a floor, formatted as a measurement,
+    // while `run_totals` reported `null` for the same run.
+    expect(runTokensStat(100, false)).toBe('≥100')
+    expect(runTokensStat(1234, false)).toBe('≥1,234')
+    // No count anywhere: there is no floor to state, so the words replace the figure. "0" here
+    // would be the precise lie — indistinguishable from a run that genuinely used no tokens.
+    expect(runTokensStat(0, false)).toBe(UNRECORDED_LABEL)
+    // A RECORDED zero is a measurement and keeps its number. This is the pair the whole
+    // three-state rule exists for: same int, different claim.
+    expect(runTokensStat(0, true)).toBe('0')
+    expect(runTokensStat(1234, true)).toBe('1,234')
+    // An ABSENT flag falls through to the plain number, matching `tokensUnrecorded`'s documented
+    // rule above — a legacy payload must not be relabelled "not recorded".
+    expect(runTokensStat(100, undefined)).toBe('100')
   })
 
   it('keeps "not recorded" distinct from the panels\' "not measured"', () => {

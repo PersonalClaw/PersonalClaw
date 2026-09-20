@@ -3,12 +3,14 @@ store + the api_chat suggestion hook. Suggest-first, LLM never in the hot path."
 
 from __future__ import annotations
 
+import logging
 import time
 from types import SimpleNamespace
 
 import pytest
 
 from personalclaw.agents import routing
+from personalclaw.providers import entity_routes
 
 
 def _profile(specialty="", route_hints=""):
@@ -136,6 +138,18 @@ class TestSuppressionStore:
         routing.unmute("DbA")
         assert "dba" not in routing.routing_status()["muted"]
         assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
+
+    def test_config_path_failure_fails_open_with_warning(self, monkeypatch, caplog):
+        def fail_config_dir():
+            raise RuntimeError("measured config-dir failure")
+
+        monkeypatch.setattr(entity_routes, "config_dir", fail_config_dir)
+        with caplog.at_level(logging.WARNING, logger=routing.__name__):
+            assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
+
+        warnings = [record for record in caplog.records if record.name == routing.__name__]
+        assert len(warnings) == 1
+        assert "agent_routing" in warnings[0].getMessage()
 
 
 class TestSuggestForSend:

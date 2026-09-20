@@ -27,7 +27,15 @@ export type RunStepState = 'done' | 'active' | 'todo' | 'untracked'
 export interface RunStep { label: string; state: RunStepState; key: string }
 
 export interface GateFailure { label: string; command: string; output: string }
-export interface StallInfo { stage: string; title: string; findings: number }
+export interface StallInfo {
+  stage: string
+  title: string
+  findings: number
+  cause?: string
+  label?: string
+  command?: string
+  binary?: string
+}
 
 /** The transient, NOT-persisted flags a run's lifecycle events toggle. Mirrors the
  *  ad-hoc component state the inline cockpit folds kept (gateFail/stalled/judgeDegraded). */
@@ -217,8 +225,18 @@ export function foldReducer(flags: RunFlags, event: string, data?: unknown): Run
       }
       return { ...flags, gate: null } // re-ran + passed → clear a stale failure banner
     }
-    case 'stage_stalled':
-      return { ...flags, stall: { stage: String(d.stage || ''), title: String(d.title || d.stage || 'this stage'), findings: Number(d.findings || 0) } }
+    case 'stage_stalled': {
+      const stall: StallInfo = {
+        stage: String(d.stage || ''),
+        title: String(d.title || d.stage || 'this stage'),
+        findings: Number(d.findings || 0),
+      }
+      if (d.cause) stall.cause = String(d.cause)
+      if (d.label) stall.label = String(d.label)
+      if (d.command) stall.command = String(d.command)
+      if (d.binary) stall.binary = String(d.binary)
+      return { ...flags, stall }
+    }
     case 'judge_error':
       return { ...flags, judgeDegraded: true }
     case 'cycle_verdict':

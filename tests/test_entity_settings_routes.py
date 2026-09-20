@@ -10,10 +10,12 @@ authoritative allowlist.
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from personalclaw.agents import routing
 from personalclaw.providers import entity_routes as er
 
 
@@ -31,6 +33,49 @@ def _req(body):
 
 async def _json(resp):
     return json.loads(resp.body.decode())
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"dismissals":',
+        b"\xff\xfe\x00\x80",
+    ],
+    ids=["truncated-json", "binary-garbage"],
+)
+def test_corrupt_entity_settings_fail_open_with_one_warning(payload, caplog):
+    entity = "agent_routing"
+    path = er._entity_settings_path(entity)
+    path.write_bytes(payload)
+
+    with caplog.at_level(logging.WARNING, logger=er.__name__):
+        assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
+
+    warnings = [record for record in caplog.records if record.name == er.__name__]
+    assert len(warnings) == 1
+    assert entity in warnings[0].getMessage()
+    assert str(path) in warnings[0].getMessage()
+
+
+def test_non_object_entity_settings_fail_open_with_one_warning(caplog):
+    entity = "agent_routing"
+    path = er._entity_settings_path(entity)
+    path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger=er.__name__):
+        assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
+
+    warnings = [record for record in caplog.records if record.name == er.__name__]
+    assert len(warnings) == 1
+    assert entity in warnings[0].getMessage()
+    assert str(path) in warnings[0].getMessage()
+
+
+def test_absent_entity_settings_fail_open_without_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger=er.__name__):
+        assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
+
+    assert [record for record in caplog.records if record.name == er.__name__] == []
 
 
 @pytest.mark.asyncio

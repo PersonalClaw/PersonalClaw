@@ -22,6 +22,11 @@ Four checks, all cheap and none of them instantiating anything:
 store, no registry) preflight must not claim the requirement is absent — refusing a run
 because the checker was unavailable is its own outage. That distinction is the whole
 reason findings are typed rather than a bare list of strings.
+
+`provider_requirement_gap` is the fifth thing a reader needs and the one these four checks
+structurally cannot produce: what the referenced providers *themselves* require. It is a
+separate function rather than a fifth check because it belongs on the PLAN surface, not on the
+run-start gate — see its docstring.
 """
 
 from __future__ import annotations
@@ -290,19 +295,91 @@ def _check_models(spec: dict[str, Any], result: PreflightResult, probe: Any) -> 
 # ── action providers ─────────────────────────────────────────────────────────
 
 
-def _check_action_providers(spec: dict[str, Any], result: PreflightResult, lookup: Any) -> None:
+def _provider_references(spec: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Every `action` node's provider, split into LITERAL names and BINDINGS.
+
+    One walk, two consumers: `_check_action_providers` can only check the literal half, and
+    `provider_requirement_gap` has to name the bound half — a binding resolved at dispatch is
+    unchecked, and a report that silently dropped it would read as "checked, fine".
+    """
     root = _root_of(spec)
     if root is None:
-        return
-    names: set[str] = set()
+        return [], []
+    literal: set[str] = set()
+    bound: set[str] = set()
     for _path, node in walk(root):
         if node.kind != NodeKind.ACTION:
             continue
         provider = (node.config or {}).get("provider")
+        if not isinstance(provider, str) or not provider:
+            continue
         # A BOUND provider name is resolved at dispatch, so it cannot be checked here.
         # Skipping it is correct; guessing at the binding's future value is not.
-        if isinstance(provider, str) and provider and "{{" not in provider:
-            names.add(provider)
+        (bound if "{{" in provider else literal).add(provider)
+    return sorted(literal), sorted(bound)
+
+
+def provider_requirement_gap(spec: dict[str, Any]) -> list[Finding]:
+    """What a spec-only preflight structurally CANNOT check, named rather than omitted.
+
+    `preflight` proves a referenced action provider is REGISTERED. It cannot prove the provider's
+    own requirements are met, because `ActionProvider` declares none — there is no `requirements`
+    on the contract to aggregate one hop through. And a provider name that is a BINDING is
+    resolved at dispatch, so it is skipped entirely.
+
+    Both are WARNINGS, so `ok` is unaffected: a coverage caveat must not refuse a run. Reporting
+    them at all is the point — a report that says `ok` while a whole class went unexamined is
+    exactly how a plan-time green becomes a death at node one.
+
+    Deliberately NOT folded into `preflight()`. At run start the report is a GATE whose findings
+    read as "fix these", and a permanently-unactionable warning on every action-using run is the
+    noise that gets a rule suppressed wholesale, taking the real findings with it. At plan time
+    the report is advice about what approving this plan does *not* guarantee, which is where a
+    coverage caveat belongs.
+    """
+    literal, bound = _provider_references(spec)
+    findings: list[Finding] = []
+    if literal:
+        findings.append(
+            Finding(
+                code="WF_PRE_PROVIDER_REQUIREMENTS_UNCHECKED",
+                message=(
+                    f"did not check what {', '.join(repr(n) for n in literal)} themselves "
+                    "require: the action provider contract declares no requirements"
+                ),
+                remediation=(
+                    "if a node fails on a missing credential the provider needs, add it in "
+                    "Settings → Providers and start the run again"
+                ),
+                severity=SEVERITY_WARNING,
+                kind="action_providers",
+            )
+        )
+    if bound:
+        findings.append(
+            Finding(
+                code="WF_PRE_PROVIDER_BOUND_UNCHECKED",
+                message=(
+                    f"could not check {len(bound)} action provider(s) named by a binding: "
+                    f"{', '.join(repr(n) for n in bound)} resolves at dispatch"
+                ),
+                remediation=(
+                    "name the provider literally if it is known now, or expect an unknown-provider "
+                    "failure at that node"
+                ),
+                severity=SEVERITY_WARNING,
+                kind="action_providers",
+            )
+        )
+    return findings
+
+
+def _check_action_providers(spec: dict[str, Any], result: PreflightResult, lookup: Any) -> None:
+    if _root_of(spec) is None:
+        # Unchanged from the pre-refactor shape: a rootless spec records no `action_providers`
+        # key at all, the same way `_check_models` records no `models` key.
+        return
+    names = set(_provider_references(spec)[0])
     result.checked["action_providers"] = sorted(names)
     if not names:
         return

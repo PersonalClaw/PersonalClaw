@@ -9,6 +9,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A skill now says HOW it came to exist, not only which tier it lives in.**
+- **CSV is a generated document format, and it stores as text rather than as a binary body.**
 - **A pack's staged roster could be deployed only by `curl`. `POST /api/packs/{name}/roster/deploy` shipped complete — route, handler, `deploy_roster`, and the `roster` rows already on the `/api/packs/installed` wire — with no control anywhere in the dashboard**
 - **Nine config sections were PATCH-editable, backend-read and reachable from NO control in the dashboard. They have controls now — two new Settings panels and five new sections on existing ones.**
 - **`knowledge.synthesis_window` and `knowledge.max_mentions_per_claim` now do what they say.**
@@ -33,6 +35,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
+- **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
 - **66 more spacing values now obey the Density slider (Appearance → Density), in 29 whole files.**
 - **A tool's risk level now gates the control that runs it, and "Always for this agent" only promises a saved grant when it will actually save one ([#506](https://github.com/PersonalClaw/PersonalClaw/issues/506), [#541](https://github.com/PersonalClaw/PersonalClaw/issues/541), [#683](https://github.com/PersonalClaw/PersonalClaw/issues/683)).**
 - **⚠️ PERSONALCLAW NOW TRACKS RELEASES, NOT `main` — AND THE UPDATE IT APPLIES IS THE ONE YOU CHOSE.**
@@ -52,11 +56,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Removed
-- **⚠️ Two runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.**
+- **⚠️ Four remaining runtime-editable config paths that governed nothing are gone: `workflows.max_active_runs`, `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`, and `learning.min_session_score`.**
+- **⚠️ Two earlier runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.**
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **`personalclaw agent list` measures its columns instead of hardcoding them, so the table is aligned on a fresh install.**
+- **A credential in a chat title no longer reaches the export download's filename.**
+- **Code-loop runnability now distinguishes a missing command binary from a project that has not been scaffolded yet.**
 - **A run ledger whose completed steps never recorded token counts no longer reports `tokens: 0`.**
+- **The token total a user actually reads now carries the same disclosure as the ledger's own aggregate.**
 - **The persistence toggle no longer lights up for a setting the host cannot honour, the durable-workers hint now answers the requirement it names, and "sessions survive a restart" has exactly one owner.**
 - **An automation can no longer be EDITED into a state it could never run from, and the doctor names the rows already on disk that are.**
 - **`pip install personalclaw` on Python 3.14 is now refused at install time instead of succeeding and handing you a connector-pack parser that refuses every import.**

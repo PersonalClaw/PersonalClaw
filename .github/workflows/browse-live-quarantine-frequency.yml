@@ -1,0 +1,45 @@
+# Cross-run observer for browse-live's deliberate ENVIRONMENT quarantine (#2641).
+#
+# `ci.yml` can classify only its own run. This workflow runs after CI, reads the retained
+# JUnit artifacts across runs, and treats each head SHA as one environment observation so
+# push/pull-request duplicates and retries cannot inflate the rate.
+name: Browse-live quarantine frequency
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  frequency:
+    # The cancelled push duplicate normally loses ci.yml's branch-level concurrency race.
+    # Its matching pull_request run still triggers this observer; running on both would make
+    # the alert workflow itself noisy even though the script groups the data by head SHA.
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # workflow_run executes trusted default-branch code, never the PR head. The downloaded
+      # JUnit artifact is untrusted input; the observer only searches bounded ZIP/XML bytes
+      # and never extracts or executes them.
+      - uses: actions/checkout@v7
+      - name: Classify browse-live quarantine frequency
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Threshold: alert at 3 of the last 5 DISTINCT head SHAs targeting main.
+          # Three independent revisions establishes recurrence beyond a one-off flake;
+          # a 3/5 rate also catches alternating failures that a consecutive-only rule misses.
+          BROWSE_LIVE_WINDOW: "5"
+          BROWSE_LIVE_THRESHOLD: "3"
+        run: >-
+          python3 tools/browse_live_quarantine_frequency.py
+          --repository "$GITHUB_REPOSITORY"
+          --workflow ci.yml
+          --base main
+          --window "$BROWSE_LIVE_WINDOW"
+          --threshold "$BROWSE_LIVE_THRESHOLD"

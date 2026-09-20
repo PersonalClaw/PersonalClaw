@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -8,7 +8,7 @@ import { confirmDelete } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
-import { SOURCE_TONE } from './skillMeta'
+import { SOURCE_TONE, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 
@@ -20,6 +20,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const tone = SOURCE_TONE[skill.source] ?? 'var(--color-on-surface-low)'
+  const prov = provenanceMeta(skill.provenance)
+  // `source`, NOT `provenance`: a taught skill is a `local` skill and is exactly as editable
+  // as a hand-placed one. Reading provenance here instead would lock the user out of editing
+  // the skill their own session just taught (#576).
   const editable = skill.source !== 'bundled'
 
   const { data: files } = useQuery<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
@@ -49,6 +53,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
             tones clear AA at 14-16% and have no `<tone>-container` to pair with. */}
         <span className="rounded-pill px-m h-7 inline-flex items-center text-[0.8125rem]" style={toneChipSkin(tone, 16)}>{skill.source}</span>
         <span className="text-on-surface-low text-[0.8125rem]">{skill.type}</span>
+        {/* The tier chip above says WHERE this skill lives; this says how it got there (issue 576).
+            The inspector is the surface a reviewer opens to decide whether to keep what a
+            session taught, so it carries the sentence and not just the word the row shows. */}
+        {prov && <span data-type="label-s" className={`inline-flex items-center gap-1.5 ${prov.tone}`} title={prov.title}><GraduationCap size={13} /> {prov.label}</span>}
         {skill.always && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}><Zap size={13} /> always loaded</span>}
       </div>
 
@@ -91,18 +99,28 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   )
 }
 
+type ReverifyOutcome =
+  | { kind: 'idle' }
+  | { kind: 'ok'; at: number; data: SkillIntegrity }
+  | { kind: 'error'; message: string }
+
 /** S6 integrity: shows the install-time status from the list, plus a Re-verify action
  *  that re-hashes on-disk files against the .pclaw-lock.json baseline and reports drift.
  *  A skill with no lock (bundled / hand-placed) is "unverified" — expected, not an error. */
 function IntegritySection({ skill }: { skill: SkillItem }) {
-  const [result, setResult] = useState<SkillIntegrity | null>(null)
+  const [outcome, setOutcome] = useState<ReverifyOutcome>({ kind: 'idle' })
   const [busy, setBusy] = useState(false)
-  // The row already carries an install-time status; the re-verify result supersedes it.
-  const status = result?.integrity ?? skill.integrity ?? 'unverified'
+  // The row already carries an install-time status; a successful re-verify supersedes it.
+  // A failed re-verify leaves that valid install-time fact visible beside the failure reason.
+  const status = outcome.kind === 'ok' ? outcome.data.integrity : skill.integrity ?? 'unverified'
 
   async function verify() {
     setBusy(true)
-    try { setResult(await api.verifySkill(skill.name)) } catch { /* ignore */ }
+    try {
+      const data = await api.verifySkill(skill.name)
+      setOutcome({ kind: 'ok', at: Date.now(), data })
+    }
+    catch (e) { setOutcome({ kind: 'error', message: (e as Error).message || 'Re-verification failed' }) }
     setBusy(false)
   }
 
@@ -111,19 +129,25 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
   const label = status === 'intact' ? 'Verified — matches install baseline'
     : status === 'tampered' ? 'Tampered — files changed since install'
     : 'Unverified — no install baseline (bundled or hand-placed)'
-  const drift = result && (result.mutated.length + result.missing.length + result.added.length > 0)
+  const drift = outcome.kind === 'ok' && (outcome.data.mutated.length + outcome.data.missing.length + outcome.data.added.length > 0)
+  const outcomeLine = outcome.kind === 'idle' ? ''
+    : outcome.kind === 'error' ? outcome.message
+    : `checked ${new Date(outcome.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
 
   return (
     <Section label="Integrity">
       <div className="flex items-center gap-s">
         <span className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: tone }}><Icon size={14} /> {label}</span>
-        <Button size="sm" variant="ghost" onClick={verify} loading={busy} className="ml-auto"><ShieldCheck size={14} /> Re-verify</Button>
+        <div className="ml-auto flex items-center gap-s">
+          {outcomeLine && <span data-type="caption" className="text-on-surface-low">{outcomeLine}</span>}
+          <Button size="sm" variant="ghost" onClick={verify} loading={busy}><ShieldCheck size={14} /> Re-verify</Button>
+        </div>
       </div>
-      {drift && (
+      {outcome.kind === 'ok' && drift && (
         <div className="mt-2 flex flex-col gap-1 text-[0.75rem] font-mono">
-          {result!.mutated.map((f) => <div key={`m${f}`} className="text-danger">changed: {f}</div>)}
-          {result!.missing.map((f) => <div key={`x${f}`} className="text-danger">missing: {f}</div>)}
-          {result!.added.map((f) => <div key={`a${f}`} className="text-warn">added: {f}</div>)}
+          {outcome.data.mutated.map((f) => <div key={`m${f}`} className="text-danger">changed: {f}</div>)}
+          {outcome.data.missing.map((f) => <div key={`x${f}`} className="text-danger">missing: {f}</div>)}
+          {outcome.data.added.map((f) => <div key={`a${f}`} className="text-warn">added: {f}</div>)}
         </div>
       )}
     </Section>

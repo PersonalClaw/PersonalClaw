@@ -2192,8 +2192,14 @@ _CONTENT_SEARCH_STOP_GRACE = 0.1
 _RG_AVAILABLE: bool | None = None
 
 
-class _ContentSearchTimedOut(TimeoutError):
-    """The Python fallback crossed its deadline or received a stop request."""
+class _ContentSearchTimedOut(Exception):
+    """The Python fallback crossed its deadline or received a stop request.
+
+    Deliberately NOT a ``TimeoutError``: that is an ``OSError`` subclass, so the
+    per-line deadline check inside the file-read ``try`` below would be caught by
+    its ``except OSError: continue`` and read as an unreadable file — the walk
+    would step to the next file and return a partial set reporting ``truncated=False``.
+    """
 
 
 def _check_content_search_deadline(
@@ -2286,7 +2292,7 @@ def _content_search_python(
 
     if allowed_roots is None:
         allowed_roots = tuple(rp for _label, rp in _dashboard_roots())
-    globs = [g.strip() for g in include.split(",") if g.strip()]
+    globs = [g.strip().removeprefix("**/") for g in include.split(",") if g.strip()]
     needle = query.lower()
     results: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -2294,9 +2300,13 @@ def _content_search_python(
         dirnames[:] = [
             d for d in dirnames if d not in _CONTENT_SEARCH_IGNORE_DIRS and not d.startswith(".")
         ]
+        rel_dir = os.path.relpath(dirpath, root)
         for fn in filenames:
             _check_content_search_deadline(deadline, stop_event)
-            if globs and not any(fnmatch.fnmatch(fn, g) for g in globs):
+            relpath = fn if rel_dir == "." else f"{rel_dir.replace(os.sep, '/')}/{fn}"
+            if globs and not any(
+                fnmatch.fnmatch(relpath, glob) or fnmatch.fnmatch(fn, glob) for glob in globs
+            ):
                 continue
             fpath = os.path.join(dirpath, fn)
             if _validate_dashboard_path(fpath, allowed_roots) is None:
@@ -2317,6 +2327,11 @@ def _content_search_python(
                             )
                             if len(results) >= _CONTENT_SEARCH_MAX_RESULTS:
                                 return results, True
+            except _ContentSearchTimedOut:
+                # Ahead of the read-error clause on purpose: the stop signal must leave
+                # the walk, not be mistaken for an unreadable file. Load-bearing only if
+                # the class is ever re-based onto an OSError lineage again.
+                raise
             except OSError:
                 continue
     return results, False

@@ -114,7 +114,6 @@ class TestWorkspaceMemoryUnification:
         other = ContextBuilder.get_memory_for(str(tmp_path / "a-totally-different-project"))
         assert other is not main
 
-    @pytest.mark.xfail(reason="pre-existing on main (v0.1.0 baseline) — #6", strict=False)
     def test_config_profile_key_resolves_silently_not_as_provider(
         self, tmp_path, monkeypatch, caplog
     ):

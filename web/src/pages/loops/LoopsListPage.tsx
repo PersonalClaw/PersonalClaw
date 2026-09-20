@@ -199,11 +199,13 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
               {loops
                 .filter(matches)
                 .map((c, i) => {
-                // A 'complete' loop with an error_message ended early (budget exhausted,
-                // DoD unmet) → the synthetic 'ended_early' meta, so it doesn't read as a
-                // genuine completion. Mirrors effectiveLoopStatus on the Code surfaces.
-                const endedEarly = c.status === 'complete' && !!c.error_message
-                const dispStatus = effectiveLoopStatus(c.status, c.error_message)
+                // A 'complete' loop whose stop_reason names a ceiling rather than 'done' ended
+                // early (budget exhausted, DoD unmet) → the synthetic 'ended_early' meta, so it
+                // doesn't read as a genuine completion. Mirrors effectiveLoopStatus on the Code
+                // surfaces — and `endedEarly` is READ OFF that one derivation rather than
+                // re-deriving the same distinction a second time three lines below it.
+                const dispStatus = effectiveLoopStatus(c.status, c.stop_reason)
+                const endedEarly = dispStatus === 'ended_early'
                 // A GENUINELY completed loop reached its Definition of Done — show a full
                 // ring. An ended-early one didn't, so its ring tracks actual cycle
                 // progress (capped at 1), not a misleading full ring.
@@ -333,7 +335,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
  *  goal/general/design (code has its own section), so labels say "loop" and the
  *  goal-type glyph only renders for the goal kind. */
 function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void }) {
-  const dispStatus = effectiveLoopStatus(loop.status, loop.error_message)
+  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason)
   const running = loop.status === 'running'
   const kind = (loop as { kind?: string }).kind
   const shownCycleNo = shownCycle(loop.status, loop.total_cycles)

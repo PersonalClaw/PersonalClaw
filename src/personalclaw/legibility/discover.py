@@ -416,7 +416,53 @@ def dismiss(tip_id: str) -> set[str]:
     return ids
 
 
+def clear_dismissed() -> int:
+    """Drop every dismissal; returns how many stored ids were removed.
+
+    The counterpart :func:`dismiss` never had (#452). Dismiss is one click on an X with no
+    confirm, and until this existed the only onboarding surface the product has could be
+    permanently removed by a reflex — "persisted forever" was literal, with no API, no list
+    and no reset behind it.
+
+    Clear-ALL, deliberately, and no per-id restore: the user cannot see *which* ids are
+    stored (that list is out of scope on #452), so a per-id control would ask them to pick
+    from a set they were never shown. Clearing the field is the whole operation.
+
+    Counts what was STORED, not what the catalog defines, so junk an older build persisted
+    is reported as removed too — it really was removed. The write drops the field's contents
+    wholesale rather than filtering, so it cannot leave residue behind for a later read to
+    narrow away.
+    """
+    from personalclaw.providers.entity_routes import (
+        _load_entity_settings,
+        _save_entity_settings,
+    )
+
+    current = _load_entity_settings(_ENTITY)
+    existing = current.get(_DISMISSED_FIELD, [])
+    removed = len(existing) if isinstance(existing, list) else 0
+    if not removed:
+        # Nothing stored: do not write. A no-op PUT would still rewrite the settings file,
+        # and this route is reachable from a button whose own gate can be stale by a click.
+        return 0
+    current[_DISMISSED_FIELD] = []
+    _save_entity_settings(_ENTITY, current)
+    logger.info("discover: cleared %d dismissal(s) at the user's request", removed)
+    return removed
+
+
 # ── the payload ──────────────────────────────────────────────────────────────
+
+
+def _auto_hidden(tip: DiscoverTip, engaged: dict[str, bool]) -> bool:
+    """Whether *tip* drops on its own because the user has already used its area.
+
+    The second of the two independent hide reasons, factored out so :func:`select_visible`
+    and :func:`count_restorable` share ONE predicate. They must agree exactly — a restore
+    count that disagreed with what the feed then admits is the inert-button bug in a
+    different place — and agreeing by construction beats agreeing by inspection.
+    """
+    return bool(tip.engaged_key and engaged.get(tip.engaged_key))
 
 
 def select_visible(*, dismissed: set[str], engaged: dict[str, bool]) -> list[DiscoverTip]:
@@ -425,11 +471,18 @@ def select_visible(*, dismissed: set[str], engaged: dict[str, bool]) -> list[Dis
     Order follows :data:`CATALOG` (curated), so the dashboard spotlight and the hub
     present the same stable sequence.
     """
-    return [
-        tip
-        for tip in CATALOG
-        if tip.id not in dismissed and not (tip.engaged_key and engaged.get(tip.engaged_key))
-    ]
+    return [tip for tip in CATALOG if tip.id not in dismissed and not _auto_hidden(tip, engaged)]
+
+
+def count_restorable(*, dismissed: set[str], engaged: dict[str, bool]) -> int:
+    """How many tips clearing the dismissals would actually bring back.
+
+    The dismissed tips that are not ALSO auto-hidden — i.e. exactly the ones
+    :func:`select_visible` would admit once the dismissal is gone. See
+    :func:`compute_discover` for why the restore control gates on this and not on the size
+    of the dismissed set.
+    """
+    return sum(1 for tip in CATALOG if tip.id in dismissed and not _auto_hidden(tip, engaged))
 
 
 def _group_by_area(tips: list[DiscoverTip]) -> list[dict[str, Any]]:
@@ -456,6 +509,16 @@ def compute_discover(state: Any = None) -> dict[str, Any]:
     and the page could not tell them apart from ``visible_count``/``total`` alone.
     Counted off :func:`load_dismissed`, which is already narrowed to :data:`TIP_IDS`, so
     it is the number of REAL tips the user hid, never junk an older build persisted.
+
+    ``restorable_count`` is the count the restore control must gate on, and it is NOT
+    ``dismissed_count`` (#452). The two filters in :func:`select_visible` are independent:
+    clearing a dismissal only brings a tip back if its area is *also* still unengaged. So a
+    user who dismissed a tip and later used that area has ``dismissed_count: 1`` with
+    nothing to restore — gating the button on that count ships a control that writes the
+    settings file and changes nothing the user can see. This counts the dismissed tips that
+    :func:`select_visible` would actually admit once the dismissal is gone, so
+    ``restorable_count: 0`` means "restoring is genuinely a no-op here" and the control
+    stays hidden.
     """
     from personalclaw.config.loader import AppConfig
 
@@ -467,6 +530,11 @@ def compute_discover(state: Any = None) -> dict[str, Any]:
             "visible_count": 0,
             "total": len(CATALOG),
             "dismissed_count": len(dismissed),
+            # Zero without reading engagement: with the kill switch off the payload carries
+            # no tips at all, so clearing dismissals restores nothing *here* either. Saying
+            # 0 keeps the field's contract exact ("how many tips restoring would reveal")
+            # and avoids the filesystem reads in compute_engaged on a disabled surface.
+            "restorable_count": 0,
         }
 
     engaged = compute_engaged(state)
@@ -477,4 +545,5 @@ def compute_discover(state: Any = None) -> dict[str, Any]:
         "visible_count": len(visible),
         "total": len(CATALOG),
         "dismissed_count": len(dismissed),
+        "restorable_count": count_restorable(dismissed=dismissed, engaged=engaged),
     }

@@ -3862,6 +3862,60 @@ class TestGenerateFolderIcon:
         state.sessions.get_or_create.assert_called_once_with(BACKGROUND_KEY)
         state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
 
+    @pytest.mark.asyncio
+    async def test_provider_less_install_is_silent(self, tmp_path, monkeypatch):
+        """#2978 — a provider-less install takes the silent no-icon path.
+
+        `get_or_create` resolves the `background` use case, so with no provider bound it
+        raises. It used to be called OUTSIDE the "best-effort background task" guard, so the
+        error escaped the fire-and-forget task and asyncio logged 37 unretrieved lines per
+        folder created. The request itself returned 201, so only the log showed it.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        from personalclaw.dashboard.chat_folders import _generate_folder_icon
+
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+
+        state.sessions.get_or_create = AsyncMock(
+            side_effect=RuntimeError("no model provider resolves for use case 'background'")
+        )
+        state.sessions.release = MagicMock()
+        state.save_folders = MagicMock()
+        state.push_sessions_update = MagicMock()
+
+        folder = {"id": "f1", "name": "icon-repro"}
+        state._folders = [folder]
+
+        # Must not raise: the caller fires this with `ensure_future` and nothing awaits it.
+        await _generate_folder_icon(state, folder)
+
+        assert "icon" not in folder
+        state.save_folders.assert_not_called()
+        # A session we never acquired must not be released — the `finally` used to run
+        # unconditionally, so pairing the guard with an `acquired` flag is the other half.
+        state.sessions.release.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_acquisition_is_inside_the_best_effort_guard(self, tmp_path, monkeypatch):
+        """#2978 mechanism control: the guard must OPEN before the session is acquired.
+
+        Pins the source shape, not just the outcome — an outcome-only test also passes if a
+        caller-side `try` is added, which would leave every other background acquisition
+        uncovered. `_maybe_followups` (chat_followups.py) is the sibling that already has the
+        correct shape.
+        """
+        import inspect
+
+        from personalclaw.dashboard import chat_folders
+
+        src = inspect.getsource(chat_folders._generate_folder_icon)
+        guard = src.index("except Exception:")
+        acquire = src.index("sessions.get_or_create(")
+        assert acquire < guard, "get_or_create must sit inside the best-effort try, not above it"
+        assert src.index("try:", src.index("_folder_icon_lock")) < acquire
+
 
 class TestFolderAssignmentPersistence:
     @pytest.mark.asyncio

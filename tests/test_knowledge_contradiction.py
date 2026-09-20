@@ -797,7 +797,7 @@ def test_the_brief_binding_is_absent_without_a_brief():
 # ── config wiring ──
 
 
-@pytest.mark.parametrize("field_name", ["session_brief_max_tokens", "conflict_model_pass"])
+@pytest.mark.parametrize("field_name", ["session_brief_max_tokens"])
 def test_each_new_knob_completes_the_four_point_wiring(field_name):
     from personalclaw.config.loader import AppConfig
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG

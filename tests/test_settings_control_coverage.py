@@ -12,11 +12,10 @@ This module is the rail for that measurement, scoped to exactly those nine secti
 (the allowlist is IMPORTED, not parsed) rather than a pinned list of keys, so a new key added to any
 of the nine reds here on the day it lands.
 
-🪤 COMMENTS ARE STRIPPED FIRST, and this file is the reason that matters more than usual. The two
-panels added for this class NAME the inert paths they deliberately omit, in prose, beside the keys
-they do control. An unstripped scan would read those sentences as controls — the failure this repo
-has now had at least five times (the primitive-adoption ratchet counting a ``<button>`` in a
-comment; the load-error scanner counting a ``.catch`` it was documenting).
+🪤 COMMENTS ARE STRIPPED FIRST. An unstripped scan would read a disabled example or explanatory
+sentence as a control — the failure this repo has now had at least five times (the
+primitive-adoption ratchet counting a ``<button>`` in a comment; the load-error scanner counting
+a ``.catch`` it was documenting).
 
 🪤 WHAT THIS RAIL DOES *NOT* CLAIM. It proves a WRITE PATH reaches each key, not that the control is
 reachable, correctly bounded or correctly labelled. Those are separate claims, and they are made
@@ -63,29 +62,15 @@ IN_SCOPE_SECTIONS = (
 
 #: Allowlisted paths in scope that deliberately have NO control, each with the reason.
 #:
-#: 🔑 EVERY ENTRY HERE IS AN *INERT* PATH — a different defect from a path with no control, and the
-#: subject of issue #465. An inert path validates, persists and reads back while governing nothing,
-#: so its ``_meta`` help is a promise the code does not keep. Giving one a Settings control does not
-#: fix it; it makes the promise more convincing to more users. The fix is to wire the reader or drop
-#: the allowlist row, and that is #465's call to make, not this change's.
+#: 🔑 EVERY ENTRY HERE IS AN *INERT* PATH — a different defect from a path with no control. An
+#: inert path validates, persists and reads back while governing nothing, so its ``_meta`` help is
+#: a promise the code does not keep. Giving one a Settings control does not fix it; it makes the
+#: promise more convincing to more users. The fix is to wire the reader or drop the allowlist row.
 #:
 #: The staleness guard below re-measures the inertness, so an entry cannot outlive its reason: the
 #: day someone wires a reader, this rail says the exclusion is stale and the path needs a control.
 #:
-#: 🔑 AN EXCLUSION CAN ALSO EXPIRE BY THE PATH BEING DELETED, and one did in this very change:
-#: ``workflows.max_concurrent_nodes`` was the third entry here until the #465 half of this change
-#: took it OFF the allowlist and out of ``WorkflowsConfig`` altogether. That is the remedy the
-#: assertion below names ("take it OFF the allowlist rather than dressing it up"), so the honest
-#: reconciliation is to drop the exemption rather than keep an exemption for a path that no longer
-#: exists — ``test_the_inert_exclusions_are_still_on_the_allowlist`` enforces exactly that
-#: direction. ``knowledge.idempotent_persist`` went the same way; it was never in scope here
-#: because ``knowledge`` is not one of the nine sections.
 INERT_NO_CONTROL = {
-    "workflows.max_active_runs": (
-        "Zero readers outside the plumbing. `watchdog.py`'s adopt loop iterates "
-        "`store.active_runs()` with no cap check, so the unbounded stacking its help text names is "
-        "exactly what happens. Tier-1 finding in #465."
-    ),
     "routing.energy_sampling": (
         "Zero readers. `_meta` promises 'record a rough energy estimate for local calls, so local "
         "cost is visible as something other than $0' and nothing records one. Same class as #465's "
@@ -191,11 +176,10 @@ def test_the_scan_finds_real_populations() -> None:
     """
     allowlist = _allowlist()
     keys = _in_scope(allowlist)
-    # 238 as measured after this change, which DELETED two allowlist rows (#465:
-    # `workflows.max_concurrent_nodes`, `knowledge.idempotent_persist`). The floor sits just under
-    # that, not under the 240 reading that preceded the deletions — a floor above the live count
+    # 234 as measured after #465 deleted all six ruled allowlist rows. The floor sits just under
+    # that, not under the 240 reading that preceded the cleanup — a floor above the live count
     # would red on the very cleanup the rail asks for.
-    assert len(allowlist) >= 235, f"the allowlist import must find the paths, got {len(allowlist)}"
+    assert len(allowlist) >= 231, f"the allowlist import must find the paths, got {len(allowlist)}"
     assert len(keys) >= 60, f"the nine in-scope sections must hold the keys, got {len(keys)}"
     srcs = _frontend_sources()
     assert len(srcs) >= 400, f"the frontend scan must find the sources, got {len(srcs)}"
@@ -290,12 +274,11 @@ def test_a_commented_out_path_does_not_count_as_a_control() -> None:
     subjects create. Both new panels name the inert paths they omit, in prose, so a scan that read
     comments would report them as controlled.
     """
-    live = "api.patchConfig('workflows.max_active_runs', v)"
+    live = "api.patchConfig('routing.energy_sampling', v)"
     assert _strip_comments(f"// {live}").strip() == ""
     assert _strip_comments(f"/* {live} */").strip() == ""
     assert (
-        _writers("workflows.max_active_runs", {"web/src/p.tsx": _strip_comments(f"// {live}")})
-        == []
+        _writers("routing.energy_sampling", {"web/src/p.tsx": _strip_comments(f"// {live}")}) == []
     )
 
 

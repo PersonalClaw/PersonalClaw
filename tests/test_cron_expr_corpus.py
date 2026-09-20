@@ -14,6 +14,7 @@ rather than silently leaving the frontend check disagreeing with the refusal the
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 from personalclaw.schedule import validate_cron_expr
 
 CORPUS = Path(__file__).resolve().parents[1] / "web/src/pages/schedule/cronExprCorpus.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _cases() -> list[dict]:
@@ -36,6 +38,35 @@ def test_the_corpus_ships_with_the_frontend_validator_it_constrains():
     assert len(cases) >= 40
     assert sum(1 for c in cases if c["valid"]) >= 15
     assert sum(1 for c in cases if not c["valid"]) >= 15
+
+
+def test_the_runtime_and_lock_keep_the_parser_on_the_measured_major():
+    """A plain editable install and CI must resolve the parser major this corpus measured.
+
+    CI installs ``uv.lock`` while the documented local setup installs from
+    ``pyproject.toml``. A wide direct requirement lets those two paths select
+    different parser grammars even while each install is internally valid.
+    """
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as fh:
+        project = tomllib.load(fh)
+    requirement = next(
+        dep for dep in project["project"]["dependencies"] if dep.startswith("croniter")
+    )
+    assert requirement == "croniter>=2.0,<3"
+
+    with (PROJECT_ROOT / "uv.lock").open("rb") as fh:
+        lock = tomllib.load(fh)
+    croniter_package = next(package for package in lock["package"] if package["name"] == "croniter")
+    assert croniter_package["version"].split(".", 1)[0] == "2"
+    personalclaw_package = next(
+        package for package in lock["package"] if package["name"] == "personalclaw"
+    )
+    locked_requirement = next(
+        requirement
+        for requirement in personalclaw_package["metadata"]["requires-dist"]
+        if requirement["name"] == "croniter"
+    )
+    assert locked_requirement["specifier"] == ">=2.0,<3"
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda c: repr(c["expr"]))

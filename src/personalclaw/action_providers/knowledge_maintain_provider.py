@@ -683,12 +683,11 @@ def run_consolidation_pass(*, batch_size: int = 0) -> int:
     🔴 **Dry run. This does NOT apply.** `_apply` writes a model-authored summary and then
     ARCHIVES every input item, and no config knob authorises that without a user present.
     Applying also needs one model call per cluster, so an unattended tick would spend unbounded
-    tokens on work nobody asked for — the `conflict_model_pass` knob exists precisely because
-    this codebase treats a background model call as opt-in. Going through
-    `KnowledgeConsolidateActionProvider.execute` rather than calling `plan_consolidation`
-    directly is the substantive part: `execute` is where `check_gates` lives, so the min-hours
-    and min-cluster knobs are finally honoured on a cadence instead of only when a human opens a
-    panel. The previous pass bypassed `execute` and therefore bypassed the gate entirely.
+    tokens on work nobody asked for. Going through `KnowledgeConsolidateActionProvider.execute`
+    rather than calling `plan_consolidation` directly is the substantive part: `execute` is where
+    `check_gates` lives, so the min-hours and min-cluster knobs are finally honoured on a cadence
+    instead of only when a human opens a panel. The previous pass bypassed `execute` and therefore
+    bypassed the gate entirely.
     """
     import asyncio
 

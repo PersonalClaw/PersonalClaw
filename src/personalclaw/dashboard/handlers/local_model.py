@@ -132,6 +132,9 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
 
     result = await asyncio.to_thread(bind_local_model, endpoint=endpoint)
     if result.ok:
+        from personalclaw.llm.registry import sync_entries_from_config
+
+        sync_entries_from_config()
         sel().log_api_access(
             caller=_caller(request),
             operation="onboarding.local_model.bind",

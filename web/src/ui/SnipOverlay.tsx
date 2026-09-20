@@ -6,6 +6,7 @@ import { Button } from './Button'
 import { useFocusTrap } from './useFocusTrap'
 import { spring, physics, expr } from '../design/motion'
 import { cropViewStyle, type SnipRect } from './composer/displayCapture'
+import { SURFACE_WIDTHS } from '../app/appearance'
 
 /** How far one arrow-key press moves or resizes the selection, in SOURCE pixels.
  *  Coarse enough to cross a 4K frame in a reasonable number of presses, fine enough
@@ -148,7 +149,7 @@ export function SnipOverlay({ frame, width, height, onCancel, onConfirm }: {
       <motion.div ref={trapRef} role="dialog" aria-modal="true" aria-label="Crop the captured screen"
         onKeyDown={onKeyDown}
         className="squircle relative flex max-h-full w-full flex-col overflow-hidden bg-surface shadow-sheet"
-        style={{ maxWidth: 'calc(var(--content-width) + 320px)' }}
+        style={{ maxWidth: SURFACE_WIDTHS.snipOverlay }}
         initial={{ opacity: 0, scale: enterScale, y: enterY }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
         transition={reduce ? spring.effects : physics.playful}>
         <div className="flex shrink-0 items-center gap-s border-b border-outline-variant/40 px-l py-m">

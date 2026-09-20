@@ -317,14 +317,16 @@ class TestTransport:
         client = await _client(monkeypatch)
         try:
             statuses = []
+            refusals = []
             for _ in range(caps_mod.DEFAULT_CAPS.burst + 3):
-                statuses.append((await _rpc(client, "tools/list", token=token)).status)
+                response = await _rpc(client, "tools/list", token=token)
+                statuses.append(response.status)
+                if response.status == 429:
+                    refusals.append(response)
             assert statuses.count(200) == caps_mod.DEFAULT_CAPS.burst
-            assert 429 in statuses
-            resp = await _rpc(client, "tools/list", token=token)
-            assert resp.status == 429
+            assert refusals
             # Retry-After: 0 would invite an immediate retry storm.
-            assert int(resp.headers["Retry-After"]) >= 1
+            assert int(refusals[0].headers["Retry-After"]) >= 1
         finally:
             await client.close()
 

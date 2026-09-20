@@ -491,7 +491,11 @@ class TestRuns:
         """A run that fails three nodes deep on a missing input has already cost money."""
         await service.author_def(
             name="wf-inp",
-            root=SPEC_ROOT,
+            root={
+                "kind": "transform",
+                "id": "uses-since",
+                "config": {"expr": "{{inputs.since}}"},
+            },
             inputs={"since": {"type": "string", "required": True}},
         )
         body = await service.start_run(
@@ -499,17 +503,66 @@ class TestRuns:
         )
         assert not body["ok"] and body["code"] == "WF_RUN_MISSING_INPUTS"
         assert body["missing"] == ["since"]
+        assert "since" in body["follow_up"]
+        assert body["all_filled"] is False
 
     async def test_a_default_satisfies_a_required_input(self, provider) -> None:
         await service.author_def(
             name="wf-def-inp",
-            root=SPEC_ROOT,
+            root={
+                "kind": "transform",
+                "id": "uses-since",
+                "config": {"expr": "{{inputs.since}}"},
+            },
             inputs={"since": {"type": "string", "required": True, "default": "1h"}},
         )
         body = await service.start_run(
             name="wf-def-inp", supervisor=_FakeSupervisor(), skip_preflight=True
         )
         assert body["ok"]
+
+    def test_workflow_start_surfaces_missing_derived_inputs_and_accepts_complete_payload(
+        self, provider, monkeypatch
+    ) -> None:
+        """The two-arm production gate: the derived form fails, then the same call shape succeeds.
+
+        The input is deliberately undeclared so a declared-only validator cannot satisfy this
+        test; only the tree-derived parameter contract can name it. Its name is deliberately
+        ``extracted`` so the start payload also proves it cannot collide with the contract envelope.
+        """
+        authored = T._call_tool(
+            "workflow_author",
+            {
+                "name": "wf-derived-input",
+                "root": {
+                    "kind": "transform",
+                    "id": "uses-topic",
+                    "config": {"expr": "{{inputs.extracted.topic}}"},
+                },
+            },
+        )
+        assert json.loads(authored)["valid"] is True
+
+        supervisor = _FakeSupervisor()
+        monkeypatch.setattr(T, "_supervisor", lambda: supervisor)
+
+        missing = T._call_tool("workflow_start", {"name": "wf-derived-input", "inputs": {}})
+        assert missing.startswith("Error [WF_RUN_MISSING_INPUTS]")
+        missing_payload = json.loads(missing.split("\n", 1)[1])
+        assert missing_payload["missing"] == ["extracted"]
+        assert "extracted" in missing_payload["follow_up"]
+        assert missing_payload["all_filled"] is False
+        assert supervisor.launched == []
+
+        complete = T._call_tool(
+            "workflow_start",
+            {
+                "name": "wf-derived-input",
+                "inputs": {"extracted": {"topic": "cold starts"}},
+            },
+        )
+        complete_payload = json.loads(complete.split("\n", 1)[1])
+        assert complete_payload["run_id"] == supervisor.launched[-1]
 
     async def test_no_supervisor_is_honest_about_not_starting(self, provider) -> None:
         await service.author_def(name="wf-nosup", root=SPEC_ROOT)

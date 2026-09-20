@@ -41,6 +41,7 @@ from personalclaw.safety_flags import strict_bool
 from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
+from personalclaw.workflows.failure_taxonomy import classify_exception
 from personalclaw.workflows.judge_contract import (
     JudgeHints,
     JudgeVerdict,
@@ -542,7 +543,7 @@ async def dispatch_infer(
         except Exception as exc:  # provider/transport/contract failures
             return NodeResult(
                 state=InstanceState.FAILED,
-                failure=_classify_exception(exc),
+                failure=classify_exception(exc),
                 **journalled_prompt(wire, prompt),
             )
 
@@ -606,7 +607,7 @@ async def dispatch_visualize(
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # provider/transport failures
-        return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
     if not result.dsl.strip():
         return _fail(
             FailureClass.PROTOCOL,
@@ -1159,7 +1160,7 @@ async def dispatch_action(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
 
     output: Any = _action_output(result)
     contract = (node.config or {}).get("output_contract")
@@ -1383,7 +1384,7 @@ async def _dual_guard(block: dict[str, Any], verify: Any) -> NodeResult:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+        return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
 
     baseline_passed = truthy(block.get("guard_baseline"))
     if outcome is True:
@@ -1532,7 +1533,7 @@ async def dispatch_gate(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+            return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
         # Tristate, matching loop/gates.py: None means "could not determine", which is
         # NOT a pass — an unrunnable verifier must never certify work.
         if outcome is None:
@@ -1573,7 +1574,7 @@ async def dispatch_gate(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+                return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
         ladder = run_ladder(criteria, evaluated)
         if ladder.passed:
             return NodeResult(state=InstanceState.DONE, output=ladder.to_dict())
@@ -1767,7 +1768,7 @@ async def dispatch_gate(
                 except Exception as exc:
                     return NodeResult(
                         state=InstanceState.FAILED,
-                        failure=_classify_exception(exc),
+                        failure=classify_exception(exc),
                         **journalled_prompt(wire, instruction),
                     )
                 texts.append(str(text))
@@ -2438,55 +2439,6 @@ def _parse_json_loose(text: Any) -> Any:
             except (TypeError, ValueError):
                 continue
     return None
-
-
-def _classify_exception(exc: BaseException) -> Failure:
-    """Map an exception to the typed taxonomy. Only TRANSIENT/NETWORK are retryable, so
-    this classification decides whether budget gets spent on a retry."""
-    name = type(exc).__name__
-    text = str(exc)
-    low = text.lower()
-    if isinstance(exc, TimeoutError) or "timeout" in low or "timed out" in low:
-        return Failure(
-            failure_class=FailureClass.TIMEOUT,
-            cause_plain=f"{name}: {text}"[:500],
-            remediation="raise timeout_total, or split the node into smaller steps",
-            recoverable=True,
-        )
-    if any(k in low for k in ("connection", "network", "dns", "unreachable", "socket")):
-        return Failure(
-            failure_class=FailureClass.NETWORK,
-            cause_plain=f"{name}: {text}"[:500],
-            remediation="check connectivity; the engine will retry",
-            recoverable=True,
-        )
-    if any(
-        k in low for k in ("permission", "forbidden", "unauthorized", "credential", "access denied")
-    ):
-        return Failure(
-            failure_class=FailureClass.PERMISSION,
-            cause_plain=f"{name}: {text}"[:500],
-            remediation="check the credential in Settings → Providers, or the tool's "
-            "approval policy",
-        )
-    if any(k in low for k in ("rate limit", "429", "throttl", "overloaded", "capacity")):
-        return Failure(
-            failure_class=FailureClass.TRANSIENT,
-            cause_plain=f"{name}: {text}"[:500],
-            remediation="the engine will back off and retry",
-            recoverable=True,
-        )
-    if "outputcontract" in name.lower() or "schema" in low or "json" in low:
-        return Failure(
-            failure_class=FailureClass.PROTOCOL,
-            cause_plain=f"{name}: {text}"[:500],
-            remediation="tighten the schema in the prompt, or use produce-then-extract",
-        )
-    return Failure(
-        failure_class=FailureClass.INTERNAL,
-        cause_plain=f"{name}: {text}"[:500],
-        remediation="check the gateway log for the full traceback",
-    )
 
 
 def _action_output(result: Any) -> Any:

@@ -40,14 +40,12 @@ from personalclaw.workflows.surfacing_channels import (
     Overlay,
     Pack,
     Predicate,
-    PreFill,
     Requirement,
     ScopedDef,
     ScopeState,
     TriggerFixture,
     adopt_target,
     apply_overlay,
-    build_prefill,
     check_fixtures,
     confidence,
     dismiss_pack,
@@ -69,7 +67,6 @@ from personalclaw.workflows.surfacing_channels import (
     resume_boost,
     scan_paths,
     sort_key,
-    suggestion_inputs,
 )
 
 DAY = 86400.0
@@ -745,102 +742,6 @@ def test_no_findings_means_no_message():
 
 def test_a_def_with_NO_requirements_passes():
     assert preflight([])[0] is True
-
-
-# ── R11: pre-fill ──
-
-SCHEMA = {
-    "properties": {"env": {"type": "string"}, "version": {"type": "string"}},
-    "required": ["env"],
-}
-
-
-def test_only_USER_messages_count_as_truth():
-    """A value the agent proposed is not something the user asked for; pre-filling from it puts
-    words in their mouth and then runs on them."""
-    result = build_prefill(
-        SCHEMA,
-        [
-            {"role": "assistant", "values": {"env": "prod"}},
-            {"role": "user", "values": {"env": "staging"}},
-        ],
-    )
-    assert result.extracted["env"] == "staging"
-
-
-def test_FENCED_content_is_excluded():
-    """Pasted content firing a workflow is the failure that made manual-first the default."""
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"env": "prod"}, "fenced": True}])
-    assert result.extracted == {}
-    assert result.all_filled is False
-
-
-def test_PASTED_content_is_excluded_too():
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"env": "prod"}, "pasted": True}])
-    assert result.extracted == {}
-
-
-def test_the_LATEST_value_wins():
-    """A user who corrects themselves mid-turn means the correction."""
-    result = build_prefill(
-        SCHEMA,
-        [
-            {"role": "user", "values": {"env": "staging"}},
-            {"role": "user", "values": {"env": "prod"}},
-        ],
-    )
-    assert result.extracted["env"] == "prod"
-
-
-def test_a_value_NOT_in_the_schema_is_dropped():
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"nonsense": 1}}])
-    assert result.extracted == {}
-
-
-def test_all_filled_is_RE_DERIVED_from_the_schema():
-    """A model reporting `all_filled: true` while omitting a required input produces a
-    `workflow_start` that fails engine validation — after the user was told it was ready."""
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"version": "1.2"}}])
-    assert result.all_filled is False
-    assert result.missing == ["env"]
-
-
-def test_the_follow_up_asks_REQUIRED_first():
-    result = build_prefill(SCHEMA, [])
-    assert "env" in result.follow_up
-    assert "version" not in result.follow_up
-
-
-def test_a_DECLINED_optional_is_never_re_asked():
-    """Re-asking is how a follow-up becomes an interrogation — the user already answered "no"."""
-    result = build_prefill(
-        SCHEMA, [{"role": "user", "values": {"env": "prod"}}], declined=["version"]
-    )
-    assert result.all_filled is True
-    assert result.follow_up == ""
-
-
-def test_an_optional_gap_is_offered_but_does_not_block():
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"env": "prod"}}])
-    assert result.all_filled is True
-    assert "version" in result.follow_up
-
-
-def test_suggestion_inputs_never_carry_a_PLACEHOLDER():
-    """A placeholder would pass the engine's presence check and execute a step against a made-up
-    value — worse than the run refusing to start."""
-    result = build_prefill(SCHEMA, [{"role": "user", "values": {"version": "1.2"}}])
-    assert "env" not in suggestion_inputs(result)
-
-
-def test_a_prefill_round_trips_to_dict():
-    payload = PreFill(extracted={"a": 1}, missing=["b"], follow_up="?", all_filled=False).to_dict()
-    assert payload == {
-        "extracted": {"a": 1},
-        "missing": ["b"],
-        "follow_up": "?",
-        "all_filled": False,
-    }
 
 
 # ── the reachability doctor ──

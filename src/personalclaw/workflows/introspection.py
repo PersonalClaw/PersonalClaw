@@ -87,6 +87,12 @@ class RunStats:
     is what makes the trade honest instead of silent: it carries the SAME fact, in the same word,
     as `ledger.reader.run_totals` and `usage_ledger` — False ⇒ this float is a FLOOR because some
     completed step booked no cost, and a surface must say so rather than render `$0.00`.
+
+    `tokens` makes the identical trade and needs the identical disclosure: it stays an `int` the
+    strip can sort on, and `tokens_recorded` carries whether that int is a measurement (#3218).
+    Two aggregates over ONE journal that answer the token question differently is the defect —
+    `ledger.reader.run_totals` reports `tokens: null` where this projection reported `0`, and this
+    is the one a user reads, on `IntrospectPanel`'s Tokens cell.
     """
 
     run_id: str
@@ -95,6 +101,11 @@ class RunStats:
     cost_usd: float = 0.0
     #: False when some `step_completed` carried no `cost_usd` key, so `cost_usd` is a FLOOR.
     priced: bool = True
+    #: False when some `step_completed` carried no `tokens` key (or an explicit null), so `tokens`
+    #: is a FLOOR. Kept SEPARATE from `priced` deliberately: a step can book a cost and report no
+    #: token count, and one flag covering both would have to lie to one of its two readers (#2630).
+    #: `loop/journal.py::LoopJournal.cycle` writes no `tokens` key, so every loop run lands here.
+    tokens_recorded: bool = True
     steps_completed: int = 0
     steps_failed: int = 0
     steps_cached: int = 0
@@ -126,6 +137,7 @@ class RunStats:
         return {
             "run_id": self.run_id,
             "tokens": self.tokens,
+            "tokens_recorded": self.tokens_recorded,
             "cached_tokens": self.cached_tokens,
             "cost_usd": round(self.cost_usd, 6),
             "priced": self.priced,
@@ -174,9 +186,13 @@ def run_stats(run_id: str, events: list[dict[str, Any]]) -> RunStats:
         if kind == "step_completed":
             stats.steps_completed += 1
             stats.tokens += int(event.get("tokens", 0) or 0)
+            # Same rule as `_carried` and `ledger.reader.run_totals`, applied to the token count as
+            # well as the cost: a step that carries no key (or an explicit null) makes the running
+            # total a FLOOR, not a measurement. `.get()` collapsing absent and null into `None` is
+            # what makes ONE check cover both, which is the same shape `run_totals` uses (#3218).
+            if event.get("tokens") is None:
+                stats.tokens_recorded = False
             stats.cost_usd += float(event.get("cost_usd", 0.0) or 0.0)
-            # Same rule as `_carried` and `ledger.reader.run_totals`: a step that carries no cost
-            # key (or an explicit null) makes the running float a FLOOR, not a measurement.
             if event.get("cost_usd") is None:
                 stats.priced = False
             stats.cached_tokens += int(event.get("cached_tokens", 0) or 0)

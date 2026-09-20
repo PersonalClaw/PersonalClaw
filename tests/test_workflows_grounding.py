@@ -266,17 +266,39 @@ def test_duplicate_ids_are_caught_with_a_readable_message():
     assert "{{{{" not in issue
 
 
-def test_a_judge_gate_without_criteria_is_caught():
-    """A judge with no prompt approves everything, which is worse than no gate — it looks like
-    verification."""
+@pytest.mark.parametrize(
+    ("gate_kind", "field_config", "missing_field"),
+    [
+        ("verify_command", {}, "config.verify"),
+        ("verify_script", {}, "config.verify"),
+        ("ladder", {}, "config.criteria"),
+        ("ladder", {"criteria": {}}, "config.criteria"),
+        ("ladder", {"criteria": []}, "config.criteria"),
+        ("judge", {}, "config.prompt"),
+        ("judge", {"prompt": "   "}, "config.prompt"),
+        ("expression", {}, "config.expr"),
+    ],
+)
+def test_every_runtime_required_gate_field_is_refused_by_the_self_check(
+    gate_kind: str,
+    field_config: dict,
+    missing_field: str,
+):
     spec = {
         "root": {
             "kind": "sequence",
             "id": "r",
-            "children": [stage("w"), {"kind": "gate", "id": "g", "config": {"kind": "judge"}}],
+            "children": [
+                stage("w"),
+                {
+                    "kind": "gate",
+                    "id": "g",
+                    "config": {"kind": gate_kind, **field_config},
+                },
+            ],
         }
     }
-    assert any("no `config.prompt`" in i for i in self_check(spec).issues)
+    assert any(f"`{missing_field}`" in issue for issue in self_check(spec).issues)
 
 
 def test_an_unbounded_until_loop_is_caught():

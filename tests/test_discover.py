@@ -8,6 +8,7 @@ Covers the hand-authored catalog's integrity, the pure visible-selection logic
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -307,6 +308,11 @@ def test_compute_respects_kill_switch(_entity_home: Path, monkeypatch: pytest.Mo
         "visible_count": 0,
         "total": len(dc.CATALOG),
         "dismissed_count": 0,
+        # 0 on this branch by construction, not by measurement: a disabled surface shows no
+        # tips, so clearing dismissals reveals nothing here either. Pinned in the exact-dict
+        # assertion so a later change that computes engagement on the disabled path — the
+        # filesystem reads this branch exists to skip — has to come through this test.
+        "restorable_count": 0,
     }
 
 
@@ -362,3 +368,96 @@ def test_compute_auto_hides_engaged(monkeypatch: pytest.MonkeyPatch, _entity_hom
     flat_ids = [tip["id"] for g in out["areas"] for tip in g["tips"]]
     assert "chat" not in flat_ids and "loops" not in flat_ids
     assert out["visible_count"] == len(dc.CATALOG) - 2
+
+
+# ── restore: the way back from a dismissal (#452) ─────────────────────────────
+
+
+def test_restorable_count_is_not_the_dismissed_count(
+    _entity_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The discriminator the restore control gates on (#452).
+
+    ``dismissed_count`` counts what the user hid; ``restorable_count`` counts what
+    UN-hiding would actually show them. The two filters in ``select_visible`` are
+    independent, so a tip that was dismissed AND whose area has since been engaged stays
+    hidden either way — gating the button on ``dismissed_count`` ships a control that
+    rewrites the settings file and changes nothing on screen. This test is what makes the
+    two numbers observably different; a fix that returned ``dismissed_count`` under the new
+    field's name would pass every other assertion in this file.
+    """
+    _stub_config(monkeypatch, enabled=True)
+    dc.dismiss("chat")
+    dc.dismiss("tasks")
+    # "chat" is now ALSO auto-hidden. Restoring it would reveal nothing; "tasks" would.
+    monkeypatch.setattr(dc, "compute_engaged", lambda state=None: {"chat": True})
+
+    out = dc.compute_discover()
+    assert out["dismissed_count"] == 2, "the user hid two tips"
+    assert out["restorable_count"] == 1, "only 'tasks' would come back — 'chat' is engaged too"
+    assert out["restorable_count"] != out["dismissed_count"]
+
+
+def test_restorable_count_agrees_with_what_the_feed_then_admits(
+    _entity_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The count must be exactly the number of tips clearing the dismissals adds.
+
+    Stated as a before/after over the real writer rather than as a second derivation of the
+    rule, so the count cannot drift from ``select_visible``'s own behaviour.
+    """
+    _stub_config(monkeypatch, enabled=True)
+    monkeypatch.setattr(dc, "compute_engaged", lambda state=None: {"chat": True, "loops": True})
+    for tip_id in ("chat", "loops", "tasks", "memory"):
+        dc.dismiss(tip_id)
+
+    before = dc.compute_discover()
+    promised = before["restorable_count"]
+    assert promised == 2, "'tasks' and 'memory'; 'chat'/'loops' are engaged as well"
+
+    dc.clear_dismissed()
+    after = dc.compute_discover()
+    assert after["visible_count"] - before["visible_count"] == promised
+    assert after["restorable_count"] == 0, "nothing is dismissed any more"
+
+
+def test_clear_dismissed_removes_every_dismissal(_entity_home: Path):
+    dc.dismiss("chat")
+    dc.dismiss("tasks")
+    assert dc.load_dismissed() == {"chat", "tasks"}
+
+    assert dc.clear_dismissed() == 2, "returns how many stored ids it removed"
+    assert dc.load_dismissed() == set()
+    # Persisted, not just in-memory: a reload must not bring the dismissals back.
+    settings = json.loads((_entity_home / "entity_settings" / "legibility.json").read_text())
+    assert settings[dc._DISMISSED_FIELD] == []
+
+
+def test_clear_dismissed_counts_junk_an_older_build_stored(_entity_home: Path):
+    """Counts what was STORED, not what the catalog defines.
+
+    ``load_dismissed`` narrows to :data:`TIP_IDS`, so junk an older permissive build wrote is
+    invisible to every reader — but it IS in the file and clearing really does remove it.
+    Reporting it keeps ``restored`` a true statement about the write.
+    """
+    from personalclaw.providers.entity_routes import _save_entity_settings
+
+    _save_entity_settings(dc._ENTITY, {dc._DISMISSED_FIELD: ["chat", "not-a-tip", "also-junk"]})
+    assert dc.load_dismissed() == {"chat"}, "readers already ignore the junk"
+    assert dc.clear_dismissed() == 3, "but the write removed all three"
+    assert dc.load_dismissed() == set()
+
+
+def test_clear_dismissed_with_nothing_stored_does_not_write(
+    _entity_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A no-op must stay a no-op — the button's gate can be one click stale."""
+    calls: list[object] = []
+    # Patched at its definition, not on `dc`: clear_dismissed imports the writer inside the
+    # function body, so a module attribute on `dc` would never be consulted.
+    monkeypatch.setattr(
+        "personalclaw.providers.entity_routes._save_entity_settings",
+        lambda *a, **k: calls.append(a),
+    )
+    assert dc.clear_dismissed() == 0
+    assert calls == [], "nothing stored, so nothing was written"

@@ -6,11 +6,9 @@ twelve paths with no reader anywhere in the tree. They were not broken in any wa
 see — the round trip was perfect — and that is the defect: the only thing promising behaviour
 was the `_meta` help text, which is the settings-copy surface a user actually reads.
 
-Five of the twelve were wired between the filing and this change (`require_citations`,
+Five of the twelve were wired between the filing and the first cleanup (`require_citations`,
 `consolidate_min_cluster`, `consolidate_min_hours`, `self_model_enabled`, `retention_per_def`).
-This file covers the four this change resolves, and the resolution is deliberately not uniform,
-because "wire the reader" and "delete the knob" are both honest and only one of them is right
-per field:
+This file covers the two later wires and all six ruled deletions:
 
 * **wired** `knowledge.synthesis_window` — `longrun`'s own note said
   "`KnowledgeConfig.synthesis_window` overrides it" while nothing overrode anything, so the one
@@ -25,6 +23,10 @@ per field:
 * **deleted** `workflows.max_concurrent_nodes` — a bare total claiming to be "partitioned across
   typed lanes" when the two per-lane fields beside it ARE the live partition. Two knobs over one
   quantity, one honoured and one ignored.
+* **deleted** `workflows.max_active_runs`, `learning.min_session_score`,
+  `knowledge.lint_every_n_persists`, and `knowledge.conflict_model_pass` — four complete config
+  round trips with no reachable behaviour behind them. Their producing/enforcement work is not
+  part of an allowlist-hygiene fix.
 
 🪤 A test that only proves round-trip CERTIFIES this defect rather than catching it: the
 dataclass, the `load()` line, the `_meta` and the allowlist entry are all present in every inert
@@ -35,9 +37,12 @@ behaviour change, or asserts the field's absence from both the schema and the wr
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 
+from personalclaw.config import loader as config_loader
+from personalclaw.config.learning import LearningConfig
 from personalclaw.config.loader import AppConfig, KnowledgeConfig, WorkflowsConfig
 from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.knowledge import semantics as sem
@@ -243,13 +248,17 @@ def test_a_first_sighting_is_seeded_even_with_an_unreadable_config(monkeypatch):
     assert len(merged[0]["mentions"]) == 1
 
 
-# ── the two deletions: gone from BOTH the schema and the write path ──
+# ── the six deletions: gone from BOTH the schema and the write path ──
 
 
 @pytest.mark.parametrize(
     "path,owner,field",
     [
+        ("knowledge.conflict_model_pass", KnowledgeConfig, "conflict_model_pass"),
         ("knowledge.idempotent_persist", KnowledgeConfig, "idempotent_persist"),
+        ("knowledge.lint_every_n_persists", KnowledgeConfig, "lint_every_n_persists"),
+        ("learning.min_session_score", LearningConfig, "min_session_score"),
+        ("workflows.max_active_runs", WorkflowsConfig, "max_active_runs"),
         ("workflows.max_concurrent_nodes", WorkflowsConfig, "max_concurrent_nodes"),
     ],
 )
@@ -265,13 +274,38 @@ def test_a_deleted_knob_is_gone_from_the_schema_and_the_allowlist(path, owner, f
     assert field not in names, f"{owner.__name__}.{field} is still declared"
 
 
-def test_a_stored_value_for_a_deleted_knob_does_not_break_the_load():
-    """A user who PATCHed one of these before the deletion has it in `config.json`. Loading must
-    ignore the key, not raise — `load()` reads declared fields out of the dict rather than
-    splatting it, and this pins that so a future refactor to `**data` cannot regress it."""
-    cfg = KnowledgeConfig()
-    assert not hasattr(cfg, "idempotent_persist")
-    assert AppConfig().workflows.lane_caps().keys() == {"llm", "io", "compute"}
+def test_stored_values_for_deleted_knobs_are_ignored(tmp_path, monkeypatch):
+    """An installed home may still carry every removed key. Explicit load mappings ignore them."""
+    monkeypatch.setattr(config_loader, "config_dir", lambda: tmp_path)
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "knowledge": {
+                    "conflict_model_pass": False,
+                    "idempotent_persist": False,
+                    "lint_every_n_persists": 999,
+                },
+                "learning": {"min_session_score": 0.9},
+                "workflows": {
+                    "max_active_runs": 1,
+                    "max_concurrent_nodes": 64,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig.load()
+    for owner, fields in [
+        (
+            cfg.knowledge,
+            ("conflict_model_pass", "idempotent_persist", "lint_every_n_persists"),
+        ),
+        (cfg.learning, ("min_session_score",)),
+        (cfg.workflows, ("max_active_runs", "max_concurrent_nodes")),
+    ]:
+        for field in fields:
+            assert not hasattr(owner, field)
 
 
 def test_the_per_lane_caps_are_what_actually_bounds_concurrency():

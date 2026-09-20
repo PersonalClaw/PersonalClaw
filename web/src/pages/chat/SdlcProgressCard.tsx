@@ -141,12 +141,12 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
     finally { setBusy(false) }
   }
 
-  // Use the EFFECTIVE status so a budget-exhausted finish (complete + error_message)
-  // reads as the honest warn-toned "Ended early" here too — matching the Code list +
-  // cockpit OutcomeBanner. Raw entity.status alone showed a green "Complete" pill for a
+  // Use the EFFECTIVE status so a budget-exhausted finish (complete + a stop_reason other
+  // than 'done') reads as the honest warn-toned "Ended early" here too — matching the Code
+  // list + cockpit OutcomeBanner. Raw entity.status alone showed a green "Complete" pill for a
   // non-genuine finish, the one surface that skipped effectiveLoopStatus. Only changes
   // complete→ended_early, so the needs_input/blocked attention branches are unaffected.
-  const status = entity ? effectiveLoopStatus(entity.status, entity.error_message) : (created ? 'ready' : '…')
+  const status = entity ? effectiveLoopStatus(entity.status, entity.stop_reason) : (created ? 'ready' : '…')
   // Display the REAL kind from the fetched loop (general/goal/code/design), not the
   // coarse refObj.kind ('code'|'loop') — otherwise a general/design loop mislabels as
   // "Goal Loop". Fall back to the coarse kind until the entity loads.

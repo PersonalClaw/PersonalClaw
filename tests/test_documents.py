@@ -233,6 +233,41 @@ def test_an_empty_sheet_model_still_produces_a_valid_workbook(tmp_path):
     assert load_workbook(path).sheetnames  # a workbook with zero sheets is invalid
 
 
+def test_csv_rows_round_trip_through_the_stdlib_reader():
+    import csv
+    import io
+
+    rows = [["Region", "Q1"], ["EMEA", "120"], ["APAC", "99.5"]]
+    data = get_writer("csv")(SheetModel.from_rows({"Sales": rows}))
+
+    assert list(csv.reader(io.StringIO(data.decode("utf-8"), newline=""))) == rows
+    assert data.endswith(b"\r\n"), "the stdlib excel dialect uses RFC 4180 row endings"
+
+
+def test_csv_uses_stdlib_quoting_for_commas_quotes_and_newlines():
+    import csv
+    import io
+
+    rows = [["name", "notes"], ['Doe, "Jane"', "first line\nsecond line"]]
+    data = get_writer("csv")(SheetModel.from_rows({"People": rows}))
+
+    assert b'"Doe, ""Jane"""' in data
+    assert b'"first line\nsecond line"' in data
+    assert list(csv.reader(io.StringIO(data.decode("utf-8"), newline=""))) == rows
+
+
+def test_csv_refuses_a_multi_sheet_workbook():
+    model = SheetModel.from_rows({"First": [["a"]], "Second": [["b"]]})
+
+    with pytest.raises(ValueError, match="cannot represent multiple sheets"):
+        get_writer("csv")(model)
+
+
+def test_csv_refuses_a_prose_document_model():
+    with pytest.raises(TypeError, match="prose documents have no rows"):
+        get_writer("csv")(DocumentModel(title="Not tabular"))
+
+
 def test_ragged_table_rows_are_normalized_not_truncated(tmp_path):
     """python-docx needs a fixed column count; truncating would silently lose cells."""
     model = DocumentModel(blocks=[Block(kind="table", rows=[["a", "b", "c"], ["1"]])])
@@ -558,6 +593,102 @@ def test_the_pptx_kind_is_registered_in_both_sets():
     from personalclaw.artifacts.models import ALLOWED_KINDS, BINARY_KINDS
 
     assert "pptx" in ALLOWED_KINDS and "pptx" in BINARY_KINDS
+
+
+class TestCsvDocumentTool:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    def test_csv_stores_and_updates_as_text_without_using_the_binary_body(
+        self, tmp_path, monkeypatch
+    ):
+        from personalclaw.mcp_artifacts import _DOC_MIME, _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Regional sales",
+                "format": "csv",
+                "rows": [["Region", "Q1"], ["EMEA", 120]],
+                "description": "Quarterly totals",
+                "tags": ["sales"],
+            },
+            "session-1",
+            _audit,
+        )
+
+        assert "Error" not in first, first
+        [listed] = prov.list()
+        art = prov.get(listed.slug)
+        assert art.kind == "csv"
+        assert art.content == "Region,Q1\nEMEA,120\n"
+        stored_path = tmp_path / "artifacts" / art.slug / "current.html"
+        assert stored_path.read_bytes() == b"Region,Q1\r\nEMEA,120\r\n"
+        assert art.source == "chat"
+        assert art.description == "Quarterly totals"
+        assert art.tags == ["sales"]
+        assert art.events[0].by == "agent" and art.events[0].session_id == "session-1"
+        assert prov.raw_bytes(art.slug) is None, "a text kind must not have a binary body"
+        assert _DOC_MIME["csv"] == "text/csv"
+
+        second = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Regional sales",
+                "format": "csv",
+                "rows": [["Region", "Q1"], ["APAC", 99.5]],
+                "slug": art.slug,
+            },
+            "session-2",
+            _audit,
+        )
+
+        assert "Error" not in second, second
+        updated = prov.get(art.slug)
+        assert updated.version == 2
+        assert updated.content == "Region,Q1\nAPAC,99.5\n"
+        assert len(prov.list()) == 1, "regeneration must not mint a -2 twin"
+        assert updated.events[-1].type == "iterated"
+        assert updated.events[-1].session_id == "session-2"
+        assert [outcome for outcome, _slug, _error in audited] == ["success", "success"]
+
+    def test_csv_uses_the_text_cap_not_the_binary_cap(self, tmp_path, monkeypatch):
+        from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        reply = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Too large",
+                "format": "csv",
+                "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+            },
+            None,
+            _audit,
+        )
+
+        assert "the generated csv came to 1.5MB (cap 1MB)" in reply
+        assert prov.list() == [], "the tool must refuse before the store truncates text"
+        assert audited[-1][0] == "denied"
+        assert audited[-1][2].startswith("oversized ")
 
 
 # ── Regenerating under an existing slug (the tool path) ──────────────────────

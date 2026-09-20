@@ -2978,11 +2978,9 @@ class RunController:
                 except asyncio.CancelledError:
                     continue
                 except Exception as exc:
-                    from personalclaw.workflows.engine import _classify_exception
+                    from personalclaw.workflows.failure_taxonomy import classify_exception
 
-                    result = NodeResult(
-                        state=InstanceState.FAILED, failure=_classify_exception(exc)
-                    )
+                    result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
                 self._apply(entry, result)
             self._persist_state()
 

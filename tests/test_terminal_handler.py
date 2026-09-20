@@ -805,8 +805,9 @@ class TestTerminalWsIntegration:
         """The PTY is an automation target (cockpit/chat inject commands at socket-open,
         during rc-file init). oh-my-zsh's periodic update prompt does `read -k 1` at init
         and steals the first byte of pending input ("python …" → "ython …"); its
-        has_typed_input guard is GNU-stty-only (broken on macOS). The spawn env must set
-        DISABLE_AUTO_UPDATE=true so embedded shells never prompt."""
+        has_typed_input guard is GNU-stty-only (broken on macOS). Assert the environment
+        at the subprocess boundary; executing the developer's real login shell would make
+        this contract depend on their rc files and update state."""
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text(
             json.dumps({"dashboard": {"terminal": {"enabled": True, "shell": "/bin/sh"}}})
@@ -814,27 +815,57 @@ class TestTerminalWsIntegration:
         monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
         monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
 
+        captured: dict = {}
+        slave_fds: list[int] = []
+
+        class _FakeProcess:
+            def __init__(self):
+                self.pid = 4242
+                self.returncode = None
+                self._done = asyncio.Event()
+
+            async def wait(self):
+                await self._done.wait()
+                return self.returncode
+
+        async def _fake_spawn(*argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            # The handler closes its worker fd after spawn. A real child owns a duplicate;
+            # keep one here so the PTY master does not read EOF before the WS reaches its loop.
+            slave_fds.append(os.dup(kwargs["stdin"]))
+            return _FakeProcess()
+
+        def _fake_signal(sess, _sig):
+            sess.proc.returncode = 0
+            sess.proc._done.set()
+
+        monkeypatch.setattr(
+            "personalclaw.sandbox.create_subprocess_limited",
+            _fake_spawn,
+        )
+        monkeypatch.setattr(terminal, "_signal_session", _fake_signal)
+
         registry: dict = {}
         app = _make_app(registry=registry)
 
         from aiohttp.test_utils import TestClient, TestServer
 
-        async with TestClient(TestServer(app)) as client:
-            async with client.ws_connect("/api/ws/terminal/env-sess") as ws:
-                # marker-$VAR-end: the echoed-back keystrokes contain the literal
-                # "$DISABLE_AUTO_UPDATE"; only the executed output contains the value.
-                await ws.send_bytes(b'echo "marker-$DISABLE_AUTO_UPDATE-end"\n')
-                seen = b""
-                for _ in range(40):
+        try:
+            async with TestClient(TestServer(app)) as client:
+                async with client.ws_connect("/api/ws/terminal/env-sess") as ws:
+                    # A pong proves the handler completed spawn and entered the WS loop.
+                    await ws.send_str(json.dumps({"type": "ping"}))
                     msg = await ws.receive(timeout=3)
-                    if msg.type == web.WSMsgType.BINARY:
-                        seen += msg.data
-                        if b"marker-true-end" in seen:
-                            break
-                assert b"marker-true-end" in seen
-                await ws.close()
+                    assert msg.type == web.WSMsgType.TEXT
+                    assert json.loads(msg.data) == {"type": "pong"}
+                    assert captured["kwargs"]["env"]["DISABLE_AUTO_UPDATE"] == "true"
+                    await ws.close()
 
-            await terminal._kill_session(registry["env-sess"])
+                await terminal._kill_session(registry["env-sess"])
+        finally:
+            for fd in slave_fds:
+                os.close(fd)
 
     @pytest.mark.asyncio
     async def test_rest_create_list_delete(self, monkeypatch, tmp_path):

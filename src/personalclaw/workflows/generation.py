@@ -164,13 +164,29 @@ def _check_gates(nodes: list[dict], check: SelfCheck) -> None:
                 f"gate `{node.get('id', '?')}` has no `config.kind` — set it to approval, judge, "
                 "expression, verify_command, verify_script, event or ladder"
             )
-        if gate_kind == "judge" and not cfg.get("prompt"):
-            check.issues.append(
-                f"judge gate `{node.get('id', '?')}` has no `config.prompt` — a judge with no "
-                "criteria approves everything, which is worse than no gate"
-            )
+        if gate_kind == "judge":
+            prompt = cfg.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                check.issues.append(
+                    f"judge gate `{node.get('id', '?')}` has no `config.prompt` — a judge with no "
+                    "criteria approves everything, which is worse than no gate"
+                )
         if gate_kind == "expression" and not cfg.get("expr"):
             check.issues.append(f"expression gate `{node.get('id', '?')}` has no `config.expr`")
+        if gate_kind == "ladder":
+            criteria = cfg.get("criteria")
+            if not isinstance(criteria, list) or not criteria:
+                check.issues.append(
+                    f"ladder gate `{node.get('id', '?')}` has no non-empty `config.criteria` "
+                    "list — without ordered criteria it cannot determine which rung passed"
+                )
+        if gate_kind in ("verify_command", "verify_script") and not isinstance(
+            cfg.get("verify"), dict
+        ):
+            check.issues.append(
+                f"{gate_kind} gate `{node.get('id', '?')}` has no `config.verify` object — "
+                "without a command or script definition the verifier has nothing to run"
+            )
 
 
 def _check_foreach(nodes: list[dict], check: SelfCheck) -> None:

@@ -143,6 +143,38 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
             return
 
 
+_AGENT_TABLE_HEADERS = ("NAME", "PROVIDER_AGENT", "DEFAULT_DIR", "MEMORY_STORE")
+
+
+def render_agent_table(cfg: AppConfig) -> str:
+    """Render ``personalclaw agent list`` with widths measured from the rows (#2949).
+
+    Fixed widths misaligned the table on a fresh install, because three of the
+    shipped default agent names are longer than the old 20-char NAME column. The
+    default marker is part of the measured NAME cell, so it cannot eat the name's
+    budget either.
+    """
+
+    rows = [
+        (
+            name + (" *" if name == cfg.default_agent else ""),
+            agent.provider_agent,
+            agent.default_dir,
+            agent.memory_store,
+        )
+        for name, agent in cfg.agents.items()
+    ]
+    widths = [
+        max(len(head), *(len(row[i]) for row in rows)) if rows else len(head)
+        for i, head in enumerate(_AGENT_TABLE_HEADERS)
+    ]
+    lines = []
+    for cells in (_AGENT_TABLE_HEADERS, *rows):
+        padded = [f"{cell:<{widths[i]}}" for i, cell in enumerate(cells[:-1])]
+        lines.append(" ".join([*padded, cells[-1]]).rstrip())
+    return "\n".join(lines)
+
+
 def _handle_agent(args: argparse.Namespace) -> None:
     """Dispatch agent subcommands: list, create, update, delete."""
 
@@ -150,14 +182,7 @@ def _handle_agent(args: argparse.Namespace) -> None:
     cfg = AppConfig.load()
 
     if action == "list":
-        default = cfg.default_agent
-        print(f"{'NAME':<20} {'PROVIDER_AGENT':<20} {'DEFAULT_DIR':<15} {'MEMORY_STORE':<15}")
-        for name, agent in cfg.agents.items():
-            marker = " *" if name == default else ""
-            print(
-                f"{name + marker:<20} {agent.provider_agent:<20} "
-                f"{agent.default_dir:<15} {agent.memory_store:<15}"
-            )
+        print(render_agent_table(cfg))
 
     elif action == "create":
         if args.name in cfg.agents:

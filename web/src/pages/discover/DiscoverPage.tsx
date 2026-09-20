@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { reportingWrite } from '../../app/reportingWrite'
-import { Compass, ArrowUpRight, Play, X } from 'lucide-react'
+import { Compass, ArrowUpRight, Play, X, RotateCcw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -39,6 +39,17 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // area (and the "explored everything" empty state shows once the last one goes).
   const dismiss = async (id: string) => {
     if (!(await reportingWrite('dismiss that tip', () => api.dismissDiscoverTip(id)))) return
+    refresh()
+  }
+
+  // The way back (#452). Dismiss is one unconfirmed X on a card and used to be terminal —
+  // "persisted forever" with no API, no list and no reset — so the product's only
+  // onboarding surface could be removed by a reflex. Clear-all, not per-id: the user is
+  // never shown WHICH tips they hid (that list is out of scope), so a per-id control would
+  // ask them to choose from an invisible set. Goes through reportingWrite for the same
+  // reason dismiss does: a failed restore must not be reported as a restore.
+  const restore = async () => {
+    if (!(await reportingWrite('restore your hidden tips', () => api.restoreDiscoverTips()))) return
     refresh()
   }
 
@@ -94,10 +105,26 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           // Both sentences stay honest about what is recoverable, which is nothing: hiding a
           // tip is still one-way (see the residual on #452).
           data.dismissed_count > 0 ? (
+            // Split again on `restorable_count`, because "you hid N" does not tell the user
+            // whether bringing them back would show them anything. Restoring only reveals a
+            // tip whose area is ALSO still unengaged, so a user who hid a tip and later used
+            // that area has nothing to get back — and the two cases need different sentences,
+            // not one hedge. Gating the button on `dismissed_count` here is exactly the inert
+            // control the ruling on #452 named: it would write the settings file and change
+            // nothing on screen.
             <EmptyState
               icon={Compass}
               title={`No tips left to show — you hid ${data.dismissed_count} of ${data.total}`}
-              hint="The rest auto-hid once you used those areas. A dismissed tip stays hidden for good; new ones will appear here as PersonalClaw grows. The tour above always stays."
+              hint={
+                data.restorable_count > 0
+                  ? `The rest auto-hid once you used those areas. ${data.restorable_count === 1 ? 'One of the tips you hid is' : `${data.restorable_count} of the tips you hid are`} still unexplored — you can bring ${data.restorable_count === 1 ? 'it' : 'them'} back. The tour above always stays.`
+                  : "The rest auto-hid once you used those areas — and you have since used every area you hid a tip for, so there is nothing left to bring back. New tips will appear here as PersonalClaw grows. The tour above always stays."
+              }
+              action={
+                data.restorable_count > 0
+                  ? { label: `Restore ${data.restorable_count} hidden ${data.restorable_count === 1 ? 'tip' : 'tips'}`, onClick: restore, icon: RotateCcw }
+                  : undefined
+              }
             />
           ) : (
             <EmptyState
@@ -126,6 +153,18 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                 grows as you open things &mdash; this is where you find out what else is there. Each
                 tip links straight into the feature; dismiss any you&rsquo;re not interested in.
               </p>
+              {/* The restore control also has to live HERE, not only in the empty state where
+                  the count it gates on was specified. A user with two tips showing and five
+                  hidden never reaches the empty branch, and they are precisely the user who
+                  wants a dismissal back — putting the only way back behind "you have run out
+                  of tips" would leave issue 452 half fixed. Same `restorable_count` gate, so it
+                  appears only when it would actually reveal something. */}
+              {data.restorable_count > 0 && (
+                <Button variant="ghost" onClick={restore} className="self-start">
+                  <RotateCcw size={16} />
+                  Restore {data.restorable_count} hidden {data.restorable_count === 1 ? 'tip' : 'tips'}
+                </Button>
+              )}
             </EntranceRegion>
             {data.areas.map((group) => (
               <EntranceRegion key={group.area} className="min-w-0">

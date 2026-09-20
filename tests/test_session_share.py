@@ -34,6 +34,7 @@ from personalclaw.dashboard import session_share as sh
 from personalclaw.dashboard import session_starters as ss
 
 AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+FAKE_SK_TOKEN = "sk-notarealfixture0123456789abcdefghij"
 
 MESSAGES = [
     {"role": "user", "content": f"deploy with {AWS_KEY} please", "ts": "2026-08-11T10:00:00Z"},
@@ -232,6 +233,24 @@ async def test_post_share_creates_the_artifact(routed):
     stored = provider.get(body["slug"])
     assert stored is not None
     assert AWS_KEY not in stored.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fmt", ["md", "json"])
+async def test_export_route_redacts_title_from_filename_and_body(routed, fmt):
+    state, provider = routed
+    state.conversation_log.update_metadata(
+        "dashboard:s1", {"title": f"deploy with {FAKE_SK_TOKEN}"}
+    )
+    async with TestClient(TestServer(_make_app(state, provider))) as client:
+        resp = await client.get(f"/api/chat/sessions/s1/export?format={fmt}")
+        assert resp.status == 200
+        disposition = resp.headers["Content-Disposition"]
+        body = await resp.text()
+
+    assert FAKE_SK_TOKEN not in disposition
+    assert FAKE_SK_TOKEN not in body
+    assert "[REDACTED: credential]" in body
 
 
 @pytest.mark.asyncio

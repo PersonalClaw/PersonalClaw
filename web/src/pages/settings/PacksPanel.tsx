@@ -277,7 +277,10 @@ export function PackStoreSection({ installed, onInstalled }: {
 // ── installed packs + finish-setup chip ──────────────────────────────────────
 function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   if (packs.length === 0) {
-    return <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">No packs installed yet.</div>
+    // Teach what fills it, like this panel's siblings do. The affordance is named, not hinted at:
+    // the "Pack store" Section is on this same page, so the sentence is a route the reader can
+    // follow. Deliberately a USER-driven promise — nothing lands here on its own.
+    return <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">No packs installed yet — install one from the pack store below and it shows up here with its setup state.</div>
   }
   return (
     <div className="flex flex-col gap-2">

@@ -269,6 +269,69 @@ async def test_bind_accepts_a_private_lan_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch):
+    from personalclaw.llm import registry as llm_registry
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.providers.provider_bridge import (
+        ProviderResolutionError,
+        resolve_provider_for_use_case,
+    )
+
+    class FakeModelProvider:
+        def complete(self, *args, **kwargs):
+            return "ok"
+
+        def stream(self, *args, **kwargs):
+            yield "ok"
+
+    registry = llm_registry.ProviderRegistry()
+    monkeypatch.setattr(llm_registry, "_default_registry", registry)
+    registry.register_type(
+        ProviderCapability(
+            type=slm.PROVIDER_TYPE,
+            capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
+            supports_streaming=True,
+            supports_tools=True,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=0,
+        ),
+        lambda **_: FakeModelProvider(),
+    )
+
+    model = "llama3.2:3b"
+
+    def bind_and_persist(*, endpoint):
+        slm._write_provider_entry(  # noqa: SLF001 — reproduce the successful bind's writes
+            endpoint=endpoint, model=model, embedding_model=""
+        )
+        slm._write_active_models(model=model, embedding_model="")  # noqa: SLF001
+        return BindResult(
+            status=BOUND,
+            detail="bound",
+            endpoint=endpoint,
+            model=model,
+            provider_name=slm.PROVIDER_ENTRY_NAME,
+        )
+
+    monkeypatch.setattr(slm, "bind_local_model", bind_and_persist)
+    assert registry.list_entries() == []
+
+    async with TestClient(TestServer(_app())) as c:
+        resp = await c.post(
+            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+        )
+        assert resp.status == 200
+
+    try:
+        provider = resolve_provider_for_use_case("chat", _force_model_axis=True)
+    except ProviderResolutionError as exc:
+        code = exc.agent_error.code if exc.agent_error else "uncoded"
+        pytest.fail(f"successful bind left chat unresolved in this process: {code}")
+    assert isinstance(provider, FakeModelProvider)
+
+
+@pytest.mark.asyncio
 async def test_bind_reports_a_skip_as_a_failure_with_its_reason(monkeypatch):
     monkeypatch.setattr(
         slm,

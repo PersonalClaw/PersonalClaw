@@ -1625,6 +1625,11 @@ export interface WorkflowOutboxEntry {
 export interface WorkflowRunStats {
   run_id: string
   tokens: number
+  // `false` ⇒ `tokens` is a FLOOR: some completed step carried no token count, so the int is a sum
+  // over an incomplete sample. Route it through `unrecorded.ts::runTokensStat`, never
+  // `.toLocaleString()` — a genuine measured `0` reports `tokens_recorded: true`, and collapsing
+  // the two put a floor on the cockpit where `run_totals` reported `null` (#3218).
+  tokens_recorded: boolean
   cached_tokens: number
   cost_usd: number
   // `false` ⇒ `cost_usd` is a FLOOR: some completed step booked no cost at all, so the float is a
@@ -1978,7 +1983,9 @@ export interface PromptPreview { ok: boolean; rendered?: string; error?: string;
 export interface PromptSyntaxFn { name: string; category: string; signature: string; description: string; insert: string }
 export interface PromptSyntaxConstruct { category: string; label: string; snippet: string; description: string }
 export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptSyntaxConstruct[] }
-export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
+// `provenance` is HOW the skill came to exist and is orthogonal to `source`, which is the
+// tier it lives in (#576). Optional, and `''` for a hand-authored skill — the common case.
+export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
@@ -2042,7 +2049,15 @@ export interface DiscoverArea { area: string; tips: DiscoverTip[] }
 /** `dismissed_count` is what lets the hub's empty state tell "you used every area" from
  *  "you hid the tips" — `visible_count: 0` means both, and the copy used to claim the
  *  first unconditionally (#452). */
-export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number; dismissed_count: number }
+export interface DiscoverResponse {
+  enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number
+  /** How many tips the user explicitly hid (#3200) — what the empty state counts. */
+  dismissed_count: number
+  /** How many of those clearing the dismissals would actually make VISIBLE again, which is
+   *  NOT dismissed_count: a tip whose area the user has since used stays auto-hidden either
+   *  way. The restore control gates on THIS, or it offers a write with no visible effect. */
+  restorable_count: number
+}
 /** One always-on convention in effect right now. `preview` is credential-redacted;
  *  `body` is only present on the single-doc editor read, where it is verbatim. */
 export interface AlwaysOnItem {
@@ -4699,6 +4714,16 @@ export interface CodeFinding {
   // clickable chips in the cockpit so the user can jump from "what changed" to it.
   files_touched?: string[]
 }
+export type CommandRunnabilityReason = 'binary_not_on_path' | 'project_manifest_missing'
+export interface CommandRunnability {
+  command: string
+  runnable: boolean
+  binary: string
+  reason?: CommandRunnabilityReason
+}
+export type CodeCommandRunnability = Partial<
+  Record<'verify_command' | 'test_command', CommandRunnability>
+>
 export interface CodeProject {
   id: string; name: string; task: string; summary?: string
   entry_stage: EntryStage; project_kind: ProjectKind; intake_rigor: string
@@ -4713,6 +4738,9 @@ export interface CodeProject {
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
   success_criteria: string | null; verify_command?: string; test_command?: string
+  // Computed for this host + workspace on each detail response; never persisted and
+  // never used to rewrite the configured command.
+  command_runnability?: CodeCommandRunnability
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
@@ -4859,6 +4887,8 @@ export interface Loop {
   // project_kind, verify_command, test_command, queued_task_ids}. design:
   // {token_overrides, targets, exports}. general: {verify_command}.
   kind_config: Record<string, unknown>
+  /** Code-kind detail only: host-local diagnostics, computed and never persisted. */
+  command_runnability?: CodeCommandRunnability
 }
 // The normalized classify result the kind-aware /api/loops/classify returns — the
 // composer/Plan-Review consumes it + the create body can fold it back in (the whole
@@ -5970,6 +6000,13 @@ export const api = {
   // point (deep link), never enable; dismissals persist server-side per tip. ──
   discover: () => get<DiscoverResponse>('/api/legibility/discover'),
   dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
+  /** Clear ALL Discover dismissals — DELETE on the dismiss path, no id (#452). Clear-all
+   *  because the user is never shown which ids are stored, so per-id would ask them to pick
+   *  from an invisible set. `restored` counts stored ids removed, not tips revealed.
+   *  Inline fetch rather than the shared `del`, which resolves void — this reads its body.
+   *  Same shape as `deleteLesson` below, the other DELETE whose response is data. */
+  restoreDiscoverTips: () =>
+    fetch('/api/legibility/discover/dismiss', { method: 'DELETE', headers: { ...SK } }).then(j<{ ok: boolean; restored: number }>),
 
   // ── Always-on conventions viewer: what EVERY session receives, with
   // provenance. The server slices these out of the session's own producer strings, so

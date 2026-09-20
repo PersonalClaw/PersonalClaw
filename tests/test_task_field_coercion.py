@@ -45,6 +45,7 @@ What that accepted, each its own report and each reproduced before this suite wa
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from unittest.mock import patch
@@ -59,6 +60,9 @@ from personalclaw.tasks.models import (
     coerce_task_field,
 )
 from personalclaw.tasks.native import NativeTaskProvider
+
+#: The `created_at` spelling a write stamps a note with (#383).
+_ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 @pytest.fixture()
@@ -219,12 +223,21 @@ class TestBothEndsAgree:
 
     @pytest.mark.asyncio
     async def test_notes_are_normalized_on_both_ends(self, provider, tmp_path):
-        """#818's third clause: the note channels were uncoerced even on create."""
+        """#818's third clause: the note channels were uncoerced even on create.
+
+        The timestamp is asserted by SHAPE, not as ``""``: this test used to pin the empty
+        string, which was #383 — nothing ever dated a note, so the detail panel's per-note
+        relative time could never render. A write stamps it; the concern here is only that a
+        bare string is coerced to the canonical dict on BOTH ends.
+        """
         created = await provider.create_task(title="t", notes="a thought")
-        assert _stored(tmp_path, created.id)["notes"] == [{"content": "a thought", "timestamp": ""}]
+        stored = _stored(tmp_path, created.id)["notes"]
+        assert [n["content"] for n in stored] == ["a thought"]
+        assert _ISO_Z.match(stored[0]["timestamp"])
         await provider.update_task(created.id, research_notes="found it")
         stored = _stored(tmp_path, created.id)["research_notes"]
-        assert stored == [{"content": "found it", "timestamp": ""}]
+        assert [n["content"] for n in stored] == ["found it"]
+        assert _ISO_Z.match(stored[0]["timestamp"])
 
 
 class TestShapesThisModuleDoesNotOwn:

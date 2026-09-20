@@ -64,3 +64,23 @@ export function provenanceRecorded(
 export function tokensUnrecorded(row: { tokens_recorded?: boolean }): boolean {
   return row.tokens_recorded === false
 }
+
+/** The compact stat-cell form of a token count that may be a FLOOR.
+ *
+ *  The token twin of `runCost.ts::runCostStat`, and deliberately shaped the same way: a `<Stat>`
+ *  cell has room for a figure, not a sentence, but it must not put a measured-looking number where
+ *  the honest answer is "not recorded". `IntrospectPanel` rendered `stats.tokens.toLocaleString()`
+ *  one line below the routed Cost cell, so a run whose steps recorded no token count printed
+ *  `Tokens 100` for a total that was a floor — while `run_totals` reported `null` for the same run
+ *  (#3218).
+ *
+ *  It lives HERE rather than in `runCost.ts` because the word is `unrecorded`, not `priced`: this
+ *  module owns that vocabulary and already owns `tokensUnrecorded`, and #2630 ruled the money word
+ *  must not be widened to cover token counts.
+ *
+ *  `≥` rather than `~`: unlike a cost, a token count is counted, not estimated from a price table,
+ *  so the only thing uncertain about it is its completeness. */
+export function runTokensStat(tokens: number, tokensRecorded?: boolean): string {
+  if (!tokensUnrecorded({ tokens_recorded: tokensRecorded })) return tokens.toLocaleString()
+  return tokens > 0 ? `≥${tokens.toLocaleString()}` : UNRECORDED_LABEL
+}

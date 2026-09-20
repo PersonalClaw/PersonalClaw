@@ -28,15 +28,20 @@ _KEEPS_FILE = (
     Path(__file__).resolve().parents[1] / "docs" / "architecture" / "provider-boundary-keeps.txt"
 )
 
-# Actionable-residue patterns (NOT plain vendor words in prose):
+# Actionable-residue patterns are case-insensitive (NOT plain vendor words in prose):
 #  - a vendor SDK import statement
 #  - a vendor credential-key literal (SLACK_*_TOKEN, PERSONALCLAW_OWNER via SLACK pairing)
 #  - a Slack token-shape detection pattern (xox...)
+# The credential-key patterns end at TOKEN so suffixed prose identifiers such as
+# _setup_slack_tokens stay clean while CRED_SLACK_* constant names still match.
 _RESIDUE_PATTERNS = [
-    re.compile(r"^\s*(?:import|from)\s+(?:slack_sdk|slack|telegram|discord)\b", re.MULTILINE),
-    re.compile(r"SLACK_[A-Z_]*TOKEN"),
-    re.compile(r"SLACK_USER_TOKEN"),
-    re.compile(r"xox\[?[bpas]"),
+    re.compile(
+        r"^\s*(?:import|from)\s+(?:slack_sdk|slack|telegram|discord)\b",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    re.compile(r"SLACK_[A-Z_]*TOKEN\b", re.IGNORECASE),
+    re.compile(r"SLACK_USER_TOKEN\b", re.IGNORECASE),
+    re.compile(r"xox\[?[bpas]", re.IGNORECASE),
 ]
 
 
@@ -117,3 +122,25 @@ def test_sweep_has_teeth(tmp_path):
     assert not _has_residue(
         clean.read_text(encoding="utf-8")
     ), "residue patterns wrongly flagged a docstring vendor mention (prose is not residue)"
+
+
+def test_residue_patterns_are_case_insensitive_without_matching_prose_identifiers():
+    """Case-obfuscated residue is caught without flagging suffixed prose identifiers."""
+    probes = [
+        "IMPORT SLACK_SDK",
+        "from Slack_SDK import x",
+        "slack_bot_token",
+        "Slack_Bot_Token",
+        "XOXB-abc",
+        "XoxB-abc",
+        "import slack_sdk",
+        "SLACK_BOT_TOKEN",
+        "xoxb-abc",
+    ]
+    missed = [probe for probe in probes if not _has_residue(probe)]
+    assert not missed, "case-insensitive residue probes escaped the sweep:\n" + "\n".join(
+        f"  {probe}" for probe in missed
+    )
+    assert not _has_residue(
+        "_setup_slack_tokens"
+    ), "credential-key patterns wrongly flagged a suffixed prose identifier"

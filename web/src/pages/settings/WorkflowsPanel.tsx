@@ -8,24 +8,6 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 // The editable `workflows.*` fields, mirroring the backend `_EDITABLE_CONFIG` allowlist
 // (`config/loader.py` WorkflowsConfig). Each control PATCHes ONE allowlisted path through
 // /api/config/personalclaw; nothing here spreads the fetched config object into a write.
-//
-// 🔴 ONE ALLOWLISTED `workflows.*` PATH IS DELIBERATELY ABSENT, and that absence is the point:
-//
-//   · `workflows.max_active_runs` — zero readers outside the plumbing. `watchdog.py`'s adopt loop
-//                                   iterates `store.active_runs()` with no cap check, so the
-//                                   unbounded stacking its help text names is what actually
-//                                   happens.
-//
-// It is an INERT path (issue #465), which is a DIFFERENT defect from a path with no control: an
-// inert knob needs its reader wired or its allowlist row dropped, and giving it a Settings control
-// would only make a promise the code still ignores more convincing. It stays uncontrolled until
-// #465 decides which way it goes.
-//
-// `workflows.max_concurrent_nodes` used to sit beside it here. The #465 half of this same change
-// took the second option — it is DELETED from `WorkflowsConfig` and off the allowlist, because
-// `lane_caps()` returns the two per-lane fields plus a hardcoded `compute: 64` and never consulted
-// the total it claimed to partition. The two `Lane cap` rows below ARE that partition, so there is
-// nothing left to control.
 type WorkflowsCfg = Record<string, unknown>
 
 // The model use cases a tier may resolve to — the chat family from `ModelsPanel`'s USE_CASE_META,

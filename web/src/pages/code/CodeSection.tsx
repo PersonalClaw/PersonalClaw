@@ -148,10 +148,11 @@ const projectKind = (p: Loop): string => String(p.kind_config?.project_kind ?? '
 const stagePlan = (p: Loop): LoopPhase[] => (p.plan ?? []) as LoopPhase[]
 const stageStatus = (p: Loop): Record<string, string> => (p.phase_status ?? {}) as Record<string, string>
 
-// A COMPLETE project carrying an error_message finished NON-genuinely (budget/
-// exhaustion) → the synthetic 'ended_early' (warn tone + label), so it doesn't read as
-// an identical green "Complete". Shared helper so the distinction matches everywhere.
-const effectiveStatus = (p: Loop): string => effectiveLoopStatus(p.status, p.error_message)
+// A COMPLETE project whose stop_reason names a ceiling rather than 'done' finished
+// NON-genuinely (budget/deadline/cost exhaustion) → the synthetic 'ended_early' (warn tone
+// + label), so it doesn't read as an identical green "Completed". Shared helper so the
+// distinction matches everywhere.
+const effectiveStatus = (p: Loop): string => effectiveLoopStatus(p.status, p.stop_reason)
 
 // Pill tone for the list rows — the shared map (18% bg for a touch more presence in
 // a scanned list). needs_input/review/ready=info, blocked/stagnant/ended_early=warn,

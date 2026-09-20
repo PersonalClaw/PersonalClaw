@@ -552,9 +552,9 @@ class TestPerformance:
             {"kind": "transform", "id": f"n{i}", "config": {"expr": f"{i}"}} for i in range(60)
         ]
         root = Node.from_dict({"kind": "parallel", "id": "wide", "children": children})
-        start = time.perf_counter()
+        start = time.process_time()
         frontier(root, {})
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        elapsed_ms = (time.process_time() - start) * 1000
         assert elapsed_ms < 100, f"frontier took {elapsed_ms:.1f}ms for 60 nodes"
 
     def test_a_deep_spec_also_schedules_quickly(self) -> None:
@@ -568,9 +568,9 @@ class TestPerformance:
         for i in range(40):
             node = {"kind": "sequence", "id": f"s{i}", "children": [node]}
         root = Node.from_dict(node)
-        start = time.perf_counter()
+        start = time.process_time()
         frontier(root, {})
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        elapsed_ms = (time.process_time() - start) * 1000
         assert elapsed_ms < 100, f"frontier took {elapsed_ms:.1f}ms for a 40-deep spec"
 
 

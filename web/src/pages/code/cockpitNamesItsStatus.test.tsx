@@ -64,16 +64,27 @@ describe('the cockpit status strip', () => {
 
   it('a budget-exhausted finish reads "Ended early", not a green "Completed"', async () => {
     // `effectiveLoopStatus`, the same synthetic every other surface applies: a `complete` project
-    // carrying an `error_message` did not finish genuinely, and one word decides whether the user
-    // goes and looks.
-    render(<CockpitMeta project={project({ status: 'complete', error_message: 'cycle budget reached' })} />)
+    // whose `stop_reason` names a ceiling did not finish genuinely, and one word decides whether
+    // the user goes and looks. Empty prose proves the label comes from the classification.
+    render(<CockpitMeta project={project({
+      status: 'complete', stop_reason: 'cycle_budget', error_message: '',
+    })} />)
     expect(await screen.findByText('Ended early')).toBeTruthy()
     expect(screen.queryByText('Completed')).toBeNull()
   })
 
   it('a genuine completion still reads Completed', async () => {
-    // 🪤 The floor for the case above: a fix that always said "Ended early" would pass it.
-    render(<CockpitMeta project={project({ status: 'complete', error_message: '' })} />)
+    // 🪤 Contradictory legacy prose proves it is not retained as a fallback.
+    render(<CockpitMeta project={project({
+      status: 'complete', stop_reason: 'done', error_message: 'cycle budget reached',
+    })} />)
+    expect(await screen.findByText('Completed')).toBeTruthy()
+  })
+
+  it('an old row with no stop_reason follows the accepted clean break', async () => {
+    render(<CockpitMeta project={project({
+      status: 'complete', stop_reason: '', error_message: 'cycle budget reached',
+    })} />)
     expect(await screen.findByText('Completed')).toBeTruthy()
   })
 
