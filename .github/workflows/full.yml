@@ -270,6 +270,8 @@ jobs:
           retention-days: 7
 
   coverage:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
@@ -309,8 +311,29 @@ jobs:
                     open("coverage-badge.json", "w"))
           print(f"coverage {rate:.1f}%")
           PY
-          # Owner task (S4): publish coverage-badge.json to a gist/website repo and
-          # point a README shields endpoint at it. Emitted as an artifact until then.
+      - name: Publish coverage badge
+        if: github.ref == 'refs/heads/main'
+        env:
+          BADGE_BRANCH: badges
+        run: |
+          set -euo pipefail
+          published_badge="$(mktemp)"
+          if git fetch --quiet --no-tags origin "refs/heads/${BADGE_BRANCH}" 2>/dev/null &&
+             git show "FETCH_HEAD:coverage-badge.json" >"$published_badge" 2>/dev/null &&
+             cmp -s coverage-badge.json "$published_badge"; then
+            echo "coverage badge is unchanged"
+            exit 0
+          fi
+
+          blob="$(git hash-object -w coverage-badge.json)"
+          tree="$(printf '100644 blob %s\tcoverage-badge.json\n' "$blob" | git mktree)"
+          commit="$(
+            printf '%s\n' 'chore(ci): update coverage badge' |
+              git -c user.name='github-actions[bot]' \
+                  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                  commit-tree "$tree"
+          )"
+          git push --force origin "${commit}:refs/heads/${BADGE_BRANCH}"
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
         with:
