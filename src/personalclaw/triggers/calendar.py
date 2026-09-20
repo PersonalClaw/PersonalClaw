@@ -780,6 +780,7 @@ def diagnose(
     *,
     known_workflows: set[str] | frozenset[str] | None = None,
     known_duty_gates: set[str] | frozenset[str] | None = None,
+    known_action_providers: set[str] | frozenset[str] | None = None,
 ) -> DoctorReport:
     """Structural problems across every trigger. Pure; never raises.
 
@@ -793,14 +794,23 @@ def diagnose(
     * an unparseable quiet window is DROPPED at parse time, so the user believes they are protected,
     * a duty gate naming an unregistered provider fails open — the automation runs unfiltered, which
       is the opposite of what its author asked for,
-    * `catch_up` with no quiet window is a setting with nothing to resolve.
+    * `catch_up` with no quiet window is a setting with nothing to resolve,
+    * an ACTION naming a provider nothing can dispatch fails on every fire (#779).
 
     Every one of these is invisible at runtime: the trigger looks configured and behaves differently
     than its author intended, which is precisely what a doctor is for.
+
+    `known_action_providers` is INJECTED, like `known_workflows` and `known_duty_gates`, so this
+    function stays pure and testable without a live registry — and `None` means "cannot verify",
+    which suppresses the check rather than reporting every provider as unknown. The caller passes
+    `action_providers.registry.dispatchable_action_providers()`.
     """
     report = DoctorReport()
     workflows = set(known_workflows or ())
     gates_available = set(known_duty_gates) if known_duty_gates is not None else set(_DUTY_GATES)
+    providers_available = (
+        set(known_action_providers) if known_action_providers is not None else None
+    )
 
     for entry in triggers or []:
         tid = str(entry.get("id", "") or "")
@@ -905,7 +915,30 @@ def diagnose(
             inline = wf.get("inline") if isinstance(wf.get("inline"), dict) else None
             action = str((inline or wf).get("provider") or "").strip()
             granted = caps.get("providers") or []
-            if action and not provider_is_read_only(action) and action not in granted:
+            # 🔴 An action nothing can DISPATCH (#779). Reported instead of `unfenced_write_action`,
+            # never alongside it: that finding's fix is "re-save to freeze the grant", which for an
+            # unknown provider freezes a name that still resolves to nothing. This check is also why
+            # the fence finding could not catch this case on its own — `capabilities_for_action`
+            # freezes the unregistered name INTO `granted`, so `action not in granted` was False and
+            # the row read healthy. The create path refuses this shape as of #779; the population
+            # this names is the rows already on disk.
+            unknown_provider = (
+                bool(action)
+                and providers_available is not None
+                and action not in providers_available
+            )
+            if unknown_provider:
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unknown_action_provider",
+                        detail=f"runs the action {action!r}, which no installed provider "
+                        "answers to — every fire of this automation fails",
+                        fix="point it at an installed action, or install the app that provides "
+                        f"{action!r}",
+                    )
+                )
+            elif action and not provider_is_read_only(action) and action not in granted:
                 report.findings.append(
                     Finding(
                         trigger_id=tid,

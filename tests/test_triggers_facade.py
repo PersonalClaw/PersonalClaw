@@ -689,6 +689,68 @@ def test_doctor_reports_healthy_when_nothing_is_wrong(state, event_store):
     assert body["healthy"] is True and body["count"] == 0
 
 
+def test_the_doctor_no_longer_calls_an_UNDISPATCHABLE_trigger_healthy(state, event_store):
+    """🔴 #779. `diagnose` returned `healthy: True` for a trigger whose action names a provider
+    nothing can dispatch — every fire fails, and the doctor said nothing.
+
+    Its one provider-shaped check could not see the case by construction: `_seed_interval` freezes
+    the capability block the way every real writer does, and `capabilities_for_action` puts the
+    UNREGISTERED name straight into `providers`, so the fence check's `action not in granted` was
+    False. Asserted through the real route, so the injected provider set is the live one.
+    """
+    from personalclaw.triggers.screen import capabilities_for_action
+
+    state._store.delete("job1")
+    trigger = _seed_interval(
+        state,
+        "j1",
+        "Ghost action",
+        workflow={"inline": {"provider": "no-such-provider", "config": {}}},
+    )
+    # The premise, measured rather than asserted from memory: the frozen grant NAMES the bogus
+    # provider, which is exactly what neutralised the pre-existing finding.
+    assert capabilities_for_action(trigger) == {"providers": ["no-such-provider"]}
+    assert trigger.capabilities == {"providers": ["no-such-provider"]}
+
+    body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    finding = next(f for f in body["findings"] if f["code"] == "unknown_action_provider")
+    assert "no-such-provider" in finding["detail"] and finding["fix"]
+    assert body["healthy"] is False
+    # Reported INSTEAD of the fence finding, not alongside it: "re-save to freeze the grant" is not
+    # a fix for a name that resolves to nothing.
+    assert "unfenced_write_action" not in {f["code"] for f in body["findings"]}
+
+
+def test_the_doctor_names_an_UNPARSEABLE_cron_it_can_never_arm(state, event_store):
+    """#687's already-on-disk population, and the rail the shipped fix never got.
+
+    The create path refuses this shape and the doctor names it through the `semantic_spec_issues`
+    fold, which is `arm`'s own rule — one owner, so the doctor cannot say healthy about a row the
+    fire path refuses to arm. Pinned here because a clean break ships no migration: the rows a user
+    already has are found by this surface or not at all.
+    """
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Inert", expr="99 99 * * *")
+    body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    finding = next(f for f in body["findings"] if f["code"] == "unfireable_spec")
+    assert "99 99 * * *" in finding["detail"] and finding["fix"]
+    assert body["healthy"] is False
+
+
+def test_a_VALID_cron_and_a_REGISTERED_provider_are_still_healthy(state, event_store):
+    """The vacuity partner for the two findings above: they must not fire on a healthy store.
+
+    `@daily` rides along because the checks run croniter, so a macro the old five-token frontend
+    check would have flagged must not become a doctor finding either.
+    """
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Nine", expr="0 9 * * *")
+    _seed_interval(state, "j2", "Macro", expr="@daily")
+    _seed_interval(state, "j3", "Notify", workflow={"inline": {"provider": "notify", "config": {}}})
+    body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert body["healthy"] is True, body["findings"]
+
+
 def test_week_and_doctor_routes_register_before_the_id_route():
     """`/week` and `/doctor` must not be captured as trigger ids.
 

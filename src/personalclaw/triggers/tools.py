@@ -184,11 +184,7 @@ def unattended_action_refusal(workflow: Any) -> ToolResult | None:
     provider-name comparison. The typed `AgentError` rides in `data["error"]` — `ToolResult.text`
     is the sentence, and a surface that wants to branch reads the code.
     """
-    inline = workflow if isinstance(workflow, dict) else {}
-    # Two shapes reach here: the migrated `{"inline": {...}}` form the API and CLI build, and the
-    # bare `{"provider": …, "config": …}` form `create`'s `message` branch builds.
-    if isinstance(inline.get("inline"), dict):
-        inline = inline["inline"]
+    inline = _inline_action_of(workflow)
     if str(inline.get("provider") or "").strip() != _BROWSE_PROVIDER:
         return None
     config = inline.get("config")
@@ -209,6 +205,89 @@ def unattended_action_refusal(workflow: Any) -> ToolResult | None:
         return None
     typed = unattended_refusal(target, origin="a scheduled automation")
     return ToolResult(False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()})
+
+
+def _inline_action_of(workflow: Any) -> dict[str, Any]:
+    """A raw `workflow` block's action as `{provider, config}`, or `{}`.
+
+    Both shapes reach the registration paths — the migrated `{"inline": {…}}` form the API and CLI
+    build, and the bare `{"provider": …, "config": …}` form `create`'s `message` branch builds — so
+    unwrapping in ONE place is what keeps the two registration refusals below from disagreeing about
+    where to look. `schedule_view._inline_action` answers the same question for a persisted
+    `Trigger`; this one takes the block a writer is still holding.
+    """
+    block = workflow if isinstance(workflow, dict) else {}
+    inline = block.get("inline")
+    return inline if isinstance(inline, dict) else block
+
+
+def unregistered_action_provider_refusal(workflow: Any) -> ToolResult | None:
+    """Refuse an action whose provider the registry cannot dispatch (#779).
+
+    An unregistered provider was created-enabled-armed and then rejected on EVERY dispatch by the
+    gateway — the exact green-row-silent-loop BA-7 exists to prevent. Refused against the LIVE
+    registry so the fix is one edit away, and `_ensure_default_providers_registered` runs first
+    because the built-ins register lazily on first action execution (a caller that skipped it would
+    refuse every automation).
+
+    `create` has refused this since #779; a FUNCTION rather than an inline block because `update`
+    is the same door — save `notify`, then PATCH the provider to a name nothing dispatches, and a
+    create-only check has been walked around. An empty provider is left to `normalize_action`,
+    which owns "an action needs a provider"; a second sentence for one field is a second owner.
+    `resume`-carrying workflows are exempt: they re-enter a paused run rather than naming a
+    provider to dispatch.
+    """
+    block = workflow if isinstance(workflow, dict) else {}
+    name = str(_inline_action_of(workflow).get("provider") or "").strip()
+    if not name or "resume" in block:
+        return None
+    from personalclaw.action_providers.registry import (
+        _ensure_default_providers_registered,
+        get_action_provider,
+        list_action_providers,
+    )
+
+    _ensure_default_providers_registered()
+    # The bare existence question and nothing more — the resolved provider is never bound to a
+    # name, handed to a runner, or executed, which is the whole of this module's exemption from
+    # `EXECUTION_SITES` (`test_the_create_time_provider_check_only_asks_existence`).
+    if get_action_provider(name) is None:
+        return ToolResult(
+            False,
+            f"Error: unknown action provider {name!r}. "
+            f"Registered providers: {sorted(list_action_providers())}.",
+            {"provider": name},
+        )
+    return None
+
+
+def spec_error_refusal(kind: str, spec: Any) -> ToolResult | None:
+    """Refuse a spec that cannot do what it says — structure AND semantics (#483/#687/#612/#270).
+
+    `validate_spec` owns STRUCTURE ("Structure here, semantics there" — its own docstring) and
+    `arm.semantic_spec_issues` owns the rest, living beside the fire path so a check can never
+    drift from what arming does: an expression croniter refuses, a seconds-cadence 6/7-field
+    expression, an unmatchable skip date, a typo'd zone. Only ERRORS refuse; warnings ride the
+    created-response.
+
+    Extracted from `create` for `update`'s sake — `arm` refuses an unparseable spec rather than
+    guessing a cadence, so PATCHing a good expression to `'99 99 * * *'` put the row right back to
+    enabled-and-never-armed, the create-time refusal walked around. One function so the two doors
+    cannot answer differently about the same field.
+    """
+    block = spec if isinstance(spec, dict) else {}
+    from personalclaw.triggers.arm import semantic_spec_issues
+    from personalclaw.triggers.models import validate_spec
+
+    errors = [
+        i
+        for i in (*validate_spec(kind, block), *semantic_spec_issues(kind, block))
+        if i.severity == "error"
+    ]
+    if not errors:
+        return None
+    detail = "; ".join(f"{i.path}: {i.message}" for i in errors)
+    return ToolResult(False, f"Error: {detail}", {"spec": block})
 
 
 def slug_for(name: str, kind: str) -> str:
@@ -357,59 +436,26 @@ def create(
     # BA-7: refused HERE, before the row exists, not on its first tick. A saved automation that
     # refuses forever is worse than a rejected form — the user gets a green row and a silent
     # failure loop instead of a sentence naming the mistake while they are still editing it.
-    refusal = unattended_action_refusal(workflow)
-    if refusal is not None:
-        return refusal
+    for refusal in (
+        unattended_action_refusal(workflow),
+        # Same BA-7 rule for the SPEC and the PROVIDER (#483/#687/#612/#270/#779). Measured before
+        # fixing: `POST /api/triggers` persisted `{"kind":"cron","expr":"not a cron"}` as an enabled
+        # row with `next_fire_at=""` that could never fire, and an unregistered action provider
+        # dispatched into the gateway's "unknown action provider" warning forever — both while the
+        # doctor said healthy.
+        spec_error_refusal(resolved_kind, resolved_spec),
+        unregistered_action_provider_refusal(workflow),
+    ):
+        if refusal is not None:
+            return refusal
 
-    # Same BA-7 rule for the SPEC and the PROVIDER (#483/#687/#612/#270/#779). Measured before
-    # fixing: `POST /api/triggers` persisted `{"kind":"cron","expr":"not a cron"}` as an enabled
-    # row with `next_fire_at=""` that could never fire, and an unregistered action provider
-    # dispatched into the gateway's "unknown action provider" warning forever — both while the
-    # doctor said healthy. Structure (`validate_spec`) and semantics (`semantic_spec_issues`,
-    # living beside the fire path in `arm`) refuse on ERROR before the row exists; warnings ride
-    # the created-response so a sub-floor cadence or inert skip date is named while the author is
-    # still looking.
+    # Warnings ride the created-response so a sub-floor cadence or inert skip date is named while
+    # the author is still looking — the ERROR half above is what refuses.
     from personalclaw.triggers.arm import semantic_spec_issues
-    from personalclaw.triggers.models import validate_spec
 
-    spec_issues = [
-        i
-        for i in (
-            *validate_spec(resolved_kind, resolved_spec),
-            *semantic_spec_issues(resolved_kind, resolved_spec),
-        )
-        if i.severity == "error"
-    ]
-    if spec_issues:
-        detail = "; ".join(f"{i.path}: {i.message}" for i in spec_issues)
-        return ToolResult(False, f"Error: {detail}", {"spec": resolved_spec})
     spec_warnings = [
         i for i in semantic_spec_issues(resolved_kind, resolved_spec) if i.severity != "error"
     ]
-
-    provider_name = str(
-        (workflow.get("inline") or {}).get("provider")
-        if isinstance(workflow.get("inline"), dict)
-        else workflow.get("provider") or ""
-    ).strip()
-    if provider_name and "resume" not in workflow:
-        from personalclaw.action_providers.registry import (
-            _ensure_default_providers_registered,
-            get_action_provider,
-            list_action_providers,
-        )
-
-        _ensure_default_providers_registered()
-        if get_action_provider(provider_name) is None:
-            # An unregistered provider is created-enabled-armed today and then rejected on
-            # EVERY dispatch by the gateway (#779) — the exact green-row-silent-loop BA-7
-            # exists to prevent. Refused with the live registry so the fix is one edit away.
-            return ToolResult(
-                False,
-                f"Error: unknown action provider {provider_name!r}. "
-                f"Registered providers: {sorted(list_action_providers())}.",
-                {"provider": provider_name},
-            )
 
     trigger = Trigger(
         id=_unique_id(store, slug_for(name, resolved_kind)),
@@ -562,11 +608,23 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
             f"Error: nothing to update. Not settable here: {', '.join(rejected) or 'none given'}.",
             {"rejected": rejected},
         )
-    # BA-7: the same registration refusal as `create`. Without it the update path is the hole —
+    # BA-7: the same registration refusals as `create`. Without them the update path is the hole —
     # save a `gateway` browse automation, then patch its `workflow` to `user_browser`, and the
-    # create-time check has been walked around.
+    # create-time check has been walked around. #779/#687 close the same hole for the other two:
+    # create with `bash` + `0 9 * * *`, then PATCH the provider to a name nothing can dispatch or
+    # the expr to one nothing can parse, and the row is right back to armed-and-inert.
     if "workflow" in applied:
-        refusal = unattended_action_refusal(applied["workflow"])
+        for refusal in (
+            unattended_action_refusal(applied["workflow"]),
+            unregistered_action_provider_refusal(applied["workflow"]),
+        ):
+            if refusal is not None:
+                return refusal
+    if "spec" in applied:
+        # The row's OWN kind, not one the patch could carry: `_SETTABLE` does not admit `kind`, so
+        # the spec being edited is always this trigger's, and `semantic_spec_issues` returns nothing
+        # for a non-clock kind — a `file` glob is untouched by the cron rule.
+        refusal = spec_error_refusal(row.trigger.kind, applied["spec"])
         if refusal is not None:
             return refusal
     trigger = row.trigger

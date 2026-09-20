@@ -11,6 +11,7 @@ import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
   secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
 } from './scheduleMeta'
+import { cronExprInvalidReason } from './cronExpr'
 
 /** The draft mirrors the create/update payload but keeps the kind/mode axes
  *  explicit (the wire derives them from which fields are set). */
@@ -106,6 +107,21 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     // field not at all (`null`/`undefined`) falls back to the entity default.
     failure_delivery: j.failure_delivery ?? 'inbox', failure_dedupe: !!j.failure_dedupe,
   }
+}
+
+/** Why this draft's SCHEDULE cannot be submitted, or `null` (#687).
+ *
+ *  Both surfaces that render `ScheduleForm` gate their Save on this, so neither can post a cron
+ *  expression the server will refuse: `TriggerCreatePage`'s `canSave` had no cron term at all and
+ *  posted `body.cron` regardless, and `ScheduleDetail`'s Save gated only on a non-empty name. One
+ *  exported function rather than a copy in each, because a per-surface copy is how one of them ends
+ *  up still submitting the bad value.
+ *
+ *  Scoped to the CADENCE on purpose: `every` and `at` drafts carry no cron and must stay
+ *  submittable, and the name/action requirements belong to the surfaces that own those fields.
+ */
+export function scheduleDraftInvalidReason(d: ScheduleDraft): string | null {
+  return d.kind === 'cron' ? cronExprInvalidReason(d.cron) : null
 }
 
 /** Build the create/update payload. The backend create handler accepts every/cron/at + agent
@@ -393,19 +409,31 @@ function NativeSelect({ value, onChange, options, label, name }: { value: string
 
 /** Cron field — text input + live human description + quick presets. */
 function CronField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const valid = value.trim().split(/\s+/).length === 5
+  // 🔴 A REAL validator, not a token count. `value.trim().split(/\s+/).length === 5` was wrong in
+  // BOTH directions — `'99 99 * * *'` has five tokens and the server refuses it, `'@daily'` has one
+  // and the server accepts it — so this field reddened a working expression and cleared a broken
+  // one. `cronExprInvalidReason` is sound against croniter (railed by `cronExpr.test.ts`), so a red
+  // here is an expression `POST /api/triggers` would refuse too.
+  const reason = cronExprInvalidReason(value)
   return (
     <div className="flex flex-col gap-s">
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="0 9 * * *"
         name="cron-expression" aria-label="Cron expression (minute hour day-of-month month day-of-week)"
-        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary' : 'ring-1 ring-danger/50'}`} />
+        aria-invalid={reason ? true : undefined}
+        aria-describedby={reason ? 'cron-expression-error' : undefined}
+        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${reason ? 'ring-1 ring-danger/50' : 'focus:ring-primary'}`} />
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map((p) => (
           <button key={p.expr} type="button" onClick={() => onChange(p.expr)}
             className={`rounded-pill px-m h-7 text-[0.75rem] transition-colors ${value.trim() === p.expr ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-var hover:bg-surface-highest'}`}>{p.label}</button>
         ))}
       </div>
-      {!valid && <p className="text-danger text-[0.75rem]">Cron needs five fields: minute hour day-of-month month day-of-week.</p>}
+      {/* `role="alert"` because this line became a DYNAMIC failure. It used to be one static
+          sentence ("Cron needs five fields…") — a label, which is why `fieldErrorAnnounced`'s
+          census never covered it. Rendering `{reason}` puts it in the family that rail owns, and a
+          failure with no role announces to nobody; the four other `0.75rem` sites carry the role on
+          the raw element for the same reason (`FieldError` is size-locked to `0.8125rem`). */}
+      {reason && <p role="alert" id="cron-expression-error" className="text-danger text-[0.75rem]">{reason}</p>}
     </div>
   )
 }
