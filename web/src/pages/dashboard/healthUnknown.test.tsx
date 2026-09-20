@@ -142,12 +142,27 @@ describe('the settings health and safety cards say when they could not check', (
 
   it('both cards render a "could not check" state and keep their loading flag honest', () => {
     const c = code()
-    // Two cards, one form. `loading` must not stay true forever on a rejection either.
+    // Two cards, one form — and the FORM MOVED, so this asserts the same two properties through it.
+    //
+    // 🔑 WHAT CHANGED AND WHY THIS IS NOT A WEAKENING. Both properties used to be spelled per tile:
+    // a hand-written `<StatusPill label="Couldn't check">` for the state, and
+    // `loading={x === undefined && !xErr}` for the honesty. `BentoCard` owns both now behind one
+    // `failed` prop, so the literals this test matched are gone from the tile — while the properties
+    // are strictly better held:
+    //   · the STATE is `failed={…Status === 'error'}`, rendering one shared danger-toned band with
+    //     the server's own message and a Retry, instead of a muted grey pill with neither;
+    //   · the HONESTY is no longer each tile's `&& !xErr` to remember — the card tests `failed`
+    //     BEFORE `loading`, so a rejection cannot fall into the skeleton branch at any call site.
+    //     That ORDER is asserted in `settings/tileLoadFailure.test.ts` and driven as behaviour in
+    //     `settings/tileLoadingAnnounced.test.tsx` ("beats the loading branch").
+    // A per-tile `&& !xErr` would now be redundant, so demanding it here would pin an idiom the
+    // component replaced — which is how a rail starts describing history instead of the app.
     for (const id of ['doctor', 'guardrails']) {
       const block = cardBlock(c, id)
-      expect(block, `the ${id} card must offer a could-not-check state`).toMatch(/Could ?n['’]t check/)
-      expect(block, `the ${id} card's loading must exclude the failed case`)
-        .toMatch(/=== undefined && !\w*Err/)
+      expect(block, `the ${id} card must say when it could not check`).toMatch(/failed=\{\w+ === 'error'\}/)
+      expect(block, `the ${id} card must hand over the rejection, not just the fact of one`)
+        .toMatch(/error=\{\w+\}/)
+      expect(block, `the ${id} card must offer a retry`).toMatch(/onRetry=\{\w+\}/)
     }
   })
 

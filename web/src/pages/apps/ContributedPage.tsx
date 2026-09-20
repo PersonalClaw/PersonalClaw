@@ -98,7 +98,7 @@ export function ContributedPage({ app, host, src, mountFunction = 'mount' }: Pro
 
   if (error) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-low">
+      <div className="flex h-full flex-col items-center justify-center gap-s text-on-surface-low">
         <AlertTriangle size={22} className="text-warn" />
         <div data-type="body-m">Failed to load {app.name}</div>
         <div data-type="body-s" className="max-w-md text-center opacity-70">{error}</div>

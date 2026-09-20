@@ -299,7 +299,7 @@ export function MenuRow({
       aria-checked={role === 'menuitemradio' ? !!selected : undefined}
       whileTap={{ scale: 0.97 }}
       transition={spring.spatialFast}
-      className="group flex items-center gap-s w-full rounded-md px-m py-2 text-left text-on-surface hover:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+      className="group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
     >
       {icon && <span className="shrink-0 text-on-surface-var transition-transform duration-150 group-hover:translate-x-0.5">{icon}</span>}
       <span className="flex-1 min-w-0">

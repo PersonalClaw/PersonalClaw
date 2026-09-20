@@ -79,6 +79,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # must not confirm whether the path exists. `files.py`'s six other sites emit this same sentence
     # FLAT today; this is the code they convert to, and the census ratchet is what moves them.
     "invalid_path": "The path is not one the dashboard may touch.",
+    "file_content_search_timeout": (
+        "File content search exceeded its time limit; narrow the directory or filter and retry."
+    ),
     # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
     # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
     # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file

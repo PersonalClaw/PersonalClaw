@@ -33,6 +33,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **66 more spacing values now obey the Density slider (Appearance → Density), in 29 whole files.**
 - **A tool's risk level now gates the control that runs it, and "Always for this agent" only promises a saved grant when it will actually save one ([#506](https://github.com/PersonalClaw/PersonalClaw/issues/506), [#541](https://github.com/PersonalClaw/PersonalClaw/issues/541), [#683](https://github.com/PersonalClaw/PersonalClaw/issues/683)).**
 - **⚠️ PERSONALCLAW NOW TRACKS RELEASES, NOT `main` — AND THE UPDATE IT APPLIES IS THE ONE YOU CHOSE.**
 - **Inbox maintenance no longer runs on its own 6h loop — the remediation engine owns it, like every other store-tidying pass.**
@@ -55,6 +56,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **A run ledger whose completed steps never recorded token counts no longer reports `tokens: 0`.**
 - **The persistence toggle no longer lights up for a setting the host cannot honour, the durable-workers hint now answers the requirement it names, and "sessions survive a restart" has exactly one owner.**
 - **An automation can no longer be EDITED into a state it could never run from, and the doctor names the rows already on disk that are.**
 - **`pip install personalclaw` on Python 3.14 is now refused at install time instead of succeeding and handing you a connector-pack parser that refuses every import.**
@@ -137,6 +139,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app's `icon` can no longer crash the dashboard, and it is now validated at install rather than only at paint.**
 - **The Doctor's health score now says what it is excluding, and so does `personalclaw doctor`.**
 - A routing mute can now be undone from **Settings → Chat → Agent routing → Muted agents**, and the panel stops promising a control it did not have.
+- The **skill-proposal queue can now be emptied, and it stops refilling itself.** The 409-forever half of this cycle was fixed earlier; two links survived and kept proposals at 89% of the open inbox.
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -792,3 +795,4 @@ agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard
 
 - **Single-user, self-hosted, MIT-licensed.**
 - **Requires Python 3.12+; a model-provider API key (or a local Ollama) to start chatting.**
+

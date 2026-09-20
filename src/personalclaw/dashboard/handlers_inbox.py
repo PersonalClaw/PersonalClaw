@@ -144,6 +144,60 @@ def _record_signal(state: "DashboardState", item, signal: str) -> None:
     _record_signals(state, [item], signal)
 
 
+def _dismiss(state: "DashboardState", inbox_state, items: list) -> int:
+    """Everything dismissing a row entails, in ONE place. Returns how many rows it answered.
+
+    Three things, and they were spread across two handlers that each did a subset:
+
+    1. remember the id in ``InboxState.dismissed`` (the suppression set);
+    2. record the negative engagement signal (one store write for the whole batch);
+    3. 🔴 **answer the thing the row MIRRORS.** A proposal row is a mirror of a record in
+       ``skills/.proposals/``, and dismissing the mirror left the original ``pending`` — so the
+       Skills page kept counting a queue the inbox said was empty. Measured on this worktree:
+       18 open rows against 19 pending proposals, and ``dismiss-all`` on 32 rows reduced the
+       Skills page's "Proposals (32)" by zero (#409's second bulk-clear gap).
+
+    Why ``reject`` is the right answer and not a guess: ``skills/proposals`` already declares
+    the mapping in the other direction — ``reject()`` resolves its row to **dismissed** and
+    ``accept()`` to **handled**. DISMISSED *is* the terminal status for "the user said no", so a
+    row landing there and the proposal surviving is the two stores disagreeing about an answer
+    the user already gave. This completes the bijection the module states; it does not invent one.
+
+    The inverse is deliberately NOT symmetric: a row going HANDLED must not *accept* a proposal,
+    because accepting installs authored content and that stays an explicit act. ``accept()``
+    sets HANDLED itself.
+
+    Keyed on ``refs["skill_proposal"]`` — the ref ``_surface_in_inbox`` writes and
+    ``_resolve_inbox_item`` reads — so it cannot reach a row of another kind. A workflow gate's
+    row carries ``refs["workflow"]`` and is untouched: dismissing a gate notification must never
+    answer the gate.
+    """
+    items = [i for i in items if i is not None]
+    if not items:
+        return 0
+    for item in items:
+        inbox_state.dismissed.add(item.id)
+    inbox_state.save()
+    _record_signals(state, items, "dismiss")
+    from personalclaw.skills import proposals as skill_proposals
+
+    answered = 0
+    for item in items:
+        pid = str((getattr(item, "refs", None) or {}).get("skill_proposal") or "")
+        if not pid:
+            continue
+        try:
+            if skill_proposals.reject(pid):
+                answered += 1
+        except Exception:
+            # A row the user dismissed must stay dismissed even if the proposal store is
+            # unreachable — the inbox half already succeeded above.
+            logger.warning("inbox dismiss: could not answer proposal %s", pid, exc_info=True)
+    if answered:
+        logger.info("inbox dismiss answered %d skill proposal(s)", answered)
+    return answered
+
+
 def _rank_items(state: "DashboardState", items: list) -> list:
     """Recency baseline, optionally re-weighted by engagement when the flag is on. The
     baseline (pure created_at desc) is unchanged when disabled — a true no-op default."""
@@ -464,11 +518,10 @@ async def api_inbox_update(request: web.Request) -> web.Response:
         inbox_state.muted_threads.add(thread_key)
         inbox_state.save()
 
-    # Handle dismiss → track in state + record a negative engagement signal.
+    # Handle dismiss → the one dismissal owner: suppression set, engagement signal, and the
+    # answer to whatever the row mirrors (`_dismiss`).
     if body.get("status") == ItemStatus.DISMISSED:
-        inbox_state.dismissed.add(item_id)
-        inbox_state.save()
-        _record_signal(state, item, "dismiss")
+        _dismiss(state, inbox_state, [inbox.items.get(item_id)])
 
     # A favorite toggled ON is a strong positive signal (off is not a negative — the user
     # is just un-starring, not disengaging).
@@ -561,21 +614,22 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     LOOKING at an item removed it from the reach of the only bulk control, and a queue you had
     browsed could not be cleared except one row at a time (#409, measured with 32 open rows).
     "Dismiss all" that skips what you have read is not "all".
+
+    🔴 And it goes through `_dismiss`, the one dismissal owner, so clearing the queue also
+    ANSWERS the proposals those rows mirror. Before that, dismissing 32 proposal rows reduced
+    the Skills page's "Proposals (32)" by zero: two stores, one cleared. "Dismiss all" that
+    leaves the queue full is not "all" either.
     """
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
-    count = 0
     swept: list = []
     for item in inbox.open_items():
-        inbox_state.dismissed.add(item.id)
         inbox.update(item.id, status=ItemStatus.DISMISSED)
         swept.append(item)
-        count += 1
-    inbox_state.save()
-    # The same negative engagement signal the per-item dismiss records (PUT /api/inbox/{id}).
+    count = len(swept)
     # Dismissing a whole queue in one click is the strongest topic-rejection a user can
-    # express — it must train the ranker exactly like dismissing each row would have.
-    _record_signals(state, swept, "dismiss")
+    # express — it trains the ranker exactly like dismissing each row would have, in one write.
+    answered = _dismiss(state, inbox_state, swept)
     try:
         sel().log_tool_invocation(
             session_key="dashboard:inbox",
@@ -586,7 +640,7 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL audit failed for inbox dismiss_all", exc_info=True)
-    return web.json_response({"ok": True, "dismissed": count})
+    return web.json_response({"ok": True, "dismissed": count, "proposals_rejected": answered})
 
 
 async def api_inbox_draft(request: web.Request) -> web.Response:

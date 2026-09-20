@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,7 +27,7 @@ def search_root(tmp_path, monkeypatch):
     monkeypatch.setattr(
         F,
         "_validate_dashboard_path",
-        lambda raw: raw if str(raw).startswith(str(tmp_path)) else None,
+        lambda raw, allowed_roots=None: raw if str(raw).startswith(str(tmp_path)) else None,
     )
     monkeypatch.setattr(F, "_sel", lambda: MagicMock())
     return tmp_path
@@ -58,6 +59,26 @@ def test_python_search_reports_line_and_col(search_root):
     assert r["line"] == 2 and r["col"] >= 1
 
 
+def test_python_search_resolves_allowlist_once(tmp_path, monkeypatch):
+    for index in range(4):
+        (tmp_path / f"file-{index}.txt").write_text("ordinary content\n")
+
+    calls = 0
+
+    def counted_roots():
+        nonlocal calls
+        calls += 1
+        return [("Root", str(tmp_path))]
+
+    monkeypatch.setattr(F, "_dashboard_roots", counted_roots)
+
+    results, truncated = F._content_search_python(str(tmp_path), "absent", "")
+
+    assert results == []
+    assert not truncated
+    assert calls == 1
+
+
 # ── HTTP handler ──
 
 
@@ -85,8 +106,45 @@ def test_handler_empty_query_returns_empty(search_root, monkeypatch):
     assert body["results"] == []
 
 
+def test_handler_python_timeout_returns_structured_error(search_root, monkeypatch):
+    monkeypatch.setattr(F, "_CONTENT_SEARCH_TIMEOUT", 0.02)
+
+    def slow_search(
+        root,
+        query,
+        include,
+        allowed_roots=None,
+        *,
+        deadline=None,
+        stop_event=None,
+    ):
+        finish = time.monotonic() + 0.5
+        while time.monotonic() < finish:
+            if stop_event is not None and stop_event.wait(0.001):
+                raise F._ContentSearchTimedOut
+        return [], False
+
+    monkeypatch.setattr(F, "_content_search_python", slow_search)
+
+    started = time.monotonic()
+    status, body = _call(str(search_root), "needle", monkeypatch=monkeypatch)
+    elapsed = time.monotonic() - started
+
+    assert status == 504
+    assert body == {
+        "error": {
+            "code": "file_content_search_timeout",
+            "message": (
+                "File content search exceeded its time limit. "
+                "Narrow the directory or include glob and try again."
+            ),
+        }
+    }
+    assert elapsed < 0.25
+
+
 def test_handler_invalid_dir_400(monkeypatch):
-    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: None)
+    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw, allowed_roots=None: None)
     status, _ = _call("/etc", "x", monkeypatch=monkeypatch)
     assert status == 400
 
@@ -99,7 +157,7 @@ def test_handler_redacts_secrets_in_preview(tmp_path, monkeypatch):
     monkeypatch.setattr(
         F,
         "_validate_dashboard_path",
-        lambda raw: raw if str(raw).startswith(str(tmp_path)) else None,
+        lambda raw, allowed_roots=None: raw if str(raw).startswith(str(tmp_path)) else None,
     )
     monkeypatch.setattr(F, "_sel", lambda: MagicMock())
     status, body = _call(str(tmp_path), "needle", monkeypatch=monkeypatch)

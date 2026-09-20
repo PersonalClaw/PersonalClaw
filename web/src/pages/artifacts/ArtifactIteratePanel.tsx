@@ -75,7 +75,7 @@ export function ArtifactIteratePanel({ slug, name, session, onSession, onClose }
     // guessed (the render tests cannot see this; a browser drive can).
     <aside aria-label={`Iterate with agent: ${name}`}
       className="flex min-h-0 min-w-0 flex-1 flex-col border-outline/40 border-t lg:border-t-0 lg:border-l">
-      <div className="flex shrink-0 items-center gap-2 border-b border-outline/40 px-m py-2">
+      <div className="flex shrink-0 items-center gap-s border-b border-outline/40 px-m py-s">
         <MessagesSquare size={14} className="shrink-0 text-primary" />
         <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>Iterate with agent</span>
         <div className="ml-auto shrink-0">
@@ -86,7 +86,7 @@ export function ArtifactIteratePanel({ slug, name, session, onSession, onClose }
         {/* A failed stage is its OWN state: without it the panel would sit on the
             loading line forever and read as a chat that never arrived. */}
         {error ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-m text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-s px-m text-center">
             <FileWarning size={22} className="opacity-40 text-on-surface-low" />
             <p className="text-on-surface text-[0.8125rem]">Couldn't open an iteration session.</p>
             <p className="text-on-surface-low text-[0.75rem]">{error}</p>

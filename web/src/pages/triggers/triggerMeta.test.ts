@@ -374,7 +374,7 @@ describe('eventToTrigger', () => {
     expect(t.runCount).toBe(3)
     // A data event has no schedule, so claiming a next run or a last status would be a lie.
     expect(t.lastRunTs).toBeNull()
-    expect(t.lastStatus).toBeNull()
+    expect(t.runStatus).toBeNull()
   })
 
   it('carries only the ONE matcher its pattern reads', () => {

@@ -50,7 +50,7 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
         transition={reduce ? spring.effects : physics.playful}>
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface/95 px-l py-m">
           <div className="flex min-w-0 items-center gap-s">{icon}<span data-type="title-l" className="truncate text-on-surface">{title}</span></div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-xs">
             <IconButton icon={X} label="Close" size={34} onClick={onClose} />
           </div>
         </div>

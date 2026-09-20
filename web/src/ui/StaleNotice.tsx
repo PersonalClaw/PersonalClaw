@@ -51,7 +51,7 @@ export function StaleNotice({ stale, what, className, announce = true }: {
       data-stale="true"
       role={announce ? 'status' : undefined}
       data-type="caption"
-      className={`inline-flex items-center gap-1 text-on-surface-low ${className ?? ''}`}
+      className={`inline-flex items-center gap-xs text-on-surface-low ${className ?? ''}`}
     >
       <RefreshCw size={11} className="animate-pulse" aria-hidden />
       Updating {what}…

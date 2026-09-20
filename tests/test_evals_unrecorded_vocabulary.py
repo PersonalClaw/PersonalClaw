@@ -1,4 +1,4 @@
-"""The rail for ONE vocabulary of "unrecorded" across the eval report (#2540 / #2561 / #2562).
+"""The rail for ONE vocabulary of "unrecorded" (#2540 / #2561 / #2562 / #2630).
 
 Three fields in one report collapsed *absent* into *zero/none*, and the fix was one word
 (``unrecorded``, owned by :mod:`personalclaw.evals.provenance` and mirrored in
@@ -65,6 +65,13 @@ GUARDED: dict[str, dict] = {
         "patterns": (r'\bget\(\s*"tokens"\s*\)', r'\[\s*"tokens"\s*\]', r"\bspend\.tokens\b"),
         "dirs": ("src/personalclaw/evals", "scripts", "harness"),
     },
+    "run_totals.tokens": {
+        "patterns": (
+            r"""\btotals\.get\(\s*["']tokens["']""",
+            r"""\btotals\[\s*["']tokens["']\s*\]""",
+        ),
+        "dirs": ("src/personalclaw/workflows",),
+    },
     "token_ratio": {
         "patterns": (
             r'\bget\(\s*"token_ratio"\s*\)',
@@ -95,6 +102,7 @@ GUARDED: dict[str, dict] = {
 #: Any one of these, in the same file, counts as consulting the not-recorded fact.
 GUARD_TOKENS: dict[str, tuple[str, ...]] = {
     "spend.tokens": ("tokens_recorded",),
+    "run_totals.tokens": ("tokens_recorded",),
     "token_ratio": ("tokens_recorded", "tokensUnrecorded"),
     "provider_binding": ("report_schema", "PROVENANCE_SCHEMA", "provenanceRecorded"),
     "cell_model": ("UNRECORDED", "NO_MODEL", THE_WORD, "cell_model_fingerprint"),
@@ -107,6 +115,9 @@ EXPECTED_CONSUMERS: dict[str, dict[str, str | None]] = {
     # ── producers and readers of the eval spend dict ──
     "src/personalclaw/evals/gate.py": {
         "spend.tokens": "cell_spend/_accumulate sum the cells' token counts",
+    },
+    "src/personalclaw/workflows/controller.py": {
+        "run_totals.tokens": "budget pre-charge and terminal row folding",
     },
     "scripts/learning_benchmark.py": {
         "spend.tokens": "_verdict_for_task builds the §4 token denominator",
@@ -357,17 +368,18 @@ def test_the_detector_is_not_green_from_matching_nothing():
     from the same parse it is checking would be satisfied by a parse that matched nothing.
     """
     derived = _derive()
-    # An absolute lower bound. There are thirteen consumer files and four guarded fields; if this
+    # An absolute lower bound. There are fourteen consumer files and five guarded fields; if this
     # ever legitimately shrinks, the shrink is the thing to look at.
-    assert len(derived) >= 13, f"the detector found only {len(derived)} consumer file(s)"
+    assert len(derived) >= 14, f"the detector found only {len(derived)} consumer file(s)"
     total_reads = sum(len(fields) for fields in derived.values())
-    assert total_reads >= 17, f"the detector found only {total_reads} guarded read(s)"
-    assert len({f for fields in derived.values() for f in fields}) == 4
+    assert total_reads >= 18, f"the detector found only {total_reads} guarded read(s)"
+    assert len({f for fields in derived.values() for f in fields}) == 5
 
     # Literal (file, field) pairs, each read off the source by eye. Every one is a line this change
     # touched or deliberately left alone.
     for path, field in (
         ("src/personalclaw/evals/gate.py", "spend.tokens"),
+        ("src/personalclaw/workflows/controller.py", "run_totals.tokens"),
         ("scripts/learning_benchmark.py", "spend.tokens"),
         ("scripts/learning_benchmark.py", "provider_binding"),
         ("scripts/learning_benchmark.py", "cell_model"),

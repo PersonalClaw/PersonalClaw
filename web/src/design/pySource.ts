@@ -33,3 +33,48 @@ export function pyBetween(src: string, from: string, to: string): string {
   const b = src.indexOf(to, a + from.length)
   return b < 0 ? '' : src.slice(a, b)
 }
+
+/** Every VALUE of a `str, Enum` class — the vocabulary a wire field can carry.
+ *
+ *  🔑 DERIVED, so a rail cannot go stale against the backend. The alternative is a hand-copied list
+ *  in the test, which is what let `TriggerHealth`'s members outgrow the renderer that draws them
+ *  (issue 496): a mirror only catches drift if something proves it is still a mirror. Bounded by the
+ *  next `class` at column 0, for the reason this module exists.
+ *
+ *  Returns [] for an unknown class, so a caller's own "the vocabulary is non-empty" assertion is what
+ *  fails when a class is renamed — not a later assertion passing vacuously over nothing. */
+export function pyEnumMembers(src: string, cls: string): string[] {
+  const body = pyBetween(`${src}\nclass __EOF__`, `class ${cls}`, '\nclass ')
+  return [...body.matchAll(/^\s+[A-Z_0-9]+ = "([a-z_]+)"/gm)].map((m) => m[1])
+}
+
+/** Every KEY of a module-level `dict[str, str]` literal — e.g. a status→outcome mapping table. */
+export function pyDictKeys(src: string, name: string): string[] {
+  const body = pyBetween(src, `${name}: dict[str, str] = {`, '\n}')
+  return [...body.matchAll(/^\s+"([a-z_]+)":/gm)].map((m) => m[1])
+}
+
+/** Every `"key": SomeEnum.MEMBER.value` pair of such a dict, as key → the enum member's VALUE.
+ *
+ *  Resolves the member name against `enumSrc` so the result speaks wire values, which is what a
+ *  frontend renderer is handed. A key whose value is not a resolvable enum member is dropped, and the
+ *  caller's key-coverage assertion is what reports it. */
+export function pyDictToEnumValues(
+  src: string,
+  name: string,
+  enumSrc: string,
+  enumCls: string,
+): Record<string, string> {
+  const body = pyBetween(src, `${name}: dict[str, str] = {`, '\n}')
+  const members = new Map(
+    [...pyBetween(`${enumSrc}\nclass __EOF__`, `class ${enumCls}`, '\nclass ').matchAll(
+      /^\s+([A-Z_0-9]+) = "([a-z_]+)"/gm,
+    )].map((m) => [m[1], m[2]]),
+  )
+  const out: Record<string, string> = {}
+  for (const m of body.matchAll(/^\s+"([a-z_]+)":\s*(\w+)\.([A-Z_0-9]+)\.value/gm)) {
+    const value = members.get(m[3])
+    if (value) out[m[1]] = value
+  }
+  return out
+}

@@ -123,7 +123,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           {vm?.workflow || 'Workflow'}
         </span>
         {look && StatusIcon && (
-          <span data-type="caption" className={`inline-flex shrink-0 items-center gap-1 ${look.tone}`}>
+          <span data-type="caption" className={`inline-flex shrink-0 items-center gap-xs ${look.tone}`}>
             <StatusIcon size={12} className={look.spin ? 'animate-spin' : ''} /> {look.label}
           </span>
         )}
@@ -149,7 +149,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
             <span
               data-testid="run-cached-count"
               data-type="caption"
-              className="shrink-0 rounded-pill px-2 py-0.5 tabular-nums"
+              className="shrink-0 rounded-pill px-s py-0.5 tabular-nums"
               style={accentChip}
               title={`${vm.cachedCount} step${vm.cachedCount === 1 ? '' : 's'} served from the resume cache rather than re-run`}
             >

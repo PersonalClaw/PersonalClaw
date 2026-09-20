@@ -54,8 +54,21 @@ describe('a failed inbox-settings read is reported, not shown as loading', () =>
   it('the dashboard tile stops shimmering when the read failed', () => {
     const src = read(WIDGET)
     expect(/inboxSettings\(\)[\s\S]{0,90}\.catch\(/.test(src), 'the tile must not swallow the shared key').toBe(false)
-    expect(src, 'loading must not include the failed state').toMatch(/loading=\{s === undefined && !inboxErr\}/)
-    expect(src, 'and the failure must be visible in the card').toMatch(/Couldn&rsquo;t load inbox settings/)
+    // The Inbox tile was the CANONICAL form of the per-tile idiom — `loading={s === undefined &&
+    // !inboxErr}` plus a hand-written muted line — and the other tiles were converged onto it. The
+    // convergence went one step further: `BentoCard` owns the failure now, so the idiom is a prop.
+    // Same two properties, one place:
+    //   the failure is VISIBLE  → `failed={sStatus === 'error'}` renders the shared band, with the
+    //                             server's own message and a Retry the muted line never had
+    //   loading YIELDS to it    → the card branches on `failed` first, so no tile has to remember
+    //                             `&& !xErr` (order asserted in settings/tileLoadFailure.test.ts,
+    //                             driven in settings/tileLoadingAnnounced.test.tsx)
+    const at = src.indexOf('title="Inbox"')
+    expect(at, 'the Inbox tile must still exist').toBeGreaterThan(-1)
+    const tag = src.slice(at, at + 400)
+    expect(tag, 'the failure must be visible in the card').toMatch(/failed=\{\w+ === 'error'\}/)
+    expect(tag, "and carry the server's own message").toMatch(/error=\{inboxErr\}/)
+    expect(tag, 'and offer a retry').toMatch(/onRetry=\{refresh\}/)
   })
 
   it('reads the real files (not vacuously green)', () => {

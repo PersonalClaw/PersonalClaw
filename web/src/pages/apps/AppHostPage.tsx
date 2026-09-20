@@ -77,14 +77,14 @@ function Center({ children, spinner }: { children?: React.ReactNode; spinner?: b
   if (spinner) {
     return (
       <div role="status" aria-busy="true"
-        className="flex h-full items-center justify-center gap-2 text-on-surface-low" data-type="body-m">
+        className="flex h-full items-center justify-center gap-s text-on-surface-low" data-type="body-m">
         <LoadingStatus what="the app" />
         <Loader2 size={22} className="animate-spin" />
       </div>
     )
   }
   return (
-    <div className="flex h-full items-center justify-center gap-2 text-on-surface-low" data-type="body-m">
+    <div className="flex h-full items-center justify-center gap-s text-on-surface-low" data-type="body-m">
       {children}
     </div>
   )

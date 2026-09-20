@@ -45,7 +45,7 @@ export function MermaidBlock({ code }: { code: string }) {
     // The render failed, so this IS the diagram — named as its source rather than announced as one
     // long line of mermaid syntax.
     return <pre tabIndex={0} role="group" aria-label="Diagram source" data-type="body-s"
-      className="my-3 overflow-x-auto rounded-lg bg-surface-low px-m py-2"><code className="font-mono text-on-surface-low">{code}</code></pre>
+      className="my-m overflow-x-auto rounded-lg bg-surface-low px-m py-s"><code className="font-mono text-on-surface-low">{code}</code></pre>
   }
-  return <div ref={ref} className="my-3 flex justify-center overflow-x-auto rounded-lg bg-surface-low px-m py-3" />
+  return <div ref={ref} className="my-m flex justify-center overflow-x-auto rounded-lg bg-surface-low px-m py-m" />
 }

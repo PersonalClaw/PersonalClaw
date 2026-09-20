@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -167,6 +167,142 @@ def _make_id(slug: str, session_key: str, created_at: str) -> str:
     return f"{slug}-{h}"
 
 
+# ── which skill is a proposal ABOUT ───────────────────────────────────────────
+
+
+def _live_resolver():
+    """A memoized ``(name) -> bool`` "does this skill exist" probe over ONE loader.
+
+    Memoized because :func:`coalesce_reason` asks it once per pending proposal and the
+    measured queue held twenty proposals naming the same two skills — an unmemoized probe
+    would ``rglob`` the skills tree twenty times to learn one answer.
+
+    ``load_skill(...) is not None`` and not ``skill_file(...)``, because that is the
+    predicate :func:`accept` has always resolved its target with, and a rail that disagreed
+    with accept about what exists would refuse a proposal accept could still apply.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
+    loader = SkillsLoader(install_builtins=False)
+    cache: dict[str, bool] = {}
+
+    def _resolves(name: str) -> bool:
+        if name not in cache:
+            cache[name] = bool(name) and loader.load_skill(name) is not None
+        return cache[name]
+
+    return _resolves
+
+
+def accept_target(prop: SkillProposal, *, resolves=None) -> str:
+    """The EXISTING skill an :func:`accept` would apply *prop* to, or ``""`` to MINT one.
+
+    🔴 THE single expression of "which skill is this proposal about", and it is single on
+    purpose. #409's cycle survived three fixes because that question had two answers: the
+    generator asked it (to label the ``kind``), ``accept`` asked it again (to pick overlay vs
+    create), and nothing asked it at the point where a proposal ENTERS the queue — so twenty
+    proposals about one skill were filed, each of them individually applicable and
+    collectively untriageable. Deriving the coalescing key and the accept target from the same
+    function is what makes "already awaiting review" mean the same thing as "would overlay the
+    same skill".
+
+    *resolves* is an injectable ``(name) -> bool`` existence probe (see
+    :func:`_live_resolver`) so a caller resolving many proposals pays for one loader.
+    """
+    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+    probe = resolves or _live_resolver()
+    if prop.kind == "refine" and prop.refine_target and probe(prop.refine_target):
+        return prop.refine_target
+    implied = f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
+    return implied if probe(implied) else ""
+
+
+def subject(prop: SkillProposal, *, resolves=None) -> str:
+    """The skill *prop* is about, resolvable or not — :func:`accept_target` or ``auto/<slug>``.
+
+    Total where ``accept_target`` is partial, because the coalescing question ("is the user
+    already being asked about this skill?") has an answer even for a slug nothing has
+    installed yet: two proposals to create the same new skill are still one review.
+    """
+    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+    return accept_target(prop, resolves=resolves) or f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
+
+
+#: How long an ACCEPTED refinement suppresses the next proposal for the same subject. A
+#: ROLLING window, not a calendar day: a calendar day lets a stumble at 23:59 and another at
+#: 00:01 both file, which is the burst this exists to prevent. (Lifted verbatim from
+#: ``refine.REFINE_CAP_WINDOW``, whose rule this now IS — see :func:`coalesce_reason`.)
+COALESCE_WINDOW = timedelta(hours=24)
+
+
+def _parse_iso(value: object) -> datetime | None:
+    """Parse an ISO 8601 stamp, tolerating a naive one by reading it as UTC.
+
+    ``None`` for anything unparseable, and the caller treats ``None`` as "cannot prove this
+    is old", i.e. it DOES suppress the next proposal. A record whose timestamp cannot be read
+    must not become a hole in the rail.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)  # 3.12+ accepts a trailing `Z`
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def coalesce_reason(prop: SkillProposal, *, now: datetime | None = None) -> str:
+    """``""`` when the queue may take *prop*, else why it must not — the ONE anti-flood rail.
+
+    🔴 This rule already existed and covered ONE of three producers. ``refine.cap_reason``
+    ("one refine per skill per day", reading both the pending queue and the accepted overlay)
+    was consulted only by the stumble arm; the after-turn skill ladder
+    (``after_turn_review._ladder_pass``) and the auto-skill synthesizer (``history.py``) went
+    straight to :func:`enqueue`. Measured on this worktree before the move: twenty
+    same-target proposals filed in twenty minutes, all twenty accepted by the queue, twenty
+    open inbox rows for ONE skill — while ``cap_reason`` for that skill correctly answered
+    "a refine proposal for auto/loop-worker is already pending". The rule was right; it was
+    in the wrong place. It lives at the SINK now, so a fourth producer inherits it by
+    construction rather than by remembering to ask.
+
+    Two halves, and neither alone is enough:
+
+    * **the pending queue** — a proposal about this subject is already awaiting review.
+      Window-LESS, deliberately: an unanswered review IS the coalescing point, and #409's
+      whole complaint is that the same target accrued twenty distinct reviews. (The stumble
+      arm's version windowed this half too, which let a 25-hour-old unanswered proposal admit
+      a second one — accretion without a ceiling.)
+    * **the accepted overlay** — this subject already took a refinement inside
+      :data:`COALESCE_WINDOW`. Needed because ``accept`` DELETES the queue entry, so the
+      queue alone forgets a refinement the instant the user approves it, and the next
+      proposal would land exactly when the user was engaged.
+
+    Refuses the NEWCOMER rather than superseding the pending row: the row may already be open
+    in front of the user, and a review that vanished mid-read is a worse failure than a
+    refinement that waits for the next pass.
+    """
+    at = now or _parse_iso(prop.created_at) or datetime.now(timezone.utc)
+    resolves = _live_resolver()
+    mine = subject(prop, resolves=resolves)
+    if not mine:  # pragma: no cover - `subject` is total; belt and braces
+        return ""
+    for other in list_pending(_surface=False):
+        if other.id == prop.id:
+            continue  # a re-enqueue of the SAME record is idempotent, not a flood
+        if subject(other, resolves=resolves) == mine:
+            return f"a proposal for {mine} is already awaiting review ({other.id})"
+    from personalclaw.skills import overlays
+
+    last = overlays.last_refinement(mine)
+    if last is not None:
+        stamp = _parse_iso(last.get("created_at"))
+        if stamp is None or stamp >= at - COALESCE_WINDOW:
+            return f"{mine} already took a refinement in the last 24h"
+    return ""
+
+
 def enqueue(
     *,
     slug: str,
@@ -181,8 +317,10 @@ def enqueue(
     source_excerpt: str = "",
 ) -> SkillProposal | None:
     """Add a synthesized skill to the review queue. Returns the proposal, or None
-    if the queue is full or inputs are empty. The source excerpt is FENCED so a
-    poisoned trace can't direct any model that later renders it."""
+    if the queue is full, the inputs are empty, or the user is ALREADY being asked about this
+    skill (:func:`coalesce_reason` — the one anti-flood rail every producer inherits here).
+    The source excerpt is FENCED so a poisoned trace can't direct any model that later
+    renders it."""
     if not (slug and description and procedure_md):
         return None
     d = _proposals_dir()
@@ -213,6 +351,12 @@ def enqueue(
         trigger=trigger,
         source_excerpt=fenced,
     )
+    # The rail sits AFTER the record is built and BEFORE it is written, because the coalescing
+    # key is derived from the proposal itself (`subject`) — the same resolution `accept` runs.
+    reason = coalesce_reason(prop)
+    if reason:
+        logger.info("skill-proposal coalesced: dropping %r — %s", slug, reason)
+        return None
     try:
         atomic_write(d / f"{pid}.json", json.dumps(prop.to_dict(), indent=2))
     except OSError:
@@ -329,8 +473,14 @@ def _load(pid: str) -> SkillProposal | None:
         return None
 
 
-def list_pending() -> list[SkillProposal]:
-    """All pending proposals, newest-first by created_at."""
+def list_pending(*, _surface: bool = True) -> list[SkillProposal]:
+    """All pending proposals, newest-first by created_at.
+
+    ``_surface=False`` skips the inbox backfill. Private-by-underscore because exactly one
+    caller wants it: :func:`coalesce_reason` runs INSIDE :func:`enqueue`, and surfacing rows
+    from the middle of an enqueue would raise inbox items for other proposals as a side effect
+    of filing this one — and would re-enter the inbox store while ``enqueue`` is mid-write.
+    """
     d = _proposals_dir()
     if not d.is_dir():
         return []
@@ -343,7 +493,8 @@ def list_pending() -> list[SkillProposal]:
         except (OSError, ValueError, TypeError):
             continue
     out.sort(key=lambda r: r.created_at, reverse=True)
-    backfill_inbox_items(out)
+    if _surface:
+        backfill_inbox_items(out)
     return out
 
 
@@ -463,11 +614,7 @@ def accept(
     if prop is None:
         raise AcceptError(f"no proposal {pid!r}")
     from personalclaw.skills import overlays
-    from personalclaw.skills.loader import (
-        AUTO_SKILL_NAMESPACE,
-        AutoSkillProvenance,
-        SkillsLoader,
-    )
+    from personalclaw.skills.loader import AutoSkillProvenance, SkillsLoader
 
     loader = SkillsLoader(install_builtins=False)
     eff_description = description or prop.description
@@ -475,7 +622,9 @@ def accept(
 
     # ── overlay an EXISTING skill, or mint a new one ──
     #
-    # ONE decision, asked once: is there already a skill this proposal is about?
+    # ONE decision, asked once, by `accept_target` — which the enqueue-time coalescing rail
+    # also derives its key from, so "already awaiting review" and "would overlay the same
+    # skill" cannot drift apart:
     #
     #   * `kind="refine"` names its target explicitly. This is #303, fixed earlier: accept() used to
     #     route EVERY proposal through `create_auto_skill(slug)`, so a refine of an existing skill
@@ -490,28 +639,22 @@ def accept(
     # A 21st proposal for `loop-worker` IS a refinement of `loop-worker`, whatever the row is
     # labelled, so it overlays. That is also the recovery path for a queue the bug already filled:
     # no generator fix can reach a proposal already on disk.
-    target = ""
-    if prop.kind == "refine" and prop.refine_target:
-        if loader.load_skill(prop.refine_target) is not None:
-            target = prop.refine_target
-        else:
-            # Target vanished (deleted since proposal) — create instead of 500'ing, so the Accept
-            # button still resolves the proposal.
-            logger.info(
-                "refine target %r for proposal %s no longer exists; creating new skill",
-                prop.refine_target,
-                pid,
-            )
-    if not target:
-        implied = f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
-        if loader.load_skill(implied) is not None:
-            logger.info(
-                "proposal %s is labelled %r but %s already exists; overlaying it",
-                pid,
-                prop.kind,
-                implied,
-            )
-            target = implied
+    target = accept_target(prop)
+    if target and target != prop.refine_target:
+        logger.info(
+            "proposal %s is labelled %r but %s already exists; overlaying it",
+            pid,
+            prop.kind,
+            target,
+        )
+    elif not target and prop.kind == "refine" and prop.refine_target:
+        # Target vanished (deleted since proposal) — create instead of 500'ing, so the Accept
+        # button still resolves the proposal.
+        logger.info(
+            "refine target %r for proposal %s no longer exists; creating new skill",
+            prop.refine_target,
+            pid,
+        )
 
     if target:
         try:

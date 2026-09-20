@@ -514,7 +514,21 @@ def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, s
 
     Each dict contains: ``{name, description, path, source}``.
     The ``source`` field is the discovery directory name.
+
+    🔴 RECURSIVE, through ``loader.iter_skill_files`` — the same enumeration the runtime
+    loader uses. This walked ONE level with ``iterdir()``, so ``auto/`` (the namespace holding
+    every accepted skill proposal, with no ``SKILL.md`` of its own) was skipped whole and both
+    consumers went blind to it: ``personalclaw skills list`` printed none of them, and the
+    loop classifier's capability catalog (``handlers/loop_routes._installed_capability_
+    catalogs``) could never rank a skill the user had just approved. Measured before the fix:
+    3 ``auto/*`` skills on disk, 0 in this list (#302, #409).
+
+    ``name`` is the path RELATIVE to the discovery root, so ``auto/loop-worker`` keeps its
+    namespace — which is what the loader calls it and what stops it colliding in ``seen_names``
+    with a top-level skill of the same basename.
     """
+    from personalclaw.skills.loader import iter_skill_files
+
     search_paths = list(SKILL_DISCOVERY_PATHS)
     if extra_paths:
         search_paths.extend(extra_paths)
@@ -525,21 +539,14 @@ def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, s
     for base in search_paths:
         if not base.is_dir():
             continue
-        for entry in sorted(base.iterdir()):
-            if not entry.is_dir():
-                continue
-            skill_md = entry / _SKILL_FILENAME
-            if not skill_md.is_file():
-                continue
-            name = entry.name
+        for name, skill_md in iter_skill_files(base):
             if name in seen_names:
                 continue  # project-level wins; skip duplicates
             seen_names.add(name)
-            description = _parse_description(skill_md)
             skills.append(
                 {
                     "name": name,
-                    "description": description,
+                    "description": _parse_description(skill_md),
                     "path": str(skill_md),
                     "source": str(base),
                 }

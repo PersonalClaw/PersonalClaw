@@ -164,16 +164,27 @@ def _project_skills_dir() -> Path | None:
     return None
 
 
-def _iter_skill_files(base: Path) -> list[tuple[str, Path]]:
+def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
     """Recursively find all SKILL.md files under *base*.
 
     Returns ``(relative_name, skill_file_path)`` pairs sorted by name.
     The relative name uses ``/`` as separator (e.g. ``utils/tiny-url``).
+
+    🔴 THE enumeration, and public for that reason. Every surface answering "what skills
+    exist" has to call this one, because a surface that walked ONE level with ``iterdir()``
+    skipped the ``auto/`` namespace directory whole — it holds every accepted skill proposal
+    and has no ``SKILL.md`` of its own — so the skills were loaded into every agent's context
+    while the listing reported none of them (#302, #409). Four surfaces did exactly that.
+
+    A ``SKILL.md`` at *base* itself names no skill and is skipped: the key is the path relative
+    to the root, and the root's own relative path is ``"."``.
     """
     results: list[tuple[str, Path]] = []
     if not base.exists():
         return results
     for skill_file in sorted(base.rglob("SKILL.md")):
+        if skill_file.parent == base:
+            continue
         # Name is the parent dir's path relative to base
         rel = skill_file.parent.relative_to(base)
         name = str(rel).replace("\\", "/")
@@ -193,7 +204,7 @@ def _ensure_builtin_skills(base: Path) -> None:
     for src_root in (_project_skills_dir(), _BUILTIN_SKILLS_DIR):
         if not src_root or not src_root.exists():
             continue
-        for name, src_file in _iter_skill_files(src_root):
+        for name, src_file in iter_skill_files(src_root):
             source_names.add(name)
             src_dir = src_file.parent
             dest_dir = base / name
@@ -479,8 +490,8 @@ class SkillsLoader:
         # below (an agent-local skill overrides a same-named global/bundled one).
         results: list[tuple[str, Path]] = []
         if self._agent_dir is not None and self._agent_dir.is_dir():
-            results.extend(_iter_skill_files(self._agent_dir))
-        results.extend(_iter_skill_files(self._dir))
+            results.extend(iter_skill_files(self._agent_dir))
+        results.extend(iter_skill_files(self._dir))
         if self._scoped:
             return results
         from personalclaw.skills.marketplace import SKILL_DISCOVERY_PATHS
@@ -488,7 +499,7 @@ class SkillsLoader:
         seen = {name for name, _ in results}
         for extra_dir in SKILL_DISCOVERY_PATHS:
             if extra_dir.is_dir() and extra_dir != self._dir:
-                for name, path in _iter_skill_files(extra_dir):
+                for name, path in iter_skill_files(extra_dir):
                     if name not in seen:
                         results.append((name, path))
                         seen.add(name)

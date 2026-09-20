@@ -126,7 +126,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           string (`open.title`, `open.name`, `selectedEntity`, …), so all of them gain it; a future JSX
           title simply gets nothing rather than something wrong. */}
       <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate" title={typeof title === 'string' ? title : undefined}>{title}</h2></div>
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-xs shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}
           size={34}

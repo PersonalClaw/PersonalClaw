@@ -165,7 +165,7 @@ function SurfacingSimulator() {
           ratchet counts bespoke chrome, and these two carry the accessible-name plumbing (an
           explicit `ariaLabel` wins, which is what a control outside a `Field` needs). */}
       <form
-        className="mt-2 flex items-center gap-2"
+        className="mt-s flex items-center gap-s"
         onSubmit={(e) => { e.preventDefault(); if (text.trim() && !busy) void run() }}
       >
         <TextInput
@@ -183,17 +183,17 @@ function SurfacingSimulator() {
         </Button>
       </form>
       {err !== null && (
-        <div role="alert" data-type="caption" className="mt-2 text-on-surface-low">
+        <div role="alert" data-type="caption" className="mt-s text-on-surface-low">
           Couldn't simulate surfacing: {String((err as Error)?.message || err)}
         </div>
       )}
       {rows !== null && rows.length === 0 && (
-        <div data-type="caption" className="mt-2 text-on-surface-low">No skill scored against that message.</div>
+        <div data-type="caption" className="mt-s text-on-surface-low">No skill scored against that message.</div>
       )}
       {rows !== null && rows.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+        <div className="mt-s flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
           {rows.map((c) => (
-            <div key={c.key} data-type="caption" className="flex items-baseline justify-between gap-2">
+            <div key={c.key} data-type="caption" className="flex items-baseline justify-between gap-s">
               <span className={c.included ? 'text-on-surface-var' : 'text-on-surface-low'}>
                 {c.key} <span className="text-on-surface-low">· {c.reason}</span>
               </span>
@@ -242,7 +242,7 @@ function AutomationSimulator() {
         What one automation would do on its next fire — the resolved schedule, the rendered action,
         the session it targets, what it is allowed to do, and its observe-mode dry fire.
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-s flex items-center gap-s">
         <Select
           value={pick}
           onChange={(v) => { setPick(v); setDesc(null); setErr(null) }}
@@ -261,12 +261,12 @@ function AutomationSimulator() {
           sentence would promise a live update the panel does not do — and the empty-state-promise
           census exists precisely to keep that shape out. */}
       {empty && (
-        <div data-type="caption" className="mt-2 text-on-surface-low">
+        <div data-type="caption" className="mt-s text-on-surface-low">
           No automations yet. Create one on the Automations page, then reopen this panel.
         </div>
       )}
       {err !== null && (
-        <div role="alert" data-type="caption" className="mt-2 text-on-surface-low">
+        <div role="alert" data-type="caption" className="mt-s text-on-surface-low">
           Couldn't describe that automation: {String((err as Error)?.message || err)}
         </div>
       )}
@@ -282,7 +282,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
   const cg = d.capability_grants
   const om = d.observe_mode
   return (
-    <div className="mt-2 flex flex-col gap-1.5 border-t border-outline-variant/30 pt-2">
+    <div className="mt-s flex flex-col gap-1.5 border-t border-outline-variant/30 pt-s">
       {/* 1 — resolved next fire. `source` is rendered, not just the instant: an "armed" row is
           one the tick will act on, a "computed" one is enabled-but-inert (it has no
           `next_fire_at` yet), and conflating them hides exactly the automations a user comes
@@ -307,9 +307,9 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
         {ac.render_error
           ? <div role="alert" style={{ color: 'var(--color-warning)' }}>Would fail to render: {ac.render_error}</div>
           : ac.rendered
-            ? <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">{ac.rendered}</pre>
+            ? <pre data-type="caption" className="mt-xs overflow-x-auto rounded-md bg-surface px-2.5 py-s text-on-surface-low">{ac.rendered}</pre>
             : null}
-        <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">
+        <pre data-type="caption" className="mt-xs overflow-x-auto rounded-md bg-surface px-2.5 py-s text-on-surface-low">
           {JSON.stringify(ac.config, null, 2)}
         </pre>
       </Fact>
@@ -350,7 +350,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
             what would run instead of running it.
           </div>
         )}
-        <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">{om.detail}</pre>
+        <pre data-type="caption" className="mt-xs overflow-x-auto rounded-md bg-surface px-2.5 py-s text-on-surface-low">{om.detail}</pre>
         {om.gate_plan.enforced && om.gate_plan.enforced.length > 0 && (
           <div className="text-on-surface-low">Gates enforced: {om.gate_plan.enforced.join(', ')}</div>
         )}
@@ -488,9 +488,9 @@ export function RemediationSection() {
             exactly where it computed `reachable`; `blocked_by` is that sentence, carried
             through instead of dropped, so the row names the prerequisite and the next step. */}
         {scored.length > 0 && (
-          <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+          <div className="mt-s flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
             {scored.map((d) => (
-              <div key={d.key} data-type="caption" className="flex items-baseline justify-between gap-2">
+              <div key={d.key} data-type="caption" className="flex items-baseline justify-between gap-s">
                 <span className={d.reachable ? 'text-on-surface-var' : 'text-on-surface-low'}>
                   {capLabel(d.key)}
                   <span className="ml-1.5 text-on-surface-low tabular-nums">×{d.count}</span>
@@ -517,7 +517,7 @@ export function RemediationSection() {
             reason (most often "target_score already met"), which is exactly the state that makes
             a nonzero deficit list look contradictory — so say it. */}
         {snap && (
-          <div data-type="caption" className="mt-2 border-t border-outline-variant/30 pt-2 text-on-surface-low">
+          <div data-type="caption" className="mt-s border-t border-outline-variant/30 pt-s text-on-surface-low">
             {snap.plan.length > 0
               ? <>Run now would: {snap.plan.map((j) => capLabel(j.id)).join(' · ')}</>
               : scored.some((d) => d.reachable)
@@ -537,7 +537,7 @@ export function RemediationSection() {
             the one thing this list exists to catch, so failures are counted on the summary line
             and the newest pass names each job's outcome underneath. */}
         {snap && snap.recent_runs.length > 0 && (
-          <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+          <div className="mt-s flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
             {snap.recent_runs.slice(0, 5).map((r, i) => {
               // `=== 'error'`: `skipped_cooldown` is the storm guard working, not a failure. See
               // the same discrimination on the toast level above.
@@ -554,7 +554,7 @@ export function RemediationSection() {
                       bury the score this section is about; the latest one is the pass a reader is
                       actually asking about, and older failures still show in its count above. */}
                   {i === 0 && r.jobs.map((j, k) => (
-                    <div key={k} className="ml-3 text-on-surface-low">
+                    <div key={k} className="ml-m text-on-surface-low">
                       {capLabel(j.id)} — {j.status}{(j.error || j.detail) ? `: ${j.error || j.detail}` : ''}
                     </div>
                   ))}
@@ -578,14 +578,14 @@ function StatusBanner({ report }: { report: DoctorReport }) {
   const stamp = <span className="text-on-surface-low"> · checked {relPast(report.generated_at)}</span>
   if (report.core_ok && report.ok) {
     return (
-      <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-success)' }}>
+      <div data-type="body-s" className="flex items-center gap-s" style={{ color: 'var(--color-success)' }}>
         <CheckCircle2 size={16} /> <span>All systems healthy{stamp}</span>
       </div>
     )
   }
   if (!report.core_ok) {
     return (
-      <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-error)' }}>
+      <div data-type="body-s" className="flex items-center gap-s" style={{ color: 'var(--color-error)' }}>
         <XCircle size={16} />
         <span>Gateway core failing{report.restart_suggested ? ' — a restart may be required' : ''}{stamp}</span>
       </div>
@@ -593,7 +593,7 @@ function StatusBanner({ report }: { report: DoctorReport }) {
   }
   // core OK, but a capability degraded — the doctrine framing.
   return (
-    <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-warning)' }}>
+    <div data-type="body-s" className="flex items-center gap-s" style={{ color: 'var(--color-warning)' }}>
       <AlertTriangle size={16} />
       <span>Core healthy · {capLabel(report.worst)} degraded{stamp}</span>
     </div>
@@ -606,7 +606,7 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
   const color = cap.ok ? 'var(--color-success)' : cap.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-s">
         <Icon size={16} style={{ color }} />
         <span data-type="body-m" className="text-on-surface">{capLabel(name)}</span>
         {!cap.ok && (
@@ -619,7 +619,7 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
           <InvestigateButton kind="doctor_finding" id={name} backLink="#/settings/doctor" size={28} />
         </span>
       </div>
-      <div className="mt-2 flex flex-col gap-1.5">
+      <div className="mt-s flex flex-col gap-1.5">
         {cap.probes.map((p) => <ProbeRow key={p.id} probe={p} onFixed={onFixed} />)}
       </div>
     </div>
@@ -649,7 +649,7 @@ function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
     } finally { setBusy(false) }
   }
   return (
-    <Button variant="secondary" size="xs" onClick={run} loading={busy} className="mt-1 shrink-0">
+    <Button variant="secondary" size="xs" onClick={run} loading={busy} className="mt-xs shrink-0">
       <Wrench size={13} /> Fix
     </Button>
   )
@@ -673,21 +673,21 @@ function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void 
   )
   if (!hasEvidence) {
     return (
-      <div className="flex items-start gap-2 border-b border-outline-variant/30 pb-1.5 last:border-0 last:pb-0">
+      <div className="flex items-start gap-s border-b border-outline-variant/30 pb-1.5 last:border-0 last:pb-0">
         {head}
       </div>
     )
   }
   return (
     <details className="group border-b border-outline-variant/30 pb-1.5 last:border-0 last:pb-0">
-      <summary className="flex cursor-pointer list-none items-start gap-2">
+      <summary className="flex cursor-pointer list-none items-start gap-s">
         {head}
         <ChevronRight
           size={14}
-          className="mt-1 shrink-0 text-on-surface-low transition-transform group-open:rotate-90"
+          className="mt-xs shrink-0 text-on-surface-low transition-transform group-open:rotate-90"
         />
       </summary>
-      <pre data-type="caption" className="mt-1.5 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">
+      <pre data-type="caption" className="mt-1.5 overflow-x-auto rounded-md bg-surface px-2.5 py-s text-on-surface-low">
         {JSON.stringify(probe.evidence, null, 2)}
       </pre>
     </details>

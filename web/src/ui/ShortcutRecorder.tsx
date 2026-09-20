@@ -84,7 +84,7 @@ export function ShortcutRecorder({
         : `${label}: ${format(value)} — activate to change`}
       aria-describedby={hintId}
       data-type="body-s"
-      className={`inline-flex h-9 min-w-32 items-center justify-center rounded-md px-3 font-mono transition-colors ${
+      className={`inline-flex h-9 min-w-32 items-center justify-center rounded-md px-m font-mono transition-colors ${
         recording
           ? 'bg-surface-high text-on-surface-low ring-2 ring-inset ring-primary'
           : 'bg-surface-high text-on-surface hover:brightness-110'}`}

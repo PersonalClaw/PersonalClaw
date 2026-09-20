@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import shutil
 import socket
@@ -47,6 +48,7 @@ import browse_chrome
 import pytest
 
 from personalclaw.browse import cdp
+from personalclaw.browse.transport import CdpTransportError
 from personalclaw.config.loader import AppConfig
 from personalclaw.net import policy as net_policy
 
@@ -178,6 +180,54 @@ class _Site:
 # ── the browser ───────────────────────────────────────────────────────────────
 
 
+async def _prove_page_attachment(page_ws: str) -> None:
+    """Require one successful Page-domain round trip before the fixture yields."""
+    from personalclaw.browse.transport import WebSocketCdpTransport
+
+    inner = await WebSocketCdpTransport.connect(page_ws)
+    try:
+        await inner.send(cdp.PAGE_ENABLE)
+    finally:
+        await inner.close()
+
+
+def _wait_for_attached_page(port: int, deadline: float, stderr_log) -> str:
+    """Poll Chrome until a page target answers a Page command under one deadline."""
+    while time.time() < deadline:
+        page_ws = None
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=1) as r:
+                for target in json.load(r):
+                    if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
+                        page_ws = target["webSocketDebuggerUrl"]
+                        break
+        except Exception:
+            pass
+
+        if page_ws is not None:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            try:
+                asyncio.run(asyncio.wait_for(_prove_page_attachment(page_ws), timeout=remaining))
+            except TimeoutError:
+                break
+            except CdpTransportError as exc:
+                if _NOT_ATTACHED not in str(exc):
+                    raise
+            else:
+                return page_ws
+
+        time.sleep(0.2)
+
+    stderr_log.seek(0)
+    detail = stderr_log.read().decode("utf-8", "replace").strip()
+    raise AssertionError(
+        "chrome never exposed a page target over CDP; its stderr was:\n"
+        + (detail or "(chrome wrote nothing to stderr)")
+    )
+
+
 @contextlib.contextmanager
 def _browser(chrome: str):
     """Launch a headless browser and yield ONE page target's WebSocket URL.
@@ -218,26 +268,8 @@ def _browser(chrome: str):
         stderr=stderr_log,
     )
     try:
-        page_ws = None
         deadline = time.time() + 30
-        while time.time() < deadline and page_ws is None:
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=1) as r:
-                    for target in json.load(r):
-                        if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
-                            page_ws = target["webSocketDebuggerUrl"]
-                            break
-            except Exception:
-                pass
-            if page_ws is None:
-                time.sleep(0.2)
-        if page_ws is None:
-            stderr_log.seek(0)
-            detail = stderr_log.read().decode("utf-8", "replace").strip()
-            raise AssertionError(
-                "chrome never exposed a page target over CDP; its stderr was:\n"
-                + (detail or "(chrome wrote nothing to stderr)")
-            )
+        page_ws = _wait_for_attached_page(port, deadline, stderr_log)
         yield page_ws
     finally:
         proc.terminate()
@@ -550,6 +582,51 @@ def test_a_real_client_side_redirect_to_an_allowed_host_is_left_alone(live: dict
 
 
 # ── the attribution rail itself, which needs no browser ───────────────────────
+
+
+def test_the_browser_repolls_when_a_page_target_is_not_attached() -> None:
+    target_lists = iter(
+        [
+            [{"type": "page", "webSocketDebuggerUrl": "ws://stale"}],
+            [{"type": "page", "webSocketDebuggerUrl": "ws://attached"}],
+        ]
+    )
+
+    def _open_targets(*_args: object, **_kwargs: object):
+        return contextlib.nullcontext(io.StringIO(json.dumps(next(target_lists))))
+
+    probe = mock.AsyncMock(
+        side_effect=[
+            CdpTransportError(f"the browser rejected the command: {_NOT_ATTACHED}"),
+            None,
+        ]
+    )
+    with (
+        mock.patch.object(urllib.request, "urlopen", side_effect=_open_targets) as poll,
+        mock.patch(f"{__name__}._prove_page_attachment", probe),
+        mock.patch.object(time, "sleep"),
+    ):
+        page_ws = _wait_for_attached_page(9222, time.time() + 1, io.BytesIO())
+
+    assert page_ws == "ws://attached"
+    assert poll.call_count == 2
+    assert [call.args[0] for call in probe.await_args_list] == ["ws://stale", "ws://attached"]
+
+
+def test_chrome_never_exposed_a_page_target_still_fails() -> None:
+    def _no_targets(*_args: object, **_kwargs: object):
+        return contextlib.nullcontext(io.StringIO("[]"))
+
+    stderr_log = io.BytesIO(b"forced no page target")
+    with (
+        mock.patch.object(urllib.request, "urlopen", side_effect=_no_targets),
+        mock.patch.object(time, "time", side_effect=[0.0, 1.0]),
+        mock.patch.object(time, "sleep"),
+        pytest.raises(AssertionError, match="chrome never exposed a page target") as exc_info,
+    ):
+        _wait_for_attached_page(9222, 0.5, stderr_log)
+
+    assert "forced no page target" in str(exc_info.value)
 
 
 def test_an_unattached_session_is_attributed_to_the_environment() -> None:

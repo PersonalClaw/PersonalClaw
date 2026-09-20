@@ -19,11 +19,17 @@ import { SearchPanel } from './SearchPanel'
 const searchProviders = vi.fn()
 const searchActive = vi.fn()
 const setActiveSearchProvider = vi.fn()
+const tools = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     searchProviders: (...a: unknown[]) => searchProviders(...a),
     searchActive: (...a: unknown[]) => searchActive(...a),
     setActiveSearchProvider: (...a: unknown[]) => setActiveSearchProvider(...a),
+    // Mocked even though this file asserts nothing about it: the panel calls all three inside one
+    // `Promise.all`, so an absent `api.tools` is a TypeError thrown before any `.catch` can attach
+    // — the whole panel would render its skeleton and every assertion below would time out on a
+    // failure that names the wrong thing.
+    tools: (...a: unknown[]) => tools(...a),
   },
 }))
 
@@ -46,6 +52,8 @@ describe('the search bind list announces which provider is bound, and to what', 
       { name: 'tavily', display_name: 'Tavily', capabilities: { ...CAPS, supports_fetch: true }, available: false },
     ])
     searchActive.mockResolvedValue({ 'search-general': ['searxng'] })
+    // The tool exists, so this file's subject — the bind list — is the only thing on screen.
+    tools.mockResolvedValue([{ name: 'web_search', description: '', provider: 'web-tools' }])
   })
 
   it('the group is named with its use case, so four sibling lists are distinguishable', async () => {

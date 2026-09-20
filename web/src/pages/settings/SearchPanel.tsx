@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } from 'lucide-react'
-import { api, type SearchProviderInfo } from '../../lib/api'
+import { api, type SearchProviderInfo, type ToolItem } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 import { DisclosureCard } from '../../ui/DisclosureCard'
+import { TextLink } from '../../ui/TextLink'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
 // one provider per use-case; an unbound one falls back to the general binding.
@@ -16,20 +17,56 @@ const USE_CASE_META: Record<string, { label: string; description: string; icon: 
 }
 const USE_CASE_ORDER = ['search-general', 'search-news', 'search-financial', 'fetch-article']
 
+/** The tool that CALLS whatever is bound here. A search provider is inert without it:
+ *  binding one registers a provider, not a tool the agent can invoke (#278 — a user
+ *  installed DuckDuckGo, bound it, saw `available: true`, and chat still answered
+ *  "no web-search tool in the catalog"). Predicated on the TOOL NAME, not on the app
+ *  that ships it, so any app providing `web_search` satisfies the panel and no bundle
+ *  name gates the check. */
+const SEARCH_TOOL = 'web_search'
+/** The app that ships `web_search` today — named in COPY and in a Store deep link only
+ *  (the user has to find it there), never in the predicate above. `open=<name>` opens that
+ *  Store card's detail panel; an unknown name degrades to the plain Store grid rather than
+ *  erroring, so this link cannot strand a user if the bundle is ever renamed. */
+const SEARCH_TOOL_APP = { name: 'web-tools', label: 'Native Tools (Web)' }
+const SEARCH_TOOL_APP_HREF = `#/apps?view=store&open=${SEARCH_TOOL_APP.name}`
+/** …and the seven search-provider apps, deep-linked by the `search` tag every one of them
+ *  declares — the bare Store is 38 cards. */
+const STORE_SEARCH_APPS_HREF = '#/apps?view=store&stag=search'
+/** The panel's dashed advisory shell, declared once because it now carries TWO notes — and because
+ *  two shrink-only ratchets meet on this string. `spacingTokenRamp` wants an exact-rung value spelled
+ *  as a token; `rowGroupPadding` caps the token-spelled roomy slabs that compete with `RowGroup`. A
+ *  second literal copy trips one of them whichever way it is spelled, so: one declaration, two uses,
+ *  and the census counts these three utilities once. (Spelling either offending pair out in this
+ *  comment also trips the second rail — it matches the raw file, comments included.) */
+const NOTE_SHELL = 'mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-3 text-on-surface-low'
+
 /** Search → bind a configured search provider to each use-case. Reads
  *  /api/search/providers (registered providers + capabilities) + /api/search/active
- *  (current bindings); writes via PUT /api/search/active/{use_case}. Single-select —
- *  configure providers (endpoint / API key) over in Providers. */
+ *  (current bindings) + /api/tools (does a `web_search` tool exist at all); writes via
+ *  PUT /api/search/active/{use_case}. Single-select — configure providers (endpoint /
+ *  API key) over in Providers. */
 export function SearchPanel() {
   const { data, refresh } = useQuery('settings:search', async () => {
-    const [providers, active] = await Promise.all([
+    const [providers, active, tools] = await Promise.all([
       api.searchProviders().catch(() => [] as SearchProviderInfo[]),
       api.searchActive().catch(() => ({} as Record<string, string[]>)),
+      // `null`, NOT `[]`, on failure: "no tools came back" and "the tool list says there is
+      // no web_search" are different claims, and only the second one may accuse the user of a
+      // missing app. An unreachable /api/tools renders no note rather than a false one.
+      api.tools().catch(() => null as ToolItem[] | null),
     ])
-    return { providers, active }
+    return { providers, active, tools }
   }, { persist: true })
   const providers = data?.providers
   const active = data?.active ?? {}
+  const tools = data?.tools ?? null
+  // Registered-but-no-tool is the whole gap. Registered (not "bound") is the right left-hand
+  // side because the registry's implicit fallback searches over ANY registered provider when a
+  // use-case is unbound (search_providers/registry.py "2. Implicit fallback"), so a provider is
+  // enough to make the missing tool the only thing standing between the user and a web search.
+  const missingSearchTool = providers !== undefined && providers.length > 0
+    && tools !== null && !tools.some((t) => t.name === SEARCH_TOOL)
 
   const reloadActive = () => { invalidateKeys('settings:search'); refresh() }
 
@@ -40,8 +77,13 @@ export function SearchPanel() {
       <PanelHeader title="Search" hint="Bind a search provider to each use case. Configure providers (endpoint / API key) in Providers, then assign them here. An unbound use case falls back to General search." />
       <Section>
         {providers.length === 0 && (
-          <div data-type="body-s" className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
-            No search providers configured. Enable <span className="text-on-surface">SearXNG</span> or <span className="text-on-surface">Tavily</span> in <span className="text-on-surface">Providers</span> and add their endpoint / API key.
+          <div data-type="body-s" className={`${NOTE_SHELL} text-center`}>
+            No search providers configured. Install a search provider app from the <TextLink href={STORE_SEARCH_APPS_HREF} ink="emphasis" className="underline">Store</TextLink> (some need no API key at all), then add its endpoint / API key in <span className="text-on-surface">Providers</span> if it asks for one.
+          </div>
+        )}
+        {missingSearchTool && (
+          <div data-type="body-s" className={NOTE_SHELL}>
+            Binding a provider here is not enough on its own: the agent has no <code className="text-on-surface">{SEARCH_TOOL}</code> tool yet, so a chat turn cannot search. It ships in the <span className="text-on-surface">{SEARCH_TOOL_APP.label}</span> app — <TextLink href={SEARCH_TOOL_APP_HREF} ink="emphasis" className="underline">install it from the Store</TextLink>.
           </div>
         )}
         {USE_CASE_ORDER.map((uc) => (

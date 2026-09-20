@@ -1150,8 +1150,18 @@ export interface ScheduleJob {
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
   created_ts?: number | null
-  last_status?: string | null              // "ok" | "error" (the action-dispatch result)
+  // 🔴 NOT a run outcome. `schedule_view.py` aliases the trigger's `health_status` onto this name
+  // for wire compatibility, so its vocabulary is `TriggerHealth` (`ok | degraded | parked |
+  // failing`) plus the legacy `error` — and it DEFAULTS to `ok` on a trigger that has never fired.
+  // Reading it as a run status is the two-vocabularies-one-dot defect (issue 496): `triggerMeta`
+  // lands it in `Trigger.health` and `triggerStatusMeta` owns when it may speak.
+  last_status?: string | null
   last_run_status?: string | null          // newest run record status: success|failure|timeout|launched (T7, persistent)
+  // The LIFECYCLE state (`active | paused | autopaused | parked | quarantined | retired`). The clock
+  // projection was the last of the three to omit it, so an autopaused and a quarantined schedule
+  // both arrived as `state: null` and rendered the identical "failing" dot (issue 496).
+  state?: string | null
+  run_count?: number
   agent?: string | null; model?: string | null
   channel?: string | null; approval_mode?: string | null
   silent?: boolean; strict_schedule?: boolean; timezone?: string | null
@@ -7314,7 +7324,10 @@ export const api = {
   openInboxItem: (id: string) => post<{ ok: boolean }>(`/api/inbox/${encodeURIComponent(id)}/open`),
   favoriteInboxItem: (id: string, favorited: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/inbox/${encodeURIComponent(id)}/favorite`, { favorited }),
-  dismissAllInbox: () => post<{ ok: boolean; dismissed: number }>('/api/inbox/dismiss-all'),
+  // `proposals_rejected`: dismissing a proposal row ANSWERS the proposal it mirrors, so the
+  // Skills page's queue falls with the inbox's rather than the two reporting one queue twice.
+  dismissAllInbox: () =>
+    post<{ ok: boolean; dismissed: number; proposals_rejected: number }>('/api/inbox/dismiss-all'),
   restartInbox: () => post<{ ok: boolean; error?: string }>('/api/inbox/restart'),
   inboxSettings: () => get<{ settings: InboxSettings }>('/api/inbox/settings').then((d) => d.settings),
   saveInboxSettings: (s: Partial<InboxSettings>) => put<{ settings: InboxSettings }>('/api/inbox/settings', s),

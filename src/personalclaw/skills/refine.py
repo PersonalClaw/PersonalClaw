@@ -32,13 +32,9 @@ from __future__ import annotations
 import difflib
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
-
-# The daily cap is a ROLLING 24h window, not a calendar day: a calendar day lets a stumble at
-# 23:59 and another at 00:01 both file, which is the burst the cap exists to prevent.
-REFINE_CAP_WINDOW = timedelta(hours=24)
 
 _DIFF_MAX = 6000
 _QUOTE_MAX = 400
@@ -70,22 +66,6 @@ _DESCRIPTION = {
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
-
-
-def _parse_iso(value: object) -> datetime | None:
-    """Parse an ISO 8601 stamp, tolerating a naive one by reading it as UTC.
-
-    Returns ``None`` for anything unparseable, and every caller treats ``None`` as "cannot
-    prove this is recent" — i.e. it does NOT satisfy the cap. A record whose timestamp cannot
-    be read must not silence the next proposal.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def refinement_description(trigger: str) -> str:
@@ -129,36 +109,6 @@ def _blockquote(text: str) -> str:
     except Exception:  # pragma: no cover - redaction must never block the proposal
         logger.debug("refine: redaction failed", exc_info=True)
     return f"> {flat}"
-
-
-def cap_reason(skill: str, *, now: datetime | None = None) -> str:
-    """``""`` when *skill* may take another refine proposal, else why it may not.
-
-    Reads BOTH halves of "one refine per skill per day", because either alone is wrong:
-
-    * the pending queue — a proposal already waiting for review;
-    * the skill's overlay — a refinement already ACCEPTED. ``accept`` deletes the queue entry,
-      so the queue on its own forgets a same-day refinement the instant the user approves it,
-      and the second proposal of the day would slip through exactly when the user was engaged.
-    """
-    at = now or _now()
-    cutoff = at - REFINE_CAP_WINDOW
-    try:
-        from personalclaw.skills import overlays, proposals
-    except Exception:  # pragma: no cover - import failure is not a licence to spam
-        return "skills store unavailable"
-    for prop in proposals.list_pending():
-        if prop.kind != "refine" or prop.refine_target != skill:
-            continue
-        stamp = _parse_iso(prop.created_at)
-        if stamp is None or stamp >= cutoff:
-            return f"a refine proposal for {skill} is already pending"
-    last = overlays.last_refinement(skill)
-    if last is not None:
-        stamp = _parse_iso(last.get("created_at"))
-        if stamp is not None and stamp >= cutoff:
-            return f"{skill} already took a refinement in the last 24h"
-    return ""
 
 
 def proposed_body(skill: str, *, description: str, procedure_md: str, trigger: str, at: str) -> str:
@@ -243,18 +193,21 @@ def propose_refinement(
     """File ONE refine proposal for *skill* from a detected stumble. Returns it, or ``None``.
 
     ``None`` — never an exception — for: an unmapped trigger, a skill that does not resolve,
-    the daily cap, a refinement that would change nothing, or a queue that is full. Each of
-    those is logged at INFO with its reason, because "the stumble arm proposed nothing" and
-    "the stumble arm is broken" must not be the same observation.
+    a refinement that would change nothing, a queue that is full, or the per-subject
+    coalescing rail. Each of those is logged at INFO with its reason, because "the stumble arm
+    proposed nothing" and "the stumble arm is broken" must not be the same observation.
+
+    🔴 The cap used to live HERE, as ``cap_reason``, and that was the defect: this arm was one
+    of three producers and the only one that asked. It now lives at the sink
+    (``proposals.coalesce_reason``, called from ``proposals.enqueue``), so the after-turn skill
+    ladder and the auto-skill synthesizer are covered by the same rule instead of by nothing —
+    and the ``None`` this returns when the rail fires is ``enqueue``'s, logged with its reason
+    there.
     """
     at = now or _now()
     body = refinement_body(trigger, detail=detail, quote=user_message, now=at)
     if not body:
         logger.info("refine: no body template for trigger %r; proposing nothing", trigger)
-        return None
-    reason = cap_reason(skill, now=at)
-    if reason:
-        logger.info("refine: capped for %s — %s", skill, reason)
         return None
     description = refinement_description(trigger)
     stamp = at.isoformat(timespec="seconds")

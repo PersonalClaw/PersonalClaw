@@ -100,8 +100,14 @@ describe('a config panel does not present fabricated values as saved state', () 
     const widgets = codeOf('pages/settings/settingsWidgets.tsx')
     const at = widgets.indexOf('title="Legibility"')
     const body = widgets.slice(at, at + 900)
-    expect(body).toMatch(/loading=\{c === undefined && !legErr\}/)
-    expect(body).toMatch(/Boolean\(legErr\) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load/)
+    // "like the other four" is now "like the other thirty-one": the hand-rolled
+    // `Boolean(legErr) && <div data-type="caption" …>` this used to match was one of fifteen copies,
+    // and `BentoCard`'s `failed` replaced all of them with one danger-toned band that also carries
+    // the server's message and a Retry. `loading` no longer needs `&& !legErr` because the card tests
+    // `failed` first — the property, not the spelling, is what this asserts.
+    expect(body).toMatch(/loading=\{c === undefined\}/)
+    expect(body).toMatch(/failed=\{cStatus === 'error'\}/)
+    expect(body).toMatch(/error=\{legErr\}/)
   })
 
   // ── `settings:agent-defaults` — the same defect, on the two most dangerous controls in Settings ──
@@ -211,7 +217,41 @@ describe('a config panel does not present fabricated values as saved state', () 
     // hub→panel journey. Lowered to the MEASURED post-fix value, not to 32-minus-nothing.
     // Per-file, this tree: ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 · AgentDefaultsPanel 1 ·
     // settingsWidgets 27 = 33.
-    expect(stillSubstituting, 'the decorating fallbacks in these five files, measured')
-      .toBeGreaterThanOrEqual(33)
+    //
+    // ── 🔻 33 → 9, AND THE SHAPE CHANGED: PER-FILE EXACT EQUALITY ────────────────────────────────
+    //
+    // The paragraph above diagnosed its own rail and then handed the fix forward, verbatim: *"a
+    // `toBeGreaterThanOrEqual` floor cannot detect an ADDITION, only a removal … An exact-equality
+    // assertion would catch both and force this comment to be updated in the same PR; that is a
+    // bigger change than this one and it belongs to whoever next touches this rail."* This is that
+    // PR, so this is that change — and it is the same correction being made tree-wide in
+    // `ui/loadErrorState.test.tsx` §B, for the same reason, in the same commit.
+    //
+    // Two things the new shape fixes, not one:
+    //   · a floor could not see an ADDITION — the drift this comment records FOUR separate times;
+    //   · a TOTAL could not see a swap — one file losing a swallow while another gained one nets to
+    //     zero. Per-file numbers cannot be traded off against each other.
+    //
+    // Measured both sides: `origin/main` is ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 ·
+    // AgentDefaultsPanel 1 · settingsWidgets 27 = 33 (so the floor was finally accurate), and this
+    // branch is the same four files unchanged with settingsWidgets at 3 = 9. The hub's 24 became 3:
+    // 21 tiles now report the failure through `BentoCard`'s `failed` prop, and the three that remain
+    // are each a read the surface makes no CLAIM about (`usePacksInstalled`'s shared-key mirror,
+    // `useAgentDefaults`' decorating name read, `useToolsSavings`' optional meter).
+    const PER_FILE: Record<string, number> = {
+      ChatPanel: 1,
+      DurabilityPanel: 2,
+      PacksPanel: 2,
+      AgentDefaultsPanel: 1,
+      settingsWidgets: 3,
+    }
+    const measured = Object.fromEntries(files.map((f) => [
+      f, (codeOf(`pages/settings/${f}.tsx`).match(/\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\}|\(\{\}|'')/g) ?? []).length,
+    ]))
+    expect(measured, 'a decorating fallback was ADDED or REMOVED — update this map in the same commit')
+      .toEqual(PER_FILE)
+    // Kept as a redundant VACUITY check on the regex itself: if it stops matching, `measured` above
+    // would be all-zeros and would fail loudly, but a zero total is the specific way a census lies.
+    expect(stillSubstituting, 'the census regex must still match something').toBeGreaterThan(0)
   })
 })

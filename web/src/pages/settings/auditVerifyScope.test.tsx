@@ -207,11 +207,22 @@ describe('the payload type and the handler agree on the exact key set', () => {
     expect(declared.has('broken_at'), 'and the one #536 named stays gone').toBe(false)
   })
 
-  it('the bento tile reads only emitted fields, and has a third state for "did not run"', () => {
+  it('the bento tile reads only emitted fields, and binds the REACHABLE did-not-run state', () => {
     const w = strip(WIDGETS)
-    expect(w, 'useAudit swallows a failure to null — reading v.error was reading a ghost')
+    expect(w, 'reading v.error was reading a ghost — the field is client-fabricated')
       .not.toMatch(/v\.error/)
-    expect(w, 'and null must not render as a blank tile body under a security title')
-      .toMatch(/v === null/)
+    // This assertion used to require `v === null`, and that was requiring DEAD CODE. Measured in
+    // `lib/api.ts`: `j()` throws `apiError(r)` on any non-2xx and `fetch` rejects on a dead
+    // connection, so `api.auditVerify()` REJECTS rather than resolving to `null`; `useQuery` stores
+    // nothing for a rejection, so `data` is `undefined` and `status === 'error'`. Reaching
+    // `v === null` needed the handler to emit literal JSON `null`, which its 6-field body (asserted
+    // above) cannot. The did-not-run state a user can actually hit is the failure band, so the rail
+    // now requires the tile to BIND it — an unbound tile is the empty-card-under-a-security-title
+    // regression this test exists to stop.
+    // `[^>]*` cannot be used to stay inside the tag: the tag holds `onClick={() => go('audit')}`,
+    // whose arrow is a `>`, so a negated-`>` class stops dead there. Bounded `[\s\S]{0,400}?` is
+    // shorter than the distance to the next tile and so cannot borrow a sibling's binding.
+    expect(w, 'a failed chain check must paint the failure band, not an empty tile body')
+      .toMatch(/title="Audit log"[\s\S]{0,400}?failed=\{[^}]*=== 'error'\}/)
   })
 })

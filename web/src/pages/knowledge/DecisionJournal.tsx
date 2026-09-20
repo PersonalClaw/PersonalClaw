@@ -82,7 +82,7 @@ export function DecisionJournal({ onOpenItem, onOpenChat }: { onOpenItem: (id: s
  *  than a label. */
 function DomainTag({ domain }: { domain: string }) {
   return (
-    <span data-type="caption" className="shrink-0 rounded-full px-2 py-[1px] text-on-surface-low"
+    <span data-type="caption" className="shrink-0 rounded-full px-s py-[1px] text-on-surface-low"
       style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>{domain}</span>
   )
 }
@@ -112,13 +112,13 @@ function CalibrationStrip({ view }: { view: Parameters<typeof calibrationCaption
       {/* The caption is the claim. It is rendered in every state including the two with no
           number, because a strip that goes silent when it has nothing to say leaves the reader
           to assume the chart above it means something. */}
-      <p data-type="body-m" className="mt-1 text-on-surface-low" data-calibration-state={state}>
+      <p data-type="body-m" className="mt-xs text-on-surface-low" data-calibration-state={state}>
         {calibrationCaption(view)}
       </p>
       {domains.length > 0 && (
         <ul className="mt-l flex flex-col gap-s">
           {domains.map(([domain, b]) => (
-            <li key={domain} className="flex flex-col gap-1">
+            <li key={domain} className="flex flex-col gap-xs">
               <div className="flex items-baseline justify-between gap-s">
                 <span data-type="title-m" className="text-on-surface" style={fvs(500)}>{domain}</span>
                 <span data-type="body-s" className="text-on-surface-low tabular-nums">{bucketLabel(b, view.calibration_min_n)}</span>
@@ -168,7 +168,7 @@ function PendingRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOpe
   const tone = state === 'stale' ? 'var(--color-warn)' : state === 'overdue' ? 'var(--color-danger)' : 'var(--color-on-surface-low)'
   return (
     <ListRow index={index} onClick={onOpen} label={d.summary} accent={state === 'counting' ? undefined : tone}>
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-xs">
         <div className="flex min-w-0 items-center gap-s">
           <span className="truncate text-on-surface" style={fvs(500)}>{d.summary}</span>
           <DomainTag domain={d.domain} />
@@ -205,11 +205,11 @@ function ResolvedRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOp
         <dl className="grid gap-s sm:grid-cols-2">
           <div className="min-w-0">
             <dt data-type="caption" className="text-on-surface-low uppercase tracking-wide">Expected</dt>
-            <dd data-type="body-m" className="mt-1 text-on-surface">{d.expectation}</dd>
+            <dd data-type="body-m" className="mt-xs text-on-surface">{d.expectation}</dd>
           </div>
           <div className="min-w-0">
             <dt data-type="caption" className="text-on-surface-low uppercase tracking-wide">What happened</dt>
-            <dd data-type="body-m" className="mt-1 text-on-surface">{d.outcome || '—'}</dd>
+            <dd data-type="body-m" className="mt-xs text-on-surface">{d.outcome || '—'}</dd>
           </div>
         </dl>
         <div data-type="body-s" className="flex flex-wrap items-center gap-s text-on-surface-low">
@@ -217,7 +217,7 @@ function ResolvedRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOp
           {/* The lesson chip is a SOFT reference into the memory store, so its absence is a real
               state (the lesson write was refused) and is said rather than hidden. */}
           {d.lesson_memory_key
-            ? <span className="inline-flex items-center gap-1"><Brain size={12} aria-hidden /> lesson recorded</span>
+            ? <span className="inline-flex items-center gap-xs"><Brain size={12} aria-hidden /> lesson recorded</span>
             : <span className="opacity-80">no lesson recorded</span>}
         </div>
       </div>

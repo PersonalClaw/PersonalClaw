@@ -23,7 +23,7 @@ const EDGE = 'size-[176px]'
 function Plate({ children, dashed }: { children: React.ReactNode; dashed?: boolean }) {
   return (
     <div
-      className={`flex ${EDGE} shrink-0 flex-col items-center justify-center gap-2 rounded-lg px-3 text-center ${
+      className={`flex ${EDGE} shrink-0 flex-col items-center justify-center gap-s rounded-lg px-m text-center ${
         dashed ? 'border border-dashed border-outline-variant' : ''
       }`}
     >

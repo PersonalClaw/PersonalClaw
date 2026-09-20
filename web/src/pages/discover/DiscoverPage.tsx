@@ -53,7 +53,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
               {data && data.enabled && data.visible_count > 0 && (
                 <span
                   data-type="label-s"
-                  className="inline-flex h-5 items-center rounded-pill px-2"
+                  className="inline-flex h-5 items-center rounded-pill px-s"
                   style={accentChip}
                 >
                   {data.visible_count}
