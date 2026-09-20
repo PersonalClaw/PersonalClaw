@@ -1453,10 +1453,12 @@ async def start_dashboard(
         api_always_on_doc_write,
         api_discover,
         api_discover_dismiss,
+        api_discover_dismiss_clear,
     )
 
     app.router.add_get("/api/legibility/discover", api_discover)
     app.router.add_post("/api/legibility/discover/dismiss", api_discover_dismiss)
+    app.router.add_delete("/api/legibility/discover/dismiss", api_discover_dismiss_clear)
     # Always-on conventions viewer (PEP-10): what every session receives, with provenance,
     # sliced out of the session's own producers so the viewer cannot drift from the prompt.
     app.router.add_get("/api/legibility/always-on", api_always_on)

@@ -410,6 +410,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/legibility/always-on/doc` — one body, verbatim, for the editor.
 - `PUT /api/legibility/always-on/doc` — replace an editable project instruction.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
+- `DELETE /api/legibility/discover/dismiss` — undo every Discover dismissal.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
