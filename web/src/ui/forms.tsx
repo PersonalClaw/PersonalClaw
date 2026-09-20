@@ -162,23 +162,44 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, disabled, disabledReason, maxLength }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   autoFocus?: boolean
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   name?: string
+  /** An explicit DOM id, for a call-site that publishes its OWN visible `<label htmlFor>` rather
+   *  than wrapping the control in a `Field`. Without it the id is internal (`name` or a generated
+   *  one), so such a label resolved to nothing and the visible text named the control for sighted
+   *  users only — measured exactly that in the schema-driven provider form. Wins over `name`. */
+  id?: string
   ariaLabel?: string
   /** Publishes `aria-required`. Visual treatment is deliberately unchanged. */
   required?: boolean
   /** Native `maxlength`. For a field the BACKEND bounds, pass the same limit here so the cap is
    *  reachable before a save instead of only as a rejection afterwards. */
   maxLength?: number
+  /** Native `minlength` — `maxLength`'s pair, for the same reason. A schema that states a floor
+   *  (a key of at least N chars) can surface it at the field instead of only as a save rejection. */
+  minLength?: number
+  /** Native `pattern`. Same reasoning as the length bounds: a schema-declared shape belongs on the
+   *  control, not only in the handler that rejects it. */
+  pattern?: string
+  /** Native `min`/`max` — the numeric bounds, meaningful only with `type="number"`. */
+  min?: number
+  max?: number
   size?: FieldSize
   surface?: FieldSurface
-  /** Masks a secret (API keys, tokens). Defaults to a plain text field. */
-  type?: 'text' | 'password'
+  /** `password` masks a secret (API keys, tokens); `number` is the full-width numeric text field.
+   *
+   *  `number` is NOT a second home for `NumberField`, the compact stepper below: that one owns the
+   *  dense fixed-width right-aligned role AND clamp-on-commit, and its `value: number` deliberately
+   *  cannot represent "unset" (an empty entry reverts to the last good value). A schema-driven
+   *  OPTIONAL numeric setting must be clearable back to absent and sits full-width in a stacked
+   *  form, so it is the text field's shape with a numeric keyboard — not a stepper. Pick
+   *  `NumberField` for a stepper beside a label; pick this for a nullable schema field. */
+  type?: 'text' | 'password' | 'number'
   /** Monospace — technical values (commands, endpoints, keys). Mirrors TextArea's. */
   mono?: boolean
   /** A leading glyph (typically a search icon) pinned inside the left edge. Adds
@@ -186,6 +207,11 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
    *  passes the raw icon (e.g. `<Search size={14} />`) and it inherits the muted
    *  tone from the icon span. */
   leadingIcon?: ReactNode
+  /** An interactive affordance pinned inside the RIGHT edge — a show/hide-secret eye, a spinner.
+   *  Adds the canonical right inset (pr-10) that clears it. Unlike `leadingIcon` this is not
+   *  pointer-transparent: it holds a real control, so the caller passes the button itself.
+   *  Mirrors `ui/SearchField`'s `trailingSlot`, the same affordance on the search field. */
+  trailingSlot?: ReactNode
   /** Dim + block the field. Grown for an editing surface behind a consent gate (the
    *  document/sheet/deck editors), where a text field that could still be typed into
    *  would make the gate a notice instead of a mechanism. */
@@ -210,26 +236,35 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   // Field both announced "Set a password" and were indistinguishable. `ariaLabel` is the caller
   // saying "this control is not the Field", which only the caller can know.
   const claimsFieldLabel = !!labelId && !name && !ariaLabel
+  // Inline padding, kept as a single exclusive choice so `px-m` never emits beside a `pl-*`/`pr-*`
+  // (the padding-inline + padding-left cascade race the INPUT_BASE note above warns about). With no
+  // affordance this is the plain `px-m`, so every prior call-site stays byte-identical; a
+  // leadingIcon alone still yields exactly `pl-9 pr-m`.
+  const padX = leadingIcon || trailingSlot
+    ? cx(leadingIcon ? 'pl-9' : 'pl-m', trailingSlot ? 'pr-10' : 'pr-m')
+    : 'px-m'
   const input = (
-    <input value={value} type={type} autoFocus={autoFocus} name={name} id={name || autoId}
+    <input value={value} type={type} autoFocus={autoFocus} name={name} id={id || name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
       aria-required={required || undefined}
-      maxLength={maxLength}
+      maxLength={maxLength} minLength={minLength} pattern={pattern} min={min} max={max}
       disabled={disabled}
       title={disabled ? disabledReason || undefined : undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
       data-type={FIELD_ROLE[size]}
-      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono', disabled && 'opacity-50')} />
+      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], padX, mono && 'font-mono', disabled && 'opacity-50')} />
   )
-  if (!leadingIcon) return input
+  if (!leadingIcon && !trailingSlot) return input
   // The canonical leading-icon geometry (icon at left-3, input pl-9) — the shape
   // the prior form primitive defined; the app's leading-icon search fields
-  // converge onto it.
+  // converge onto it. The trailing affordance mirrors it at right-1.5, the inset
+  // the app's show/hide-secret eye already sat at.
   return (
     <div className="relative w-full">
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low">{leadingIcon}</span>
+      {leadingIcon && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low">{leadingIcon}</span>}
       {input}
+      {trailingSlot && <span className="absolute right-1.5 top-1/2 -translate-y-1/2">{trailingSlot}</span>}
     </div>
   )
 }
@@ -246,11 +281,20 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
 // `sm`. A mono textarea always rides body-s, the dense technical size the mono
 // branch has always pinned regardless of `size`.
 
-export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', disabled, disabledReason }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
+export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', surface = 'container', disabled, disabledReason, id }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
+  /** The same fill axis `TextInput` carries. TextArea and Select were the family's two
+   *  fixed-FILL fields, which showed up as drift inside a single form: the provider form's
+   *  JSON rows rendered `container` while every sibling text field rendered `high`, so the
+   *  one multi-line row in the stack did not match the fields above it. */
+  surface?: FieldSurface
   /** Dim + block the field, and why — TextInput's pair, same reasoning (an editor behind a
    *  consent gate needs the gate to be a mechanism, and a dead control owes a reason). */
   disabled?: boolean
-  disabledReason?: string }) {
+  disabledReason?: string
+  /** An explicit DOM id for a call-site publishing its own visible `<label htmlFor>`, exactly
+   *  `TextInput`'s. The id was internal-only, so such a label pointed at nothing — the provider
+   *  form's JSON fields had a visible caption that named them for sighted users alone. */
+  id?: string }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -263,10 +307,10 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // member. `aria-labelledby={labelId}` used to be unconditional, silently ignoring a caller's
   // ariaLabel.
   return (
-    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    <textarea value={value} rows={rows} autoFocus={autoFocus} id={id || autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
       disabled={disabled} title={disabled ? disabledReason || undefined : undefined}
       data-type={mono ? 'body-s' : FIELD_ROLE[size]}
-      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono' : ''}`} />
+      className={cx('w-full rounded-md px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary', FIELD_SURFACE[surface], mono && 'font-mono')} />
   )
 }
 
@@ -340,7 +384,7 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
 }
 
 /** Styled native select — matches the TextInput chrome. */
-export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason, size = 'lg', required }: { value: string; onChange: (v: string) => void
+export function Select({ value, onChange, options, disabled, name, id, ariaLabel, disabledReason, size = 'lg', surface = 'container', required }: { value: string; onChange: (v: string) => void
   /** Per-option `disabled`/`title` ride through to the native `<option>` — a fixed choice set
    *  can carry individually unavailable entries (with the reason on hover) without the caller
    *  dropping to a raw `<select>`. */
@@ -362,6 +406,13 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
    *  toolbar row needs the sm height, and hardcoding lg here made this the family's only
    *  fixed-height field. */
   size?: FieldSize
+  /** The same fill axis `TextInput` carries (container / high / base). Select hardcoded
+   *  `bg-surface-container`, which made it the family's only fixed-FILL field — so a panel-on-panel
+   *  form whose text fields ride `high` had to drop to bespoke chrome to keep its select matching. */
+  surface?: FieldSurface
+  /** An explicit DOM id for a call-site publishing its own visible `<label htmlFor>`, exactly
+   *  `TextInput`'s. Wins over `name`. */
+  id?: string
   /** Publishes `aria-required`, exactly like `TextInput`'s. Visual treatment is deliberately
    *  unchanged — a caller marks the label. Select was the odd primitive out here too (it had no
    *  way to state a required choice), so a schema-driven form rendering a required enum could only
@@ -372,12 +423,12 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
   const autoId = useId()
   const claimsFieldLabel = !!labelId && !name && !ariaLabel
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
+    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={id || name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId} aria-required={required || undefined}
       title={disabled ? disabledReason || undefined : undefined}
       data-type={FIELD_ROLE[size]}
-      className={cx('w-full appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SIZE[size])}>
+      className={cx('w-full appearance-none rounded-md pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SURFACE[surface], FIELD_SIZE[size])}>
       {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
     </select>
   )

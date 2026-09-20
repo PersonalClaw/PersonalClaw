@@ -8,12 +8,8 @@ import { parseJsonField, serializeJsonField } from '../apps/appConfigForm'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
-import { TextArea } from '../../ui/forms'
+import { Select, TextArea, TextInput } from '../../ui/forms'
 import { SavedToast } from './settingsUI'
-
-/** Metrics + chrome only — the type size rides `data-type="body-s"` on each consumer,
- *  since a class string has no element to carry the attribute. */
-export const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** Seed {key: default} from a schema's properties so a created instance submits
  *  the same defaults the form shows (else a field with a `default` renders but
@@ -99,9 +95,11 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
   const meta = prop['x-meta'] ?? {}
   const label = meta.label ?? fieldKey
   const [showSecret, setShowSecret] = useState(false)
-  // Associate the visible label with the control for screen readers: native
-  // inputs/selects get `id` + a <label htmlFor>; the boolean Toggle takes an
-  // accessible name via its own `label` prop (aria-label).
+  // Associate the visible label with the control for screen readers: every stacked control takes
+  // this `id` and the row below binds a <label htmlFor> to it; the boolean Toggle takes an
+  // accessible name via its own `label` prop (aria-label) instead. The form primitives grew an
+  // explicit `id` for exactly this — before that only the raw controls could be bound, so the JSON
+  // rows (already on TextArea) had a visible caption that named them for sighted users alone.
   const id = useId()
   const [jsonText, setJsonText] = useState(() =>
     serializeJsonField(value, prop.type === 'object' ? 'object' : 'array'))
@@ -123,7 +121,7 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
       // regex over the file text, so do not spell the raw tag name in a comment here —
       // that alone tripped the ratchet.) `ariaLabel` because this form names its rows with
       // its own label element, not a Field context.
-      <TextArea value={jsonText} rows={4} mono ariaLabel={label}
+      <TextArea id={id} surface="high" value={jsonText} rows={4} mono ariaLabel={label}
         onChange={(nv) => {
           setJsonText(nv)
           const res = parseJsonField(nv, expected)
@@ -136,38 +134,40 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
     )
   } else if (prop.enum && prop.enum.length) {
     control = (
-      <select id={id} value={String(value ?? prop.default ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={inputCls + ' cursor-pointer'}>
-        {prop.enum.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      <Select id={id} size="md" surface="high" value={String(value ?? prop.default ?? '')} onChange={onChange}
+        options={prop.enum.map((o) => ({ value: o, label: o }))} />
     )
   } else if (prop.type === 'boolean') {
     const on = Boolean(value ?? prop.default)
     control = <Toggle on={on} onChange={onChange} label={label} />
   } else if (prop.type === 'integer' || prop.type === 'number') {
     control = (
-      <input id={id} type="number" value={value == null ? '' : String(value)} min={prop.minimum} max={prop.maximum}
-        onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
-        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} data-type="body-s" className={inputCls} />
+      // An EMPTY entry commits `undefined`, not 0 — an optional numeric setting must be clearable
+      // back to absent. That is also why this is the TextInput numeric field and not `NumberField`:
+      // the stepper's `value: number` cannot express "unset" and reverts an empty entry to the last
+      // good value, so adopting it here would make an optional bound permanent once typed.
+      <TextInput id={id} type="number" size="md" surface="high" value={value == null ? '' : String(value)}
+        min={prop.minimum} max={prop.maximum}
+        onChange={(v) => onChange(v === '' ? undefined : Number(v))}
+        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} />
     )
   } else if (meta.sensitive) {
     control = (
-      <div className="relative">
-        <input id={id} type={showSecret ? 'text' : 'password'} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
-          minLength={prop.minLength} maxLength={prop.maxLength}
-          placeholder={secretAlreadySet ? 'saved — leave blank to keep' : meta.placeholder ?? '••••••••'}
-          data-type="body-s" className={inputCls + ' pr-10'} />
-        <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
+      <TextInput id={id} type={showSecret ? 'text' : 'password'} size="md" surface="high"
+        value={String(value ?? '')} onChange={onChange}
+        minLength={prop.minLength} maxLength={prop.maxLength}
+        placeholder={secretAlreadySet ? 'saved — leave blank to keep' : meta.placeholder ?? '••••••••'}
+        trailingSlot={
           <SquareIconButton label={showSecret ? 'Hide' : 'Show'} onClick={() => setShowSecret((s) => !s)}>
             {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
           </SquareIconButton>
-        </span>
-      </div>
+        } />
     )
   } else {
     control = (
-      <input id={id} type="text" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
+      <TextInput id={id} type="text" size="md" surface="high" value={String(value ?? '')} onChange={onChange}
         minLength={prop.minLength} maxLength={prop.maxLength} pattern={prop.pattern}
-        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} data-type="body-s" className={inputCls} />
+        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} />
     )
   }
 
