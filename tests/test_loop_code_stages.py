@@ -53,6 +53,87 @@ def _code(**over):
 
 
 class TestStageAdvance:
+    def test_runnability_probe_distinguishes_missing_binary_from_missing_manifest(
+        self, monkeypatch, tmp_path
+    ):
+        """Both negatives must stay independently failable and truthfully named."""
+        import shutil
+
+        from personalclaw.loop.kinds import sdlc
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "bell_times.py").write_text("print('bell')\n")
+
+        monkeypatch.setattr(shutil, "which", lambda _binary: None)
+        missing_binary = sdlc._command_runnable_here(
+            "definitely-missing-binary-319 --check", str(ws)
+        )
+        assert not missing_binary
+        assert missing_binary.reason == "binary_not_on_path"
+        assert missing_binary.binary == "definitely-missing-binary-319"
+
+        # Vacuity floor for the old negative: with the binary explicitly resolvable,
+        # npm still cannot run meaningfully before package.json exists.
+        monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
+        missing_manifest = sdlc._command_runnable_here("npm run build", str(ws))
+        assert not missing_manifest
+        assert missing_manifest.reason == "project_manifest_missing"
+        assert missing_manifest.binary == "npm"
+
+    def test_missing_binary_skip_names_its_own_reason_and_falls_through_to_judge(
+        self, monkeypatch, tmp_path
+    ):
+        """A missing executable is not mislabeled as a project with no manifest."""
+        import shutil
+
+        from personalclaw.loop import gates
+        from personalclaw.loop import kinds as _k
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        c = _code(
+            plan=[{"stage": "implementation", "title": "I", "exit_criteria": ["works"]}],
+            phase_status={"implementation": "active"},
+            workspace_dir=str(ws),
+            kind_config={"verify_command": "definitely-missing-binary-319 --check"},
+        )
+        monkeypatch.setattr(shutil, "which", lambda _binary: None)
+        called = {"n": 0}
+
+        async def _must_not_run(*_a, **_k):
+            called["n"] += 1
+            return False
+
+        monkeypatch.setattr(gates, "run_verify_command", _must_not_run)
+        monkeypatch.setattr(gates, "judge_verdict", lambda *_a, **_k: _async("PASS"))
+        ctx = _Ctx()
+        done = _run(
+            type(_k.get("code"))().on_new_cycle(
+                store.get(c.id),
+                [{"cycle": 1, "stage": "implementation", "summary": "done"}],
+                ctx,
+            )
+        )
+
+        assert done is True  # judge fall-through is unchanged
+        assert called["n"] == 0
+        skipped = [
+            e[2] for e in ctx.events if e[1] == "gate_check" and e[2].get("runnability_reason")
+        ]
+        assert skipped == [
+            {
+                "loop_id": c.id,
+                "label": "build",
+                "command": "definitely-missing-binary-319 --check",
+                "ok": None,
+                "stage": "implementation",
+                "skipped": "binary `definitely-missing-binary-319` not on PATH",
+                "runnability_reason": "binary_not_on_path",
+                "binary": "definitely-missing-binary-319",
+            }
+        ]
+
     def test_no_criteria_advances_on_work_happened(self):
         c = _code(
             plan=[{"stage": "design", "title": "D"}, {"stage": "implementation", "title": "I"}],
@@ -364,6 +445,51 @@ class TestStageAdvance:
         )
         assert not any(e[1] == "stage_stalled" for e in ctx.events)
 
+    def test_missing_binary_is_a_third_stall_cause_with_the_edit_command_remedy(
+        self, monkeypatch, tmp_path
+    ):
+        import shutil
+
+        from personalclaw.loop import gates
+        from personalclaw.loop import kinds as _k
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        command = "definitely-missing-binary-319 --check"
+        c = _code(
+            plan=[{"stage": "verification", "title": "Verify & QA", "exit_criteria": ["passes"]}],
+            phase_status={"verification": "active"},
+            workspace_dir=str(ws),
+            kind_config={"verify_command": command},
+        )
+        monkeypatch.setattr(shutil, "which", lambda _binary: None)
+        monkeypatch.setattr(gates, "judge_verdict", lambda *_a, **_k: _async("FAIL"))
+        s = type(_k.get("code"))()
+        ctx = _Ctx()
+        findings = [
+            {"cycle": i, "stage": "verification", "summary": f"attempt {i}"} for i in range(1, 6)
+        ]
+
+        assert _run(s.on_new_cycle(store.get(c.id), findings, ctx)) is False
+        blocked = store.get(c.id)
+        assert blocked.status == "blocked"
+        assert "not on PATH" in blocked.error_message
+        assert "Edit the stored command, then resume." in blocked.error_message
+        assert "relax a criterion" not in blocked.error_message
+        stalled = [e[2] for e in ctx.events if e[1] == "stage_stalled"]
+        assert stalled == [
+            {
+                "loop_id": c.id,
+                "stage": "verification",
+                "title": "Verify & QA",
+                "findings": 5,
+                "cause": "binary",
+                "label": "build",
+                "command": command,
+                "binary": "definitely-missing-binary-319",
+            }
+        ]
+
     def test_progressing_stage_does_not_false_stall(self, monkeypatch):
         """A stage grinding 5+ findings but STILL resolving tasks (one per cycle) is
         making real progress, not spinning — it must NOT escalate to blocked. Guards
@@ -478,6 +604,8 @@ class TestStageAdvance:
         never advances. Fix: the command is SKIPPED when its project isn't buildable yet
         (no manifest); the stage gates on the judge instead. With the planning deliverable
         present + judge PASS, it advances — instead of grinding forever."""
+        import shutil
+
         from personalclaw.loop import gates
         from personalclaw.loop import kinds as _k
 
@@ -485,6 +613,7 @@ class TestStageAdvance:
         ws.mkdir()
         (ws / "PLAN.md").write_text("# the plan")  # deliverable exists (ground truth)
         # NO package.json → `npm run build` can't run here yet
+        monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
         c = _code(
             plan=[
                 {
@@ -521,7 +650,10 @@ class TestStageAdvance:
         assert store.get(c.id).phase_status["implementation"] == "active"
         # the skip is observable as a gate_check with ok=None + a skipped reason
         assert any(
-            e[1] == "gate_check" and e[2].get("ok") is None and e[2].get("skipped")
+            e[1] == "gate_check"
+            and e[2].get("ok") is None
+            and e[2].get("skipped") == "project not buildable yet"
+            and e[2].get("runnability_reason") == "project_manifest_missing"
             for e in ctx.events
         )
 
@@ -718,12 +850,15 @@ class TestStageAdvance:
         """Once the scaffold stage has created the manifest, the same verify_command
         DOES gate — a real non-zero exit blocks the stage (the command is no longer
         skipped). Confirms the fix doesn't suppress genuine build failures."""
+        import shutil
+
         from personalclaw.loop import gates
         from personalclaw.loop import kinds as _k
 
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "package.json").write_text("{}")  # now buildable
+        monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
         c = _code(
             plan=[{"stage": "implementation", "title": "I", "exit_criteria": ["builds"]}],
             phase_status={"implementation": "active"},

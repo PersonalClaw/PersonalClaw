@@ -33,7 +33,7 @@ import {
 } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
-import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
+import { foldReducer, emptyRunFlags, type RunFlags, type StallInfo } from '../loops/runFold'
 import { phaseKey } from '../loops/loopPhases'
 import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
@@ -82,6 +82,7 @@ function loopToCodeProject(p: Loop): CodeProject {
     queued_task_ids: Array.isArray(kc.queued_task_ids) ? (kc.queued_task_ids as string[]) : [],
     stage_plan: (p.plan ?? []) as unknown as CodeStage[],
     stage_status: (p.phase_status ?? {}) as Record<string, string>,
+    command_runnability: p.command_runnability,
   }
 }
 
@@ -98,6 +99,13 @@ const TERMINAL_STATUSES = new Set(['complete', 'stopped'])
 // skipped (the editor opens directly): char-by-char animating hundreds of KB mounts
 // a giant DOM string + janks, with no readability payoff for machine-generated bulk.
 const REVEAL_MAX_CHARS = 40_000
+// The shared chrome for this page's full-width warn strips (missing command, brownfield
+// needs a workspace, workspace vanished). One object, so the tint lives in ONE place
+// instead of being re-typed per banner — the status-tint ratchet counts each spelling.
+const WARN_STRIP: React.CSSProperties = {
+  background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)',
+  color: 'var(--color-warn)',
+}
 
 // Resolve a worker-recorded `files_touched` path against the workspace root — the ONE
 // place this logic lives (was copy-pasted into the follow-worker open, the OutcomeBanner
@@ -152,6 +160,31 @@ const stageKey = (s: CodeStage): string => phaseKey(s)
 const cmdLabel = (cmd: string, max = 36): string => {
   const c = (cmd || '').trim()
   return c.length > max ? `${c.slice(0, max - 1)}…` : c
+}
+
+export interface MissingCommandNotice {
+  key: 'verify_command' | 'test_command'
+  label: 'build' | 'test'
+  command: string
+  binary: string
+}
+
+/** Missing-binary diagnostics only. A missing project manifest is a stage-timing
+ *  state, not a dead cockpit command, so it must not disable the user's run control. */
+export function missingCommandNotices(
+  checks: CodeProject['command_runnability'],
+): MissingCommandNotice[] {
+  const out: MissingCommandNotice[] = []
+  for (const [key, label] of [
+    ['verify_command', 'build'],
+    ['test_command', 'test'],
+  ] as const) {
+    const check = checks?.[key]
+    if (check?.runnable === false && check.reason === 'binary_not_on_path' && check.binary) {
+      out.push({ key, label, command: check.command, binary: check.binary })
+    }
+  }
+  return out
 }
 
 // Grow a steer textarea to fit its content (up to the CSS max-height, which then
@@ -519,6 +552,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // viewable. `ws` stays workspace-only — it gates the brownfield start picker.
   const fileRoot = ws || p.files_dir || ''
   const active = p.status === 'running'
+  const missingCommands = missingCommandNotices(p.command_runnability)
+  const missingBuild = missingCommands.find((notice) => notice.key === 'verify_command')
+  const missingTest = missingCommands.find((notice) => notice.key === 'test_command')
 
   async function act(action: 'start' | 'pause' | 'resume' | 'stop') {
     if (acting) return  // ignore a double-click while a prior action is in flight
@@ -679,8 +715,14 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} />}
           {/* Run the configured build/test command in the cockpit terminal (only with a
               real workspace + the command configured). Low priority → overflow first. */}
-          {!!ws && p.verify_command && <HeaderControl icon={Play} label={`Run build (${cmdLabel(p.verify_command)})`} priority="low" onClick={() => runInWorkspaceTerminal(p.verify_command || '')} />}
-          {!!ws && p.test_command && <HeaderControl icon={Play} label={`Run tests (${cmdLabel(p.test_command)})`} priority="low" onClick={() => runInWorkspaceTerminal(p.test_command || '')} />}
+          {!!ws && p.verify_command && <HeaderControl icon={Play}
+            label={missingBuild ? `Run build unavailable (${missingBuild.binary} not on PATH)` : `Run build (${cmdLabel(p.verify_command)})`}
+            hint={missingBuild?.command} disabled={!!missingBuild} priority="low"
+            onClick={() => runInWorkspaceTerminal(p.verify_command || '')} />}
+          {!!ws && p.test_command && <HeaderControl icon={Play}
+            label={missingTest ? `Run tests unavailable (${missingTest.binary} not on PATH)` : `Run tests (${cmdLabel(p.test_command)})`}
+            hint={missingTest?.command} disabled={!!missingTest} priority="low"
+            onClick={() => runInWorkspaceTerminal(p.test_command || '')} />}
           {/* Reuse this project's BOUND workspace for a fresh target — only with a real
               codebase dir + not mid-run. */}
           {onNewTarget && !active && !!ws && <HeaderControl icon={Target} label="New target" priority="low" onClick={() => onNewTarget(ws)} />}
@@ -693,12 +735,30 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       {/* Expandable prompt bar (item 14 / Gap 2) — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={p.task || ''} />
 
+      {missingCommands.length > 0 && (
+        <motion.div variants={messageEnter} initial="initial" animate="animate"
+          role="status" data-type="body-s"
+          className="flex shrink-0 items-start gap-s border-b border-outline-variant/40 px-l py-s"
+          style={WARN_STRIP}>
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            {missingCommands.map((notice, index) => (
+              <span key={notice.key}>
+                {index > 0 && ' '}
+                The stored {notice.label} command <code>{notice.command}</code> cannot run here because <code>{notice.binary}</code> is not on PATH.
+              </span>
+            ))}{' '}
+            Edit the stored {missingCommands.length === 1 ? 'command' : 'commands'} before resuming.
+          </span>
+        </motion.div>
+      )}
+
       {/* A ready brownfield draft can't start until a workspace is chosen — make
           that explicit + actionable instead of a silent failed Start. */}
       {p.status === 'ready' && p.project_kind === 'brownfield' && !ws && (
         <motion.div variants={messageEnter} initial="initial" animate="animate"
           data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 bg-warn/10 px-l py-2"
-          style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+          style={WARN_STRIP}>
           <span>This brownfield project needs a workspace directory before it can start.</span>
           <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Choose folder</Button>
         </motion.div>
@@ -715,14 +775,14 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         (p.status === 'ready' || p.status === 'review') ? (
           <motion.div variants={messageEnter} initial="initial" animate="animate"
             data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 px-l py-2"
-            style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+            style={WARN_STRIP}>
             <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists — re-pick it to continue.</span>
             <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Re-pick folder</Button>
           </motion.div>
         ) : (
           <motion.div variants={messageEnter} initial="initial" animate="animate"
             data-type="body-s" className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2"
-            style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+            style={WARN_STRIP}>
             <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists, so this run can't continue. Its files are gone — Stop or Delete the project, or restore the folder and reopen.</span>
           </motion.div>
         )
@@ -1244,7 +1304,7 @@ function FileFinder({ ws }: { ws: string }) {
 function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew }: {
   project: CodeProject; onTasksChanged: () => void; tasksNonce: number
   activityBySession: Record<string, ActivityItem[]>; gateFail: { label: string; command: string; output: string } | null
-  stalled: { stage: string; title: string; findings: number } | null; onNudged: () => void; onStartNew?: () => void
+  stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void
 }) {
   // Navigable Tasks panel: a list view (all tasks, grouped by stage) and a per-task
   // DETAIL view (task plan + its agent loop events + a task-scoped steer box). The
@@ -3247,7 +3307,7 @@ function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: string }) {
 /** Project-level footer for the Tasks panel: signals that aren't task-scoped
  *  (attended question, gate failure, stall, terminal outcome) + the steer box.
  *  Per-task agent loop events live under each task card (StageTasks), not here. */
-function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { project: CodeProject; gateFail: { label: string; command: string; output: string } | null; stalled: { stage: string; title: string; findings: number } | null; onNudged: () => void; onStartNew?: () => void }) {
+function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { project: CodeProject; gateFail: { label: string; command: string; output: string } | null; stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   // Synchronous double-send guard (sending state is async — rapid double Enter/click
@@ -3265,6 +3325,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
   }, [])
   const [steers, setSteers] = useState<{ text: string; failed?: boolean }[]>([])
   const findings = project.findings ?? []
+  const missingCommands = missingCommandNotices(project.command_runnability)
 
   async function steer(explicit?: string) {
     const t = (explicit ?? text).trim()
@@ -3369,7 +3430,11 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
               <AlertTriangle size={14} /> {loopStatusLabel('blocked')} — needs you
             </div>
             <p className="whitespace-pre-wrap text-on-surface-var">{project.error_message}</p>
-            <p data-type="caption" className="mt-1 text-on-surface-low">Steer it below (or relax a stage criterion), then Resume.</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low">
+              {missingCommands.length > 0
+                ? `Edit the stored ${missingCommands.length === 1 ? 'command' : 'commands'}, then Resume.`
+                : 'Steer it below (or relax a stage criterion), then Resume.'}
+            </p>
           </div>
         )}
         {gateFail && project.status === 'running' && (
@@ -3394,7 +3459,11 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <AlertTriangle size={14} /> “{stalled.title}” {project.status === 'blocked' ? 'is stuck — paused for you' : 'seems stuck'}
             </div>
-            <p data-type="caption" className="text-on-surface-var">{stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion{project.status === 'blocked' ? ', then Resume' : ''}.</p>
+            <p data-type="caption" className="text-on-surface-var">
+              {stalled.cause === 'binary'
+                ? `${stalled.findings} cycles in and ${stalled.binary || 'the command binary'} is not on PATH — edit the stored command${project.status === 'blocked' ? ', then Resume' : ''}.`
+                : `${stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion${project.status === 'blocked' ? ', then Resume' : ''}.`}
+            </p>
           </div>
         )}
         {/* the most recent steer, so the user sees their message landed */}

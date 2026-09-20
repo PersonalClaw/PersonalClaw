@@ -42,6 +42,25 @@ def _as_list(v) -> list:
     return v if isinstance(v, list) else []
 
 
+def _loop_view(loop_id: str) -> dict | None:
+    """Detail view plus host-local diagnostics that must never enter persisted state."""
+    view = store.get_redacted(loop_id)
+    if view is None or view.get("kind") != "code":
+        return view
+    loop = store.get(loop_id)
+    if loop is None:
+        return view
+    from personalclaw.loop.kinds.sdlc import command_runnability_view
+    from personalclaw.loop.loop import effective_dir
+
+    return {
+        **view,
+        "command_runnability": command_runnability_view(
+            loop.kind_config or {}, effective_dir(loop)
+        ),
+    }
+
+
 def _refuse_source_state(
     action: str, status: str, sources: frozenset[LoopStatus]
 ) -> web.Response | None:
@@ -430,7 +449,7 @@ async def api_loop_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "Validation failed", **v.to_dict()}, status=400)
     loop = _build_loop_from_body(body)
     created = store.create(loop)
-    return web.json_response(store.get_redacted(created.id), status=201)
+    return web.json_response(_loop_view(created.id), status=201)
 
 
 async def api_loop_list(request: web.Request) -> web.Response:
@@ -448,7 +467,7 @@ async def api_loop_get(request: web.Request) -> web.Response:
     # for a malformed id and this endpoint alone reported it as 404.
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    view = store.get_redacted(cid)
+    view = _loop_view(cid)
     if view is None:
         return web.json_response({"error": "Not found"}, status=404)
     # What this loop cost (MRT-3). Detail-only, never on the list: it is one JSONL scan per loop,
@@ -647,7 +666,7 @@ async def api_loop_update(request: web.Request) -> web.Response:
         if set(body) <= {"name"}:
             renamed = store.rename(cid, require_string(body, "name"))
             return (
-                web.json_response(store.get_redacted(cid))
+                web.json_response(_loop_view(cid))
                 if renamed
                 else web.json_response({"error": "Not found"}, status=404)
             )
@@ -659,13 +678,13 @@ async def api_loop_update(request: web.Request) -> web.Response:
         if set(body) == {"workspace_dir"}:
             rebound = store.rebind_workspace(cid, str(body.get("workspace_dir", "")))
             if rebound is not None:
-                return web.json_response(store.get_redacted(cid))
+                return web.json_response(_loop_view(cid))
             return web.json_response(
                 {"error": "Workspace can't be changed while the loop is running or finished."},
                 status=409,
             )
         return web.json_response({"error": "Loop spec is frozen (already started)"}, status=409)
-    return web.json_response(store.get_redacted(cid))
+    return web.json_response(_loop_view(cid))
 
 
 async def api_loop_action(request: web.Request) -> web.Response:
@@ -705,7 +724,7 @@ async def api_loop_action(request: web.Request) -> web.Response:
         await manager.pause(state, svc, cid)
     elif action == "stop":
         await manager.stop(state, svc, cid)
-    return web.json_response(store.get_redacted(cid))
+    return web.json_response(_loop_view(cid))
 
 
 async def _reap_loop_sessions(state, loop_id: str) -> None:
@@ -827,7 +846,7 @@ async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    view = store.get_redacted(cid)
+    view = _loop_view(cid)
     if view is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.dashboard.sse import stream_response

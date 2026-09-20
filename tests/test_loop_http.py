@@ -191,6 +191,39 @@ class TestCreate:
         assert d["kind_config"]["entry_stage"] == "design"
         assert d["kind_config"]["verify_command"] == "make lint"
 
+    def test_code_detail_reports_missing_binary_without_rewriting_command(
+        self, state, monkeypatch, tmp_path
+    ):
+        import shutil
+
+        command = "definitely-missing-binary-319 --check"
+        monkeypatch.setattr(shutil, "which", lambda _binary: None)
+        r = _run(
+            H.api_loop_create(
+                _req(
+                    "POST",
+                    "/api/loops",
+                    state,
+                    body={
+                        "kind": "code",
+                        "task": "verify this small utility without changing its command",
+                        "workspace_dir": str(tmp_path),
+                        "verify_command": command,
+                    },
+                )
+            )
+        )
+
+        assert r.status == 201
+        d = _body(r)
+        assert d["kind_config"]["verify_command"] == command
+        assert d["command_runnability"]["verify_command"] == {
+            "command": command,
+            "runnable": False,
+            "binary": "definitely-missing-binary-319",
+            "reason": "binary_not_on_path",
+        }
+
     @pytest.mark.parametrize(
         "kind,kc_key",
         [

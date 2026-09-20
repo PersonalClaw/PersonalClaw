@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, register
@@ -68,36 +69,172 @@ _BUILD_MANIFESTS: dict[str, tuple[str, ...]] = {
     "maven": ("pom.xml",),
 }
 
+_BINARY_NOT_ON_PATH = "binary_not_on_path"
+_PROJECT_MANIFEST_MISSING = "project_manifest_missing"
+_SHELL_BUILTINS = frozenset(
+    {
+        ".",
+        ":",
+        "[",
+        "alias",
+        "bg",
+        "break",
+        "cd",
+        "command",
+        "continue",
+        "eval",
+        "exec",
+        "exit",
+        "export",
+        "false",
+        "fc",
+        "fg",
+        "getopts",
+        "hash",
+        "jobs",
+        "kill",
+        "printf",
+        "pwd",
+        "read",
+        "readonly",
+        "return",
+        "set",
+        "shift",
+        "source",
+        "test",
+        "times",
+        "trap",
+        "true",
+        "type",
+        "ulimit",
+        "umask",
+        "unalias",
+        "unset",
+        "wait",
+    }
+)
 
-def _command_runnable_here(cmd: str, workspace_dir: str) -> bool:
-    """Whether a verify/test command can MEANINGFULLY run in the workspace yet — i.e.
-    the toolchain it invokes has its project manifest present. Returns True when we
-    don't recognize the toolchain (don't suppress an unknown command — let it run and
-    report its real exit code) or no workspace is bound (the runner handles cwd=None).
-    Returns False only when a recognized toolchain's manifest is absent — meaning a
-    planning/pre-scaffold stage where running the command would just ENOENT-fail.
 
-    This is what makes the gate STAGE-APPROPRIATE without hard-coding stage names: the
-    same `verify_command` simply doesn't gate a stage whose project isn't built yet,
-    and starts gating once the scaffold stage creates the manifest."""
+@dataclass(frozen=True)
+class _CommandRunnability:
+    runnable: bool
+    reason: str = ""
+    binary: str = ""
+
+    def __bool__(self) -> bool:
+        """Keep the old boolean call contract while carrying the distinct reason."""
+        return self.runnable
+
+    def to_dict(self, command: str) -> dict:
+        out = {
+            "command": (command or "").strip(),
+            "runnable": self.runnable,
+            "binary": self.binary,
+        }
+        if self.reason:
+            out["reason"] = self.reason
+        return out
+
+
+def _leading_command_word(cmd: str) -> str:
+    """Return the first executable word without interpreting or rewriting the command.
+
+    Leading environment assignments are shell syntax, not a binary. Shell builtins are
+    returned too; the caller knows they do not need a PATH entry. If shell syntax is too
+    complex to identify conservatively, return an empty word and let the real runner
+    report what happened.
+    """
+    import re
+    import shlex
+
+    try:
+        words = shlex.split(cmd or "", posix=True)
+    except ValueError:
+        return ""
+    for word in words:
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+            continue
+        if not word or word[0] in "({!":
+            return ""
+        return word
+    return ""
+
+
+def _command_runnable_here(cmd: str, workspace_dir: str) -> _CommandRunnability:
+    """Whether a verify/test command can meaningfully run in this host + workspace.
+
+    Two independent negatives are reported rather than collapsed:
+
+    * ``binary_not_on_path`` — the leading executable cannot resolve on this host.
+    * ``project_manifest_missing`` — the executable exists, but its recognized
+      toolchain does not have a project manifest in the workspace yet.
+
+    Unknown toolchains whose binary resolves still run and report their real exit code.
+    No command text is rewritten: persisted commands remain portable, reproducible data.
+    """
     import os
+    import shutil
 
-    cmd = (cmd or "").strip().lower()
+    raw_cmd = (cmd or "").strip()
     ws = (workspace_dir or "").strip()
-    if not cmd or not ws:
-        return True
+    if not raw_cmd:
+        return _CommandRunnability(True)
+
+    binary = _leading_command_word(raw_cmd)
+    if binary and binary not in _SHELL_BUILTINS:
+        resolved = None
+        if os.path.dirname(binary):
+            # A relative executable is resolved against the workspace where the command
+            # will run, not the gateway process's own cwd.
+            if ws:
+                candidate = binary if os.path.isabs(binary) else os.path.join(ws, binary)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    resolved = candidate
+        else:
+            resolved = shutil.which(binary)
+        if resolved is None:
+            return _CommandRunnability(False, _BINARY_NOT_ON_PATH, binary)
+
+    if not ws:
+        return _CommandRunnability(True, binary=binary)
+
+    normalized_cmd = raw_cmd.lower()
     manifests: tuple[str, ...] = ()
     for token, mans in _BUILD_MANIFESTS.items():
         # word-ish match: the toolchain token appears as a command word
-        if token in cmd.split() or any(
+        if token in normalized_cmd.split() or any(
             seg.strip().startswith(token + " ") or seg.strip() == token
-            for seg in cmd.replace("&&", ";").replace("||", ";").split(";")
+            for seg in normalized_cmd.replace("&&", ";").replace("||", ";").split(";")
         ):
             manifests = mans
             break
     if not manifests:
-        return True  # unrecognized toolchain → let it run (don't second-guess)
-    return any(os.path.isfile(os.path.join(ws, m)) for m in manifests)
+        return _CommandRunnability(True, binary=binary)
+    if not any(os.path.isfile(os.path.join(ws, m)) for m in manifests):
+        return _CommandRunnability(False, _PROJECT_MANIFEST_MISSING, binary)
+    return _CommandRunnability(True, binary=binary)
+
+
+def command_runnability_view(kind_config: dict, workspace_dir: str) -> dict[str, dict]:
+    """Computed host diagnostics for the cockpit; never persisted into ``kind_config``."""
+    out: dict[str, dict] = {}
+    for key in ("verify_command", "test_command"):
+        command = str((kind_config or {}).get(key, "") or "").strip()
+        if command:
+            out[key] = _command_runnable_here(command, workspace_dir).to_dict(command)
+    return out
+
+
+def _stage_commands(loop: Loop, stage: str) -> list[tuple[str, str]]:
+    cfg = loop.kind_config or {}
+    checks: list[tuple[str, str]] = []
+    verify_command = str(cfg.get("verify_command", "") or "").strip()
+    test_command = str(cfg.get("test_command", "") or "").strip()
+    if verify_command:
+        checks.append(("build", verify_command))
+    if stage == "verification" and test_command:
+        checks.append(("tests", test_command))
+    return checks
 
 
 class CodeKind(LoopKindStrategy):
@@ -590,8 +727,10 @@ class CodeKind(LoopKindStrategy):
         ``cause`` tailors the steer message to WHY it stalled: ``"gate"`` = the structural
         exit criteria never cleared (busywork the gate rejects); ``"metric"`` = the exit
         criteria are met but the quality metric keeps holding below the stage's pass bar
-        (refinement that can't clear the quality gate). Ported from the legacy code
-        watchdog's _note_stall/_escalate_stall."""
+        (refinement that can't clear the quality gate). A gate stall is refined to
+        ``"binary"`` when its configured command cannot resolve on this host, because
+        editing the command — not relaxing an exit criterion — is the remedy. Ported
+        from the legacy code watchdog's _note_stall/_escalate_stall."""
         if not stage:
             return False
         key = f"{loop.id}:{stage}"
@@ -621,6 +760,17 @@ class CodeKind(LoopKindStrategy):
                 resolved_now,
             )
             return False
+        missing_command: tuple[str, str, _CommandRunnability] | None = None
+        if cause == "gate":
+            from personalclaw.loop.loop import effective_dir
+
+            ws = effective_dir(loop)
+            for label, command in _stage_commands(loop, stage):
+                runnable = _command_runnable_here(command, ws)
+                if runnable.reason == _BINARY_NOT_ON_PATH:
+                    missing_command = (label, command, runnable)
+                    cause = "binary"
+                    break
         self._stall_notified.add(key)
         from personalclaw.loop import store
         from personalclaw.loop.loop import LoopStatus
@@ -634,16 +784,26 @@ class CodeKind(LoopKindStrategy):
             _STALL_FINDINGS,
             loop.id,
         )
+        stall_event = {
+            "loop_id": loop.id,
+            "stage": stage,
+            "title": title,
+            "findings": _STALL_FINDINGS,
+            "cause": cause,
+        }
+        if missing_command is not None:
+            label, command, runnable = missing_command
+            stall_event.update(
+                {
+                    "label": label,
+                    "command": command,
+                    "binary": runnable.binary,
+                }
+            )
         ctx.publish(
             loop.id,
             "stage_stalled",
-            {
-                "loop_id": loop.id,
-                "stage": stage,
-                "title": title,
-                "findings": _STALL_FINDINGS,
-                "cause": cause,
-            },
+            stall_event,
         )
         try:  # pause the worker's nudge loop so it stops spinning while it waits on the user
             nl = ctx.svc.get_by_session(session_key(loop.id))
@@ -651,20 +811,30 @@ class CodeKind(LoopKindStrategy):
                 await ctx.svc.update(nl.id, active=False)
         except Exception:
             logger.debug("code: stall-pause of nudge loop failed for %s", loop.id, exc_info=True)
-        detail = (
-            "its exit criteria — paused to avoid spinning. Steer it (or relax a criterion), "
-            "then resume."
-            if cause == "gate"
-            else "its quality bar — the work meets the exit criteria but keeps scoring below the "
-            "stage's quality gate. Paused to avoid spinning; steer it (or relax the bar), then resume."  # noqa: E501
-        )
+        if missing_command is not None:
+            _label, command, runnable = missing_command
+            error_message = (
+                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing because "
+                f"`{runnable.binary}` is not on PATH here, so `{command}` cannot run. "
+                "Edit the stored command, then resume."
+            )
+        elif cause == "gate":
+            error_message = (
+                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing its exit "
+                "criteria — paused to avoid spinning. Steer it (or relax a criterion), then "
+                "resume."
+            )
+        else:
+            error_message = (
+                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing its quality "
+                "bar — the work meets the exit criteria but keeps scoring below the stage's "
+                "quality gate. Paused to avoid spinning; steer it (or relax the bar), then resume."
+            )
         try:
             store.update_status(
                 loop.id,
                 LoopStatus.BLOCKED,
-                error_message=(
-                    f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing {detail}"
-                ),
+                error_message=error_message,
             )
         except (KeyError, store.TransitionError):
             pass
@@ -1014,19 +1184,20 @@ class CodeKind(LoopKindStrategy):
             verdict_rendered,
         )
 
-        cfg = loop.kind_config or {}
-        checks = []
-        if str(cfg.get("verify_command", "")).strip():
-            checks.append(("build", cfg["verify_command"]))
-        if stage == "verification" and str(cfg.get("test_command", "")).strip():
-            checks.append(("tests", cfg["test_command"]))
+        checks = _stage_commands(loop, stage)
         passed_a_command = False  # a deterministic check actually RAN and PASSED
         for label, cmd in checks:
-            # Skip a command that can't meaningfully run yet — a planning/pre-scaffold
-            # stage has no project manifest, so the command would exit ENOENT (254) and
-            # hard-fail the gate forever. Treat "not buildable yet" as can't-run (fall
-            # through to the judge), exactly like the 127 tool-missing tristate.
-            if not _command_runnable_here(cmd, ws):
+            # Two distinct can't-run states both fall through to the judge, exactly as
+            # before; only their observable reason differs. A missing binary is an
+            # operator-fixable command defect. A missing manifest means a planning /
+            # pre-scaffold stage is not buildable yet.
+            runnable = _command_runnable_here(cmd, ws)
+            if not runnable:
+                skipped = (
+                    f"binary `{runnable.binary}` not on PATH"
+                    if runnable.reason == _BINARY_NOT_ON_PATH
+                    else "project not buildable yet"
+                )
                 ctx.publish(
                     loop.id,
                     "gate_check",
@@ -1036,7 +1207,9 @@ class CodeKind(LoopKindStrategy):
                         "command": cmd,
                         "ok": None,
                         "stage": stage,
-                        "skipped": "project not buildable yet",
+                        "skipped": skipped,
+                        "runnability_reason": runnable.reason,
+                        **({"binary": runnable.binary} if runnable.binary else {}),
                     },
                 )
                 continue
