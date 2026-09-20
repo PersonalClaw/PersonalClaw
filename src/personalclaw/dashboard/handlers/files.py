@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -1077,7 +1078,7 @@ def _path_rejection(exc: "ValidationError") -> str:
 _CONTROL_CHARS = frozenset(chr(c) for c in list(range(0x20)) + [0x7F])
 
 
-def _validate_dashboard_path(raw: str) -> str | None:
+def _validate_dashboard_path(raw: str, allowed_roots: tuple[str, ...] | None = None) -> str | None:
     """Validate a file path for dashboard file I/O.
 
     Two-layer check:
@@ -1097,7 +1098,11 @@ def _validate_dashboard_path(raw: str) -> str | None:
     if canonical is None:
         return None
 
-    roots = [rp for _label, rp in _dashboard_roots()]
+    roots = (
+        allowed_roots
+        if allowed_roots is not None
+        else tuple(rp for _label, rp in _dashboard_roots())
+    )
 
     inside_allowlist = False
     for root in roots:
@@ -2183,7 +2188,21 @@ _CONTENT_SEARCH_IGNORE_DIRS = {
 }
 _CONTENT_SEARCH_MAX_RESULTS = 500
 _CONTENT_SEARCH_TIMEOUT = 15.0
+_CONTENT_SEARCH_STOP_GRACE = 0.1
 _RG_AVAILABLE: bool | None = None
+
+
+class _ContentSearchTimedOut(TimeoutError):
+    """The Python fallback crossed its deadline or received a stop request."""
+
+
+def _check_content_search_deadline(
+    deadline: float | None, stop_event: threading.Event | None
+) -> None:
+    if (stop_event is not None and stop_event.is_set()) or (
+        deadline is not None and time.monotonic() >= deadline
+    ):
+        raise _ContentSearchTimedOut
 
 
 def _has_rg() -> bool:
@@ -2195,7 +2214,12 @@ def _has_rg() -> bool:
     return _RG_AVAILABLE
 
 
-async def _content_search_rg(root: str, query: str, include: str) -> tuple[list[dict], bool]:
+async def _content_search_rg(
+    root: str,
+    query: str,
+    include: str,
+    allowed_roots: tuple[str, ...] | None = None,
+) -> tuple[list[dict], bool]:
     """Content search via ripgrep --json. Returns (results, truncated)."""
     import asyncio  # noqa: F811
     import json as _json  # noqa: F811
@@ -2231,7 +2255,7 @@ async def _content_search_rg(root: str, query: str, include: str) -> tuple[list[
             continue
         d = obj["data"]
         path = d["path"].get("text", "")
-        if not path or _validate_dashboard_path(path) is None:
+        if not path or _validate_dashboard_path(path, allowed_roots) is None:
             continue
         text = (d.get("lines", {}) or {}).get("text", "")
         sub = d.get("submatches") or [{}]
@@ -2248,26 +2272,39 @@ async def _content_search_rg(root: str, query: str, include: str) -> tuple[list[
     return results, False
 
 
-def _content_search_python(root: str, query: str, include: str) -> tuple[list[dict], bool]:
+def _content_search_python(
+    root: str,
+    query: str,
+    include: str,
+    allowed_roots: tuple[str, ...] | None = None,
+    *,
+    deadline: float | None = None,
+    stop_event: threading.Event | None = None,
+) -> tuple[list[dict], bool]:
     """Pure-Python content search fallback (no ripgrep). Returns (results, truncated)."""
     import fnmatch
 
+    if allowed_roots is None:
+        allowed_roots = tuple(rp for _label, rp in _dashboard_roots())
     globs = [g.strip() for g in include.split(",") if g.strip()]
     needle = query.lower()
     results: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
+        _check_content_search_deadline(deadline, stop_event)
         dirnames[:] = [
             d for d in dirnames if d not in _CONTENT_SEARCH_IGNORE_DIRS and not d.startswith(".")
         ]
         for fn in filenames:
+            _check_content_search_deadline(deadline, stop_event)
             if globs and not any(fnmatch.fnmatch(fn, g) for g in globs):
                 continue
             fpath = os.path.join(dirpath, fn)
-            if _validate_dashboard_path(fpath) is None:
+            if _validate_dashboard_path(fpath, allowed_roots) is None:
                 continue
             try:
                 with open(fpath, encoding="utf-8", errors="ignore") as fh:
                     for n, line in enumerate(fh, 1):
+                        _check_content_search_deadline(deadline, stop_event)
                         col = line.lower().find(needle)
                         if col >= 0:
                             results.append(
@@ -2300,7 +2337,8 @@ async def api_file_content_search(request: web.Request) -> web.Response:
     Results: ``[{file, line, col, preview}]`` plus ``engine`` and ``truncated``.
     """
     raw = request.query.get("path", "").strip()
-    path = _validate_dashboard_path(raw)
+    allowed_roots = tuple(rp for _label, rp in _dashboard_roots())
+    path = _validate_dashboard_path(raw, allowed_roots)
     if not path or not os.path.isdir(path):
         return web.json_response({"error": "invalid or forbidden directory"}, status=400)
     q = request.query.get("q", "").strip()
@@ -2309,9 +2347,47 @@ async def api_file_content_search(request: web.Request) -> web.Response:
         return web.json_response({"results": [], "engine": engine, "truncated": False})
     include = request.query.get("include", "")
     if _has_rg():
-        results, truncated = await _content_search_rg(path, q, include)
+        results, truncated = await _content_search_rg(path, q, include, allowed_roots)
     else:
-        results, truncated = await asyncio.to_thread(_content_search_python, path, q, include)
+        stop_event = threading.Event()
+        deadline = time.monotonic() + _CONTENT_SEARCH_TIMEOUT
+        search_task = asyncio.create_task(
+            asyncio.to_thread(
+                _content_search_python,
+                path,
+                q,
+                include,
+                allowed_roots,
+                deadline=deadline,
+                stop_event=stop_event,
+            )
+        )
+        try:
+            results, truncated = await asyncio.wait_for(
+                asyncio.shield(search_task), timeout=_CONTENT_SEARCH_TIMEOUT
+            )
+        except TimeoutError:
+            stop_event.set()
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError, _ContentSearchTimedOut):
+                await asyncio.wait_for(
+                    asyncio.shield(search_task), timeout=_CONTENT_SEARCH_STOP_GRACE
+                )
+            if not search_task.done():
+                search_task.cancel()
+            _sel().log_tool_invocation(
+                session_key="dashboard",
+                tool_name="file_content_search",
+                outcome="error",
+                resources=f"{path} q={q[:80]} timeout",
+            )
+            return json_error(
+                "file_content_search_timeout",
+                message=(
+                    "File content search exceeded its time limit. "
+                    "Narrow the directory or include glob and try again."
+                ),
+                status=504,
+            )
     _sel().log_tool_invocation(
         session_key="dashboard",
         tool_name="file_content_search",
