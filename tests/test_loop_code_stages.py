@@ -53,6 +53,54 @@ def _code(**over):
 
 
 class TestStageAdvance:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "for item in one; do :; done",
+            "if true; then :; fi",
+            "while false; do :; done",
+            "until true; do :; done",
+            "case value in *) :;; esac",
+            "select item in one; do break; done",
+            "function check { :; }; check",
+            "time true",
+            "{ true; }",
+            "[[ -n value ]]",
+            "! false",
+        ],
+    )
+    def test_shell_keyword_command_is_deferred_to_the_real_runner(self, command, tmp_path):
+        """Shell grammar is not a binary whose presence can be decided with PATH."""
+        from personalclaw.loop.kinds import sdlc
+
+        runnable = sdlc._command_runnable_here(command, str(tmp_path))
+
+        assert runnable
+        assert runnable.reason == ""
+        assert runnable.binary == ""
+
+    def test_genuinely_absent_binary_still_reports_binary_not_on_path(self, tmp_path):
+        """The shell-syntax escape must not erase the missing-tool diagnostic."""
+        from personalclaw.loop.kinds import sdlc
+
+        runnable = sdlc._command_runnable_here(
+            "definitely-not-a-real-binary-xyz foo", str(tmp_path)
+        )
+
+        assert not runnable
+        assert runnable.reason == "binary_not_on_path"
+        assert runnable.binary == "definitely-not-a-real-binary-xyz"
+
+    def test_absolute_binary_resolves_without_a_workspace(self):
+        """An absolute executable does not need a workspace-relative resolution base."""
+        from personalclaw.loop.kinds import sdlc
+
+        runnable = sdlc._command_runnable_here("/bin/sh -c 'exit 0'", "")
+
+        assert runnable
+        assert runnable.reason == ""
+        assert runnable.binary == "/bin/sh"
+
     def test_runnability_probe_distinguishes_missing_binary_from_missing_manifest(
         self, monkeypatch, tmp_path
     ):

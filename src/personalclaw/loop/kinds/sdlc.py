@@ -113,6 +113,19 @@ _SHELL_BUILTINS = frozenset(
         "wait",
     }
 )
+_SHELL_KEYWORDS = frozenset(
+    {
+        "[[",
+        "case",
+        "for",
+        "function",
+        "if",
+        "select",
+        "time",
+        "until",
+        "while",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -154,7 +167,7 @@ def _leading_command_word(cmd: str) -> str:
     for word in words:
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
             continue
-        if not word or word[0] in "({!":
+        if not word or word[0] in "({!" or word in _SHELL_KEYWORDS:
             return ""
         return word
     return ""
@@ -184,12 +197,16 @@ def _command_runnable_here(cmd: str, workspace_dir: str) -> _CommandRunnability:
     if binary and binary not in _SHELL_BUILTINS:
         resolved = None
         if os.path.dirname(binary):
-            # A relative executable is resolved against the workspace where the command
-            # will run, not the gateway process's own cwd.
-            if ws:
-                candidate = binary if os.path.isabs(binary) else os.path.join(ws, binary)
-                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    resolved = candidate
+            if os.path.isabs(binary):
+                candidate = binary
+            elif ws:
+                # A relative executable is resolved against the workspace where the
+                # command will run, not the gateway process's own cwd.
+                candidate = os.path.join(ws, binary)
+            else:
+                candidate = ""
+            if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                resolved = candidate
         else:
             resolved = shutil.which(binary)
         if resolved is None:
