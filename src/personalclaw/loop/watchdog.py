@@ -1178,13 +1178,22 @@ class LoopWatchdog:
                 # (a monitor's watch window): the POLICY says so via its convergence spec,
                 # so the cockpit shows a clean completion rather than an error-flavored
                 # "stopped before done" for an inherently-ongoing loop that ran its course.
+                #
+                # The stop reason follows `genuine` through `default_stop_reason`, NOT a flat
+                # CYCLE_BUDGET: this site used to stamp CYCLE_BUDGET on both halves of that
+                # carve-out, so the monitor whose watch window IS the plan finished with
+                # `error_message=None` (clean) while its WHY said "stopped on budget" — the two
+                # fields contradicted each other on the one path built to distinguish them. With
+                # the reason derived, `stop_reason not in ("", "done")` is exactly the set of
+                # completions that carry an `error_message`, which is what lets the display label
+                # be read off the classification instead of parsed out of the free text.
                 if loop.max_cycles > 0 and count >= loop.max_cycles:
                     genuine = supervisor.budget_stop_is_genuine(policy)
                     await self._complete(
                         cid,
                         reason="cycle budget reached",
                         genuine=genuine,
-                        stop_reason=LoopStopReason.CYCLE_BUDGET,
+                        stop_reason=default_stop_reason(genuine),
                     )
                     continue
 

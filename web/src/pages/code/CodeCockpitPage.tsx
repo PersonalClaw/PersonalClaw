@@ -999,8 +999,9 @@ export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProjec
   // was mis-deciding.
   //
   // `effectiveLoopStatus` for the same reason every other surface uses it: a `complete` project
-  // carrying an `error_message` finished non-genuinely, and must not read as a green "Completed".
-  const dispStatus = effectiveLoopStatus(p.status, p.error_message)
+  // whose `stop_reason` names a ceiling rather than `done` finished non-genuinely, and must not
+  // read as a green "Completed".
+  const dispStatus = effectiveLoopStatus(p.status, p.stop_reason)
   return (
     <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
       {/* Status leads: it is the one line always true about a run, and the answer to the question

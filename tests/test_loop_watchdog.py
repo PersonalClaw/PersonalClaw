@@ -12,7 +12,7 @@ import pytest
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import manager, store
 from personalclaw.loop import watchdog as W
-from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 
 
 def _run(coro):
@@ -250,10 +250,12 @@ class TestBudgetCap:
         _run(wd._poll_once())
         _write_finding(c.id, 1)
         _run(wd._poll_once())  # open_ended judge defers (no model) → budget (1) caps it
-        assert store.get(c.id).status == LoopStatus.COMPLETE.value
+        saved = store.get(c.id)
+        assert saved.status == LoopStatus.COMPLETE.value
         # A budget stop is NON-genuine: error_message records WHY, so the cockpit can
         # distinguish "stopped on budget" from a clean done after a reload.
-        assert "budget" in (store.get(c.id).error_message or "").lower()
+        assert "budget" in (saved.error_message or "").lower()
+        assert saved.stop_reason == LoopStopReason.CYCLE_BUDGET.value
 
     def test_genuine_complete_has_no_error_note(self):
         c = _running(
@@ -264,8 +266,10 @@ class TestBudgetCap:
         _run(wd._poll_once())
         _write_finding(c.id, 1)
         _run(wd._poll_once())  # verify passes → genuine completion
-        assert store.get(c.id).status == LoopStatus.COMPLETE.value
-        assert (store.get(c.id).error_message or "") == ""  # clean done, no note
+        saved = store.get(c.id)
+        assert saved.status == LoopStatus.COMPLETE.value
+        assert (saved.error_message or "") == ""  # clean done, no note
+        assert saved.stop_reason == LoopStopReason.DONE.value
 
     def test_monitor_budget_stop_is_genuine(self):
         # A monitor's cycle budget IS its watch window — reaching it is a clean
@@ -277,8 +281,10 @@ class TestBudgetCap:
         _run(wd._poll_once())
         _write_finding(c.id, 1)
         _run(wd._poll_once())  # monitor never self-completes → budget (1) caps it, genuinely
-        assert store.get(c.id).status == LoopStatus.COMPLETE.value
-        assert (store.get(c.id).error_message or "") == ""  # clean — the watch window ended
+        saved = store.get(c.id)
+        assert saved.status == LoopStatus.COMPLETE.value
+        assert (saved.error_message or "") == ""  # clean — the watch window ended
+        assert saved.stop_reason == LoopStopReason.DONE.value
 
 
 class TestNeedsInput:
