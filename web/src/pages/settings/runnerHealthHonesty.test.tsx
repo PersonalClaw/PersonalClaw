@@ -27,6 +27,11 @@ vi.mock('../../lib/api', () => ({
     patchConfig: () => Promise.resolve({}),
     agents: () => Promise.resolve({ default_agent: '' }),
     setDefaultAgent: () => Promise.resolve({}),
+    // The panel's durable-workers hint asks the host whether it can keep a worker's shell alive
+    // past a restart (`lib/persistClaim`), which reads this terminal endpoint. Mocked rather than
+    // omitted: an absent method made the probe throw inside an effect and every assertion below
+    // failed on a crashed tree, which says nothing about runner honesty.
+    terminalSessions: () => Promise.resolve({ persist_available: true, sessions: [] }),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))

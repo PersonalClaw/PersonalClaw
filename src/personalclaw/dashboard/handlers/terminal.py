@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import pty as _pty
-import shutil
 import signal
 import struct
 import termios
@@ -128,15 +127,16 @@ def _get_config(request: web.Request) -> dict:
 _TMUX_SOCKET = tmux_substrate.TMUX_SOCKET
 
 
-def _tmux_available() -> bool:
-    """Whether the tmux binary is on PATH (macOS/Linux only; Windows has none)."""
-    return shutil.which("tmux") is not None
-
-
 def _persist_enabled(request: web.Request) -> bool:
     """Persistent (tmux-backed) terminals are ON only when BOTH the opt-in config flag
-    and a usable tmux binary are present — else fall back to the in-process PTY unchanged."""
-    return bool(_get_config(request).get("persist", False)) and _tmux_available()
+    and a usable tmux binary are present — else fall back to the in-process PTY unchanged.
+
+    "Is tmux installed" comes from `tmux_substrate`, for the same reason the socket does: this
+    module used to carry a byte-identical private copy of it, and the docstring above says what
+    two copies of a tmux fact cost. It is also what makes the gate and the `persist_available`
+    the client reads provably the SAME fact — a test can no longer move one without the other.
+    """
+    return bool(_get_config(request).get("persist", False)) and tmux_substrate.tmux_available()
 
 
 def _tmux_session_name(session_id: str) -> str:
@@ -822,7 +822,20 @@ async def api_terminal_list(request: web.Request) -> web.Response:
             source="dashboard",
             resources="feature_disabled",
         )
-        return web.json_response({"enabled": False, "sessions": []})
+        # `persist_available` rides the disabled branch too. "Can this host keep a shell alive
+        # past a restart" is a property of the HOST, not of whether the terminal panel is
+        # switched on — and Settings › Agent's durable-workers row asks this endpoint the same
+        # question for a feature that has nothing to do with the panel. Omitting the key here
+        # made the answer read as "no tmux" (absent is deliberately UNAVAILABLE on the client,
+        # so an older gateway cannot accidentally promise), i.e. a second way to state a
+        # limitation the host does not have.
+        return web.json_response(
+            {
+                "enabled": False,
+                "persist_available": tmux_substrate.tmux_available(),
+                "sessions": [],
+            }
+        )
 
     registry = _get_registry(request)
     sessions = []
@@ -886,7 +899,7 @@ async def api_terminal_list(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "enabled": True,
-            "persist_available": _tmux_available(),
+            "persist_available": tmux_substrate.tmux_available(),
             "sessions": sessions,
         }
     )

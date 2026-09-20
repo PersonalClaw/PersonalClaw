@@ -3,6 +3,7 @@ import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useQuery } from '../../lib/data'
+import { durableWorkersHint, usePersistAvailable } from '../../lib/persistClaim'
 import { PanelHeader, Section, RowGroup, Row, SegPills, SavedToast, StrListField, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField, TextInput } from '../../ui/forms'
@@ -22,6 +23,10 @@ export function AgentDefaultsPanel() {
   const [cfg, setCfg] = useState<AgentCfg | null>(null)
   const { options: agentOptions, loading: agentsLoading, discovered } = useAgentCatalog()
   const [defaultAgent, setDefaultAgent] = useState('')
+  // Whether THIS host can keep a worker's shell alive past a restart, for the durable-workers row
+  // below. Called up here, above the early returns — a hook after a conditional `return` is a
+  // different hook order on the loading pass.
+  const persistAvailable = usePersistAvailable()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. The editable form state (cfg/defaultAgent) is seeded and
@@ -130,8 +135,12 @@ export function AgentDefaultsPanel() {
             hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
           <NumberRow label="Runner idle release" cfg={cfg} field="runner_idle_release_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
             hint="How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched." />
+          {/* The hint used to END with "Requires the tmux binary; without it this has no effect" —
+              naming a precondition it never consulted, while the Terminal page already had the
+              host's answer on the wire. It now comes from `lib/persistClaim`, the one owner of
+              this promise, so this row and the terminal toggle cannot state one fact two ways. */}
           <ToggleRow label="Durable worker sessions" cfg={cfg} field="durable_sessions" patch={patch}
-            hint="Run workers inside a tmux session on PersonalClaw's own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. Requires the tmux binary; without it this has no effect." />
+            hint={durableWorkersHint(persistAvailable)} />
         </RowGroup>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
