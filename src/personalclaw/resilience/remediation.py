@@ -106,6 +106,25 @@ class Deficit:
     the ceiling this deficit can subtract (GBrain's ``max_reachable_score`` inverse):
     when the deficit is unfixable right now (e.g. no embedder bound), the caller sets
     ``reachable=False`` so the engine never burns budget on futile work.
+
+    🔴 ``blocked_by`` IS THE HALF OF ``reachable`` A READER CAN ACT ON. ``reachable=False``
+    says the engine will not touch this; it does not say WHY, and the why is the only part
+    a person can do something about. Measured on a seeded home: 25 knowledge items with no
+    vectors, score 100 (correctly — the penalty is excluded because no maintenance run can
+    improve it), and the surfaces could say no more than "not fixable yet" — which reads as
+    "the system will get to it" for a deficit nothing will ever get to. The prerequisite is
+    known exactly where ``reachable`` is computed (``can_resolve_use_case("embedding")``),
+    and it was discarded one line later.
+
+    So the reason is produced ONCE, here, as one user-facing sentence naming the missing
+    prerequisite and the next step — and both the Doctor panel and ``personalclaw doctor``
+    render that same string. The alternative (each surface keying a reason off the deficit
+    key) is the same sentence written twice, drifting, in the two places least able to know
+    why the engine bailed.
+
+    INVARIANT, railed by ``test_doctor_payload_readers``: ``blocked_by`` is non-empty if and
+    only if ``reachable is False``. A reachable deficit has nothing blocking it; an
+    unreachable one that cannot name its blocker is the defect above, re-created.
     """
 
     key: str
@@ -114,6 +133,7 @@ class Deficit:
     max_penalty: float
     reachable: bool = True
     job_id: str = ""  # the remediation job that reduces this deficit (if any)
+    blocked_by: str = ""  # why an unreachable deficit is at its floor, in one sentence
 
     @property
     def penalty(self) -> float:
@@ -136,14 +156,23 @@ def measure_deficits() -> list[Deficit]:
         from personalclaw.providers.provider_bridge import can_resolve_use_case
 
         missing = int(get_knowledge_store().count_items_missing_embedding())
+        embedder_ready = can_resolve_use_case("embedding")
         out.append(
             Deficit(
                 key="knowledge_missing_embeddings",
                 count=missing,
                 weight=0.5,
                 max_penalty=20.0,
-                reachable=can_resolve_use_case("embedding"),
+                reachable=embedder_ready,
                 job_id="knowledge.reindex-embeddings",
+                # The prerequisite, in the words the CLI's own Vector Memory row already uses
+                # ("pick an embedding model in Settings → Models") — the two must read alike,
+                # because they are the same missing binding seen from two surfaces.
+                blocked_by=(
+                    ""
+                    if embedder_ready
+                    else "no embedding model is bound — pick one in Settings → Models"
+                ),
             )
         )
     except Exception:
@@ -292,6 +321,14 @@ def measure_deficits() -> list[Deficit]:
                 weight=5.0,
                 max_penalty=20.0,
                 reachable=False,
+                # Unreachable BY DESIGN rather than by a missing binding, so the sentence has
+                # to say that: there is no prerequisite to satisfy and no button that clears
+                # it. Reviewing the skill is the only move, and nothing else on the surface
+                # would tell a reader that.
+                blocked_by=(
+                    "a tampered skill needs a person — review it on the Skills page, then "
+                    "reinstall or remove it"
+                ),
             )
         )
     except Exception:

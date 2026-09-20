@@ -549,7 +549,11 @@ export interface RemediationRun {
 export interface RemediationSnapshot {
   score: number
   target_score: number
-  deficits: { key: string; count: number; penalty: number; reachable: boolean }[]
+  /** `blocked_by` is the actionable half of `reachable`: one sentence naming the missing
+   *  prerequisite, produced by `Deficit.blocked_by` and non-empty exactly when `reachable`
+   *  is false. Without it a surface can say no more than "not fixable yet", which reads as
+   *  "the system will get to it" for a deficit nothing will ever get to. */
+  deficits: { key: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
   plan: RemediationJobRow[]
   recent_runs: RemediationRun[]
 }

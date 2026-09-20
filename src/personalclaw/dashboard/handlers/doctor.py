@@ -612,42 +612,55 @@ async def _tts_clone_probe(_timed) -> dict | None:
 # ── Remediation engine (§4) ───────────────────────────────────────────────────
 
 
+def remediation_snapshot() -> dict:
+    """The `/api/doctor/remediation` body: health score, the measured deficits behind it, a
+    dry-run plan preview, and the recent remediation-run ledger. Blocking (measures every
+    deficit source) — call it off the loop.
+
+    Module-level rather than a closure inside the handler so a rail can build the REAL
+    payload and derive its field set from the shape itself. ``test_doctor_payload_readers``
+    does exactly that: every field this projects must have a reader on a doctor surface,
+    which is only checkable if the projection is reachable from a test.
+    """
+    import time as _t
+
+    from personalclaw.resilience import remediation as _rem
+
+    deficits = _rem.measure_deficits()
+    cfg = _resilience_cfg().remediation
+    preview = _rem.run_remediation(
+        target_score=float(cfg.target_score),
+        max_cost_usd=cfg.max_cost_usd,
+        now=_t.time(),
+        dry_run=True,
+    )
+    return {
+        "score": _rem.health_score(deficits),
+        "target_score": cfg.target_score,
+        "deficits": [
+            {
+                "key": d.key,
+                "count": d.count,
+                "penalty": round(d.penalty, 1),
+                "reachable": d.reachable,
+                # WHY an unreachable deficit is at its floor. Computed where `reachable` is
+                # and dropped here until now, which left every surface with nothing to say
+                # past "not fixable yet". See `Deficit.blocked_by`.
+                "blocked_by": d.blocked_by,
+            }
+            for d in deficits
+        ],
+        "plan": preview.jobs,
+        "recent_runs": _rem.recent_runs(10),
+    }
+
+
 async def api_doctor_remediation(request: web.Request) -> web.Response:
     """GET /api/doctor/remediation — current health score, a dry-run plan preview, and
     the recent remediation-run ledger."""
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
-
-    def _snapshot() -> dict:
-        import time as _t
-
-        from personalclaw.resilience import remediation as _rem
-
-        deficits = _rem.measure_deficits()
-        cfg = _resilience_cfg().remediation
-        preview = _rem.run_remediation(
-            target_score=float(cfg.target_score),
-            max_cost_usd=cfg.max_cost_usd,
-            now=_t.time(),
-            dry_run=True,
-        )
-        return {
-            "score": _rem.health_score(deficits),
-            "target_score": cfg.target_score,
-            "deficits": [
-                {
-                    "key": d.key,
-                    "count": d.count,
-                    "penalty": round(d.penalty, 1),
-                    "reachable": d.reachable,
-                }
-                for d in deficits
-            ],
-            "plan": preview.jobs,
-            "recent_runs": _rem.recent_runs(10),
-        }
-
-    return web.json_response(await asyncio.to_thread(_snapshot))
+    return web.json_response(await asyncio.to_thread(remediation_snapshot))
 
 
 async def api_doctor_remediation_run(request: web.Request) -> web.Response:
