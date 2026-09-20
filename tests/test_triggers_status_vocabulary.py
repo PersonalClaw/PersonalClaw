@@ -109,7 +109,8 @@ WRITERS: tuple[Writer, ...] = (
         # Raised from 3 when AG-7 added the rung ladder's `skipped_gate` refusal: both refusal
         # statuses now arrive through `_record_refused_fire`, pinned by its `_REFUSAL_STATUSES`
         # guard, so the floor tightens rather than staying where a lost status would fit.
-        min_values=4,
+        # Raised to 5 when AG-2 added the day-budget pause's `needs_input` to that same guard.
+        min_values=5,
     ),
     Writer(
         label="triggers/service.py records a suppressed fire's ScheduleRun",

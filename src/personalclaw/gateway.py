@@ -175,7 +175,17 @@ _CYCLE_REPROMPT_MSG = (
 #: silent FAILED fallback, so a defended fire would appear in the user's history as a broken
 #: automation. `test_triggers_status_vocabulary` reads this same tuple to enumerate what this
 #: writer can produce — keeping it a module constant is what keeps that rail able to see it.
-_REFUSAL_STATUSES: tuple[str, ...] = ("blocked_injection", Outcome.SKIPPED_GATE.value)
+_REFUSAL_STATUSES: tuple[str, ...] = (
+    "blocked_injection",
+    Outcome.SKIPPED_GATE.value,
+    # AG-2's day-budget pause. A bare string because there is deliberately no `Outcome.NEEDS_INPUT`:
+    # this status belongs to the EXECUTOR's vocabulary (`executor.STATUS_TO_OUTCOME`), which
+    # projects it to `Outcome.DEFERRED` — "parked awaiting a human".
+    # `SCHEDULE_STATUS_TO_OUTCOME` carries the same key with the same target so one word cannot
+    # mean two things across the merged runs feed, and
+    # `test_the_two_status_families_do_not_disagree` is what keeps the two tables honest.
+    "needs_input",
+)
 
 
 # Tool-name prefixes treated as read-only by the --approval reads flag.
@@ -888,9 +898,15 @@ class GatewayOrchestrator:
     def _day_budget_exceeded(self, *, context: str) -> bool:
         """True when the day-scope guardrail spend ceiling is already hit.
 
-        Used as a pre-dispatch gate for unattended LLM work (cron agent fires).
-        On the transition into exceeded, emits ONE needs-input notification so the
-        user learns their automation is paused for the day without a per-fire spam.
+        The pre-dispatch gate for unattended work, called by `_fire_store_trigger` — every
+        clock, file, webhook and chained fire. On the transition into exceeded, emits ONE
+        notification so the user learns their automation is paused for the day without a
+        per-fire spam; the caller records the per-fire `needs_input` outcome that projects
+        to `Outcome.DEFERRED`, so the PAUSE is legible in the runs feed even though the
+        TOAST is de-duped. (Until AG-2 this said it emitted a "needs-input notification"
+        while emitting a WARNING and having no caller at all — the docstring asserted the
+        clause the code did not satisfy.)
+
         Fail-open (returns False) on any error — a broken budget read must never
         wedge unattended work; the meter + breaker remain the hard controls.
         """
@@ -1189,6 +1205,49 @@ class GatewayOrchestrator:
                 trigger,
                 status=_Outcome.SKIPPED_GATE.value,
                 error=f"held for your approval: {route.reason}",
+            )
+            self._push_trigger_refresh()
+            return
+
+        # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one (AUTONOMY-GUARDRAILS §1.1 — AG-2).
+        # `_day_budget_exceeded` was WRITTEN to be this gate — its own docstring says it is "used as
+        # a pre-dispatch gate for unattended LLM work (cron agent fires)" — and it had ZERO
+        # production callers. Measured at `171a613ae`: `day_budget_exceeded` appears once in `src/`,
+        # on its own `def` line, and only tests ever called it. Its caller was `_run_action_job`,
+        # which retired with `ScheduleService` (S112); the successor seam inherited neither this
+        # gate nor the denylist (AG-12) nor the failure wrap — the third time that retirement was
+        # found to have dropped a control it never re-attached.
+        #
+        # What that cost: the ceiling `settings/GuardrailsPanel.tsx:55` promises will pause "a cron
+        # fire" was enforced only at the model-call layer (`model_call.py:302`), which a `bash` or
+        # `http` action never reaches at all — so a per-minute trigger over its day ceiling kept
+        # firing — and which, when it IS reached, raises into the fire's error path and reports a
+        # BROKEN automation rather than a deliberate pause.
+        #
+        # `needs_input`, not `skipped_gate`: AG-2's clause says the fire "pauses into needs-input",
+        # and `executor.STATUS_TO_OUTCOME` already maps that status to `Outcome.DEFERRED` — "parked
+        # awaiting a human", the one reading of DEFERRED that means a ceiling only a person can
+        # lift. `skipped_gate` is in `INERT_OUTCOMES` and folds OUT of the default runs inbox, which
+        # would hide the very pause the user is meant to act on.
+        #
+        # LAST of the pre-dispatch gates deliberately: when a denylist block or a rung hold also
+        # applies, the row must record the SECURITY verdict, not a budget pause. A rung cannot
+        # relax this — a withheld action returned above and spent nothing.
+        #
+        # Recording cannot wedge the fire: `_day_budget_exceeded` fail-opens on any error, and both
+        # calls below swallow their own failures, so a bookkeeping fault can never turn a pause into
+        # a stuck automation. The one-shot `_budget_notified` de-dupe stays INSIDE the gate where it
+        # belongs — it exists so a per-minute trigger does not raise one toast per fire — while the
+        # outcome row is written per fire, because a fire that was skipped produced an outcome and
+        # suppressing it would drop the row that makes the pause legible in the runs feed.
+        if self._day_budget_exceeded(context=f"trigger {getattr(trigger, 'id', '') or ''}"):
+            await self._record_refused_fire(
+                trigger,
+                status="needs_input",
+                error=(
+                    "paused — the daily automation budget is spent. Unattended runs resume "
+                    "tomorrow, or raise the budget in Settings → Guardrails."
+                ),
             )
             self._push_trigger_refresh()
             return
