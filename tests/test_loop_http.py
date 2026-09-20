@@ -224,6 +224,33 @@ class TestCreate:
             "reason": "binary_not_on_path",
         }
 
+    def test_code_detail_reports_shell_keyword_command_as_runnable(self, state, tmp_path):
+        command = 'for f in *.py; do python3 -m py_compile "$f"; done'
+        r = _run(
+            H.api_loop_create(
+                _req(
+                    "POST",
+                    "/api/loops",
+                    state,
+                    body={
+                        "kind": "code",
+                        "task": "compile every Python file in this workspace",
+                        "workspace_dir": str(tmp_path),
+                        "verify_command": command,
+                    },
+                )
+            )
+        )
+
+        assert r.status == 201
+        d = _body(r)
+        assert d["kind_config"]["verify_command"] == command
+        assert d["command_runnability"]["verify_command"] == {
+            "command": command,
+            "runnable": True,
+            "binary": "",
+        }
+
     @pytest.mark.parametrize(
         "kind,kc_key",
         [
