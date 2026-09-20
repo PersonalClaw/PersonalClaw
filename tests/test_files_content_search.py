@@ -79,6 +79,65 @@ def test_python_search_resolves_allowlist_once(tmp_path, monkeypatch):
     assert calls == 1
 
 
+# ── Deadline / stop-event rail (drives the REAL fallback, not a stand-in) ──
+
+
+class _TripAfter:
+    """``stop_event`` lookalike that answers ``True`` from the ``nth`` call on."""
+
+    def __init__(self, nth: int) -> None:
+        self._nth = nth
+        self.calls = 0
+
+    def is_set(self) -> bool:
+        self.calls += 1
+        return self.calls >= self._nth
+
+
+@pytest.fixture
+def one_file_root(tmp_path, monkeypatch):
+    (tmp_path / "one.txt").write_text(
+        "needle_here 1\nneedle_here 2\nneedle_here 3\nneedle_here 4\n"
+    )
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Root", str(tmp_path))])
+    monkeypatch.setattr(
+        F,
+        "_validate_dashboard_path",
+        lambda raw, allowed_roots=None: raw if str(raw).startswith(str(tmp_path)) else None,
+    )
+    return tmp_path
+
+
+def test_content_search_timed_out_is_not_an_oserror():
+    # TimeoutError is an OSError subclass, so that lineage would put the stop signal
+    # inside the reach of the fallback's ``except OSError: continue`` read handler.
+    assert not issubclass(F._ContentSearchTimedOut, OSError)
+
+
+def test_one_file_root_search_is_complete_without_a_stop_event(one_file_root):
+    results, truncated = F._content_search_python(str(one_file_root), "needle_here", "")
+    assert len(results) == 4
+    assert not truncated
+
+
+@pytest.mark.parametrize("nth", [1, 2, 3, 4, 5, 6])
+def test_stop_event_leaves_the_walk_at_every_check(one_file_root, nth):
+    # Checks 1-2 are the os.walk and per-file checks (outside the file-read ``try``);
+    # 3-6 are the per-line check INSIDE it, which used to be swallowed and return a
+    # partial set claiming truncated=False.
+    with pytest.raises(F._ContentSearchTimedOut):
+        F._content_search_python(str(one_file_root), "needle_here", "", stop_event=_TripAfter(nth))
+
+
+def test_expired_deadline_leaves_the_walk(one_file_root):
+    # Trips at the os.walk check, so this is a sanity rail on the deadline arm, not a
+    # discriminator for the swallow — it passed on the unfixed code too.
+    with pytest.raises(F._ContentSearchTimedOut):
+        F._content_search_python(
+            str(one_file_root), "needle_here", "", deadline=time.monotonic() - 1.0
+        )
+
+
 # ── HTTP handler ──
 
 
