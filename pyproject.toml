@@ -40,7 +40,7 @@ dependencies = [
     "aiohttp>=3.9,<4",
     "websockets>=12,<18",
     "cron-descriptor>=1.4,<3",
-    "croniter>=2.0,<7",
+    "croniter>=2.0,<3",
     # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
     # memory app (native-vector-memory), which ships INSIDE core, so its deps are
     # baked in (not shed). It's small + NOT excluded from the desktop bundle
