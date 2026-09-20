@@ -8,7 +8,17 @@ name = "personalclaw"
 version = "0.1.3"
 description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
 license = { text = "MIT" }
-requires-python = ">=3.12"
+# Upper-bounded ON PURPOSE, to the newest interpreter CI actually verifies. An open
+# `>=3.12` promised every future Python while the matrix proved two, and 3.14 collected on
+# that promise: the connector-pack parse fence denies `importlib`, so neutering the
+# pre-imported `importlib._bootstrap` replaces the import machinery's own
+# `_find_and_load` — on 3.14 EVERY import inside a pack script is refused, legitimate ones
+# included, and the refusal names `importlib._bootstrap._find_and_load` instead of the
+# module asked for. Connector-pack parsing is therefore non-functional on 3.14, not merely
+# noisier. Refusing the install is the honest answer until the fence is fixed; widen this
+# in the same change that adds 3.14 to `.github/workflows/full.yml`, which
+# `tests/test_dependency_bounds.py` requires.
+requires-python = ">=3.12,<3.14"
 
 authors = [
     { name = "PersonalClaw contributors" },
