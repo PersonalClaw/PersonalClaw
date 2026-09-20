@@ -7,6 +7,17 @@ import { api, type AgentProvider, type DiscoveredAgent, type ModelItem } from '.
  *  composer (useComposerData) and the agent-catalog hook below build on it, so
  *  the discovery logic lives in exactly one place. */
 
+/** The key an agent name is stored under in the routing-suppression store.
+ *
+ *  🔑 MIRRORS `agents/routing.py`'s `canonical_agent`, and it exists because the mismatch was a
+ *  live defect, not a hypothetical. `GET /api/agents/routing/status` returns CANONICAL keys, and
+ *  the agent detail page compared them to the raw route name with `.includes()`. Measured on a live
+ *  gateway: three dismissals of the shipped default agent `PersonalClaw` wrote
+ *  `muted: ["personalclaw"]`, `is_suppressed("PersonalClaw")` returned True, and the panel said
+ *  "Active — eligible for auto-routing suggestions" with no Unmute control. Any comparison against
+ *  a name in `routing_status().muted` goes through here; `routingMuteReachable` is the rail. */
+export const canonicalAgentKey = (name: string): string => String(name ?? '').trim().toLowerCase()
+
 /** ACP discovery: for every ready non-native provider, fetch its agents. */
 export async function loadAcpDiscovered(providers: AgentProvider[]): Promise<Record<string, DiscoveredAgent[]>> {
   const acp = providers.filter((p) => p.type !== 'native' && p.ready)

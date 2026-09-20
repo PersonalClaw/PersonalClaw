@@ -348,7 +348,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'chat', group: 'General', label: 'Chat', icon: MessageSquare, size: 'md',
     description: 'Message behavior, history, and session preferences.',
-    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
+    // `agent routing … muted unmute` is in here on purpose: the panel's Agent-routing section is the
+    // ONLY place a muted agent can be un-muted from the whole list, and a user hunting for it has no
+    // reason to guess "Chat" — the state was created by an ✕ in a chat, not by a chat setting.
+    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps agent routing suggestions specialist dismiss cooldown muted unmute re-enable ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
     render(query, go) {
       const { data: c, refresh, stale: cStale } = useDashCfg()
       // This card is the SECOND writer of these prefs (the Chat settings panel is the other), so it

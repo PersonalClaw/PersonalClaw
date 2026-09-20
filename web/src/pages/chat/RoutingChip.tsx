@@ -15,6 +15,18 @@ import { notify } from '../../app/appSdk'
 // so the chip stays the one import site for everything routing-chip-shaped.
 export type { RoutingSuggestion }
 
+/** The one sentence a user gets when a dismissal crosses the mute threshold, and where to undo it.
+ *
+ *  🔴 THE THIRD DISMISSAL IS A DIFFERENT EVENT and it used to look identical to the first two.
+ *  Crossing the threshold mutes the agent for good — there is no expiry, and `is_suppressed` returns
+ *  on the mute BEFORE it reads `cooldown_hours`, so the "Dismiss cooldown" setting cannot walk it
+ *  back (measured: PATCHing it to 0 leaves the mute in place, and so does toggling the section's
+ *  master switch off and on). The dismiss response already says which dismissal this was
+ *  (`{count, muted}`) and the old code discarded it, so the agent went quiet forever with nothing
+ *  said anywhere. Naming the surface that clears it is the other half of issue 414. */
+const announceMuted = (agent: string) =>
+  notify(`${agent} won't be suggested again — undo it under Settings › Chat › Agent routing › Muted agents.`, 'info')
+
 /** Routing suggestion chip (AGENT-ROUTING S2) — a subtle, non-blocking pill above
  *  the composer proposing a better-fit specialist for the current default-agent chat.
  *  "Route" re-targets the session via the existing agent-switch path; ✕ dismisses
@@ -54,9 +66,11 @@ export function RoutingChip({ suggestion, defaultAgent, onRoute, onDismiss }: {
   // at a threshold, so a swallowed rejection means the suggestion keeps coming and never mutes — the
   // user's repeated dismissals quietly amount to nothing. The chip still hides (a dismissal is a
   // request to get something out of the way); the report is what makes the recurrence explicable.
+  // The threshold crossing itself is announced by `announceMuted` — see its note.
   const dismiss = () => {
-    void reportingWrite(`dismiss the ${suggestion.agent} suggestion`,
-      () => api.routingDismiss(suggestion.agent))
+    void reportingWrite(`dismiss the ${suggestion.agent} suggestion`, async () => {
+      if ((await api.routingDismiss(suggestion.agent))?.muted) announceMuted(suggestion.agent)
+    })
     // Dismissing is negative feedback on the routing pair.
     api.recordFeedback({
       target_kind: 'routing_suggestion', target_id: targetId, verdict: 'down',
