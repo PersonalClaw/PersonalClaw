@@ -1,10 +1,13 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useId, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Loader2, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Loader2, RotateCcw, type LucideIcon } from 'lucide-react'
+import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { StatusPill as UiStatusPill } from '../../ui/StatusPill'
 import { StaleNotice } from '../../ui/StaleNotice'
 import { spring, expr } from '../../design/motion'
+import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
+import { readableErrText } from '../../lib/errText'
 import { fvs, withWeight } from '../../design/fontWeight'
 
 /** A coarse weight hint kept on each widget for future tuning. The home page lays
@@ -45,13 +48,50 @@ export function Highlight({ text, query }: { text: string; query: string }) {
  *  operates it (the control stops propagation). The title + arrow act as the
  *  explicit "open" affordance.
  *
- *  `loading` shows a skeleton mirroring the card shape so it paints instantly. */
-export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, accent, footer, rows, children }: {
+ *  `loading` shows a skeleton mirroring the card shape so it paints instantly.
+ *  `failed` REPLACES the body with a failure band — see the prop's own note. */
+export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, error, onRetry, stale, accent, footer, rows, children }: {
   icon: LucideIcon
   title: string
   query?: string
   onClick: () => void
   loading?: boolean
+  /** The tile's read FAILED, from `useQuery`'s `status === 'error'`.
+   *
+   *  🔴 THIS PROP EXISTS BECAUSE THE HUB HAD NO HONEST WAY TO SAY IT, and ~30 tiles each invented
+   *  their own. Before it, a tile in this state did one of three things, none of them right:
+   *
+   *    · **Claimed a number.** The fetcher carried `.catch(() => null)`, so the rejection never
+   *      reached the layer, `status` could never be `'error'`, and the body rendered against a
+   *      substituted value. "0 archived sessions", "Nothing installed yet — browse the Store",
+   *      "Discover is off". A confident wrong answer, which is worse than silence.
+   *    · **Shimmered forever.** Drop the swallow alone and `data === undefined` still satisfies the
+   *      skeleton branch, so the tile pulses until the tab is closed. This file's sibling logged
+   *      that exact trade in prose — "every hub tile turns a failure into a permanent shimmer …
+   *      logged as its own family" — and this is that family, closed.
+   *    · **Hand-rolled a muted caption.** The 15 tiles that DID bind `error` each wrote their own
+   *      `<div data-type="caption" class="text-on-surface-low">Couldn't load your X.</div>`: body-ink
+   *      grey, no glyph, no recovery, 15 wordings. A failure painted in the same ink as a hint does
+   *      not read as a failure.
+   *
+   *  One prop, one treatment, and the tone comes from `design/errorTreatments`' single-sourced
+   *  `ERROR_SURFACE_PAINT` rather than a fourth hand-written danger wash.
+   *
+   *  🪤 NOT A LIVE REGION, AND THE NUMBER IS WHY. Measured on a cold open of `#/settings`: 22 tiles
+   *  are in flight simultaneously, so a `role="alert"` per tile queues up to 22 assertive
+   *  announcements for one page load — the same ruling `aria-busy` and `StaleNotice`'s
+   *  `announce={false}` already carry on this component. The failure reaches assistive tech as an
+   *  `aria-describedby` DESCRIPTION on the nav button the user actually lands on, which adds the
+   *  fact without renaming the control (a tile whose label changes on failure stops being findable
+   *  by the name it has when it works — the ruling this file applied to `loading`). */
+  failed?: boolean
+  /** The rejection itself, so the band can show the server's own message. Passed through
+   *  `readableErrText`, which drops the closed set of useless strings (`Failed to fetch`,
+   *  `Load failed`, `HTTP 502`) that would otherwise displace a written sentence. */
+  error?: unknown
+  /** Re-runs the tile's fetch — `useQuery`'s `refresh`. Omit only where the tile genuinely has
+   *  no handle on its own read. */
+  onRetry?: () => void
   /** The tile is showing a CACHED value that is past its freshness window, from `useQuery`'s
    *  `stale`. Renders the shared `StaleNotice` in the header, unannounced — see the note on the
    *  nav overlay below for why 22 live regions on one page is not an option. A tile that paints a
@@ -68,6 +108,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
   children?: ReactNode
 }) {
   const tint = accent || 'var(--color-primary)'
+  const failId = `bento-fail-${useId()}`
   return (
     <motion.div
       layout
@@ -94,7 +135,8 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
           lands here, which is exactly the trade this surface needs. One `role="status"` per SECTION (as
           `RemoteProvidersSkeleton` ships) is fine; per tile is not. */}
       <button type="button" onClick={onClick} aria-label={`Open ${title} settings`}
-        aria-busy={loading || undefined}
+        aria-busy={(loading && !failed) || undefined}
+        aria-describedby={failed ? failId : undefined}
         className="absolute inset-0 z-0 rounded-xl outline-none" />
       {/* Content sits above the overlay but is click-through except for controls. */}
       <div className="pointer-events-none relative z-10 flex min-h-0 flex-col">
@@ -108,12 +150,75 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
           <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
           <ArrowRight size={14} className="shrink-0 text-on-surface-low transition-transform group-hover:translate-x-0.5" />
         </div>
-        {loading
-          ? <CardSkeleton rows={rows ?? 2} />
-          : <div className="flex min-h-0 flex-1 flex-col">{children}</div>}
-        {footer && <div data-type="caption" className="mt-2 text-on-surface-low">{footer}</div>}
+        {/* Failure is checked BEFORE loading, and the order is the whole point: `data === undefined`
+            satisfies the skeleton branch too, so a failure tested second is a failure never shown —
+            the reachability trap `ui/loadErrorState.test.tsx` was written about. */}
+        {failed
+          ? <TileLoadError id={failId} title={title} error={error} onRetry={onRetry} />
+          : loading
+            ? <CardSkeleton rows={rows ?? 2} />
+            : <div className="flex min-h-0 flex-1 flex-col">{children}</div>}
+        {/* A footer describes data the tile no longer has, so it is suppressed on failure rather
+            than left sitting under the band contradicting it. */}
+        {footer && !failed && <div data-type="caption" className="mt-2 text-on-surface-low">{footer}</div>}
       </div>
     </motion.div>
+  )
+}
+
+/** The tile-scale failure band — what a hub card shows instead of a number it does not have.
+ *
+ *  Deliberately NOT `ui/ListScaffold`'s `LoadError`. That primitive is a centred `py-2xl` column
+ *  with a 32px glyph and a `headline-s`; a bento tile's whole body is ~64px tall, so rendering it
+ *  here would either overflow the card or force every sibling tile to that height. Same INFORMATION
+ *  (what failed · the server's own words · a way out), tile-scale composition — and the tone token
+ *  is shared rather than re-picked, so the two surfaces cannot drift apart in colour.
+ *
+ *  `<p>` carries the description id, not the wrapper: including the Retry button in the
+ *  `aria-describedby` target would append its label to the nav button's description, so the tile
+ *  would announce a second, unreachable "Retry" that belongs to a different control. */
+function TileLoadError({ id, title, error, onRetry }: {
+  id: string; title: string; error?: unknown; onRetry?: () => void
+}) {
+  // `px-s`, not `px-2`: 8px lands exactly on a rung, so the raw form would be inert under the
+  // density slider and `design/spacingTokenRamp.test.ts` counts it. `gap-1.5`/`py-1.5` are 6px, a
+  // half-step the ramp has no rung for, so they stay raw by that rail's own reckoning.
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5 rounded-md px-s py-1.5"
+      style={ERROR_SURFACE_PAINT}>
+      <p id={id} data-type="caption" className="flex items-start gap-1.5" style={{ color: 'inherit' }}>
+        <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden />
+        <span>
+          <span style={fvs(600)}>Couldn&rsquo;t load {title}.</span>{' '}
+          {/* The written sentence, not the engine's. `readableErrText` returns '' for the closed
+              set of strings that read as a developer console (`Failed to fetch`, `Load failed`,
+              `HTTP 502`) so they cannot displace it, and passes a backend-authored message
+              through untouched — "name is required" still reaches the reader. */}
+          <span className="opacity-80">{readableErrText(error) || 'The server didn’t respond.'}</span>
+        </span>
+      </p>
+      {onRetry && (
+        // The SHARED primitive, at the `xs` tier its own doc introduced for exactly this ("dense
+        // in-panel chrome … error retries"). A hand-rolled `<button>` here would also have moved
+        // the `primitiveAdoption` ratchet, whose baseline is pinned at the measured actual with no
+        // slack — so the bespoke version is not merely inconsistent, it is CI-red.
+        //
+        // `ghost`, not `ghost-accent`: that variant's `--color-primary-emphasis` ink was measured to
+        // AA against canvas/surface/surface-high, NOT against this band's danger wash, and an
+        // unverified pairing on a failure surface is the one place to not guess. `ghost`'s
+        // `text-on-surface` over a 10% danger mix on `surface-container` is the standard body-ink
+        // pairing the mode tokens already guarantee.
+        //
+        // Sits in the card's click-through content layer over the full-card nav overlay, so it
+        // re-enables pointer events and stops the click in the BUBBLE phase — the contract
+        // `Switch`/`SegToggle`/`InlineSelect` below already use. A capture-phase stop would preempt
+        // the button's own onClick.
+        <Button variant="ghost" size="xs" className="pointer-events-auto self-start"
+          onClick={(e) => { e.stopPropagation(); onRetry() }}>
+          <RotateCcw size={12} aria-hidden /> Retry
+        </Button>
+      )}
+    </div>
   )
 }
 
