@@ -257,7 +257,7 @@ describe('the census: every empty-state promise is accounted for', () => {
   })
 })
 
-describe('the two user-driven promises are what they claim', () => {
+describe('the three user-driven promises are what they claim', () => {
   it('the code cockpit only promises files while a run is in flight', () => {
     // The distinction that keeps it out of the "verify the mechanism" bucket: with no run, the copy says
     // files appear "once it runs" — a conditional, not a background job.
@@ -269,6 +269,19 @@ describe('the two user-driven promises are what they claim', () => {
   it('the chat empty state promises only what the user does next', () => {
     expect(web('pages/ChatPage.tsx')).toMatch(
       /title="No chats yet" hint="Start a conversation — your sessions will appear here/,
+    )
+  })
+
+  it('the installed-packs empty state names the surface that fills it, and that surface is on the page', () => {
+    // 🪤 The failure mode this owns is NOT "the copy is missing" — it is "the copy points somewhere
+    // that no longer exists". So both halves are asserted in one test: the sentence, and the Section
+    // it sends the reader to. Splitting them would let the panel drop the store and stay green.
+    const ui = web('pages/settings/PacksPanel.tsx')
+    expect(ui, 'the empty state says what the user does next').toContain(
+      'No packs installed yet — install one from the pack store below',
+    )
+    expect(ui, 'and the pack store it points at is rendered by this same panel').toContain(
+      '<Section title="Pack store"',
     )
   })
 })
