@@ -4,6 +4,7 @@
 # workspace split — venvs are not relocatable). PyInstaller output stays intra-repo
 # too. Override VENV=... / PYI_BUNDLE_DIR=... if yours differ.
 PYTHON  ?= python3
+UV      ?= uv
 VENV    ?= .venv/bin
 PKG     := src/personalclaw
 TESTS   := tests
@@ -28,7 +29,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lint test test-e2e test-visual build clean harness-validate gates \
+.PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
         mutation-check \
         serve serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
@@ -46,6 +47,10 @@ help:
 format:
 	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS)
 	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS)
+
+## lock: refresh uv.lock from the declared project dependencies
+lock:
+	$(UV) lock
 
 ## lint: check formatting, run flake8 and mypy
 lint:
