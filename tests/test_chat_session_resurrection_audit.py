@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import json
 import pathlib
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -86,7 +87,15 @@ _CREATES_BY_DESIGN: dict[str, str] = {
     # ── the explicit create route ──
     "dashboard/chat_handlers.py::api_chat_session_create": (
         "POST /api/chat/sessions IS the create verb — this is the one route whose job "
-        "is to mint a key, and it is what a client uses instead of naming a dead one"
+        "is to mint a key, and it is what a client uses instead of naming a dead one. "
+        "Its `body['name']` IS client-supplied (measured: naming a hard-deleted key "
+        "here does re-materialise it), so this row is a JUDGMENT, not a mechanical "
+        "fact: a create verb cannot distinguish 'hard-deleted' from 'never existed' "
+        "(no tombstone is kept), so refusing an unknown name would break creation "
+        "outright. And the hazard the two guarded writers carry is *implicit* "
+        "continuation — a send or a resume asserts 'this session exists, continue it' "
+        "— where an explicit create asserts the opposite. The dashboard never sends a "
+        "session KEY here (ChatPage's ensureSession omits `name` entirely)"
     ),
     # ── SERVER-derived key: the owning resource's identity IS the session name, so a
     #    miss means 'this resource has no session yet', never 'the client typed a key' ──
@@ -187,9 +196,8 @@ FILES_SCANNED_FLOOR = 800
 #: The ``{session}``-addressed route population, derived from the real route table.
 #: A FLOOR: the family this audit reasons about ("every other writer to a session")
 #: is exactly this set, and a derivation that stopped finding it would make the
-#: classification above look complete when it had simply gone blind. Measured at 50
-#: (47 in ``dashboard/server.py`` + lifecycle/export/share in the two
-#: ``register_routes`` modules).
+#: classification above look complete when it had simply gone blind. Re-measured at 50
+#: on this tree: 47 chat-session routes + 3 ``/api/skills/ephemeral/{session}`` routes.
 SESSION_ROUTE_FLOOR = 45
 
 
@@ -580,6 +588,174 @@ async def test_omitting_the_session_still_starts_a_new_conversation(tmp_path):
         assert resp.status == 200, await resp.text()
         minted = (await resp.json())["session"]
         assert minted and minted in state._sessions
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_an_archived_session_is_still_reopenable(tmp_path):
+    """The refusal the guard must NOT introduce — and the whole reason the predicate is
+    persisted-metadata instead of :func:`resolve_session`.
+
+    ``/cleanup`` ARCHIVES a stale chat: ``save_session_to_history(closed=True)`` plus an
+    eviction from ``state._sessions``. ``resolve_session`` answers ``None`` for exactly
+    that state (``_rehydrate_session_from_history`` returns None on ``meta['closed']``),
+    so a guard built on it would 404 a key that DOES exist — and specifically it would
+    404 ``POST /resume``, the one route whose entire job is to reopen an archived chat
+    (it clears the ``closed`` flag itself, a few dozen lines below the guard).
+
+    The precondition asserts the two predicates genuinely DIVERGE on this state. Without
+    it, a ``resolve_session`` swap could leave this test green for a trivial reason and
+    the design call would be unfalsified.
+    """
+    from personalclaw.dashboard.chat_persistence import (
+        resolve_session,
+        save_session_to_history,
+    )
+    from personalclaw.dashboard.chat_utils import _history_key_for
+
+    state = _make_state(tmp_path)
+    session = _seed_persisted_chat(state)
+    key = session.key
+    hk = _history_key_for(key)
+
+    # Archive it exactly as ``api_chat_sessions_cleanup`` does: soft-close, then evict.
+    save_session_to_history(state, session, closed=True)
+    state._sessions.pop(key, None)
+    assert (
+        state.conversation_log.get_metadata(hk).get("closed") is True
+    ), "precondition: the archive did not set `closed` on the meta line"
+    assert key not in state._sessions
+    assert resolve_session(state, key) is None, (
+        "precondition: `resolve_session` must answer None for an ARCHIVED session, or "
+        "this test cannot tell the two predicates apart and proves nothing about the "
+        "design call"
+    )
+
+    client = await _client(state)
+    try:
+        resp = await client.post(f"/api/chat/sessions/{key}/resume", json={"key": hk})
+        assert resp.status == 200, (
+            f"reopening an ARCHIVED session was refused ({resp.status}) — the guard's "
+            f"predicate is answering 'is this session LIVE' instead of 'does this key "
+            f"exist', and archival is not deletion: {await resp.text()}"
+        )
+        # Independent oracles, not the reopen's own reply: the `closed` flag is cleared
+        # ON DISK, and a SECOND endpoint serves the original conversation again.
+        assert not state.conversation_log.get_metadata(hk).get(
+            "closed"
+        ), "the reopen did not clear `closed` on disk"
+        detail = await client.get(f"/api/chat/sessions/{key}")
+        assert detail.status == 200
+        contents = [m["content"] for m in (await detail.json())["messages"]]
+        assert "the original question" in contents, contents
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_send_to_an_archived_session_is_not_refused(tmp_path):
+    """The send half of the same control: archival is not deletion, so the guard must
+    not turn an archived key into a 404 either.
+
+    Scope note, measured against a live gateway on this branch and on ``origin/main``
+    alike: ``POST /api/chat`` to an archived key is accepted and then CLOBBERS the
+    archive — ``_rehydrate_session_from_history`` refuses a ``closed`` meta line, so
+    ``get_or_create_session`` mints a blank session under the same key and the next
+    flush overwrites the JSONL (title and turns gone). That is a SEPARATE pre-existing
+    defect of the send path's rehydrate, unchanged by this commit, and deliberately not
+    blessed here: this test asserts only that the key is not REFUSED, which is the
+    claim the guard owns. Fixing the clobber is a product decision (should a send
+    auto-reopen an archived chat?) and belongs in its own change.
+    """
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
+    from personalclaw.dashboard.chat_utils import _history_key_for
+
+    state = _make_state(tmp_path)
+    session = _seed_persisted_chat(state)
+    key = session.key
+    hk = _history_key_for(key)
+    save_session_to_history(state, session, closed=True)
+    state._sessions.pop(key, None)
+    assert state.conversation_log.get_metadata(hk).get("closed") is True
+
+    with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
+        client = await _client(state)
+        try:
+            resp = await client.post("/api/chat?ws=1", json={"session": key, "message": "hi"})
+            assert resp.status == 200, (
+                f"a send to an ARCHIVED session was refused ({resp.status}) — that is a "
+                f"NEW refusal on a key that exists: {await resp.text()}"
+            )
+        finally:
+            await client.close()
+
+
+def test_a_disk_fault_is_never_reported_as_session_not_found(tmp_path, monkeypatch, caplog):
+    """The fail-open branch, two-sided and against fixed literals.
+
+    A broken conversation log must not make the guard say "your chat does not exist" —
+    that reports the machine's problem as the user's data being gone. So the except
+    branch reads as "exists".
+
+    Both halves are asserted, because "returns True under a fault" alone is also what a
+    helper that ignores its input returns: the SAME unknown key answers ``False`` with a
+    working log and ``True`` with a raising one. If the fault injection silently missed
+    its target, both halves would answer ``False`` and this reds.
+
+    What fail-open does NOT buy, measured on this tree: a working send. ``api_chat``'s
+    very next statement (``_rehydrate_session_from_history``) re-reads the same log and
+    is not defensive, so the route answers **500**. The route-level assertion here is
+    therefore the honest one — *not a 404, not ``session_not_found``* — and it is what
+    flipping the branch to fail-closed breaks.
+    """
+    import logging
+
+    from personalclaw.dashboard import chat_persistence as cp
+
+    state = _make_state(tmp_path)
+    assert cp.session_key_exists(state, "ghost-key") is False, (
+        "with a WORKING log an unknown key must read as absent, or the contrast below "
+        "is measuring nothing"
+    )
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated unreadable conversation log")
+
+    monkeypatch.setattr(cp, "candidate_history_keys", _boom)
+    with caplog.at_level(logging.WARNING):
+        assert cp.session_key_exists(state, "ghost-key") is True, (
+            "an unreadable log made the guard refuse — a disk fault now presents as the "
+            "user's chat having been deleted"
+        )
+    assert any("session existence check failed" in r.getMessage() for r in caplog.records), (
+        f"the fail-open branch swallowed a log read failure silently: "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_route_under_a_disk_fault_does_not_answer_session_not_found(
+    tmp_path, monkeypatch
+):
+    """The route-level half of the fail-open claim (see the unit test above for why the
+    outcome is a 500 rather than a 200)."""
+    from personalclaw.dashboard import chat_persistence as cp
+
+    state = _make_state(tmp_path)
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated unreadable conversation log")
+
+    monkeypatch.setattr(cp, "candidate_history_keys", _boom)
+    client = await _client(state)
+    try:
+        resp = await client.post("/api/chat?ws=1", json={"session": "ghost-key", "message": "hi"})
+        assert resp.status != 404, (
+            "a disk fault was reported to the user as `session_not_found` — the guard "
+            "failed CLOSED and blamed their data for the machine's problem"
+        )
+        assert "session_not_found" not in (await resp.text())
     finally:
         await client.close()
 
