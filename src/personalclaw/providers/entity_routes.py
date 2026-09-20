@@ -45,9 +45,22 @@ def _load_entity_settings(entity: str) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning(
+            "Discarding unreadable entity settings for %s at %s; using empty settings: %s",
+            entity,
+            path,
+            exc,
+        )
         return {}
+    if not isinstance(data, dict):
+        logger.warning(
+            "Discarding non-object entity settings for %s at %s; using empty settings",
+            entity,
+            path,
+        )
+        return {}
+    return data
 
 
 def _save_entity_settings(entity: str, settings: dict[str, Any]) -> None:
