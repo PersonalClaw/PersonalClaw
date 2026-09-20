@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, lastRunMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, type ScheduleDraft,
@@ -174,8 +174,17 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
 
   // Honest last-run badge (T7 + #685): the health rollup dominates the run row — the
   // reaper's degraded/last_error pair must not render "ok" off a stale success row.
-  // Precedence lives in ONE place (lastRunMeta) shared with the list's schedule rows.
-  const ss = lastRunMeta(job.last_run_status, job.last_status)
+  // Precedence lives in ONE place (`triggerStatusMeta`) shared with the list's rows for every kind.
+  //
+  // 🔴 `hasRun` is passed, not omitted (issue 496). The bare pair this used to send let a healthy
+  // rollup — which DEFAULTS to `ok` on a trigger that has never fired — render as a successful run,
+  // so this badge said "ok" above a "never" last-run line on every never-fired schedule.
+  const ss = triggerStatusMeta({
+    runStatus: job.last_run_status,
+    health: job.last_status,
+    state: job.state,
+    hasRun: job.last_run_ts != null || (job.run_count ?? 0) > 0,
+  })
   return (
     <div className="flex flex-col gap-l">
       {/* action row */}

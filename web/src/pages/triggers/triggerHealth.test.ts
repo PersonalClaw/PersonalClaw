@@ -20,10 +20,21 @@
  * states no surface could show.
  */
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { triggerHealthMeta } from '../schedule/scheduleMeta'
+import { pyEnumMembers } from '../../design/pySource'
 
-const HEALTH = ['ok', 'degraded', 'parked', 'failing']
-const STATES = ['active', 'paused', 'autopaused', 'parked', 'quarantined', 'retired']
+// 🔴 READ FROM THE BACKEND, not mirrored by hand (issue 496). These two were literals, so the
+// "renders every value as something" floors below could only cover the members somebody remembered
+// to type — and a mirror proves nothing unless something proves it is still a mirror. That gap is
+// exactly how four hook statuses stayed invisible for a release. The floors now grow with the enums.
+const MODELS = readFileSync(
+  join(import.meta.dirname, '..', '..', '..', '..', 'src', 'personalclaw', 'triggers', 'models.py'),
+  'utf8',
+)
+const HEALTH = pyEnumMembers(MODELS, 'TriggerHealth')
+const STATES = pyEnumMembers(MODELS, 'TriggerState')
 
 describe('triggerHealthMeta — the health rollup', () => {
   it('does NOT render a failing automation as a neutral dot', () => {
@@ -46,6 +57,8 @@ describe('triggerHealthMeta — the health rollup', () => {
   })
 
   it('renders every health value as something, never a blank label', () => {
+    // Vacuity floor: an unreadable enum would make this pass over an empty list.
+    expect(HEALTH.length, 'the backend enum was read').toBeGreaterThanOrEqual(4)
     const blank = HEALTH.filter((h) => !triggerHealthMeta(h, 'active').label)
     expect(blank).toEqual([])
   })
@@ -71,6 +84,7 @@ describe('triggerHealthMeta — the lifecycle state', () => {
   })
 
   it('renders every lifecycle state as something distinguishable', () => {
+    expect(STATES.length, 'the backend enum was read').toBeGreaterThanOrEqual(6)
     const blank = STATES.filter((s) => s !== 'active' && !triggerHealthMeta('ok', s).label)
     expect(blank).toEqual([])
   })

@@ -187,6 +187,18 @@ def to_schedule_row(
         "created_ts": None,
         "last_status": str(getattr(trigger, "health_status", "") or ""),
         "last_run_status": last_run_status or None,
+        # 🔴 THE LIFECYCLE STATE, which this projection alone omitted (issue 496). The store and
+        # event projections both send it (`handlers/triggers.py::_serialize_store` and
+        # `_serialize_event`) and the frontend renders it through the shared `triggerHealthMeta`,
+        # so the CLOCK kind was the one kind whose lifecycle was invisible. Measured on a live
+        # gateway: an AUTOPAUSED and a QUARANTINED clock trigger both arrived as `state: null`
+        # with `last_status: 'failing'` and rendered as the identical "failing" dot — and
+        # quarantine is the one state a toggle cannot undo (`resume_state` refuses it), so
+        # "failing" sends the user to a button that will not work.
+        #
+        # Additive, so §6's "the shape `_serialize_schedule` produced" contract holds for every
+        # existing reader: nothing that ignores the key changes behaviour.
+        "state": str(getattr(trigger, "state", "") or ""),
         "agent": str(config.get("agent") or "") or None,
         "model": str(config.get("model") or "") or None,
         "channel": channel_of(trigger) or None,
