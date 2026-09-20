@@ -14,6 +14,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Vitest 5 uses maxWorkers for every pool, including the default forks pool.
+    // Keep bare local invocations from claiming every core; CI can override this
+    // through Vitest's built-in VITEST_MAX_WORKERS environment variable.
+    maxWorkers: 3,
     // Vitest's default 5 s is a WALL-CLOCK budget, and this suite runs ~400 files
     // across 18 workers — so wall-clock per test inflates roughly 3x under
     // contention. Measured on the `*LoadError.test.tsx` family, which polls the DOM
