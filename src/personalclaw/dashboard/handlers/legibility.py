@@ -4,8 +4,9 @@
 (the hand-authored catalog minus dismissed tips and minus areas the user has already
 engaged), grouped by area, or ``enabled: false`` when the ``legibility.discover_tips``
 kill switch is off. ``POST /api/legibility/discover/dismiss`` persists a per-tip
-dismissal so it never resurfaces. Propose-don't-write: neither endpoint ever enables
-or configures anything on the user's behalf.
+dismissal so it never resurfaces, and ``DELETE`` on that same path clears every dismissal
+(#452 — dismiss is one unconfirmed click, so it needs a way back). Propose-don't-write:
+no endpoint here ever enables or configures anything on the user's behalf.
 
 ``GET /api/legibility/always-on`` is the always-on conventions viewer's data (PEP-10): every
 ``always: true`` skill and project-instruction doc a session receives unconditionally, with
@@ -25,7 +26,12 @@ from personalclaw.legibility.always_on import (
     read_instruction,
     write_instruction,
 )
-from personalclaw.legibility.discover import UnknownTipError, compute_discover, dismiss
+from personalclaw.legibility.discover import (
+    UnknownTipError,
+    clear_dismissed,
+    compute_discover,
+    dismiss,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,24 @@ async def api_discover_dismiss(request: web.Request) -> web.Response:
         logger.info("discover dismiss refused: %r is not a catalog tip id", tip_id[:80])
         return web.json_response({"error": "unknown tip id"}, status=400)
     return web.json_response({"ok": True, "dismissed": sorted(ids)})
+
+
+async def api_discover_dismiss_clear(request: web.Request) -> web.Response:
+    """DELETE /api/legibility/discover/dismiss — undo every Discover dismissal.
+
+    No body and no id: this is clear-ALL (#452). The user has no way to see which ids are
+    stored, so a per-id restore would ask them to choose from a set they were never shown.
+
+    DELETE on the POST's own path, not a new ``/restore`` noun, because the resource being
+    removed is the dismissal the POST created — one path, two verbs, nothing new to learn.
+
+    Answers ``restored`` so the caller can say what happened. That count is of the ids that
+    were STORED; it is deliberately not the payload's ``restorable_count``, which is how many
+    tips will become VISIBLE again (a dismissed tip whose area the user has since used stays
+    auto-hidden). Still propose-don't-write: this only un-hides what the user hid.
+    """
+    removed = clear_dismissed()
+    return web.json_response({"ok": True, "restored": removed})
 
 
 async def api_always_on(request: web.Request) -> web.Response:

@@ -2049,7 +2049,15 @@ export interface DiscoverArea { area: string; tips: DiscoverTip[] }
 /** `dismissed_count` is what lets the hub's empty state tell "you used every area" from
  *  "you hid the tips" — `visible_count: 0` means both, and the copy used to claim the
  *  first unconditionally (#452). */
-export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number; dismissed_count: number }
+export interface DiscoverResponse {
+  enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number
+  /** How many tips the user explicitly hid (#3200) — what the empty state counts. */
+  dismissed_count: number
+  /** How many of those clearing the dismissals would actually make VISIBLE again, which is
+   *  NOT dismissed_count: a tip whose area the user has since used stays auto-hidden either
+   *  way. The restore control gates on THIS, or it offers a write with no visible effect. */
+  restorable_count: number
+}
 /** One always-on convention in effect right now (PEP-10). `preview` is credential-redacted;
  *  `body` is only present on the single-doc editor read, where it is verbatim. */
 export interface AlwaysOnItem {
@@ -5992,6 +6000,13 @@ export const api = {
   // point (deep link), never enable; dismissals persist server-side per tip. ──
   discover: () => get<DiscoverResponse>('/api/legibility/discover'),
   dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
+  /** Clear ALL Discover dismissals — DELETE on the dismiss path, no id (#452). Clear-all
+   *  because the user is never shown which ids are stored, so per-id would ask them to pick
+   *  from an invisible set. `restored` counts stored ids removed, not tips revealed.
+   *  Inline fetch rather than the shared `del`, which resolves void — this reads its body.
+   *  Same shape as `deleteLesson` below, the other DELETE whose response is data. */
+  restoreDiscoverTips: () =>
+    fetch('/api/legibility/discover/dismiss', { method: 'DELETE', headers: { ...SK } }).then(j<{ ok: boolean; restored: number }>),
 
   // ── Always-on conventions viewer (PEP-10): what EVERY session receives, with
   // provenance. The server slices these out of the session's own producer strings, so
