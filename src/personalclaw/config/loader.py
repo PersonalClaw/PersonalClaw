@@ -3294,18 +3294,18 @@ class AppConfig:
         """
         path = config_path()
         if not path.exists():
-            return cls(), False
+            return cls(memory_stores={"default": MemoryStoreConfig()}), False
 
         try:
             data = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load config from %s: %s", path, e)
-            return cls(), False
+            return cls(memory_stores={"default": MemoryStoreConfig()}), False
 
         # Must be a dict to proceed
         if not isinstance(data, dict):
             logger.warning("Config is not a JSON object, using defaults")
-            return cls(), False
+            return cls(memory_stores={"default": MemoryStoreConfig()}), False
 
         # Validate against JSON Schema (advisory — never fatal)
         _validate_config_data(data)
