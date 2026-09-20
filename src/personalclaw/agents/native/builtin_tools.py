@@ -2498,6 +2498,21 @@ class NativeBuiltinToolProvider(ToolProvider):
                     recovery_hints=["Use one of: open, in_progress, done, cancelled, blocked."],
                 )
             fields["status"] = norm
+        # The single-writer contract on a workflow-managed task (#390). The allowlist above happens
+        # to exclude most engine-owned fields, but not `status` — the one that matters most: an
+        # agent could mark a managed task done while its workflow node was still running, and then
+        # the board and the run ledger disagreed with nothing to reconcile them. The refusal names
+        # the alternative, so it reads as a recovery hint rather than a wall.
+        refusal = await registry.engine_owned_refusal(item_id, fields)
+        if refusal:
+            return ToolResult(
+                success=False,
+                error=refusal,
+                recovery_hints=[
+                    "Use workflow_skip or workflow_rewind to change what the run does; "
+                    "the task follows.",
+                ],
+            )
         try:
             task = await registry.update_task(item_id, **fields)
         except reconcile.DependencyCycleError as e:

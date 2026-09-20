@@ -36,6 +36,7 @@ trusting the table to be complete.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 
 import pytest
@@ -69,6 +70,10 @@ class _FakeSupervisor:
 #: Every run-control verb, as `(name, callable)`. The point of the list is that it is a LIST: the
 #: three that were wrong were wrong precisely because nothing enumerated their obligations.
 CONTROL_VERBS = [
+    # Async, so it is driven through `asyncio.run` rather than called: it launches, which needs a
+    # loop. Added here with the verb itself (#372) — a control verb that skips the existence check
+    # is exactly what this table exists to catch, and `start` was the tenth verb on this noun.
+    ("start_draft_run", lambda s: asyncio.run(service.start_draft_run(MISSING, supervisor=s))),
     ("cancel_run", lambda s: service.cancel_run(MISSING, supervisor=s)),
     ("pause_run", lambda s: service.pause_run(MISSING, supervisor=s)),
     ("steer_run", lambda s: service.steer_run(MISSING, "go left")),
@@ -192,7 +197,19 @@ def test_the_table_covers_every_control_verb() -> None:
             continue
         if not any(
             k in name
-            for k in ("cancel", "pause", "steer", "resume", "rewind", "run_from", "edit", "confirm")
+            for k in (
+                "cancel",
+                "pause",
+                "steer",
+                "resume",
+                "rewind",
+                "run_from",
+                "edit",
+                "confirm",
+                # `start` joins the list with `start_draft_run` (#372). `start_run` is excluded
+                # above by name because it takes a def, not a run id, so it cannot 404 on one.
+                "start",
+            )
         ):
             continue
         if name not in covered:

@@ -162,6 +162,19 @@ TICK_WAKE_SECS = 5.0
 #: only the BET about whether interrupting was worth it closes.
 ESCALATION_ANSWER_HORIZON_SECS = 24 * 3600.0
 
+#: How much of a node's total budget is held back from the DISPATCHER's own internal wait, so the
+#: dispatcher — not the outer kill in `_execute` — is what times out first.
+#:
+#: The margin is the whole point, and it is why this is not simply `timeout=total`. `_execute`
+#: wraps every dispatch in `asyncio.wait_for(coro, timeout=total)`; a dispatcher handed that same
+#: `total` for its own bounded wait always loses the race, because its timer is armed strictly
+#: later. Losing it costs the honest outcome: `dispatch_subworkflow`'s wait expiring returns
+#: DEGRADED carrying `child_run_id` and "subworkflow is still running" (the child is alive and
+#: findable), while the outer kill returns a bare FAILED/TIMEOUT that names no child at all. Five
+#: seconds is enough for the wrap-up that follows a dispatcher's wait — collecting the child's
+#: outputs and assembling the payload — and negligible against the 900s default.
+_DISPATCH_WAIT_RESERVE_SECS = 5
+
 #: Terminal-state map from a derived root outcome to the run's status.
 _ROOT_TO_RUN = {
     InstanceState.DONE: RunStatus.COMPLETE,
@@ -2697,6 +2710,15 @@ class RunController:
         because timeouts only ever execute under failure.
         """
         total = self.services.node_timeout_total
+        # The budget a dispatcher's OWN bounded wait gets (#381). Without it `dispatch` fell back
+        # to its signature default of 60s, so a `subworkflow` node stopped waiting for its child
+        # after exactly a minute no matter what the run's timeout was — the parent recorded
+        # "subworkflow is still running" with empty outputs (breaking every downstream binding) for
+        # work the child then finished. No configuration reached that 60: `node_timeout_total` is
+        # the only knob, and it was applied to the outer kill below and nowhere else, so the node's
+        # real budget and the wait it was supposed to bound never met. `0` means "no ceiling" on
+        # both sides, matching the `else` branch below and `wait_for_terminal`'s reading of a zero.
+        dispatch_wait = max(1, total - _DISPATCH_WAIT_RESERVE_SECS) if total and total > 0 else 0
         node = self._with_retry_hint(item)
         # The carried context goes on AFTER the retry hint, so a retried fresh iteration gets both
         # the correction and the handoff. Order between them does not matter — they are appended to
@@ -2741,6 +2763,12 @@ class RunController:
             # The run's mode decides a gate's deadline: background times out fast and
             # surfaces, blocking waits because a human is right there (WF2-R7).
             mode=self.run.mode,
+            # The node's OWN budget for a bounded internal wait, minus the reserve above (#381).
+            # Read by the two dispatchers that wait on something: `subworkflow`'s child-run wait and
+            # `action`'s provider call. Both previously got the signature default of 60s — a ceiling
+            # no setting could move, and one the `subworkflow` docstring explicitly disclaims ("the
+            # wait is bounded by the node's timeout").
+            timeout=dispatch_wait,
             # For `subworkflow`: the child must be driven by the SAME supervisor that will adopt
             # it after a restart, so it is passed through rather than resolved from a global.
             supervisor=self.services.supervisor,
@@ -4767,7 +4795,9 @@ class RunController:
         `managed=True` on the binding and sets the engine-owned fields directly — which is exactly
         what `materialize.reject_write` refuses when anyone ELSE attempts it. The asymmetry is the
         point: one writer for a managed task's status, and a refusal (naming the alternative) for
-        every other path.
+        every other path. Those other paths are the three doors listed on
+        `tasks.registry.engine_owned_refusal`, which is where the refusal is applied; this sentence
+        described an unwired guard until #390 wired it.
 
         Failures return "" rather than raising: the event still fires with an empty task id, which
         is honest (the projection was attempted and did not land) and leaves the next rebuild to
@@ -4816,12 +4846,16 @@ class RunController:
         try:
             from personalclaw.workflows import materialize as _materialize
 
-            # The keys `should_materialize`/`plan_materialization` actually read are `id`, `kind`,
-            # `path` and `config` — measured against their source. A `node_id` key (the name the
-            # BINDING uses) is silently ignored by both, which would make every node fail the
-            # has-an-id refusal and project nothing at all.
+            # The keys `should_materialize`/`plan_materialization` actually read are `id`, `label`,
+            # `kind`, `path` and `config` — measured against their source. A `node_id` key (the name
+            # the BINDING uses) is silently ignored by both, which would make every node fail the
+            # has-an-id refusal and project nothing at all. `label` is the TITLE source (#382): omit
+            # it here and the projection falls back to the raw node id even though the author wrote
+            # a name, which is the half of that defect this dict owns — the other half was
+            # `plan_materialization` reading `config.label`, where no definition puts it.
             node_dict = {
                 "id": item.node.id,
+                "label": item.node.label,
                 "path": item.path,
                 "kind": item.node.kind.value,
                 "config": dict(item.node.config or {}),

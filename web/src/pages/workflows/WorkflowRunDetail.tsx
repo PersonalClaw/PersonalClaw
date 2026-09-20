@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -203,6 +203,28 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
     })
   }, [act, runId])
 
+  // Launch a run that has not executed yet (#372). Unconfirmed, unlike Cancel: starting is the
+  // affirmative action the draft exists for, and a confirm on the primary verb of a surface reads
+  // as a warning about something that is simply what the user came here to do. No refetch race —
+  // `act` refetches, and the SSE stream is already open for a non-terminal run, so the first tick
+  // arrives on the stream rather than waiting for a poll.
+  //
+  // The header branch this feeds has THREE phases, not two. `isTerminal` is a binary split and
+  // `draft` is neither side of it: a run that has not started is not terminal, so it fell into the
+  // running branch and rendered Pause + Cancel — controls for work in flight, on a run with no
+  // work in flight and no way to start any. The only outcome a forked run offered its author was
+  // cancelling something that never ran. The branch is ordered prelaunch → active → ended so it
+  // reads as the lifecycle it mirrors (`models.RUN_PHASES`), and is gated on `isPrelaunch` rather
+  // than `=== 'draft'` so a future prelaunch status inherits it.
+  //
+  // Kept OUT of the JSX as a `//` comment on purpose: `token-lint` skips lines opening `//`, `*`
+  // or `/*` but not a `{/*` JSX comment, so a three-digit `#372` inside one reads as a raw CSS
+  // hex. Keeping the prose here also keeps the header's right slot short, which matters more than
+  // it looks — see the scanner note in `headerActionsAdoption.test.ts`.
+  const start = useCallback(async () => {
+    await act('Start', () => api.startDraftWorkflowRun(runId))
+  }, [act, runId])
+
   const look = run ? runLook(run.status) : null
   const StatusIcon = look?.icon
 
@@ -358,7 +380,15 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
             <QuietButton onClick={() => setReviewOpen((v) => !v)} ariaExpanded={reviewOpen} title="Review — accept or reject this run's line-anchored findings">
               <MessageSquareCode size={13} /> Review
             </QuietButton>
-            {!isTerminal(run.status) ? (
+            {/* Three lifecycle phases, not two — see the note beside `start` above. */}
+            {isPrelaunch(run.status) ? (
+              <>
+                <QuietButton onClick={start} title="Start this run — it has not executed yet">
+                  <Play size={13} /> Start
+                </QuietButton>
+                <QuietButton onClick={cancel} title="Cancel this run before it starts"><X size={13} /> Cancel</QuietButton>
+              </>
+            ) : !isTerminal(run.status) ? (
               <>
                 <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
                   <MessageSquarePlus size={13} /> Steer

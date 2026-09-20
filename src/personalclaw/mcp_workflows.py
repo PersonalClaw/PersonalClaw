@@ -330,7 +330,8 @@ def _list_tools() -> list[dict[str, Any]]:
                 "exploring an alternative when the first result must be preserved. Works on "
                 "a finished run. The fork shares the filesystem workspace and any external "
                 "resources the original created; the response names exactly what is NOT "
-                "isolated. The child starts as a draft so you can edit it before running it."
+                "isolated. The child starts as a draft — edit it with workflow_edit, then launch "
+                "it with workflow_start_draft."
             ),
             "inputSchema": {
                 "type": "object",
@@ -342,6 +343,25 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "note": {"type": "string", "description": "Why this branch exists."},
                 },
+                "required": ["run_id"],
+            },
+        },
+        {
+            # The other half of `workflow_fork` (#372). Its description promised "the child starts
+            # as a draft so you can edit it before running it" and no tool could run it: the nine
+            # run verbs all address a run that has already started, and `workflow_start` takes a
+            # def NAME, so pointing an agent at it would mint a second run and strand the fork.
+            "name": "workflow_start_draft",
+            "description": (
+                "Start a run that already exists as a DRAFT — the launch step after "
+                "workflow_fork (optionally with workflow_edit in between). Use workflow_start "
+                "instead when you want a NEW run from a definition: this one takes a run id and "
+                "launches that exact run, keeping the lineage the fork recorded. Refused on a run "
+                "that has already launched or finished."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"run_id": run_id},
                 "required": ["run_id"],
             },
         },
@@ -536,7 +556,7 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     """One boundary, the shared one (issue 592). This module used to jump straight to
     `_dispatch`, which silently skipped everything `call_tool_with_logging` provides:
-    the 19 MCP_WORKFLOW_SCHEMAS were dead (defined, key-tested, never consulted), no
+    every one of the MCP_WORKFLOW_SCHEMAS was dead (defined, key-tested, never consulted), no
     workflow tool call was SEL-logged, and — the sharp edge — `leaf_tool_denial` never
     ran, so a compiled batch leaf could call `workflow_start`/`workflow_fork` past the
     orchestration denial that exists precisely to stop a leaf fanning out unbudgeted.
@@ -631,6 +651,12 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 )
             ),
             summary="Workflow run started.",
+        )
+
+    if name == "workflow_start_draft":
+        return _fmt(
+            _run(service.start_draft_run(run_id, supervisor=_supervisor())),
+            summary="Draft run started.",
         )
 
     if name == "workflow_status":

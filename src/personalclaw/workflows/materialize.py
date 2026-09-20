@@ -1,7 +1,7 @@
 """Tasks as a projection of run state: materialization, dedup, caps (TASKS-SOPS §1 — S55). A
 materialized Task is a VIEW of a node, not a second copy of the truth. That single sentence
 decides everything here: * **The engine owns the status of a managed task**, so a direct user
-write is rejected at the write façade rather than merged. Two writers on one status field
+write is rejected at the API/tool doors rather than merged. Two writers on one status field
 produce a board that disagrees with the run it is showing, and the user believes the board. *
 **Dedup is by content, not by transaction.** Per-file JSON storage gives no atomic check-and-
 create, so a resume or rewind that re-materializes has to recognize its own earlier work. The
@@ -347,7 +347,13 @@ def plan_materialization(
             plan.skipped.append(f"{node_id or '<no id>'}: {why}")
             continue
         cfg = node.get("config") or {}
-        title = str(cfg.get("label") or node_id)
+        # NODE-level `label` first, which is where every definition actually puts it — 92 of them
+        # across the bundled set, and ZERO write `config.label` (#382). Reading only the config key
+        # titled every projected task with its raw snake_case id (`recall`, `n`, `nested`), so the
+        # `node_id` fallback below was not a fallback at all: it was the only branch anything took,
+        # and it masked the miss. `config.label` is still read, second, because a `config` blob is
+        # the node's own free-form space and an author who put the label there meant it.
+        title = str(node.get("label") or cfg.get("label") or node_id)
         print_key = fingerprint(
             source_ref=str(node.get("source_ref", "") or ""),
             title=title,
@@ -466,6 +472,14 @@ def reject_write(task: Any, fields: dict[str, Any]) -> str:
     writers on one status field produce a board that disagrees with the run it is showing, and
     the user believes the board. The message names the ALTERNATIVE, because a refusal that
     does not say what to do instead reads as the feature being broken.
+
+    ENFORCED at the three non-engine doors onto the task write path, through the one resolver
+    that turns a task id into the row this rule needs (``tasks.registry.engine_owned_refusal``):
+    ``PUT /api/tasks/{id}``, ``POST /api/tasks/bulk`` with ``op: update``, and the agent's
+    ``task_update`` tool. Not at the write FAÇADE, and not by the engine: the contract is an
+    actor asymmetry, and ``update_task`` cannot tell who is calling it — see that resolver for
+    the full reasoning. Until #390 this function had no production caller at all, so the
+    invariant ``controller._write_projected_task`` asserts in prose was documented and unheld.
     """
     if not managed(task):
         return ""

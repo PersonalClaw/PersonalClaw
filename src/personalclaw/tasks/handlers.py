@@ -258,6 +258,18 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
             tid = item.get("id") if isinstance(item, dict) else item
             if not tid:
                 errors.append({"index": i, "error": "id required"})
+            elif op == "update" and isinstance(item, dict):
+                # The engine-owned-field contract (#390), in PHASE 1 for the same reason the
+                # attribution and parent rules are: bulk is the cheapest way to reach many rows, and
+                # it hands `update_task` the item's keys exactly as the single-item handler hands it
+                # the body. Refusing here aborts the batch instead of letting one managed task's
+                # `status` land beside honest edits — a partially-applied batch is the shape that
+                # leaves the board disagreeing with the run and nothing to point at.
+                refusal = await registry.engine_owned_refusal(
+                    str(tid), {k: v for k, v in item.items() if k not in ("id", "provider")}
+                )
+                if refusal:
+                    errors.append({"index": i, "error": refusal})
     if errors:
         return web.json_response(
             {
@@ -479,6 +491,15 @@ async def api_tasks_update(request: web.Request) -> web.Response:
     if dangling:
         return json_error("invalid_request", message=dangling, status=400)
     provider_name = body.pop("provider", None)
+    # The single-writer contract on a workflow-managed task (#390). Before this the guard existed,
+    # was unit-tested, and had no production caller: `PUT /api/tasks/{id} {"preview": "…"}` on a
+    # `managed` task answered 200 and overwrote an engine projection, while `controller.py`'s own
+    # docstring asserted the opposite ("a refusal … for every other path"). Checked AFTER the shape
+    # rules above and BEFORE the write, so a malformed request still gets its shape error and a
+    # well-formed one is refused before it can land.
+    refusal = await registry.engine_owned_refusal(task_id, body, provider_name=provider_name)
+    if refusal:
+        return json_error("engine_owned_field", message=refusal, status=409)
     # The SAME resolution the create path does. `project_id` is not a `Task` field, so without this
     # it reached `update_task`, was ignored, and the edit answered 200 having changed nothing — the
     # project dropdown reverted on the next load (issue 2142). `TaskForm.draftToPayload` is shared

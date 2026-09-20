@@ -7731,6 +7731,11 @@ export const api = {
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>
     post<{ ok?: boolean; queued?: boolean; preview: WorkflowCascadePreview; issues: Array<{ code: string; message: string; node_id?: string }> }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/edit`, body),
+  // Launch a run that already exists as a DRAFT — what a forked run had no verb for (#372).
+  // Distinct from `startWorkflowRun`, which takes a def name and CREATES the row it starts:
+  // pointing that at a fork would mint a second run and strand the lineage the fork recorded.
+  startDraftWorkflowRun: (id: string) =>
+    post<{ run_id: string; status: WorkflowRunStatus; started: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/start`),
   cancelWorkflowRun: (id: string) => post<{ run_id: string; cancel_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/cancel`),
   // Refused with a 409 while the run can still move: cancel and delete are two different
   // intents, and one button doing both would delete work a user only meant to stop.

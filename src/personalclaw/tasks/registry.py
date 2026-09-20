@@ -276,6 +276,40 @@ async def update_task(task_id: str, provider_name: str | None = None, **fields: 
     return await prov.update_task(task_id, **fields)
 
 
+async def engine_owned_refusal(
+    task_id: str, fields: Any, *, provider_name: str | None = None
+) -> str:
+    """Why a NON-ENGINE write to ``task_id`` must be refused, or ``""`` when it may proceed.
+
+    The single-writer contract on a workflow-managed task, enforced (#390). ``materialize``
+    owns the rule and the message; this is the one place that resolves a task ID into the row
+    the rule needs, so the three user/agent doors onto the write path — ``PUT /api/tasks``,
+    ``POST /api/tasks/bulk`` with ``op: update``, and the agent's ``task_update`` tool — share
+    one reading instead of each re-deriving which fields the engine owns.
+
+    🔴 **Deliberately NOT applied inside :func:`update_task`.** The contract is an actor
+    asymmetry, not a field lock: the engine sets a managed task's ``status``/``preview``/
+    ``evidence`` directly (``controller._write_projected_task``) and the loop writes task status
+    through this very façade, so a guard at the façade would refuse the one writer that is
+    allowed. The façade cannot know who is calling; a door can. That is why this is an opt-in
+    function beside ``update_task`` rather than a branch inside it.
+
+    Fails OPEN on a read it cannot perform. An unreadable or vanished task is not evidence of
+    a violation, and turning a provider hiccup into a 409 on an ordinary edit would make the
+    board unusable for the many to protect the few.
+    """
+    try:
+        task = await get_task(task_id, provider_name)
+    except Exception:
+        logger.debug("engine-owned guard could not read task %s", task_id, exc_info=True)
+        return ""
+    if task is None:
+        return ""
+    from personalclaw.workflows.materialize import reject_write
+
+    return reject_write(task, fields if isinstance(fields, dict) else {})
+
+
 async def delete_task(task_id: str, provider_name: str | None = None) -> bool:
     prov = await _routed(task_id, provider_name)
     if prov is None:

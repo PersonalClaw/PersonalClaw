@@ -175,6 +175,110 @@ class TestTimeoutPair:
         assert await controller.run_to_completion(timeout=30) == RunStatus.COMPLETE
 
 
+class TestDispatcherWaitBudget:
+    """The node's budget reaches the dispatcher's OWN wait, and reaches it first (#381).
+
+    A third knob nobody configured. `dispatch()`'s `timeout` parameter bounds the two dispatchers
+    that wait on something — `subworkflow`'s child-run wait and `action`'s provider call — and the
+    single production call site passed no `timeout=`, so the signature default of **60s** won. A
+    nested run over a minute was recorded as *"subworkflow is still running"* with an EMPTY outputs
+    dict (breaking every `{{nodes.child.output.x}}` binding downstream) for work the child then
+    completed, and nothing could raise that ceiling: `node_timeout_total` was applied to the outer
+    `asyncio.wait_for` kill and nowhere else, so the node's real budget and the wait it was meant
+    to bound never met. The `subworkflow` docstring asserted the opposite the whole time — *"the
+    wait is bounded by the node's timeout"*.
+
+    Two legs, because passing the budget is only half the fix. The dispatcher's wait must also
+    resolve BEFORE the outer kill, or the honest DEGRADED result (which names `child_run_id`, so
+    the live child is findable) is replaced by a bare FAILED/TIMEOUT that names nothing. The
+    dispatcher's timer is armed strictly later than the outer one, so it loses that race unless it
+    is handed a strictly smaller budget — which is what the reserve is for.
+    """
+
+    async def test_the_NODE_budget_reaches_the_dispatcher_not_the_60s_default(self) -> None:
+        """Measured at the provider, which is where the value lands.
+
+        `dispatch_action` forwards this same `timeout` to `provider.execute(..., timeout=)`, so the
+        kwarg the provider is handed IS the budget the controller passed. Asserting the number
+        rather than merely that it is not 60: a reserve applied twice, or applied to the wrong
+        side, would still differ from 60 and still be wrong.
+        """
+        from personalclaw.workflows.controller import _DISPATCH_WAIT_RESERVE_SECS
+
+        seen: list[int] = []
+
+        def provider(_name: str):
+            class P:
+                async def execute(self, cfg, ctx, timeout=30):
+                    seen.append(timeout)
+
+                    class R:
+                        success = True
+                        stdout = "{}"
+                        outcome = ""
+                        exit_code = 0
+                        stderr = ""
+                        agent_error = None
+
+                    return R()
+
+            return P()
+
+        spec = {
+            "name": "budget",
+            "root": {"kind": "action", "id": "w", "config": {"provider": "p", "with": {}}},
+        }
+        run = _run_for(spec)
+        controller = RunController(
+            run, spec, services=EngineServices(get_provider=provider, node_timeout_total=900)
+        )
+        assert await controller.run_to_completion(timeout=30) == RunStatus.COMPLETE
+        assert seen, "the action dispatcher never ran, so this test measured nothing"
+        assert seen[0] != 60, (
+            "the dispatcher is still falling back to `dispatch`'s signature default — the "
+            "production call site passes no `timeout=` (#381)"
+        )
+        assert seen[0] == 900 - _DISPATCH_WAIT_RESERVE_SECS
+
+    async def test_a_SUBWORKFLOW_child_wait_is_bounded_by_the_node_budget(self) -> None:
+        """The reported shape, at a budget small enough to measure.
+
+        The child waits far longer than the parent's budget, so the parent must stop waiting. What
+        this pins is WHICH bound stopped it: an 8s `node_timeout_total` leaves the dispatcher 3s,
+        and the parent degrades at ~3s with the child named — not at 60s (the old unreachable
+        default) and not at 8s with a bare timeout failure (the outer kill winning the race).
+        """
+        await service.author_def(
+            name="slowchild",
+            root={"kind": "wait", "id": "w", "config": {"duration_secs": 30}},
+            provenance="user",
+            strict=False,
+        )
+        spec = {
+            "name": "parent",
+            "root": {"kind": "subworkflow", "id": "nested", "config": {"ref": "slowchild"}},
+        }
+        run = _run_for(spec)
+        wd = WorkflowWatchdog(None, EngineServices(node_timeout_total=8, node_timeout_stall=0))
+        controller = await wd.launch(run, spec)
+        started = time.time()
+        assert await controller.run_to_completion(timeout=40) == RunStatus.COMPLETE
+        elapsed = time.time() - started
+        assert elapsed < 7, (
+            f"the parent waited {elapsed:.1f}s on an 8s budget — the dispatcher's wait is not "
+            "bounded by the node budget (#381)"
+        )
+        inst = store.read_state(run.id)["root"]
+        # DEGRADED, not FAILED: the parent stopped waiting, the child did not fail. This is the
+        # half the reserve protects — the outer kill would have answered FAILED/TIMEOUT with no
+        # child id in it, and the only record of a live nested run would be gone.
+        assert inst.state == InstanceState.DEGRADED, (
+            f"got {inst.state}; the outer node kill beat the dispatcher's own wait, so the honest "
+            "degrade (which names child_run_id) was replaced by a bare timeout failure"
+        )
+        assert "still" in (inst.degraded_reason or "")
+
+
 class TestActiveEdgePair:
     """The two cases the plan makes acceptance criteria (WF2-R18).
 

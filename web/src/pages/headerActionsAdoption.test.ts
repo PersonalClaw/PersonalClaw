@@ -53,17 +53,28 @@ function pageFiles(): string[] {
   return out
 }
 
-/** Extract the balanced `{…}` body of every `right={` prop in a source string. */
+/** Extract the balanced `{…}` body of every `right={` prop in a source string.
+ *
+ *  🪤 This scan used to stop after 4000 characters and, when it had not found the balanced close
+ *  by then, fall back to `end = open` — an EMPTY body. An empty body matches no control, and zero
+ *  controls is precisely the shape this rail treats as "nothing to see here", so a slot that grew
+ *  too long turned the check OFF instead of failing it. Measured while adding one control to
+ *  `WorkflowRunDetail`: that file's slot already spanned 3736 chars on `main`, so 264 characters
+ *  of new markup anywhere in the header was enough to silently exempt it. Scanning to the real
+ *  close and throwing on an unbalanced one makes the failure loud and the rail unskippable; the
+ *  cost is a full-string walk per slot, which is nothing at this tree size.
+ */
 function rightSlots(src: string): Array<{ line: number; body: string }> {
   const out: Array<{ line: number; body: string }> = []
   for (const m of src.matchAll(/right=\{/g)) {
     const open = m.index! + m[0].length - 1
     let depth = 0
-    let end = open
-    for (let i = open; i < Math.min(src.length, open + 4000); i++) {
+    let end = -1
+    for (let i = open; i < src.length; i++) {
       if (src[i] === '{') depth++
       else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break } }
     }
+    if (end < 0) throw new Error(`unbalanced right={ at offset ${open}: no closing brace found`)
     out.push({ line: src.slice(0, m.index!).split('\n').length, body: src.slice(open, end) })
   }
   return out
