@@ -33,7 +33,21 @@ import { join } from 'node:path'
 // which is exactly what happened to the earlier attempt at this, whose 2963 was measured 745
 // commits ago and had already been overtaken by 172. Slice 1 (`a96ec3d0c`) converted **66
 // utilities across 29 whole files** and re-stated the ceiling at 3069. Slice 2 (`10313aa02`)
-// converted **14 utilities across 2 whole files** and re-stated it at 3055.
+// converted **14 utilities across 2 whole files** and re-stated it at 3055. Slice 3 (`2e007601b`)
+// converted **40 utilities in `settings/DoctorPanel.tsx`** and re-stated it at 3015.
+//
+// 🪤 SLICE 3'S FINDING — A SECOND RATCHET OWNS PART OF THIS SWEEP'S TERRITORY, so a whole-file pass
+// is not always reachable. DoctorPanel held 48 mappable values, not 40. The other 8 are the four
+// `px-4 py-3` container slabs (`:159`, `:239`, `:455`, `:608`), and converting them is pixel-identical
+// yet reds a DIFFERENT rail: `pages/settings/rowGroupPadding.test.tsx` counts the literal string
+// `px-l py-m` across `pages/settings` and caps it at **7** ("converging one LOWERS this, adding an
+// eighth reds CI"). Converting all four would make it 11. That ceiling may only fall, exactly as
+// this one may only fall, so the two rails genuinely conflict here and neither may be relaxed to
+// let the other advance — the four slabs stay raw and this ceiling stops 8 short of the file.
+// The resolution is the open question `rowGroupPadding` already records (those groups belong in
+// `RowGroup`, whose padding is `px-l py-xs`), NOT a bump on either side. Any future slice touching
+// `pages/settings` must check that rail first; a half-conversion to `px-l py-3` would dodge the
+// string match while leaving one class mixing the token scale with Tailwind's frozen defaults.
 //
 // Two hazards a converting pass will hit, recorded here because they are the reason a sweep is a
 // separate change and not a one-line regex replace:
@@ -73,13 +87,14 @@ const RAW = new RegExp(
 /** px → rung. Tailwind's numeric scale is n × 4px, so the mapping is arithmetic, not taste. */
 const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'xl', 24: '2xl', 28: '3xl' }
 
-/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `10313aa02` — today's actual floor, not an aspiration.
+/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `2e007601b` — today's actual floor, not an aspiration.
  *  A new `gap-2` reds this; converting one lowers it. It may never be RAISED: a ceiling that moves
  *  up on demand is not a ratchet, it is a comment. (An earlier attempt at this rail carried 2963,
  *  measured 745 commits earlier; by the time it was read the tree was at 3135. That is the failure
  *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.)
- *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069 → 3055. */
-const MAPPABLE_CEILING = 3055
+ *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069 → 3055
+ *  → 3015. */
+const MAPPABLE_CEILING = 3015
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */
