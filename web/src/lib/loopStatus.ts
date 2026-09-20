@@ -34,10 +34,10 @@ export interface LoopStatusLook {
  *  (a dot, a ring): low-emphasis on-surface, never an attention hue. */
 const NEUTRAL_ACCENT = 'var(--color-on-surface-low)'
 
-//: Keyed by `LoopStatus` (backend) PLUS the synthetic `ended_early` — a `complete` loop
-//: carrying an `error_message` finished non-genuinely (budget exhausted, DoD unmet).
-//: `tests/test_loop_status_vocabulary.py` rails this table against the backend enum in
-//: both drift directions, so a new status cannot ship unnamed here.
+//: Keyed by `LoopStatus` (backend) PLUS the synthetic `ended_early` — a `complete` loop whose
+//: `stop_reason` names a ceiling rather than `done` finished non-genuinely (budget exhausted,
+//: deadline or cost ran out, DoD unmet). `tests/test_loop_status_vocabulary.py` rails this table
+//: against the backend enum in both drift directions, so a new status cannot ship unnamed here.
 const LOOP_STATUS: Record<string, LoopStatusLook> = {
   intake: { label: 'Analyzing', accent: 'var(--color-primary)' },
   planning: { label: 'Planning', accent: 'var(--color-primary)' },
@@ -72,11 +72,31 @@ export function loopStatusColor(status: string): string {
   return loopStatusLook(status).accent || NEUTRAL_ACCENT
 }
 
-/** The display status: a COMPLETE loop with an error_message finished non-genuinely
- *  (cycle budget ran out / exhausted with stages unfinished) — surface that as the
- *  synthetic `ended_early` so it doesn't read as an identical green "Complete". */
-export function effectiveLoopStatus(status: string, errorMessage?: string | null): string {
-  return status === 'complete' && errorMessage ? 'ended_early' : status
+/** The display status: a COMPLETE loop whose `stop_reason` names something other than `done`
+ *  finished non-genuinely (a cycle/cost/time ceiling ran out with the goal possibly unmet) —
+ *  surface that as the synthetic `ended_early` so it doesn't read as an identical green
+ *  "Completed".
+ *
+ *  Reads the CLASSIFICATION (`stop_reason`, the closed `LoopStopReason` vocabulary), never the
+ *  free-text `error_message`. That is the whole point of `AG-14`: the enum was added so the
+ *  cockpit, the flywheel and the reports could act on WHY a loop stopped without parsing prose,
+ *  and this function — the one producer of the end-state label — was the last consumer still
+ *  parsing it. It takes no `errorMessage` argument on purpose: keeping one as a fallback would
+ *  leave the free-text read alive on the path that matters, which is exactly the clause.
+ *
+ *  🪤 `stop_reason !== 'done'` is NOT the same test as "has an error_message", and assuming it
+ *  was is what kept this migration open. `loop/watchdog.py`'s budget-cap site pairs its stop with
+ *  `budget_stop_is_genuine(policy)`, so a monitor whose watch window IS the plan completes
+ *  genuinely — `error_message` null, green "Completed" — and used to be stamped `cycle_budget`
+ *  anyway. The reason is now derived from `genuine` at that site (`default_stop_reason`), so a
+ *  genuine budget stop stamps `done` and this test preserves the carve-out rather than
+ *  relabelling every monitor "Ended early".
+ *
+ *  An absent/empty `stop_reason` reads as a genuine completion. Pre-#2321 rows predate the
+ *  column and carry `''`, so a historical non-genuine finish loses the "Ended early" label —
+ *  an accepted clean break under the pre-1.0 banner, not a dual path. */
+export function effectiveLoopStatus(status: string, stopReason?: string | null): string {
+  return status === 'complete' && stopReason && stopReason !== 'done' ? 'ended_early' : status
 }
 
 /** Pill/chip style for a loop/code status: a tinted background + matching text color.
