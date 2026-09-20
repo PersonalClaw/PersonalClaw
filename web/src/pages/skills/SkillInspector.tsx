@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -8,7 +8,7 @@ import { confirmDelete } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
-import { SOURCE_TONE } from './skillMeta'
+import { SOURCE_TONE, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 
@@ -20,6 +20,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const tone = SOURCE_TONE[skill.source] ?? 'var(--color-on-surface-low)'
+  const prov = provenanceMeta(skill.provenance)
+  // `source`, NOT `provenance`: a taught skill is a `local` skill and is exactly as editable
+  // as a hand-placed one. Reading provenance here instead would lock the user out of editing
+  // the skill their own session just taught (#576).
   const editable = skill.source !== 'bundled'
 
   const { data: files } = useQuery<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
@@ -49,6 +53,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
             tones clear AA at 14-16% and have no `<tone>-container` to pair with. */}
         <span className="rounded-pill px-m h-7 inline-flex items-center text-[0.8125rem]" style={toneChipSkin(tone, 16)}>{skill.source}</span>
         <span className="text-on-surface-low text-[0.8125rem]">{skill.type}</span>
+        {/* The tier chip above says WHERE this skill lives; this says how it got there (issue 576).
+            The inspector is the surface a reviewer opens to decide whether to keep what a
+            session taught, so it carries the sentence and not just the word the row shows. */}
+        {prov && <span data-type="label-s" className={`inline-flex items-center gap-1.5 ${prov.tone}`} title={prov.title}><GraduationCap size={13} /> {prov.label}</span>}
         {skill.always && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}><Zap size={13} /> always loaded</span>}
       </div>
 

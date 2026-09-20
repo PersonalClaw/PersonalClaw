@@ -15,6 +15,24 @@ export function sourceLabel(source: string, agent?: string): string {
   return source
 }
 
+/** HOW a skill came to exist, which the tier in `source` cannot say (#576).
+ *
+ *  Deliberately a SECOND marker rather than extra values folded into `sourceLabel`: a
+ *  taught skill lives in the same `local` (or `agent-local`) tier as a hand-placed one and
+ *  is just as editable, so the two facts answer different questions and the surfaces that
+ *  branch on `source` must keep reading the tier. Most skills are hand-authored and return
+ *  `null` here — nothing renders, so the common row is unchanged.
+ *
+ *  `title` earns the marker its place: "taught" alone does not say what taught it, and the
+ *  reason to want this label at all is to review what a session put in the library. */
+export function provenanceMeta(provenance?: string): { label: string; title: string; tone: string } | null {
+  if (provenance === 'taught')
+    return { label: 'taught', title: 'Taught in a session, then promoted to the library', tone: 'text-ok' }
+  if (provenance === 'auto')
+    return { label: 'auto', title: 'Extracted automatically from session activity', tone: 'text-info' }
+  return null
+}
+
 /** What an accepted skill proposal DID — one sentence, shared by both surfaces that accept one.
  *
  *  The Skills card and the inbox proposal panel answer the same proposal through the same

@@ -28,6 +28,11 @@ from personalclaw.skills.loader import SkillsLoader, agent_skills_dir, skills_di
 logger = logging.getLogger(__name__)
 
 _EPHEMERAL_DIRNAME = ".ephemeral"
+# The frontmatter `source:` value a PROMOTED skill carries, the counterpart to the
+# auto-extractor's `AUTO_SKILL_SOURCE_VALUE`. Named rather than inlined because the
+# listing handler reads it back to report provenance (#576) — one literal shared by
+# the writer and its reader, so a rename cannot make the reader silently stop matching.
+TAUGHT_SKILL_SOURCE_VALUE = "taught"
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 # A draft body is bounded so a runaway turn can't write a giant file.
 _MAX_BODY = 16_000
@@ -176,9 +181,13 @@ def clear_session(session_key: str) -> int:
 
 def _skill_markdown(title: str, body: str, slug: str) -> str:
     """A clean SKILL.md for a promoted skill. Description = the title; the body is
-    the taught procedure. Marked ``source: taught`` to distinguish from ``auto``."""
+    the taught procedure. Marked ``source: taught`` to distinguish from ``auto``, and
+    the listing handler reads it back as the skill's ``provenance`` (#576)."""
     desc = " ".join(title.split())[:200].replace("\n", " ")
-    return f"---\nname: {slug}\ndescription: {desc}\nsource: taught\n---\n\n{body.strip()}\n"
+    return (
+        f"---\nname: {slug}\ndescription: {desc}\n"
+        f"source: {TAUGHT_SKILL_SOURCE_VALUE}\n---\n\n{body.strip()}\n"
+    )
 
 
 class PromotionError(Exception):
