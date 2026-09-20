@@ -1059,12 +1059,11 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     )
 
 
-#: Generated documents share the binary-artifact cap. A writer checks its output BEFORE
-#: calling the store so the user hears "the deck came to 22MB (cap 16MB)" rather than a
-#: store-level failure with no actionable number.
+#: MIME type for each generated document format.
 _DOC_MIME = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv": "text/csv",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "pdf": "application/pdf",
 }
@@ -1097,7 +1096,11 @@ def _document_create(
     Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
     needs the content back it goes through the existing read path.
     """
-    from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES
+    from personalclaw.artifacts.models import (
+        MAX_BINARY_CONTENT_BYTES,
+        MAX_CONTENT_BYTES,
+        is_binary_kind,
+    )
     from personalclaw.documents import available_formats, get_writer
     from personalclaw.documents.from_markup import document_from_html, document_from_markdown
     from personalclaw.documents.model import SheetModel
@@ -1196,14 +1199,17 @@ def _document_create(
             _audit("denied", error="no document input")
             return "Error: provide markdown, html, or source."
 
+    binary = is_binary_kind(fmt)
     try:
         data = writer(model)
+        text_content = None if binary else data.decode("utf-8")
     except Exception as e:  # noqa: BLE001 — a writer failure is a caller-facing refusal
         _audit("error", error=str(e))
         return f"Error: could not render the {fmt}: {e}"
 
-    if len(data) > MAX_BINARY_CONTENT_BYTES:
-        mb, cap = len(data) / 1_048_576, MAX_BINARY_CONTENT_BYTES / 1_048_576
+    size_cap = MAX_BINARY_CONTENT_BYTES if binary else MAX_CONTENT_BYTES
+    if len(data) > size_cap:
+        mb, cap = len(data) / 1_048_576, size_cap / 1_048_576
         _audit("denied", error=f"oversized {len(data)}")
         return (
             f"Error: the generated {fmt} came to {mb:.1f}MB (cap {cap:.0f}MB). "
@@ -1215,32 +1221,55 @@ def _document_create(
     # Re-generating under an existing slug UPDATES in place and bumps a version rather
     # than minting a "-2" twin — the same dedup posture artifact_save takes.
     if slug and prov.get(slug) is not None:
-        # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
-        # snapshot (there is no non-snapshotting binary update, because a binary body has
-        # no diffable draft state to hold back). Passing it raised TypeError, so every
-        # attempt to regenerate a document under an existing slug crashed.
-        art = prov.update_binary(
-            slug,
-            data=data,
-            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
-            event_type="iterated",
-            actor="agent",
-            session_id=sk,
-        )
+        if binary:
+            # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
+            # snapshot (there is no non-snapshotting binary update, because a binary body
+            # has no diffable draft state to hold back).
+            art = prov.update_binary(
+                slug,
+                data=data,
+                mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+                event_type="iterated",
+                actor="agent",
+                session_id=sk,
+            )
+        else:
+            art = prov.update(
+                slug,
+                content=text_content,
+                snapshot=True,
+                event_type="iterated",
+                actor="agent",
+                session_id=sk,
+            )
     else:
-        art = prov.create_binary(
-            name=display_name,
-            data=data,
-            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
-            kind=fmt,
-            source="chat",
-            slug=slug or None,
-            description=str(args.get("description") or ""),
-            tags=args.get("tags") or None,
-            actor="agent",
-            session_id=sk,
-            project_id=_current_project_id(),
-        )
+        if binary:
+            art = prov.create_binary(
+                name=display_name,
+                data=data,
+                mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+                kind=fmt,
+                source="chat",
+                slug=slug or None,
+                description=str(args.get("description") or ""),
+                tags=args.get("tags") or None,
+                actor="agent",
+                session_id=sk,
+                project_id=_current_project_id(),
+            )
+        else:
+            art = prov.create(
+                name=display_name,
+                content=text_content or "",
+                kind=fmt,
+                source="chat",
+                slug=slug or None,
+                description=str(args.get("description") or ""),
+                tags=args.get("tags") or None,
+                actor="agent",
+                session_id=sk,
+                project_id=_current_project_id(),
+            )
     _audit("success", art.slug)
     return (
         f"Created {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
