@@ -233,6 +233,106 @@ def test_a_node_with_no_id_earns_no_task():
     assert should_materialize({"kind": "stage", "id": "", "config": {}})[0] is False
 
 
+# ── the task TITLE comes from the author's label (#382) ──
+
+
+def test_a_task_is_titled_with_the_NODE_level_label():
+    """Where every definition actually writes it — and where nothing read it.
+
+    `plan_materialization` read `config.label`. A census of the bundled set found **92**
+    materializing nodes carrying a node-level `label` and **ZERO** carrying `config.label`, so the
+    `node_id` fallback was not a fallback: it was the only branch anything ever took, and it
+    masked the miss. The user's board filled with `recall`, `weigh`, `gaps`, `n`, `nested` — and
+    because `node_id` is unique only within a run, four separate tasks read as four identical
+    rows.
+    """
+    plan = plan_materialization(
+        "r-1",
+        [{"kind": "action", "id": "recall", "label": "What do we already know?", "config": {}}],
+    )
+    assert [s.title for s in plan.create] == ["What do we already know?"]
+
+
+def test_a_CONFIG_level_label_still_wins_over_the_node_id():
+    """The key the code used to read is still read, second. A `config` blob is the node's own
+    free-form space, and an author who put the label there meant it."""
+    plan = plan_materialization("r-1", [node("weigh", label="Weigh the evidence")])
+    assert [s.title for s in plan.create] == ["Weigh the evidence"]
+
+
+def test_the_NODE_label_wins_over_a_CONFIG_label():
+    """One node, two labels. The node-level key is the declared contract (`Node.label`); the
+    config key is the tolerated alternative, so the declared one is the tiebreak."""
+    plan = plan_materialization(
+        "r-1",
+        [{"kind": "action", "id": "n", "label": "declared", "config": {"label": "tolerated"}}],
+    )
+    assert [s.title for s in plan.create] == ["declared"]
+
+
+def test_an_UNLABELLED_node_still_falls_back_to_its_id():
+    """The fallback is sensible and stays. A node with no label has no better name than its id,
+    and dropping the task over a missing label would lose the work."""
+    plan = plan_materialization("r-1", [node("plain")])
+    assert [s.title for s in plan.create] == ["plain"]
+
+
+def test_label_is_a_DECLARED_field_on_the_node_model():
+    """Not an `extra` key it merely survived as. The value was reachable the whole time — this is
+    what makes reading it a contract rather than a dict-key guess, and it is why `to_dict` now
+    round-trips it in the open."""
+    from personalclaw.workflows.models import Node as SpecNode
+
+    parsed = SpecNode.from_dict({"kind": "action", "id": "recall", "label": "Recall it"})
+    assert parsed.label == "Recall it"
+    assert "label" not in parsed.extra
+    assert parsed.to_dict()["label"] == "Recall it"
+
+
+def test_every_BUNDLED_materializing_node_carries_a_label_the_projection_can_read():
+    """The census, as a rail. 🪤 The fake version of this test asserts one node's title and says
+    nothing about the other 91 — which is how a defect measured across the whole bundled set went
+    46 days without being noticed. So this walks the shipped definitions and requires that any
+    label an author wrote is the title a user would see.
+    """
+    import json
+    import pathlib
+
+    import personalclaw
+
+    bundled = pathlib.Path(personalclaw.__file__).parent / "workflows" / "bundled"
+    checked = 0
+    unread: list[str] = []
+
+    def visit(raw: dict, wf: str) -> None:
+        nonlocal checked
+        if not isinstance(raw, dict):
+            return
+        ok, _why = should_materialize(raw)
+        if ok and raw.get("label"):
+            checked += 1
+            plan = plan_materialization("r-census", [raw])
+            if not plan.create or plan.create[0].title != raw["label"]:
+                unread.append(f"{wf}:{raw.get('id')}")
+        for child in raw.get("children") or []:
+            visit(child, wf)
+        if isinstance(raw.get("body"), dict):
+            visit(raw["body"], wf)
+        for case in (raw.get("cases") or {}).values():
+            visit(case, wf)
+        if isinstance(raw.get("default"), dict):
+            visit(raw["default"], wf)
+
+    for path in sorted(bundled.glob("*/workflow.json")):
+        visit(json.loads(path.read_text(encoding="utf-8")).get("root") or {}, path.parent.name)
+
+    assert checked >= 80, (
+        f"only {checked} labelled materializing nodes found in the bundled set; the census "
+        "measured 92, so this rail is reading the wrong tree or the wrong key"
+    )
+    assert not unread, f"{len(unread)} labelled nodes would still be titled with their id: {unread}"
+
+
 # ── the materialization plan ──
 
 

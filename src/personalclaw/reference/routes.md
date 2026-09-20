@@ -815,6 +815,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/review/triage` — POST accept/reject decisions; dispatch the accepted subset to the originating worker.
 - `POST /api/workflows/runs/{run_id}/rewind` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/start` — Start an existing DRAFT run — the launch a forked run had no verb for (#372).
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 - `GET /api/workflows/runs/{run_id}/steering` — GET what is queued but unconsumed — so the UI can show it as pending.
 - `GET /api/workflows/runs/{run_id}/workspace` — GET the run's workspace review: changed files + the two reintegration verbs (§4.1).

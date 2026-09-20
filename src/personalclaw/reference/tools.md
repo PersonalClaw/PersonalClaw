@@ -2177,7 +2177,7 @@ Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, mo
 
 ### `workflow_fork`
 
-Branch a NEW run from this one, leaving the original untouched — for exploring an alternative when the first result must be preserved. Works on a finished run. The fork shares the filesystem workspace and any external resources the original created; the response names exactly what is NOT isolated. The child starts as a draft so you can edit it before running it.
+Branch a NEW run from this one, leaving the original untouched — for exploring an alternative when the first result must be preserved. Works on a finished run. The fork shares the filesystem workspace and any external resources the original created; the response names exactly what is NOT isolated. The child starts as a draft — edit it with workflow_edit, then launch it with workflow_start_draft.
 
 **Response type:** `workflow.fork.result`
 
@@ -2449,6 +2449,25 @@ Start a workflow run from a saved definition. mode='background' (default) return
     "since": "1h"
   },
   "name": "triage-inbox"
+}
+```
+
+### `workflow_start_draft`
+
+Start a run that already exists as a DRAFT — the launch step after workflow_fork (optionally with workflow_edit in between). Use workflow_start instead when you want a NEW run from a definition: this one takes a run id and launches that exact run, keeping the lineage the fork recorded. Refused on a run that has already launched or finished.
+
+**Response type:** `workflow.run.started`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Launch the draft a fork created:**
+
+```json
+{
+  "run_id": "9c3e239b"
 }
 ```
 

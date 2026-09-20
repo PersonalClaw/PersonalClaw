@@ -2112,6 +2112,19 @@ def resume_run(
     # with this exact code; `resume` was the one that did not ask.
     if run.status in TERMINAL_RUN_STATUSES:
         return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    # A run that never launched has no pause to clear and no gate to answer, and answering
+    # `resumed: true` to one was the false success at the centre of #372's closed loop: `run_from`
+    # refused with "resume the run before run_from", `resume` reported success, and the draft stayed
+    # draft forever. The refusal names `start`, which is the verb that actually applies. Sits above
+    # the clear-pause path deliberately — that path is what produced the lie, by popping a key a
+    # draft never had and saving.
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has not started, so there is no pause to clear and no gate to "
+            "answer — start it first.",
+            status=run.status.value,
+        )
 
     if answer is None and not token:
         run.extra.pop("pause_requested", None)
@@ -2164,13 +2177,18 @@ def _reentry(
     # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
     # resumed because there is nothing to resume (issue 765). 404 first, then the liveness 409,
     # which is the order the eight sibling verbs already use.
-    if store.get(run_id) is None:
+    run = store.get(run_id)
+    if run is None:
         return _run_not_found(run_id)
     controller = _live(run_id, supervisor)
     if controller is None:
+        # The remediation names the verb that APPLIES to this run's phase. A draft has nothing to
+        # resume, and saying "resume the run before run_from" sent the caller to a call that
+        # answered `resumed: true` and changed nothing — the other half of #372's closed loop.
+        first = "start" if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH else "resume"
         return _service_failure(
             "WF_RUN_NOT_LIVE",
-            f"run {run_id!r} has no live controller — resume the run before {op}",
+            f"run {run_id!r} has no live controller — {first} the run before {op}",
         )
     return controller.submit_mutation(
         [{"op": op, "node_id": node_id, "redo_effects": redo_effects, "force": force}],
@@ -2221,6 +2239,60 @@ def fork_run(
     except ValueError as exc:
         return _service_failure("WF_FORK_FAILED", str(exc))
     return _ok(**result.to_dict())
+
+
+async def start_draft_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+    """Start a run that already EXISTS as a draft — the caller-driven launch `_apply_fork`
+    promises.
+
+    `fork_run` mints its child in DRAFT deliberately ("starting it is the caller's decision,
+    because a fork is usually created to be edited before it runs"), and until #372 no verb
+    delivered that decision. `start_run` could not: it takes a def name plus inputs and CREATES
+    the row, so pointing it at an existing draft would mint a second run and orphan the first —
+    the lineage the fork recorded is the thing being launched. The nine run verbs
+    (edit/cancel/pause/resume/confirm/steer/rewind/run_from/fork) all assume a run that has
+    already started, and the two re-entry verbs say so in their own remediation ("resume the run
+    before run_from"), which closed the loop: `resume` popped `pause_requested`, answered
+    `resumed: true`, and left the status `draft`.
+
+    Gated on the run's lifecycle PHASE rather than the literal DRAFT status, exactly like
+    `set_policy_overrides` — a future prelaunch status inherits the gate without this function
+    changing, and the two prelaunch-only operations cannot drift apart. A launched or finished
+    run is refused with the same `WF_RUN_NOT_PRELAUNCH` the overlay editor uses, naming the
+    verb that DOES apply, because "cannot start" with no alternative reads as breakage.
+
+    Nothing special is needed for an overlap-QUEUED draft (`overlap.QUEUED_KEY`): the drain
+    selects on `status=DRAFT`, so a manually started run leaves its window and cannot be
+    launched twice — and `supervisor.launch` is idempotent per run id regardless.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _run_not_found(run_id)
+    if RUN_PHASES[run.status] is not LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_PRELAUNCH",
+            f"run {run_id!r} is already {run.status.value}, so there is nothing to start — "
+            "resume it to answer a gate or clear a pause, rewind it to re-run a node, or fork "
+            "it to branch a fresh attempt.",
+            status=run.status.value,
+        )
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    if supervisor is None:
+        return _service_failure(
+            "WF_NO_SUPERVISOR", "the workflow supervisor is unavailable, so the run cannot start"
+        )
+    try:
+        await supervisor.launch(run, spec)
+    except Exception as exc:
+        return _service_failure(
+            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
+        )
+    # RUNNING optimistically, the same reading `start_run` returns on its non-blocking path: the
+    # tick loop is scheduled but has not run yet, so reading the row back here would report the
+    # `draft` the caller just left. `started` is the fact this call is actually reporting.
+    return _ok(run_id=run.id, status=RunStatus.RUNNING.value, started=True)
 
 
 def audit(*, dry_run: bool = True, supervisor: Any = None) -> dict[str, Any]:

@@ -1252,6 +1252,29 @@ async def api_run_fork(request: web.Request) -> web.Response:
     return _reply(result, status=201 if result.get("ok") else 200)
 
 
+async def api_run_start_draft(request: web.Request) -> web.Response:
+    """Start an existing DRAFT run — the launch a forked run had no verb for (#372).
+
+    Distinct from `POST /api/workflows/runs`, which takes a def NAME and creates the row it
+    starts. This one addresses a run that already exists, because the whole point of forking is
+    that the child carries the parent's lineage and inherited state: creating a second run from
+    the same def would launch something else entirely and leave the fork stranded.
+
+    Guarded by `workflow_run_start`, the same operation the create-and-start route uses. A
+    separate permission would let a caller who may not start a workflow start one through the
+    other door — and starting a draft spends exactly the same money.
+    """
+    denied = _guard(request, "workflow_run_start")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    result = await service.start_draft_run(run_id, supervisor=_supervisor(request))
+    _audit(request, "workflow_run_start", "success" if result.get("ok") else "failure", run_id)
+    # 202, matching the create-and-start route's non-blocking arm: the tick loop is scheduled, and
+    # the run's own status endpoint is where its progress is read.
+    return _reply(result, status=202 if result.get("ok") else 200)
+
+
 async def api_run_continuations(request: web.Request) -> web.Response:
     """The pending resume tokens for a run — what a needs-input inbox renders.
 
@@ -1400,6 +1423,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)
     app.router.add_put("/api/workflows/runs/{run_id}/policy-overrides", api_run_policy_overrides)
+    app.router.add_post("/api/workflows/runs/{run_id}/start", api_run_start_draft)
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)

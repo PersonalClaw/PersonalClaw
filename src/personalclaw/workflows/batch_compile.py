@@ -154,6 +154,9 @@ ORCHESTRATION_TOOLS = frozenset(
     {
         "subagent_run",
         "workflow_start",
+        # Launching an existing DRAFT spawns a run exactly as `workflow_start` does (#372); the
+        # denial is about the fan-out, not about which door minted the row.
+        "workflow_start_draft",
         "workflow_author",
         "workflow_plan",
         "workflow_fork",
