@@ -4413,12 +4413,10 @@ export interface DashboardConfig {
   // default; the server refuses `PUT …/model` while it is off, so — like the flag
   // above — this is a real gate rather than a UI preference.
   document_editing: boolean
-  // Vestigial server field from the retired customizable-bento dashboard (the
-  // grid + per-user layout persistence were dropped in the v2 launcher-forward
-  // redesign — everyone gets one curated content-first layout now). No FE
-  // consumer reads it; kept only to type the config round-trip until the backend
-  // drops the field. Do NOT re-introduce a client layout editor against it.
-  dashboard_layout?: { widgets: Array<{ id: string; x: number; y: number; w: number; h: number; hidden?: boolean }>; v: number } | Record<string, never>
+  // `dashboard_layout` used to sit here — the last survivor of the customizable-bento
+  // dashboard, which was retired in the v2 launcher-forward redesign (everyone gets one
+  // curated content-first layout). The backend half outlived the retirement by 46 days
+  // and is gone too as of #529; if a grid ever comes back it lands WITH its consumer.
 }
 /** The four essential-app lanes of the first-run flow. `model`/`channel` hold the
  *  chosen app's NAME (or null); `search`/`speech` are "did the user set one up" flags.

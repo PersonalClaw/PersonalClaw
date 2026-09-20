@@ -1900,6 +1900,67 @@ async def _git(
     return _GitResult(proc.returncode == 0, text, truncated)
 
 
+#: Cap on the ``ls-files`` stdout that expands a collapsed untracked directory.
+#: Collapsing is what keeps the status response small — an untracked (and NOT
+#: ignored) ``node_modules`` is a single porcelain line but tens of thousands of
+#: paths once expanded. On a trip the directory itself still badges from its
+#: porcelain entry; only deep children go unmarked.
+_UNTRACKED_EXPAND_MAX_BYTES = 1 << 20
+
+
+async def _expand_untracked_dirs(repo: str, rel_dirs: list[str]) -> dict[str, str]:
+    """Per-path ``??`` for everything inside a wholly-untracked directory.
+
+    🔴 The other half of #431. ``git status --porcelain`` collapses a directory that is
+    untracked in full to ONE entry (``?? report/``) and never names what is inside, so
+    stripping the trailing slash badges the folder and still leaves its whole subtree
+    unmarked. That subtree is the case that matters: when an agent produces a
+    deliverable it writes a NEW DIRECTORY of files, which is precisely the shape
+    porcelain collapses, so the most common way new content appears in a workspace was
+    the one case the badges never marked.
+
+    ``ls-files --others`` rather than a local walk because git owns the ignore rules:
+    measured in a scratch repo, a gitignored ``report/ign.log`` inside an untracked
+    ``report/`` is absent from this output, while `os.walk` would have badged it ``??``.
+    One call for all collapsed roots, pathspec-scoped, so a repo without any pays
+    nothing. ``:(literal)`` disables pathspec magic — a directory literally named
+    ``:(glob)x`` is a path here, not a pattern.
+
+    Intermediate directories are DERIVED from the returned paths instead of statted: the
+    collapsed root is untracked in full, so by construction every directory under it is
+    too. The walk stops AT that root and never above it — porcelain collapsing to
+    ``?? a/b/`` rather than ``?? a/`` is proof that ``a`` holds tracked content, and
+    badging it would claim a whole committed directory is new.
+    """
+    if not rel_dirs:
+        return {}
+    roots = [d.rstrip("/") for d in rel_dirs]
+    res = await _git(
+        ["ls-files", "--others", "--exclude-standard", "-z", "--"]
+        + [f":(literal){r}/" for r in roots],
+        repo,
+        max_bytes=_UNTRACKED_EXPAND_MAX_BYTES,
+    )
+    if not res.ok:
+        return {}
+    rels = res.out.split("\0")
+    if res.truncated and rels:
+        rels.pop()  # a cut at max_bytes leaves a partial path with no terminating NUL
+    out: dict[str, str] = {}
+    for rel in rels:
+        if not rel:
+            continue
+        out[os.path.join(repo, rel)] = "??"
+        root = next((r for r in roots if rel.startswith(f"{r}/")), None)
+        if root is None:
+            continue
+        parent = os.path.dirname(rel)
+        while parent and parent != root:
+            out[os.path.join(repo, parent)] = "??"
+            parent = os.path.dirname(parent)
+    return out
+
+
 async def api_file_git_status(request: web.Request) -> web.Response:
     """GET /api/file-git-status?path=... — git branch + per-file status.
 
@@ -1908,6 +1969,10 @@ async def api_file_git_status(request: web.Request) -> web.Response:
     Empty repoRoot when *path* is not inside a git repo. The repo root must lie
     within the dashboard's allowed roots, so this can never inspect an arbitrary
     repo via a crafted path.
+
+    Keys are the shape the file tree indexes by — ``os.path.realpath``, never a
+    trailing separator. See :func:`_expand_untracked_dirs` for the collapsed-directory
+    case that made those two disagree (#431).
     """
 
     raw = request.query.get("path", "").strip()
@@ -1931,6 +1996,9 @@ async def api_file_git_status(request: web.Request) -> web.Response:
     # ``-z`` separates entries with NUL; rename entries carry a second NUL-
     # separated path (the origin) which we skip.
     parts = porcelain.split("\0")
+    # Wholly-untracked directories, as porcelain reports them (with the slash), so their
+    # subtrees can be expanded in one extra call below.
+    collapsed: list[str] = []
     i = 0
     while i < len(parts):
         entry = parts[i]
@@ -1939,12 +2007,21 @@ async def api_file_git_status(request: web.Request) -> web.Response:
             continue
         code = entry[:2].strip() or entry[:2]
         rel = entry[3:]
+        # A directory that is untracked in full arrives as ``?? report/``. The tree keys
+        # on `os.path.realpath`, which never carries a trailing separator, so joining
+        # this verbatim produced `<repo>/report/` against a tree key of `<repo>/report`
+        # and the lookup missed — zero badges on the folder AND on every file inside it
+        # (#431). The slash survives `-z`, so this is the parse's job, not git's.
+        if rel.endswith("/"):
+            collapsed.append(rel)
+            rel = rel.rstrip("/")
         statuses[os.path.join(repo, rel)] = code
         # A rename/copy ("R"/"C") consumes the next NUL-separated origin path.
         if entry[:1] in ("R", "C"):
             i += 2
         else:
             i += 1
+    statuses.update(await _expand_untracked_dirs(repo, collapsed))
 
     _sel().log_tool_invocation(
         session_key="dashboard", tool_name="git_status", outcome="success", resources=repo
@@ -2247,10 +2324,23 @@ async def api_file_content_search(request: web.Request) -> web.Response:
 async def api_file_complete(request: web.Request) -> web.Response:
     """GET /api/file-complete?path=&kind=&limit= — path autocomplete for the PathBar.
 
-    Given a (possibly partial) path, returns up to ``limit`` matching children of
-    its parent directory. ``kind=dir`` restricts to directories. Every candidate
-    is validated through the allowlist, so completion can never enumerate or
-    escape outside the dashboard's roots.
+    Given a (possibly partial) path, returns the ``limit`` alphabetically-first
+    matching children of its parent directory (directories before files).
+    ``kind=dir`` restricts to directories. Every returned candidate is validated
+    through the allowlist, so completion can never enumerate or escape outside the
+    dashboard's roots.
+
+    🔴 **Sort the whole candidate set, THEN cut to ``limit``.** This used to `break`
+    out of the ``scandir`` loop at ``limit`` and sort the survivors, which slices in
+    filesystem (inode) order and orders an arbitrary subset — the window looks
+    alphabetical while not being the real top-N, so a directory that exists and
+    matches the prefix is silently never offered (#426). Measured on a 58-entry home
+    at the default ``limit=30``: 16 of the true top-30 were missing (`apps`,
+    `codegraph`, `agent-metadata`, `loop`, …) with `.db-shm`/`.db-wal` SQLite
+    internals offered in their place, and the response carries no ``truncated``
+    flag, so the omission is invisible. It only bites above ``limit`` children —
+    exactly the directories where autocomplete is load-bearing and the user cannot
+    eyeball the listing.
     """
 
     raw = request.query.get("path", "").strip()
@@ -2270,12 +2360,12 @@ async def api_file_complete(request: web.Request) -> web.Response:
     if not parent_ok or not os.path.isdir(parent_ok):
         return web.json_response({"suggestions": []})
 
-    out: list[dict] = []
+    # Pass 1 — the CHEAP filters (prefix, kind) over every entry. `de.is_dir` reads the
+    # dirent cache, so this costs one `scandir` regardless of directory size.
+    candidates: list[tuple[str, bool]] = []
     try:
         with os.scandir(parent_ok) as it:
             for de in it:
-                if len(out) >= limit:
-                    break
                 if prefix and not de.name.startswith(prefix):
                     continue
                 try:
@@ -2284,14 +2374,23 @@ async def api_file_complete(request: web.Request) -> web.Response:
                     continue
                 if kind == "dir" and not is_dir:
                     continue
-                full = os.path.realpath(de.path)
-                if _validate_dashboard_path(full) is None:
-                    continue
-                out.append({"name": de.name, "path": full, "is_dir": is_dir})
+                candidates.append((de.name, is_dir))
     except OSError:
         return web.json_response({"suggestions": []})
 
-    out.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    # Pass 2 — the EXPENSIVE filter (`realpath` + the allowlist) in sort order, stopping
+    # at `limit`. Deferring it is what keeps the cost of sorting the full set at ~`limit`
+    # validations instead of one per directory entry: the roots hold directories with
+    # 9684 / 8299 / 8297 children.
+    candidates.sort(key=lambda c: (not c[1], c[0].lower()))
+    out: list[dict] = []
+    for name, is_dir in candidates:
+        if len(out) >= limit:
+            break
+        full = os.path.realpath(os.path.join(parent_ok, name))
+        if _validate_dashboard_path(full) is None:
+            continue
+        out.append({"name": name, "path": full, "is_dir": is_dir})
     return web.json_response({"suggestions": out})
 
 
@@ -3069,68 +3168,6 @@ async def api_create_dir(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "path": target})
 
 
-# Widget ids the home dashboard knows about (mirrors web/pages/dashboard/layout.ts
-# WidgetId). A persisted layout is filtered to these so a stale/forged id can't
-# smuggle arbitrary data into config. Kept as a set for O(1) membership.
-_DASHBOARD_WIDGET_IDS = {
-    "hero",
-    "action-center",
-    "active-work",
-    "ask",
-    "suggestions",
-    "tasks",
-    "schedule",
-    "knowledge",
-    "memory",
-    "system",
-}
-
-
-def _sanitize_dashboard_layout(raw: object) -> dict | None:
-    """Validate + normalize a persisted dashboard layout. Returns the cleaned dict,
-    an empty dict (reset-to-default), or None if the shape is invalid (→ 400).
-
-    Shape: ``{"widgets": [{"id","x","y","w","h","hidden"?}], "v": 1}``. Numeric
-    fields are coerced + clamped to the 12-col grid; unknown widget ids are dropped;
-    an empty/absent widgets list is treated as reset."""
-    if raw is None or raw == {}:
-        return {}
-    if not isinstance(raw, dict):
-        return None
-    widgets_in = raw.get("widgets")
-    if not isinstance(widgets_in, list):
-        return None
-    seen: set[str] = set()
-    widgets_out: list[dict] = []
-    for w in widgets_in:
-        if not isinstance(w, dict):
-            return None
-        wid = w.get("id")
-        if wid not in _DASHBOARD_WIDGET_IDS or wid in seen:
-            continue  # drop unknown / duplicate ids rather than failing the whole save
-        seen.add(wid)
-        try:
-            x = max(0, min(11, int(w.get("x", 0))))
-            y = max(0, min(200, int(w.get("y", 0))))
-            width = max(1, min(12, int(w.get("w", 4))))
-            height = max(1, min(12, int(w.get("h", 2))))
-        except (TypeError, ValueError):
-            return None
-        widgets_out.append(
-            {
-                "id": wid,
-                "x": x,
-                "y": y,
-                "w": width,
-                "h": height,
-                "hidden": bool(w.get("hidden", False)),
-            }
-        )
-    if not widgets_out:
-        return {}
-    return {"widgets": widgets_out, "v": 1}
-
-
 async def api_dashboard_config(request: web.Request) -> web.Response:
     """GET/PUT /api/dashboard/config — read or write dashboard settings."""
     cfg = AppConfig.load()
@@ -3169,8 +3206,6 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             # DFE-5 — the in-place document editor's master switch. Writable here (the
             # panel its Settings toggle drives) as well as through the PATCH allowlist.
             "document_editing",
-            # home dashboard widget layout (customization; per-user)
-            "dashboard_layout",
         }
         unknown = set(body.keys()) - _allowed
         if unknown:
@@ -3277,19 +3312,6 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
                         {"error": f"{_bool_field} must be a boolean"}, status=400
                     )
                 setattr(cfg.dashboard, _bool_field, val)
-        if "dashboard_layout" in body:
-            layout = _sanitize_dashboard_layout(body["dashboard_layout"])
-            if layout is None:
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
-                )
-                return web.json_response(
-                    {
-                        "error": "dashboard_layout must be {widgets:[{id,x,y,w,h,hidden?}], v} or {} to reset"  # noqa: E501
-                    },
-                    status=400,
-                )
-            cfg.dashboard.dashboard_layout = layout
         cfg.save()
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="dashboard_config_write", outcome="success"
@@ -3316,6 +3338,5 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "stream_reveal": cfg.dashboard.stream_reveal,
             "screen_share_enabled": cfg.dashboard.screen_share_enabled,
             "document_editing": cfg.dashboard.document_editing,
-            "dashboard_layout": cfg.dashboard.dashboard_layout or {},
         }
     )

@@ -1515,15 +1515,6 @@ class DashboardConfig:
             "panel + per-provider Sign-in terminal); set enabled=false to hide.",
         ),
     )
-    dashboard_layout: dict = field(
-        default_factory=dict,
-        metadata=_meta(
-            "Dashboard Layout",
-            "The home dashboard's customized widget layout ({widgets:[{id,x,y,w,h,"
-            "hidden}], v}). Empty = the curated default layout. Persisted per-user "
-            "so the home follows the operator across browsers/machines.",
-        ),
-    )
 
 
 @dataclass
@@ -3716,7 +3707,6 @@ class AppConfig:
                 # hand every existing install a lossy re-render path it never asked for.
                 document_editing=bool(dashboard_data.get("document_editing", False)),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
-                dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),
             legibility=LegibilityConfig(
                 discover_tips=bool(legibility_data.get("discover_tips", True)),

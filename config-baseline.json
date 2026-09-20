@@ -291,12 +291,6 @@
     "type": "bool"
   },
   {
-    "default": {},
-    "path": "dashboard.dashboard_layout",
-    "sensitive": false,
-    "type": "dict"
-  },
-  {
     "default": false,
     "path": "dashboard.document_editing",
     "sensitive": false,
