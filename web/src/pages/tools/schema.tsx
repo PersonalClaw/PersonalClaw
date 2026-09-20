@@ -132,7 +132,7 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   // The type SIZE left this const deliberately: a `data-type` role is an ATTRIBUTE, so it cannot
   // ride a className string — each control below declares its own role instead (`body-s` for the
   // one-line controls, `caption` for the JSON textarea, which already sized itself smaller).
-  const base = 'w-full rounded-md bg-surface px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  const base = 'w-full rounded-md bg-surface px-m py-s text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   let control: ReactNode
   const customWidget = meta.widget ? widgets?.[meta.widget] : undefined
   if (customWidget) {
@@ -166,13 +166,13 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   const bindsHtmlFor = !customWidget && t !== 'boolean'
   return (
     <div>
-      <div className="mb-1 flex items-center gap-s">
+      <div className="mb-xs flex items-center gap-s">
         <label id={`${id}-label`} htmlFor={bindsHtmlFor ? id : undefined} data-type="body-s" className="text-on-surface">{label}</label>
         <span data-type="caption" className="text-on-surface-low font-mono">{typeLabel(schema)}</span>
         {required && <span data-type="caption" className="text-danger">required</span>}
       </div>
       {control}
-      {meta.help && <p data-type="caption" className="mt-1 text-on-surface-low">{meta.help}</p>}
+      {meta.help && <p data-type="caption" className="mt-xs text-on-surface-low">{meta.help}</p>}
     </div>
   )
 }

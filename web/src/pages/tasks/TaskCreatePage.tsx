@@ -59,7 +59,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
           {err && <p ref={errRef} role="alert" data-type="body-s" className="mt-l text-danger">{err}</p>}
         </div>
       </div>
-      <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
+      <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.title.trim()} disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={16} /> Create task</Button>

@@ -43,7 +43,7 @@ export function FilterRow({
   return (
     <motion.button type="button" onClick={onClick} aria-pressed={pressed}
       whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
-      className={`relative flex h-8 w-full items-center gap-s rounded-md px-2 text-left transition-colors ${selected ? '' : 'hover:bg-surface-high'}`}>
+      className={`relative flex h-8 w-full items-center gap-s rounded-md px-s text-left transition-colors ${selected ? '' : 'hover:bg-surface-high'}`}>
       {selected && indicatorId && (
         <motion.span layoutId={indicatorId} transition={spring.spatialFast} aria-hidden
           className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />

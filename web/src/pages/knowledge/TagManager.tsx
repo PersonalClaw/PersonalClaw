@@ -142,7 +142,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
   })
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-xs">
       {/* 🔑 ALWAYS MOUNTED, EMPTY AT REST. Rename / nest / make-top-level / merge / delete give no
           other confirmation — the row simply re-renders — so this line is the whole success surface
           (WCAG 4.1.3). It used to be `{note && <div role="status">…}`, i.e. a region created at the
@@ -156,7 +156,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
           leaving both in the tree announces the confirmation twice. */}
       <span role="status" aria-live="polite" className="sr-only">{note}</span>
       {note && (
-        <div aria-hidden="true" data-type="body-s" className="pb-1 text-on-surface-var">{note}</div>
+        <div aria-hidden="true" data-type="body-s" className="pb-xs text-on-surface-var">{note}</div>
       )}
       {ordered.map(({ tag, depth }) => {
         const others = tags.filter((x) => x.id !== tag.id)
@@ -185,7 +185,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
         ]
         return (
           <ContextMenu key={tag.id} items={menu}>
-            <div className="group flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2"
+            <div className="group flex items-center gap-s rounded-lg bg-surface-container px-m py-s"
               style={{ marginLeft: depth * 20 }}>
               {depth > 0 && <ChevronRight size={12} className="shrink-0 text-on-surface-low" aria-hidden />}
               <TagIcon size={14} className="shrink-0 text-on-surface-low" aria-hidden />
@@ -216,7 +216,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
           </ContextMenu>
         )
       })}
-      <p data-type="caption" className="pt-1 text-on-surface-low">
+      <p data-type="caption" className="pt-xs text-on-surface-low">
         {/* This is the ONLY place the app tells anyone how to reach nest/merge/delete — six surfaces
             wrap rows in `ContextMenu` and this is the one with a visible hint. It named the pointer
             gesture alone, while `ui/motion/ContextMenu` has carried a keyboard route since the cycle
