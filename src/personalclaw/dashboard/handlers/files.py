@@ -2192,8 +2192,14 @@ _CONTENT_SEARCH_STOP_GRACE = 0.1
 _RG_AVAILABLE: bool | None = None
 
 
-class _ContentSearchTimedOut(TimeoutError):
-    """The Python fallback crossed its deadline or received a stop request."""
+class _ContentSearchTimedOut(Exception):
+    """The Python fallback crossed its deadline or received a stop request.
+
+    Deliberately NOT a ``TimeoutError``: that is an ``OSError`` subclass, so the
+    per-line deadline check inside the file-read ``try`` below would be caught by
+    its ``except OSError: continue`` and read as an unreadable file — the walk
+    would step to the next file and return a partial set reporting ``truncated=False``.
+    """
 
 
 def _check_content_search_deadline(
@@ -2317,6 +2323,11 @@ def _content_search_python(
                             )
                             if len(results) >= _CONTENT_SEARCH_MAX_RESULTS:
                                 return results, True
+            except _ContentSearchTimedOut:
+                # Ahead of the read-error clause on purpose: the stop signal must leave
+                # the walk, not be mistaken for an unreadable file. Load-bearing only if
+                # the class is ever re-based onto an OSError lineage again.
+                raise
             except OSError:
                 continue
     return results, False
