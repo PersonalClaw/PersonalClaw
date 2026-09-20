@@ -11,6 +11,7 @@ automation, and channel integrations — all behind one gateway process and one 
 dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 
 [![Full verification on main](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml/badge.svg?branch=main)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml?query=branch%3Amain)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/badges/coverage-badge.json)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![No analytics](https://img.shields.io/badge/analytics-none-brightgreen.svg)](#privacy)

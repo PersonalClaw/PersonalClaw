@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -10,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MAKEFILE = REPO_ROOT / "Makefile"
 README = REPO_ROOT / "README.md"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+FULL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "full.yml"
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -30,6 +32,12 @@ def _make_recipe(target: str) -> list[str]:
 
 def _workflow() -> dict[str, object]:
     workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    return workflow
+
+
+def _full_workflow() -> dict[str, object]:
+    workflow = yaml.safe_load(FULL_WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
     return workflow
 
@@ -118,3 +126,29 @@ def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     assert "syft\nSPDX-JSON SBOMs" in readme
     assert "both architectures of each image" in readme
     assert "build-provenance attestations** for the wheel and images" in readme
+
+
+def test_readme_coverage_badge_reads_the_branch_the_workflow_publishes() -> None:
+    workflow = _full_workflow()
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    coverage = jobs.get("coverage")
+    assert isinstance(coverage, dict)
+
+    publish = _step(coverage, name="Publish coverage badge")
+    environment = publish.get("env")
+    script = publish.get("run")
+    assert isinstance(environment, dict)
+    assert isinstance(script, str)
+    branch = environment.get("BADGE_BRANCH")
+    assert isinstance(branch, str)
+    assert "refs/heads/${BADGE_BRANCH}" in script
+
+    readme = README.read_text(encoding="utf-8")
+    badge = re.search(
+        r"https://img\.shields\.io/endpoint\?url=https://raw\.githubusercontent\.com/"
+        r"PersonalClaw/PersonalClaw/([^/\s)]+)/coverage-badge\.json",
+        readme,
+    )
+    assert badge is not None
+    assert badge.group(1) == branch
