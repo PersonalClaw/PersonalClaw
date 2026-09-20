@@ -5249,6 +5249,11 @@ export interface InstalledPackRec {
   // the pack row offer "Add triggers to Automations" (`packTriggersDeploy`), which lands them in
   // the live store STILL disabled for the user to review and arm one at a time.
   staged_triggers?: string[]
+  // The staged roster's rows (§4.2, AP-4): one per persona, each carrying its activation tier
+  // (`always` | `phase-N` | `as-needed`). Present so a surface can offer the one-click deploy
+  // and say which members it would leave dormant. Optional: a non-roster pack — and a ledger
+  // row written before the field existed — both omit it.
+  roster?: Array<{ slug: string; name: string; description: string; label: string; icon: string; color: string; activation: string; target: string }>
   // AP-7 §1: which paths the pack claims ongoing ownership of, and the per-component
   // `{source, computedHash}` drift lock an update compares against.
   pack_owned?: string[]
@@ -5263,6 +5268,18 @@ export interface PackTriggersDeployRec {
   pack: string
   deployed: string[]
   skipped: string[]
+}
+
+// The one-click team-deploy result (AGENT-PACKS §4.2, AP-4). Only the `always` tier is
+// promoted into live `agents{}`: `deployed` are now selectable agents, `dormant` are the
+// `phase-N`/`as-needed` rows installed-but-not-hired, and `missing` names an `always` row
+// whose persona is gone from the store (reported, never silently dropped). Idempotent.
+export interface PackRosterDeployRec {
+  ok: boolean
+  pack: string
+  deployed: string[]
+  dormant: string[]
+  missing: string[]
 }
 
 // One Domain OS pack shipped in this build (AGENT-PACKS §4.1) — the pack store's catalog row.
@@ -5546,6 +5563,11 @@ export const api = {
   // deploy: it never lands one enabled (a pack cannot arm automation, even through its enable
   // path) — the user reviews and arms each in Automations (`#/triggers`).
   packTriggersDeploy: (name: string) => post<PackTriggersDeployRec>(`/api/packs/${encodeURIComponent(name)}/triggers/deploy`, {}),
+  // One-click team deploy (AGENT-PACKS §4.2, AP-4). Promotes ONLY the `always` tier into live
+  // `agents{}`; the response names the `dormant` tiers so the UI can say what was deliberately
+  // left un-hired rather than implying the whole roster went live. Idempotent — re-deploying
+  // rewrites the same profiles. 404s when the pack is not installed or ships no roster.
+  packRosterDeploy: (name: string) => post<PackRosterDeployRec>(`/api/packs/${encodeURIComponent(name)}/roster/deploy`, {}),
   // ── Pack store + fingerprint discovery (AGENT-PACKS §4.1/§7/§1, AP-7) ──
   // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
   // integrity, leaves-first commit with rollback) at BUILTIN trust.

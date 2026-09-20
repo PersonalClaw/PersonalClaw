@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackTriggersDeployRec, type PackUpdateRec } from '../../lib/api'
+import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackTriggersDeployRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } from './settingsUI'
@@ -349,6 +349,11 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
   const [busy, setBusy] = useState(false)
   const [update, setUpdate] = useState<PackUpdateRec | null>(null)
   const [triggersDeployed, setTriggersDeployed] = useState<PackTriggersDeployRec | null>(null)
+  const [deployResult, setDeployResult] = useState<PackRosterDeployRec | null>(null)
+  // A NARROW in-flight flag for the deploy button, distinct from the row-wide `busy` gate: the
+  // button publishes `aria-busy` (from `loading`) for exactly the action it owns, while `busy`
+  // still disables its siblings. `busy` alone would announce nothing to assistive tech.
+  const [deploying, setDeploying] = useState(false)
   // Dry-run FIRST, always. The interesting output of an update is the skip list — which of
   // your edited copies it would leave alone — and applying before seeing that is exactly the
   // mistake the pack_owned rule exists to prevent.
@@ -397,11 +402,43 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
   }
   // Staged-and-disabled on install; the control appears only while there is something to add.
   const stagedTriggers = pack.staged_triggers?.length ?? 0
+  // One-click team deploy (§4.2). Promotes ONLY the roster's ``always`` tier into live agents;
+  // the ``phase-N``/``as-needed`` members stay installed-but-dormant. The result names BOTH,
+  // because "only the always tier deploys" is the whole staged-roster contract — a toast that
+  // said only "deployed N" would imply the entire team was hired.
+  const deployRoster = () => {
+    setBusy(true)
+    setDeploying(true)
+    // A fresh attempt never leaves a prior result on screen: without this, a deploy that
+    // succeeds and a later one that 404s would show a stale "Now live" panel next to the error.
+    setDeployResult(null)
+    api.packRosterDeploy(pack.name).then((r) => {
+      setDeployResult(r)
+      const live = r.deployed.length
+      const staged = r.dormant.length
+      const gone = r.missing.length
+      // ``missing`` is an ``always`` persona removed after install — reported, not raised. It
+      // rides the toast too, so a partial deploy is not silently reported as a clean success.
+      const tail = `${staged ? `; ${staged} staged for later` : ''}${gone ? `; ${gone} could not be found` : ''}`
+      notify(
+        live > 0
+          ? `Deployed ${live} always-tier agent${live === 1 ? '' : 's'} for ${pack.name}${tail}.`
+          : gone > 0
+            ? `${pack.name}: no always-tier agent could be deployed — ${gone} could not be found${staged ? `; ${staged} staged for later` : ''}.`
+            : `${pack.name} has no always-tier agent to deploy${staged ? ` — ${staged} staged for later` : ''}.`,
+        live > 0 ? 'success' : gone > 0 ? 'error' : 'info',
+      )
+    }).catch((e) => notify(`Couldn't deploy ${pack.name}'s roster: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => { setBusy(false); setDeploying(false) })
+  }
   // What the pack actually put on this machine ("skill:cfo-report", "trigger:month-end", …).
   // The ledger exists to answer that without re-deriving it, and the row never showed it: an
   // installed pack was a name and a version, with no way to see what it brought.
   const components = pack.components ?? []
   const connectors = pack.connectors ?? []
+  // A staged roster (§4.2) is what the one-click deploy acts on — show the control only when
+  // the pack shipped one. A pack with no roster has nothing to hire.
+  const roster = pack.roster ?? []
   // The backend writes "%Y-%m-%dT%H:%M:%SZ". A malformed or empty value renders nothing rather
   // than "Invalid Date" — a ledger row predating the field is a real case, not an error to show.
   const parsed = pack.installed_at ? new Date(pack.installed_at) : null
@@ -420,6 +457,9 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
             <Button variant="ghost" size="sm" loading={busy} loadingLabel="Adding…" onClick={deployTriggers}>
               Add triggers to Automations
             </Button>
+          )}
+          {roster.length > 0 && (
+            <Button variant="secondary" size="sm" loading={deploying} loadingLabel="Deploying…" disabled={busy} disabledReason={BUSY_REASON} onClick={deployRoster}>Deploy roster</Button>
           )}
           <Button variant="ghost" size="sm" loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
             Check for update
@@ -442,6 +482,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
           )}
         </div>
       )}
+      {deployResult && <RosterDeployResult result={deployResult} />}
       {/* Every fact this block can show joins its gate. Gating on components/connectors alone
           would hide a pack that has only a setup id and an install date — the same
           activity-vs-existence mistake the MCP pool tile made. */}
@@ -520,6 +561,44 @@ export function UpdatePreview({ update, busy, onApply }: {
             <span key={ref} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{ref}</span>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+/** The one-click deploy's result (§4.2). It renders BOTH what went live AND what stayed
+ *  dormant, because the staged-roster contract is that ONLY the ``always`` tier deploys — a
+ *  result that showed just the deployed count would imply the whole team was hired. The
+ *  ``missing`` line is the honest edge: an ``always`` persona deleted after install is named,
+ *  never silently dropped.
+ *
+ *  Exported for test — the deployed/dormant split is only observable by rendering it. */
+export function RosterDeployResult({ result }: { result: PackRosterDeployRec }) {
+  const live = result.deployed.length
+  return (
+    <div data-type="caption" className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+      <div className="text-on-surface-var">
+        {live > 0 ? `Deployed ${live} always-tier agent${live === 1 ? '' : 's'}` : 'No always-tier agent deployed'}
+        {result.dormant.length > 0 && <> · {result.dormant.length} staged for later, not hired</>}
+      </div>
+      {live > 0 && (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-on-surface-low">Now live</span>
+          {result.deployed.map((slug) => (
+            <span key={slug} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{slug}</span>
+          ))}
+        </div>
+      )}
+      {result.dormant.length > 0 && (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-on-surface-low">Dormant</span>
+          {result.dormant.map((slug) => (
+            <span key={slug} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{slug}</span>
+          ))}
+        </div>
+      )}
+      {result.missing.length > 0 && (
+        <div className="text-warn">Installed then removed, so not deployed: {result.missing.join(', ')}</div>
       )}
     </div>
   )
