@@ -7314,7 +7314,10 @@ export const api = {
   openInboxItem: (id: string) => post<{ ok: boolean }>(`/api/inbox/${encodeURIComponent(id)}/open`),
   favoriteInboxItem: (id: string, favorited: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/inbox/${encodeURIComponent(id)}/favorite`, { favorited }),
-  dismissAllInbox: () => post<{ ok: boolean; dismissed: number }>('/api/inbox/dismiss-all'),
+  // `proposals_rejected`: dismissing a proposal row ANSWERS the proposal it mirrors, so the
+  // Skills page's queue falls with the inbox's rather than the two reporting one queue twice.
+  dismissAllInbox: () =>
+    post<{ ok: boolean; dismissed: number; proposals_rejected: number }>('/api/inbox/dismiss-all'),
   restartInbox: () => post<{ ok: boolean; error?: string }>('/api/inbox/restart'),
   inboxSettings: () => get<{ settings: InboxSettings }>('/api/inbox/settings').then((d) => d.settings),
   saveInboxSettings: (s: Partial<InboxSettings>) => put<{ settings: InboxSettings }>('/api/inbox/settings', s),
