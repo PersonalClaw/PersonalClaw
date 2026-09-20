@@ -58,6 +58,7 @@ def _ensure_registered() -> None:
     for module, fmt in (
         ("docx_writer", "docx"),
         ("xlsx_writer", "xlsx"),
+        ("csv_writer", "csv"),
         ("pptx_writer", "pptx"),
         ("pdf_writer", "pdf"),
     ):
