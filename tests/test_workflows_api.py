@@ -864,6 +864,44 @@ class TestIntrospectRoute:
         assert body["stats"]["steps_completed"] == totals["steps_completed"]
         assert body["stats"]["steps_failed"] == totals["steps_failed"]
         assert body["stats"]["tokens"] == totals["tokens"]
+        assert body["stats"]["tokens_recorded"] is totals["tokens_recorded"]
+
+    async def test_the_projection_agrees_when_a_step_recorded_NO_token_count(
+        self, provider
+    ) -> None:
+        """The same agreement, on the case the assertion above cannot reach.
+
+        That rail runs a real echo provider, and an echo provider always records a token count — so
+        every case it sees is the recorded one, and it passed while the two aggregates disagreed on
+        all four unrecorded cases (#3218). This appends a `step_completed` carrying a cost and NO
+        `tokens` key — the shape `loop/journal.py::LoopJournal.cycle` writes, so the shape every
+        loop run has — directly onto the run's journal, and asserts the projection reports a FLOOR
+        with its disclosure rather than a measurement.
+        """
+        from personalclaw.workflows import journal as J
+
+        run_id = await self._started(provider, "intro-agree-unrecorded")
+        before = await self._introspect(run_id)
+        assert before["stats"]["tokens_recorded"] is True, "the echo provider records its tokens"
+
+        J.Journal(run_id).write(
+            J.STEP_COMPLETED,
+            instance_path="unrecorded",
+            node_id="unrecorded",
+            cost_usd=0.02,
+        )
+
+        body = await self._introspect(run_id)
+        totals = J.run_totals(run_id)
+        assert body["stats"]["tokens_recorded"] is False
+        assert totals["tokens_recorded"] is False
+        assert totals["tokens"] is None
+        # The float is untouched: the step booked a cost, so ONLY the token fact went unrecorded.
+        # One flag covering both would have had to lie about this step (#2630).
+        assert body["stats"]["priced"] is True
+        # And the floor is still carried as an int for the strip to sort on — the disclosure rides
+        # BESIDE the number, it does not replace it.
+        assert body["stats"]["tokens"] == before["stats"]["tokens"]
 
     async def test_all_nine_checklist_questions_are_answered(self, provider) -> None:
         """The atom's actual criterion. `checklist_gaps` is the contract: a non-empty list names a

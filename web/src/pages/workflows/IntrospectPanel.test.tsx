@@ -23,7 +23,7 @@ vi.mock('../../lib/api', async (importActual) => {
 
 function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospection {
   const stats = {
-    run_id: 'r1', tokens: 1200, cached_tokens: 100, cost_usd: 0.0342, priced: true,
+    run_id: 'r1', tokens: 1200, tokens_recorded: true, cached_tokens: 100, cost_usd: 0.0342, priced: true,
     steps_completed: 4, steps_failed: 1, steps_cached: 1, duration_secs: 92.5,
     first_byte_ms: 830, models: ['claude-sonnet'], unverified_steps: 3,
     verification_debt: 0.75, cache_hit_rate: 0.2,
@@ -449,6 +449,34 @@ describe('the run cost line', () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText('not recorded')).toBeTruthy()
     expect(screen.queryByText('~$0.0000')).toBeNull()
+  })
+
+  it('renders an UNRECORDED token count as a floor, never as a plain number', async () => {
+    // The token twin of the case above (#3218). The cost cell was routed through a disclosure and
+    // the Tokens cell one line below it was not, so a run whose steps recorded no count reached
+    // this cell as "100" while `run_totals` reported `null` for the same run.
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      stats: { ...base.stats, tokens: 100, tokens_recorded: false },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('≥100')).toBeTruthy()
+    expect(screen.queryByText('100')).toBeNull()
+  })
+
+  // A RAIL, not a discriminator, and labelled so deliberately: it passes on the unfixed panel too,
+  // because `.toLocaleString()` also renders "100". What it protects is the other direction — a
+  // future "just always show ≥" simplification would make every measured count read as a floor.
+  it('keeps a RECORDED token count a plain number — the floor marker is not decoration', async () => {
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      stats: { ...base.stats, tokens: 100, tokens_recorded: true },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('100')).toBeTruthy()
+    expect(screen.queryByText('≥100')).toBeNull()
   })
 
   it('marks the template percentiles as floors when the sample was not fully priced', async () => {

@@ -72,6 +72,15 @@ GUARDED: dict[str, dict] = {
         ),
         "dirs": ("src/personalclaw/workflows",),
     },
+    # The RAW ledger event, one level below the aggregate above — and the level the second producer
+    # reads at. `run_totals.tokens`' patterns match the AGGREGATE, so they could not see
+    # `introspection.py::run_stats` doing `event.get("tokens", 0)` over the same `events.jsonl`,
+    # which is precisely how the twin shipped collapsing absent-and-null into `0` after the
+    # aggregate had been fixed (#3218). A projector that sums the raw counts owns the disclosure.
+    "event.tokens": {
+        "patterns": (r"""\bevent\.get\(\s*["']tokens["']""",),
+        "dirs": ("src/personalclaw/workflows",),
+    },
     "token_ratio": {
         "patterns": (
             r'\bget\(\s*"token_ratio"\s*\)',
@@ -103,6 +112,7 @@ GUARDED: dict[str, dict] = {
 GUARD_TOKENS: dict[str, tuple[str, ...]] = {
     "spend.tokens": ("tokens_recorded",),
     "run_totals.tokens": ("tokens_recorded",),
+    "event.tokens": ("tokens_recorded",),
     "token_ratio": ("tokens_recorded", "tokensUnrecorded"),
     "provider_binding": ("report_schema", "PROVENANCE_SCHEMA", "provenanceRecorded"),
     "cell_model": ("UNRECORDED", "NO_MODEL", THE_WORD, "cell_model_fingerprint"),
@@ -119,6 +129,13 @@ EXPECTED_CONSUMERS: dict[str, dict[str, str | None]] = {
     "src/personalclaw/workflows/controller.py": {
         "run_totals.tokens": "budget pre-charge and terminal row folding",
     },
+    "src/personalclaw/workflows/introspection.py": {
+        "event.tokens": "run_stats sums the raw counts and sets RunStats.tokens_recorded",
+    },
+    # Forwards the raw value UNCHANGED — `"tokens": event.get("tokens")` keeps `None` as `None`, so
+    # the three states survive to the reader and the row needs no flag of its own. A guard here
+    # would make a faithful pass-through claim an aggregate's contract.
+    "src/personalclaw/workflows/service.py": {"event.tokens": None},
     "scripts/learning_benchmark.py": {
         "spend.tokens": "_verdict_for_task builds the §4 token denominator",
         "provider_binding": "writes the report's provenance and its schema",
@@ -368,18 +385,24 @@ def test_the_detector_is_not_green_from_matching_nothing():
     from the same parse it is checking would be satisfied by a parse that matched nothing.
     """
     derived = _derive()
-    # An absolute lower bound. There are fourteen consumer files and five guarded fields; if this
-    # ever legitimately shrinks, the shrink is the thing to look at.
-    assert len(derived) >= 14, f"the detector found only {len(derived)} consumer file(s)"
+    # An absolute lower bound. There are sixteen consumer files and six guarded fields; if this
+    # ever legitimately shrinks, the shrink is the thing to look at. (Was fourteen and five before
+    # `event.tokens` was added in #3218 — a field is added when a rail is found unable to SEE a
+    # site, so this bound rises with the detector's reach and must never be lowered to pass.)
+    assert len(derived) >= 16, f"the detector found only {len(derived)} consumer file(s)"
     total_reads = sum(len(fields) for fields in derived.values())
-    assert total_reads >= 18, f"the detector found only {total_reads} guarded read(s)"
-    assert len({f for fields in derived.values() for f in fields}) == 5
+    assert total_reads >= 22, f"the detector found only {total_reads} guarded read(s)"
+    assert len({f for fields in derived.values() for f in fields}) == 6
 
     # Literal (file, field) pairs, each read off the source by eye. Every one is a line this change
     # touched or deliberately left alone.
     for path, field in (
         ("src/personalclaw/evals/gate.py", "spend.tokens"),
         ("src/personalclaw/workflows/controller.py", "run_totals.tokens"),
+        # The two sites `run_totals.tokens`' aggregate-shaped patterns could not see (#3218): the
+        # projection that sums the raw counts, and the row builder that forwards them untouched.
+        ("src/personalclaw/workflows/introspection.py", "event.tokens"),
+        ("src/personalclaw/workflows/service.py", "event.tokens"),
         ("scripts/learning_benchmark.py", "spend.tokens"),
         ("scripts/learning_benchmark.py", "provider_binding"),
         ("scripts/learning_benchmark.py", "cell_model"),
