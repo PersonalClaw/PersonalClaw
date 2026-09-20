@@ -9,8 +9,16 @@ kept for fast grouping/filtering.
 """
 
 import enum
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+
+def _now_iso() -> str:
+    """The same spelling `native.py` stamps `created_at`/`updated_at` with, so a note's time
+    is comparable to its task's and parses in the frontend's `relTime` identically.
+    """
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 class TaskStatus(enum.Enum):
@@ -180,21 +188,26 @@ def _as_item_list(value: Any) -> list:
         return []
 
 
-def normalize_note(item: Any) -> dict:
+def normalize_note(item: Any, *, stamp: bool = False) -> dict:
     """Canonical note: ``{content, timestamp}`` (carries any legacy ``phase``/ ``created_at``
     through for back-compat readers).
+
+    ``stamp=True`` dates a note that arrives WITHOUT a timestamp — see `_as_note_list` for why
+    only a write may pass it. An incoming timestamp always wins, so re-sending an existing note
+    (the create/edit form sends the whole lane back) never re-dates it.
     """
     if isinstance(item, str):
-        return {"content": item, "timestamp": ""}
+        return {"content": item, "timestamp": _now_iso() if stamp else ""}
     if isinstance(item, dict):
+        existing = str(item.get("timestamp") or item.get("created_at") or "")
         out = {
             "content": str(item.get("content") or ""),
-            "timestamp": str(item.get("timestamp") or item.get("created_at") or ""),
+            "timestamp": existing or (_now_iso() if stamp else ""),
         }
         if item.get("phase"):
             out["phase"] = item["phase"]
         return out
-    return {"content": "", "timestamp": ""}
+    return {"content": "", "timestamp": _now_iso() if stamp else ""}
 
 
 @dataclass
@@ -575,10 +588,11 @@ def _as_text_list(value: Any, *, strict: bool) -> list[str]:
 def _as_dict_list(normalizer: Any, *, indexed: bool = False) -> Any:
     """Build a coercer for a list-of-dict field from its existing per-item normalizer.
 
-    Deliberately reuses `normalize_exit_criterion` / `normalize_action_plan_item` /
-    `normalize_note` rather than restating their shapes: those ARE the canonical forms, they
-    already accept the legacy spellings, and a second opinion here would let the read and the
-    write disagree about what a note is.
+    Deliberately reuses `normalize_exit_criterion` / `normalize_action_plan_item` rather than
+    restating their shapes: those ARE the canonical forms, they already accept the legacy
+    spellings, and a second opinion here would let the read and the write disagree about what a
+    criterion is. Notes get `_as_note_list` instead — same reuse of `normalize_note`, but they
+    need `strict` forwarded so only a write dates them.
     """
 
     def _coerce(value: Any, *, strict: bool) -> list[dict]:
@@ -588,6 +602,24 @@ def _as_dict_list(normalizer: Any, *, indexed: bool = False) -> Any:
         return [normalizer(item) for item in items]
 
     return _coerce
+
+
+def _as_note_list(value: Any, *, strict: bool) -> list[dict]:
+    """A note lane, dated on WRITE only.
+
+    Notes are an append-only log whose whole point is recency, and the detail panel renders a
+    relative time per note — but nothing ever supplied one, so the field was always ``""`` and
+    that render was permanently dead (#383).
+
+    `strict` IS the write/read discriminator this table already carries (`coerce_task_field`), and
+    the stamp must ride it rather than live in `normalize_note` unconditionally: `to_dict` and
+    `from_dict` normalize on EVERY read, so an unconditional stamp would mint a fresh "now" each
+    time a response is serialized — two reads of one task would disagree — and would date a
+    legacy undated note with the moment it was first read, which is a fabrication. A note written
+    before this landed therefore stays undated (honest: we do not know when it was added) and the
+    frontend's existing `(n.timestamp || n.created_at) &&` guard keeps hiding it.
+    """
+    return [normalize_note(item, stamp=strict) for item in _as_item_list(value)]
 
 
 def _as_open_dict_list(value: Any, *, strict: bool) -> list[dict]:
@@ -687,9 +719,9 @@ TASK_FIELD_COERCERS: dict[str, Any] = {
     "order": _as_number,
     "exit_criteria": _as_dict_list(normalize_exit_criterion),
     "action_plan": _as_dict_list(normalize_action_plan_item, indexed=True),
-    "notes": _as_dict_list(normalize_note),
-    "research_notes": _as_dict_list(normalize_note),
-    "execution_notes": _as_dict_list(normalize_note),
+    "notes": _as_note_list,
+    "research_notes": _as_note_list,
+    "execution_notes": _as_note_list,
     "agent_instructions_template": _as_text,
     "blocked_reason_kind": _as_text,
     "workflow_binding": _as_binding,
