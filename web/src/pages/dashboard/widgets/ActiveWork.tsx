@@ -52,7 +52,7 @@ export function ActiveWork({ navigate }: RouteProps) {
 function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navigate'] }) {
   // One label for the row: the heading a user reads AND the subject each action names.
   const loopLabel = loop.name || loop.task?.slice(0, 60) || 'Loop'
-  const dispStatus = effectiveLoopStatus(loop.status, loop.error_message)
+  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason)
   const statusColor = loopStatusColor(dispStatus)
   const question = pendingText(loop)
   const [answering, setAnswering] = useState(false)

@@ -570,7 +570,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       ) : (
         <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
       )}
-      {running ? (statusText || 'Working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message))}
+      {running ? (statusText || 'Working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason))}
       {/* FEED liveness, distinct from the LOOP's status beside it. A running loop whose stream has
           dropped keeps saying "Working" while nothing arrives — indistinguishable from a loop that is
           simply thinking. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships and
@@ -910,7 +910,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                            {running && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
                            <span className={running ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
                          </span>
-                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message)).toLowerCase()}</span>
+                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason)).toLowerCase()}</span>
                          {running && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{fmt(curCycleElapsed)}</span>}
                        </div>
                        {running && activity.length > 0 && <LiveSubsteps activity={activity} />}

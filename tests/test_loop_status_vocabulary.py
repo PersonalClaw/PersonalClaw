@@ -46,9 +46,9 @@ _API = _WEB / "lib" / "api.ts"
 # web is optional in some checkouts (backend-only installs); skip cleanly then.
 pytestmark = pytest.mark.skipif(not _WEB.exists(), reason="web sources not present")
 
-#: The one status the frontend renders that the backend never sends: a `complete` loop carrying an
-#: `error_message` finished non-genuinely (budget exhausted, DoD unmet), which `effectiveLoopStatus`
-#: maps to this synthetic key so it does not read as a genuine green completion.
+#: The one status the frontend renders that the backend never sends: a `complete` loop whose
+#: `stop_reason` names a ceiling finished non-genuinely (budget exhausted, DoD unmet), which
+#: `effectiveLoopStatus` maps to this synthetic key so it does not read as a genuine completion.
 _SYNTHETIC = {"ended_early"}
 
 #: A loop-status registry declares a status key against a string or an object literal
