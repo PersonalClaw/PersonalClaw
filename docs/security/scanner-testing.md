@@ -202,11 +202,15 @@ non-reachability cannot be proved and the default-deny answer stands.
 Re-measure any checkout of bundles with:
 
 ```bash
-PYTHONPATH=src:. python tools/measure_scanner_scope.py /path/to/PersonalClawApps
+git -C /path/to/PersonalClawApps fetch origin main
+PYTHONPATH=src:. python tools/measure_scanner_scope.py \
+  /path/to/PersonalClawApps --ref origin/main
 ```
 
-Every re-scored finding prints the clauses that granted it, so a downgrade nobody can
-check is not possible.
+The command refuses a dirty checkout or a `HEAD` that does not match the requested ref,
+then prints the checkout root and full validated commit SHA before the verdict table.
+Every re-scored finding also prints the clauses that granted it, so neither the source
+revision nor a downgrade can be taken on trust.
 
 ### Proving each clause is load-bearing
 

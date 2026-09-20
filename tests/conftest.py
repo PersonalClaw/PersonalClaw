@@ -1,6 +1,7 @@
 """Shared pytest configuration and fixtures."""
 
 import asyncio
+import importlib
 import os
 import shutil
 import sys
@@ -27,6 +28,23 @@ from hypothesis import HealthCheck, settings
 # alternative and the three files outside the rail: tests/pycache_guard.py. Proof that
 # it works: tests/test_pycache_guard.py.
 PYCACHE_PREFIX = pycache_guard.activate()
+
+# ── Imported-checkout provenance rail (#2634) ──────────────────────────
+# An editable install points at a mutable working tree. In a git worktree, that can make
+# pytest import ``personalclaw`` from the shared checkout while collecting tests from this
+# checkout, producing plausible results for the wrong branch. Import only after the
+# bytecode-cache rail above is active, then require the package root to belong to the
+# checkout whose conftest pytest loaded. Editable installs remain valid when they point
+# inside this same checkout.
+_INVOKING_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PERSONALCLAW = importlib.import_module("personalclaw")
+_IMPORTED_PACKAGE_ROOT = Path(_PERSONALCLAW.__file__).resolve().parent
+if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
+    raise RuntimeError(
+        "pytest imported personalclaw from outside the invoking repository root:\n"
+        f"  imported package root: {_IMPORTED_PACKAGE_ROOT}\n"
+        f"  invoking repository root: {_INVOKING_REPO_ROOT}"
+    )
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
 # package alone, with NO sibling apps/ directory. Channel/provider seams are
