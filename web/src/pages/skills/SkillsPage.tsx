@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb } from 'lucide-react'
+import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb, GraduationCap } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
@@ -16,7 +16,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
-import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
+import { SOURCE_TONE, sourceLabel, fmtInstalls, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
@@ -175,6 +175,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
             <div className="flex flex-col gap-s">
               {filtered.map((s, i) => {
                 const tone = SOURCE_TONE[s.source] ?? 'var(--color-on-surface-low)'
+                const prov = provenanceMeta(s.provenance)
                 // Right-click / long-press → scoped actions. This surface only opens a
                 // skill (delete/enable live inside the inspector panel, not here), so
                 // the menu mirrors the row's open handler — still aids discoverability.
@@ -191,6 +192,12 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                         {s.always && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Always loaded"><Zap size={11} /> always</span>}
                         {s.integrity === 'intact' && <ShieldCheck size={12} className="shrink-0 text-ok" aria-label="Integrity verified" role="img" />}
                         {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-1 text-danger text-[0.75rem]" title="Integrity check failed — files changed since install"><ShieldAlert size={11} /> tampered</span>}
+                        {/* Provenance rides with `always`/`tampered` rather than beside the source
+                            chip: it is a fact about THIS skill's origin, not the tier badge, and
+                            these markers already render only when they apply — a hand-authored
+                            skill adds nothing, which is most rows. Raw semantic ink, no tint, so
+                            it inherits this group's settled contrast rather than the chip's. */}
+                        {prov && <span data-type="caption" className={`shrink-0 inline-flex items-center gap-xs ${prov.tone}`} title={prov.title}><GraduationCap size={11} /> {prov.label}</span>}
                       </div>
                       {/* `title`: measured at 390px, these descriptions clip to **192px of up to
                           3217px** — 16.8x over, so a phone user sees roughly the first six words of a

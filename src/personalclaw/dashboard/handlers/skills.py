@@ -129,13 +129,46 @@ def _parse_always(skill_md: Path) -> bool:
     return value.strip().lower() in ("true", "yes", "1")
 
 
+def _parse_provenance(skill_md: Path) -> str:
+    """Extract HOW the skill came to exist from SKILL.md frontmatter's ``source:``.
+
+    This is deliberately NOT the listing's ``source`` field (#576). That one is derived
+    from the directory the skill lives in — ``bundled`` / ``local`` / ``agent-local`` —
+    and every surface that decides whether a skill is editable or deletable reads it, so
+    letting frontmatter override it would make a taught skill read as a tier it is not.
+    Provenance is the orthogonal fact the tier cannot carry: the auto-extractor writes
+    ``source: auto`` and promotion writes ``source: taught``, and before this both were
+    write-only — a skill the user explicitly taught the agent was indistinguishable from
+    one dropped into the same directory by hand, on every surface.
+
+    The returned vocabulary is CLOSED to the two values their writers actually produce.
+    Frontmatter is free-form text a hand-authored skill can put anything in, and this
+    value reaches a UI badge; passing it through would let an arbitrary string render as
+    provenance. An unrecognized or absent value returns ``""`` — hand-authored, which is
+    what the absence of the marker has always meant (``AutoSkillProvenance``'s docstring).
+    """
+    from personalclaw.skills.ephemeral import TAUGHT_SKILL_SOURCE_VALUE
+    from personalclaw.skills.loader import AUTO_SKILL_SOURCE_VALUE, SkillsLoader
+
+    try:
+        text = skill_md.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+    value = SkillsLoader._parse_frontmatter_text(text).get("source", "").strip().lower()
+    return value if value in (AUTO_SKILL_SOURCE_VALUE, TAUGHT_SKILL_SOURCE_VALUE) else ""
+
+
 async def api_skills_list(request: web.Request) -> web.Response:
     """GET /api/skills — list locally installed skills from all discovery paths.
 
     Each skill carries an ``integrity`` field from the S6 lint (``verify_skill_integrity``):
     ``intact`` (on-disk hashes match the install-time ``.pclaw-lock.json`` baseline),
     ``tampered`` (a locked file changed/went missing or an unexpected file appeared), or
-    ``unverified`` (no lock — a bundled or hand-placed skill, not a failure)."""
+    ``unverified`` (no lock — a bundled or hand-placed skill, not a failure).
+
+    Each also carries ``provenance`` — ``auto`` (extracted), ``taught`` (promoted from a
+    session draft), or ``""`` (hand-authored) — read from the file's own frontmatter and
+    kept separate from the directory-derived ``source``; see ``_parse_provenance``."""
     from personalclaw.agent import _all_skill_paths
     from personalclaw.skills.loader import iter_skill_files
     from personalclaw.skills.marketplace import _parse_description, verify_skill_integrity
@@ -179,6 +212,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
                     "always": _parse_always(skill_md),
                     "path": str(skill_md),
                     "source": "bundled" if is_bundled else "local",
+                    "provenance": _parse_provenance(skill_md),
                     "type": "bundled" if is_bundled else "installed",
                     "integrity": integrity,
                 }
@@ -228,6 +262,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
                         "always": _parse_always(skill_md),
                         "path": str(skill_md),
                         "source": "agent-local",
+                        "provenance": _parse_provenance(skill_md),
                         "type": "agent-local",
                         "integrity": integrity,
                         "agent": ag_name,
