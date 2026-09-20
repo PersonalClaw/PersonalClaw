@@ -54,13 +54,19 @@ export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, 
   // re-renders (stable `dirs`, unchanged slot) DON'T reload it. `load` is a no-op when
   // the slot is already cached, so this only fetches when the slot was actually cleared.
   const rootCached = dirs.cache[rootPath]
+  // `dirs.load` is identity-stable; `dirs` is NOT (it re-memoizes on every cache and
+  // every listing-error write). Keying this effect on the stable function is what the
+  // comment above always meant, and it is load-bearing now that a failed listing
+  // records a reason: depending on `dirs` would re-fire here on that write, refetch
+  // the failing path, record the reason again, and never settle.
+  const loadDir = dirs.load
   useEffect(() => {
     let alive = true
     // Paint the cached slot immediately (instant on refresh), then reconcile with the fetch.
     if (rootCached) setEntries(rootCached)
-    dirs.load(rootPath).then((e) => { if (alive) setEntries(e) })
+    loadDir(rootPath).then((e) => { if (alive) setEntries(e) })
     return () => { alive = false }
-  }, [rootPath, dirs, rootCached])
+  }, [rootPath, loadDir, rootCached])
 
   // First-ever load this session (no cached slot) → skeleton rows, not bare "Loading…",
   // so the panel has structure instead of flashing empty.
@@ -68,6 +74,12 @@ export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, 
   let shown = hideNames?.size ? entries.filter((e) => !hideNames.has(e.name)) : entries
   if (hidePrefixes?.size) shown = shown.filter((e) => ![...hidePrefixes].some((p) => e.name.startsWith(p)))
   if (hideNamesDeep?.size) shown = shown.filter((e) => !hideNamesDeep.has(e.name))
+  // A refused / missing path is NOT an empty folder (#298). The server answered
+  // 400/403/404 and `useDirCache` kept the sentence, so say which one it was rather
+  // than reusing `emptyLabel` — the go-to-path box leaves the rejected path in the
+  // URL, so a bare "Empty" reads as "you are here and there is nothing in it".
+  const loadError = dirs.errors[rootPath]
+  if (shown.length === 0 && loadError) return <div role="alert" data-type="body-s" className="px-m py-s text-danger">{loadError}</div>
   if (shown.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.8125rem]">{emptyLabel}</div>
   return (
     <div>

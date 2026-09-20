@@ -2025,7 +2025,10 @@ export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: M
 export interface DiscoverTryIt { route: string; query: Record<string, string>; label: string }
 export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
 export interface DiscoverArea { area: string; tips: DiscoverTip[] }
-export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
+/** `dismissed_count` is what lets the hub's empty state tell "you used every area" from
+ *  "you hid the tips" — `visible_count: 0` means both, and the copy used to claim the
+ *  first unconditionally (#452). */
+export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number; dismissed_count: number }
 /** One always-on convention in effect right now (PEP-10). `preview` is credential-redacted;
  *  `body` is only present on the single-doc editor read, where it is verbatim. */
 export interface AlwaysOnItem {
