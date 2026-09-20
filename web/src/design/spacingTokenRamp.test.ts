@@ -84,6 +84,14 @@ const RAW = new RegExp(
   'g',
 )
 
+/** The tokenised counterpart of `RAW`, used ONLY as the per-file pin's non-vacuity control. A file
+ *  with zero raw values is indistinguishable from a file with no spacing at all, and the second one
+ *  satisfies a "stays converted" pin forever. */
+const TOKENISED = new RegExp(
+  String.raw`(?<![-\w])((?:p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap-x|gap-y|space-x|space-y))-(xs|s|m|l|xl|2xl|3xl)(?![-\w])`,
+  'g',
+)
+
 /** px → rung. Tailwind's numeric scale is n × 4px, so the mapping is arithmetic, not taste. */
 const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'xl', 24: '2xl', 28: '3xl' }
 
@@ -162,6 +170,36 @@ describe('spacing rides the density scale', () => {
         'is arithmetic — n × 4px → xs/s/m/l/xl/2xl/3xl — so the conversion is pixel-identical at the ' +
         `default density.\nFirst few:\n  ${mappable.slice(0, 6).join('\n  ')}`,
     ).toBeLessThanOrEqual(MAPPABLE_CEILING)
+  })
+
+  it('the files a slice fully converted stay converted', () => {
+    // 🔑 THE CEILING ABOVE STRUCTURALLY CANNOT CATCH THIS. It caps the AGGREGATE, so a converted
+    // file reverting is invisible whenever anything else converts as much in the same change — the
+    // count lands under the ceiling and the rail stays green while a file the sweep already paid
+    // for goes back. The sweep took WHOLE files, so that is the shape a regression here actually
+    // has. Sampled across the areas the slices touched, including two primitives; each one measured
+    // at zero rung-equivalent raw values on `bfe18b58a`.
+    for (const rel of [
+      'pages/settings/ChatPanel.tsx',
+      'pages/knowledge/TagManager.tsx',
+      'pages/workflows/OutboxPanel.tsx',
+      'ui/FindBar.tsx',
+      'ui/Composer.tsx',
+    ]) {
+      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      // Non-vacuity FIRST: stripping a file's layout would satisfy the pin below, not fail it.
+      expect(
+        [...code.matchAll(TOKENISED)].length,
+        `${rel} carries no tokenised spacing at all — the pin below would pass vacuously`,
+      ).toBeGreaterThan(0)
+      const raw = [...code.matchAll(RAW)]
+        .filter((m) => {
+          const px = Number(m[2]) * 4
+          return Number.isInteger(px) && RUNG[px]
+        })
+        .map((m) => m[0])
+      expect(raw, `${rel} reintroduced a rung-equivalent raw value the density slider cannot move`).toEqual([])
+    }
   })
 
   it('records the half-step population the ramp cannot express — an owner question, not a gate', () => {
