@@ -644,7 +644,17 @@ class RunController:
         totals = journal_mod.run_totals(self.run.id)
         # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
         # this a crash loop mints a fresh budget each time and spends without bound.
-        self.run.total_tokens = max(self.run.total_tokens, int(totals.get("tokens", 0)))
+        tokens_recorded = self._inherit_ledger_tokens(totals)
+        token_cap = int(getattr(self.run.budget, "max_tokens", 0) or 0)
+        if resumed and token_cap and not tokens_recorded:
+            # UNKNOWN is not free. A capped resume whose earlier steps never recorded their token
+            # count cannot be safely pre-charged, so pause before the first new node is scheduled.
+            # Removing the cap remains the explicit way to continue when no measurement exists.
+            await self._finish(
+                RunStatus.PAUSED,
+                error="token spend unrecorded; cannot pre-charge token budget",
+            )
+            return False
         # Context lifecycle (WF2-R6): rebuild handoffs/carryover/decisions from the ledger. This is
         # the whole reason they are journaled — a resumed run that lost them would restart its next
         # iteration blind, re-deriving what a previous one already verified, which is the exact
@@ -668,6 +678,22 @@ class RunController:
         self._bind_project_memory_cwd()
         self._publish("workflow_run_update", {"status": self.run.status.value})
         return provisioned
+
+    def _inherit_ledger_tokens(self, totals: dict[str, Any]) -> bool:
+        """Carry a measured ledger token total onto the run row; never turn absence into zero.
+
+        ``run.total_tokens`` is intentionally still an integer: it is incremented by live node
+        results and persisted in the existing run row. The ledger aggregate's
+        ``tokens_recorded`` sibling decides whether it is safe to overwrite that row from replay.
+        False leaves the prior row untouched and lets the resume pre-charge fail closed when a
+        token cap exists.
+        """
+        tokens_recorded = totals.get("tokens_recorded") is True
+        tokens = totals.get("tokens")
+        if not tokens_recorded or tokens is None:
+            return False
+        self.run.total_tokens = max(self.run.total_tokens, int(tokens))
+        return True
 
     async def _provision_workspace(self) -> bool:
         """Stand up the run's declared workspace before the first node (WORK-CONTAINERS §4.1).
@@ -4467,7 +4493,7 @@ class RunController:
                     0.0, _epoch(self.run.completed_at) - _epoch(self.run.started_at)
                 )
         totals = journal_mod.run_totals(self.run.id)
-        self.run.total_tokens = max(self.run.total_tokens, int(totals.get("tokens", 0)))
+        self._inherit_ledger_tokens(totals)
         self._save_run()
         self._persist_state()
         self.journal.run_finished(

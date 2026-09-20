@@ -127,11 +127,12 @@ def test_a_genuinely_free_run_reports_its_zero_as_PRICED(ledger_home):
 
 
 def test_the_two_zeros_are_now_DISTINGUISHABLE(ledger_home):
-    """The measured before/after, as a test: one key, and exactly one, separates the two facts.
+    """The measured before/after, as a test: only the two disclosures separate the two facts.
 
     Before this change the two dicts were byte-identical (see the module docstring). Asserting the
-    SET of differing keys rather than just `priced` is deliberate — it pins that nothing else about
-    the aggregate drifted while the disclosure was added.
+    SET of differing keys is deliberate: ``priced`` distinguishes the cost, while ``tokens`` and
+    ``tokens_recorded`` are #2630's nullable-scalar representation of the independent token fact.
+    Nothing else about the aggregate may drift.
     """
     from personalclaw.workflows import journal as J
 
@@ -140,8 +141,10 @@ def test_the_two_zeros_are_now_DISTINGUISHABLE(ledger_home):
     free = J.run_totals("run-free2")
     assert loop["steps_completed"] == free["steps_completed"] == 2, "vacuity floor"
     differing = {k for k in set(loop) | set(free) if loop.get(k) != free.get(k)}
-    assert differing == {"priced"}, differing
+    assert differing == {"priced", "tokens", "tokens_recorded"}, differing
     assert loop["priced"] is False and free["priced"] is True
+    assert loop["tokens"] is None and loop["tokens_recorded"] is False
+    assert free["tokens"] == 0 and free["tokens_recorded"] is True
 
 
 def test_one_unpriced_step_taints_a_mixed_run(ledger_home):
@@ -202,6 +205,62 @@ def test_an_empty_ledger_reports_priced_exactly_as_usage_ledger_does(ledger_home
     totals = J.run_totals("run-empty")
     assert totals["steps_completed"] == 0
     assert totals["priced"] is usage_ledger._blank_agg()["priced"]
+
+
+# ── token recorded-ness: the nullable-scalar sibling (#2630) ──
+
+
+@pytest.mark.parametrize(
+    "run_id,steps,expected_tokens,expected_recorded",
+    [
+        (
+            "tokens-all-recorded",
+            [{"tokens": 100, "cost_usd": 0.0}, {"tokens": 200, "cost_usd": 0.0}],
+            300,
+            True,
+        ),
+        (
+            "tokens-some-null",
+            [{"tokens": 100, "cost_usd": 0.0}, {"tokens": None, "cost_usd": 0.0}],
+            None,
+            False,
+        ),
+        (
+            "tokens-key-absent",
+            [{"tokens": 100, "cost_usd": 0.0}, {"cost_usd": 0.0}],
+            None,
+            False,
+        ),
+        (
+            "tokens-recorded-zero",
+            [{"tokens": 0, "cost_usd": 0.0}],
+            0,
+            True,
+        ),
+    ],
+)
+def test_run_totals_separates_unrecorded_tokens_from_recorded_zero(
+    ledger_home, run_id, steps, expected_tokens, expected_recorded
+):
+    """Absent/null taint the count; a real zero remains a measurement."""
+    from personalclaw.ledger.writer import EVENTS_FILE
+    from personalclaw.workflows import journal as J
+    from personalclaw.workflows import store as run_store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    run_store.save(WorkflowRun(id=run_id, workflow_name="t", status=RunStatus.RUNNING))
+    for index, payload in enumerate(steps):
+        run_store.append_jsonl(
+            run_id,
+            EVENTS_FILE,
+            {"kind": J.STEP_COMPLETED, "node_id": f"n{index}", **payload},
+        )
+
+    totals = J.run_totals(run_id)
+    assert totals["steps_completed"] == len(steps), "vacuity floor: no step was aggregated"
+    assert totals["tokens"] == expected_tokens
+    assert totals["tokens_recorded"] is expected_recorded
+    assert totals["priced"] is True, "the token disclosure must not widen the money flag"
 
 
 # ── one word for one fact: the same key, the same polarity, on both money surfaces ──

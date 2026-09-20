@@ -697,6 +697,38 @@ class TestBudget:
         await c2._prepare()
         assert c2.run.total_tokens >= spent
 
+    async def test_a_capped_resume_pauses_when_ledger_tokens_are_unrecorded(self) -> None:
+        """An absent inherited count is UNKNOWN, not a free pre-charge."""
+        spec = {"name": "capped", "root": {"kind": "infer", "id": "i", "config": {"prompt": "p"}}}
+        run = _make_run(
+            spec,
+            budget=RunBudget(max_tokens=100),
+            started_at=_stamp(),
+            total_tokens=0,
+            status=RunStatus.RUNNING,
+        )
+        store.append_jsonl(
+            run.id,
+            J.EVENTS_FILE,
+            {
+                "kind": J.STEP_COMPLETED,
+                "instance_path": "old",
+                "node_id": "old",
+                "cost_usd": 0.0,
+            },
+        )
+        completion = _echo()
+        controller = RunController(run, spec, services=EngineServices(completion=completion))
+
+        assert await controller.run_to_completion(timeout=20) == RunStatus.PAUSED
+        assert completion.calls == [], "unknown inherited spend must pause before scheduling"
+        saved = store.get(run.id)
+        assert saved is not None
+        assert saved.error_message == "token spend unrecorded; cannot pre-charge token budget"
+        totals = J.run_totals(run.id)
+        assert totals["tokens"] is None
+        assert totals["tokens_recorded"] is False
+
 
 class TestRedaction:
     async def test_a_credential_in_node_output_never_reaches_disk(self) -> None:
