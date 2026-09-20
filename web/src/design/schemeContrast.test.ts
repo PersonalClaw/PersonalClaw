@@ -612,3 +612,149 @@ describe('session map rail: both mark tones clear SC 1.4.11 on the rail\'s groun
     })
   }
 })
+
+// ── THE SESSION MAP'S MARK TONES, ON THE RAIL TRACK THEY SIT ON (atom SSM-15) ─────────────────
+//
+// 🔴 WHY THIS BLOCK EXISTS AT ALL — THE CLAUSE WAS SATISFIABLE BY THIS FILE WITHOUT IT. SSM-15's
+// contract reads "`schemeContrast.test.ts` passes for the mark tones across all 12 schemes
+// including `lavender`", and every word of that was already TRUE before a line was written: the
+// 12-scheme population is pinned above and the suite is green. But `git grep` over this file found
+// **zero** occurrences of `--color-rail` and zero of either mark tone, so the clause was measuring
+// the tonal-BUTTON grid and reporting it as Session Map coverage. A passing suite that never names
+// the tokens under test is the exact vacuity the audit flagged, so the pair is named here
+// explicitly and the population is pinned by count the way the rest of the file does it.
+//
+// 🔑 THE THRESHOLD IS 3:1, NOT THIS FILE'S `AA` 4.5, AND THAT IS A MEASURED CHOICE RATHER THAN A
+// CONCESSION. A mark is a 4px round tick — a graphical object, not text — so the applicable
+// criterion is WCAG 2.1 **SC 1.4.11 Non-text Contrast (3:1)**, not SC 1.4.3. Holding it to 4.5
+// would not be "stricter", it would be WRONG, and it would red on shipped design in **7 of the 12
+// schemes**: `--color-primary` over `--color-rail` measures 4.37 (coral), 4.37 (honey), 4.38
+// (ember), 4.38 (forest), 4.39 (amber), 4.40 (rose) and 4.41 (jade) in LIGHT mode — every one of
+// them below 4.5 and every one of them comfortably above 3. That is the same 7-scheme cliff the
+// canvas finding above records, and for the same reason: `--color-rail` in light is `#f0f4f8`,
+// byte-identical to `--color-canvas`. Measured range across the whole grid: **4.37 → 11.12**, so
+// the worst combo still carries 1.46× the floor.
+//
+// 🪤 `--color-rail` IS CHROME, NOT ACCENT, so it is read from `tokens.css` per mode and NOT from the
+// scheme. That asymmetry is the whole shape of this grid — the ink varies across 12 schemes while
+// the ground is fixed — and it is the same trap `onPrimaryContainer` documents one block up. An
+// assertion below pins it, because the day a scheme starts overriding `--color-rail` this helper
+// would silently keep measuring the default and report 12 identical grounds.
+
+/** `--color-rail` for a mode — the rail's hairline spine (`SessionMapRail.tsx`'s `data-session-map-track`),
+ *  which is the ground a mark is painted on. Read from source per mode, never restated, so a retint
+ *  cannot drift this guard. */
+function railTrack(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const scope = mode === 'dark'
+    ? css.slice(0, css.search(/\.light\s*\{/))     // the @theme default block comes first
+    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+  const m = scope.match(/--color-rail:\s*(#[0-9a-fA-F]{6})/)
+  if (!m) throw new Error(`could not find --color-rail for ${mode}`)
+  return m[1]
+}
+
+/** The two tones the rail actually paints, parsed out of `SessionMapRail.tsx`'s own `tone`
+ *  expression rather than restated here — the discipline `tonalAlphas` follows for `Button.tsx`.
+ *  A repaint of the marks therefore moves this rail with it instead of leaving it guarding tokens
+ *  the component no longer uses. Returns `[currentToken, historyToken]` in that order. */
+function markToneTokens(): [string, string] {
+  const src = readFileSync(join(process.cwd(), 'src/pages/chat/SessionMapRail.tsx'), 'utf8')
+  const m = /const tone = isCurrent\s*\?\s*'var\((--[a-z-]+)\)'\s*:\s*'var\((--[a-z-]+)\)'/.exec(src)
+  if (!m) throw new Error("could not parse SessionMapRail.tsx's `tone` expression — the rail's two-tone vocabulary moved")
+  return [m[1], m[2]]
+}
+
+describe('session map: the mark tones are legible on the rail track, in every scheme (SSM-15)', () => {
+  const RAIL = { dark: railTrack('dark'), light: railTrack('light') }
+  const [CURRENT_TOKEN, HISTORY_TOKEN] = markToneTokens()
+  /** SC 1.4.11 Non-text Contrast — a 4px tick is a graphical object. See the header. */
+  const NON_TEXT = 3
+
+  /** The history tone is a neutral ink from `tokens.css`, not a scheme override — same read as the
+   *  ground, for the same reason. */
+  function neutral(token: string, mode: 'dark' | 'light'): string {
+    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+    const scope = mode === 'dark'
+      ? css.slice(0, css.search(/\.light\s*\{/))
+      : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+    const m = scope.match(new RegExp(`${token}:\\s*(#[0-9a-fA-F]{6})`))
+    if (!m) throw new Error(`could not find ${token} for ${mode}`)
+    return m[1]
+  }
+
+  const MODES = ['dark', 'light'] as const
+  const COMBOS = SCHEMES.flatMap((s) =>
+    MODES.map((mode) => ({
+      scheme: s.id,
+      mode,
+      ratio: contrast(s.colors['--color-primary'][mode], RAIL[mode]),
+    })),
+  )
+
+  // ── VACUITY FLOOR ────────────────────────────────────────────────────────────────────────────
+  // Every input here is DERIVED — the schemes imported, the ground parsed out of tokens.css, the
+  // two tones parsed out of the component. Each parse can come back empty, and an empty parse makes
+  // the loop below iterate NOTHING while every `it` still reports green. That is precisely how this
+  // clause was satisfiable in the first place, so the population is pinned by COUNT.
+  it('inspected the full population — 12 schemes × 2 modes, on a real rail tone', () => {
+    expect(SCHEMES.length, 'the curated scheme set').toBe(12)
+    expect(SCHEMES.map((s) => s.id), 'lavender is named in the clause, so it is named here').toContain('lavender')
+    expect(COMBOS.length, '12 × 2 — the whole grid was walked').toBe(24)
+    expect(new Set(COMBOS.map((c) => `${c.scheme}/${c.mode}`)).size, 'no scheme silently measured twice').toBe(24)
+    for (const mode of MODES) {
+      expect(RAIL[mode], `${mode}: --color-rail is a real hex`).toMatch(/^#[0-9a-fA-F]{6}$/)
+    }
+    expect(RAIL.dark, 'the two modes must not resolve to the same ground — that would mean one block was never found').not.toBe(RAIL.light)
+  })
+
+  it('the tones under test are the ones the component paints', () => {
+    // Parsed, not restated. If the rail is repainted this reds here — which is the correct place
+    // for it to red, rather than silently guarding an abandoned token.
+    expect(CURRENT_TOKEN, "the current region's tone").toBe('--color-primary')
+    expect(HISTORY_TOKEN, 'the history tone').toBe('--color-on-surface-low')
+    // 🔑 The structural minimum of a TWO-tone vocabulary: two different tokens. One token for both
+    // states would make the rail convey position-in-session with nothing at all, and it would still
+    // pass every ratio assertion below.
+    expect(CURRENT_TOKEN, 'a two-tone rail needs two tones').not.toBe(HISTORY_TOKEN)
+  })
+
+  it('--color-rail is CHROME — no scheme overrides it, which is what makes the per-mode read correct', () => {
+    const overriding = SCHEMES.filter((s) => '--color-rail' in s.colors).map((s) => s.id)
+    expect(
+      overriding,
+      'a scheme now overrides --color-rail, so `railTrack()` is measuring the wrong ground for it:\n' +
+        `  ${overriding.join(', ')}\n` +
+        'Read the ground from the scheme (as the ink already is) rather than from tokens.css.',
+    ).toEqual([])
+  })
+
+  // ── The grid: the CURRENT-region tone, which is the only scheme-dependent half ────────────────
+  for (const s of SCHEMES) {
+    describe(`scheme '${s.id}'`, () => {
+      for (const mode of MODES) {
+        it(`${mode}: the current-region mark (${CURRENT_TOKEN}) on the rail track ≥ 3:1`, () => {
+          const row = COMBOS.find((c) => c.scheme === s.id && c.mode === mode)!
+          expect(
+            row.ratio,
+            `a current mark is invisible against its own spine in '${s.id}' ${mode} ` +
+              `(${row.ratio.toFixed(2)}:1, SC 1.4.11 floor ${NON_TEXT}:1)`,
+          ).toBeGreaterThanOrEqual(NON_TEXT)
+        })
+      }
+    })
+  }
+
+  // The history tone is scheme-INDEPENDENT (a neutral ink), so it is two assertions rather than 24
+  // — stated once here instead of being multiplied across a loop that would measure one value
+  // twelve times and read like breadth it does not have.
+  for (const mode of MODES) {
+    it(`${mode}: the history mark (${HISTORY_TOKEN}) on the rail track ≥ 3:1`, () => {
+      const ratio = contrast(neutral(HISTORY_TOKEN, mode), RAIL[mode])
+      expect(
+        ratio,
+        `a history mark is invisible against its own spine in ${mode} (${ratio.toFixed(2)}:1)`,
+      ).toBeGreaterThanOrEqual(NON_TEXT)
+    })
+  }
+})
