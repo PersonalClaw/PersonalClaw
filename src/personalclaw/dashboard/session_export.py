@@ -45,9 +45,9 @@ def redact_field(text: str) -> str:
     """Both redaction passes over one field. Applied to EVERY role — see the module
     docstring for why the write path's role exemption can't be inherited here.
 
-    Public because ``session_share`` needs the SAME redaction for the artifact name it
-    derives (SM-9). One implementation with two callers, never a second pass that redacts
-    slightly less.
+    Public because the export filename and ``session_share`` need the SAME redaction for
+    the names they derive (SM-8/SM-9). One implementation across every export/share
+    surface, never a second pass that redacts slightly less.
     """
     if not text:
         return ""
@@ -144,7 +144,9 @@ def export_filename(title: str, key: str, fmt: str) -> str:
     alone produced names that broke the header for anyone whose chat titles aren't
     Latin — the fallback keeps the download working instead of failing on their locale.
     """
-    source = title or key or "chat"
+    # Redact before replacing punctuation: sanitising first can break a credential shape
+    # into something the redactor no longer recognises while leaving it identifiable.
+    source = redact_field(title or key or "chat")
     stem = "".join(ch if (ch.isascii() and ch.isalnum()) or ch in "-_" else "-" for ch in source)
     stem = "-".join(p for p in stem.split("-") if p)[:60].strip("-")
     return f"{(stem or 'chat').lower()}.{fmt}"

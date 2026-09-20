@@ -14,6 +14,8 @@ import pytest
 from personalclaw.dashboard import session_export as se
 from personalclaw.dashboard import session_templates as st
 
+FAKE_SK_TOKEN = "sk-notarealfixture0123456789abcdefghij"
+
 # ── templates ────────────────────────────────────────────────────────────────
 
 
@@ -253,11 +255,24 @@ def test_export_filename_is_filesystem_safe(title, expected):
     assert se.export_filename(title, "fallback", "md") == expected
 
 
+@pytest.mark.parametrize(
+    "title,key",
+    [
+        (f"deploy with {FAKE_SK_TOKEN}", "fallback"),
+        ("", FAKE_SK_TOKEN),
+    ],
+)
+def test_export_filename_redacts_credentials_before_sanitizing(title, key):
+    name = se.export_filename(title, key, "md")
+    assert FAKE_SK_TOKEN not in name
+    assert name.endswith(".md")
+
+
 def test_export_filename_is_ascii_so_plain_content_disposition_is_valid():
     """The route uses `filename="…"` (not RFC 5987), so the name must be ASCII."""
     name = se.export_filename("日本語のチャット", "fallback-key", "json")
     name.encode("ascii")  # raises if not
-    assert name.endswith(".json")
+    assert name == "chat.json"
 
 
 def test_json_export_carries_provenance():
