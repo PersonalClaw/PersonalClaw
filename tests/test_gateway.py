@@ -2413,6 +2413,68 @@ class TestSubagentSlackInjection:
 
         orch.subagent_mgr.notify_injection_failed.assert_called()
 
+    def _channel_info(self, agent_id: str):
+        info = MagicMock()
+        info.id = agent_id
+        info.parent_session_key = "C123:ts.123"
+        info.error = None
+        info.result = "result"
+        info.result_path = ""
+        info.task = "task"
+        info.agent = ""
+        info.silent = False
+        info.elapsed = 1.0
+        info.started = 0.0
+        return info
+
+    @pytest.mark.asyncio
+    async def test_a_retriable_provider_fault_spends_the_second_attempt(self):
+        """Issue 385: an exception used to `break` out of the loop, so the retry that
+        `_MAX_INJECT_ATTEMPTS` promises never ran for the one failure class it exists for —
+        a provider 5xx. The subagent had already finished; its result was simply lost."""
+        orch, mock_sm = self._setup()
+        on_done = mock_sm.call_args[1]["on_done"]
+
+        class InternalServerException(Exception):
+            pass
+
+        fault = InternalServerException(
+            "An error occurred (InternalServerException) when calling the ConverseStream "
+            "operation (reached max retries: 0): The system encountered an unexpected error "
+            "during processing. Try your request again."
+        )
+        with patch("personalclaw.gateway.asyncio.sleep", new_callable=AsyncMock) as slept:
+            with patch(
+                "personalclaw.gateway.stream_and_collect",
+                new_callable=AsyncMock,
+                side_effect=fault,
+            ) as injected:
+                await on_done([self._channel_info("agent-5xx")])
+
+        assert injected.await_count == _MAX_INJECT_ATTEMPTS
+        slept.assert_awaited()  # backed off between the two attempts
+        orch.subagent_mgr.notify_injection_failed.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_a_non_retriable_error_still_abandons_after_one_attempt(self, caplog):
+        """The bound on the fix above: classifying before retrying must not become "retry
+        everything". A non-retriable error spends ONE attempt, and the summary reports the
+        attempts MADE — it used to print `_MAX_INJECT_ATTEMPTS` and claim two."""
+        orch, mock_sm = self._setup()
+        on_done = mock_sm.call_args[1]["on_done"]
+
+        with caplog.at_level("ERROR"):
+            with patch(
+                "personalclaw.gateway.stream_and_collect",
+                new_callable=AsyncMock,
+                side_effect=ValueError("the announce block is malformed"),
+            ) as injected:
+                await on_done([self._channel_info("agent-bug")])
+
+        assert injected.await_count == 1
+        assert "all 1 channel injection attempts failed" in caplog.text
+        orch.subagent_mgr.notify_injection_failed.assert_called()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests: _deliver_result truncation

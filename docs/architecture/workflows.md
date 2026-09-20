@@ -64,6 +64,7 @@ while not terminal:
 | `coalescer.py` | per-observer event batching in front of the SSE write |
 | `projection.py` | the schema-validated run snapshot |
 | `resilience.py` | retries, circuit breaker, budgets |
+| `failure_taxonomy.py` | `classify_exception()` — the ONE exception → typed `Failure` map, and therefore the one place that decides whether budget gets spent on a retry (only `TRANSIENT`/`NETWORK` are retryable). Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
 | `judge_contract.py` | the ONE closed verdict enum (`verify.Verdict` was merged into it and deleted), the judge's wire shape (`judge_instruction` renders it, `parse_judge_json` reads it), the rubric ratchet with tolerant score lookup, the engine-computed overall, and the forbidden-mode denylist. Enforced on the live path: the judge gate validates every answer here, and `engine.apply_judge_contract` validates a judge STAGE's output at the dispatch seam |

@@ -470,7 +470,7 @@ class TestTheEngineSeam:
         self, monkeypatch
     ) -> None:
         """The ladder must not swallow a real failure. When the retry also fails, the node
-        fails with the SAME typed failure `_classify_exception` always produced."""
+        fails with the SAME typed failure `classify_exception` always produced."""
         monkeypatch.setattr(C, "prompt_char_budget", lambda *a, **k: 10_000_000)
 
         async def fn(prompt, *, use_case="background", output_type=None):
