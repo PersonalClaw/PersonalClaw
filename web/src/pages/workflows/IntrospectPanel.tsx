@@ -7,6 +7,7 @@ import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
 import { runCostStat, runCostText, templateCostStat } from '../../lib/runCost'
+import { runTokensStat } from '../../lib/unrecorded'
 
 /** The cockpit's introspection panel: the nine questions §6.4 promotes to Success Criteria
  *  (WORK-CONTAINERS R6 — criteria 6 & 8).
@@ -114,7 +115,14 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       (issue 2566): a cell has no room for the sentence below, but it must not put
                       a measured-looking figure where the honest answer is "not recorded". */}
                   <Stat label="Cost (est.)" value={runCostStat(data.stats.cost_usd, data.stats.priced)} />
-                  <Stat label="Tokens" value={data.stats.tokens.toLocaleString()} />
+                  {/* Routed through `runTokensStat` for the SAME reason the cell above is routed,
+                      one fact over: a step that recorded no token count makes this int a FLOOR, and
+                      `.toLocaleString()` on a floor printed "Tokens 100" for a run the ledger's own
+                      `run_totals` reported as `null` (issue 3218). The two aggregates now agree. */}
+                  <Stat
+                    label="Tokens"
+                    value={runTokensStat(data.stats.tokens, data.stats.tokens_recorded)}
+                  />
                   <Stat label="Duration" value={fmtElapsed(data.stats.duration_secs)} />
                   <Stat label="To first output" value={`${Math.round(data.stats.first_byte_ms)} ms`} />
                   <Stat label="Steps done" value={String(data.stats.steps_completed)} />

@@ -1625,6 +1625,11 @@ export interface WorkflowOutboxEntry {
 export interface WorkflowRunStats {
   run_id: string
   tokens: number
+  // `false` ⇒ `tokens` is a FLOOR: some completed step carried no token count, so the int is a sum
+  // over an incomplete sample. Route it through `unrecorded.ts::runTokensStat`, never
+  // `.toLocaleString()` — a genuine measured `0` reports `tokens_recorded: true`, and collapsing
+  // the two put a floor on the cockpit where `run_totals` reported `null` (#3218).
+  tokens_recorded: boolean
   cached_tokens: number
   cost_usd: number
   // `false` ⇒ `cost_usd` is a FLOOR: some completed step booked no cost at all, so the float is a
