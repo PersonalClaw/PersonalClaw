@@ -175,7 +175,7 @@ export function InboxSettingsPanel() {
         </Row>
         {s.auto_cleanup_enabled && (
           <Row label="Retention" hint="How long to keep inbox items (all sources).">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-s">
               <NumberField value={s.retention_days} min={1} max={3650} onChange={(v) => patch({ retention_days: v })} width="w-20" ariaLabel="Retention (days)" />
               <span data-type="caption" className="text-on-surface-low">days</span>
             </div>

@@ -42,7 +42,7 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
           {err && <p ref={errRef} role="alert" className="mt-l text-danger text-[0.8125rem]">{err}</p>}
         </div>
       </div>
-      <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
+      <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.name.trim()} disabledReason={!draft.name.trim() ? 'Enter an agent name first' : undefined}><Check size={16} /> Create agent</Button>

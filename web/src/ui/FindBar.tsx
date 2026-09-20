@@ -171,7 +171,7 @@ export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, initia
       // So `w-fit` has a ~344px intrinsic floor (field + counter + three 28px buttons)
       // that cannot shrink; below roughly 360px the pill hangs off the edge and the left
       // gutter is eaten. Docked, the row shrinks with the column instead.
-      className={`sticky top-2 z-30 flex items-center gap-1 rounded-pill border border-outline-variant/60 bg-surface/95 pl-1 pr-2 h-10 shadow-md backdrop-blur-md ${
+      className={`sticky top-2 z-30 flex items-center gap-xs rounded-pill border border-outline-variant/60 bg-surface/95 pl-xs pr-s h-10 shadow-md backdrop-blur-md ${
         isMobile ? 'mx-l w-auto' : 'ml-auto mr-l w-fit'}`}
       role="search"
       // Escape is bound on the CONTAINER, not only on the input (CC-6). Tabbing to

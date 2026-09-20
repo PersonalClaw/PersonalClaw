@@ -134,7 +134,7 @@ export function Composer({
 
   const sel = selection
   const pills = (
-    <div className="flex items-center gap-1 min-w-0 flex-wrap">
+    <div className="flex items-center gap-xs min-w-0 flex-wrap">
       {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
       {controls.agent && <AgentPill data={data} value={sel?.agent ?? ''} openSignal={openAgentSignal} onSelect={(a) => onSelect?.({ agent: a })} />}
       {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
@@ -161,7 +161,7 @@ export function Composer({
       ? 'Hands-free voice — paused while speaking'
       : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
   const actions = (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
           accessible NAME, so the action stops being findable by the name it has when it works —
           the failure cycle 56 measured and ruled against. */}
@@ -294,7 +294,7 @@ export function Composer({
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={physics.playful}
-                className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-[var(--radius-xli)] border-2 border-dashed border-primary/70 bg-surface-container/85 text-primary"
+                className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-s rounded-[var(--radius-xli)] border-2 border-dashed border-primary/70 bg-surface-container/85 text-primary"
                 data-type="label-m"
               >
                 <motion.span

@@ -54,7 +54,7 @@ export function DocumentsPanel() {
         <RowGroup>
           <Row label="Edit documents in place"
             hint="Opens a generated Word document in a structural editor instead of download-only. Saving RE-CREATES the file from the structure PersonalClaw could parse, so constructs its document model cannot hold (comments, footnotes, embedded objects, exact styling) are not in the saved copy. The editor lists them before your first edit and repeats them in the save confirmation, and the version you started from is always restorable from the document's Details › Versions. With this off, office documents are read-only previews and the server refuses a document save outright.">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-s">
               <SavedToast show={saved} />
               <Toggle on={cfg.document_editing} onChange={(v) => save({ document_editing: v })} label="Edit documents in place" />
             </div>

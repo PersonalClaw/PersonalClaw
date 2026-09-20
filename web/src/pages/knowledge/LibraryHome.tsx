@@ -207,7 +207,7 @@ function ItemRows({ items, onOpen, subtitle, lead, actions }: {
                 <p className="truncate text-on-surface" data-type="label-m">{name}</p>
                 <p className="truncate text-on-surface-low" data-type="body-s">{subtitle(it)}</p>
               </div>
-              {actions && <div className="flex shrink-0 items-center gap-1">{actions(it)}</div>}
+              {actions && <div className="flex shrink-0 items-center gap-xs">{actions(it)}</div>}
             </ListRow>
           </li>
         )

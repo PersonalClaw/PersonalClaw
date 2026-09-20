@@ -17,21 +17,22 @@ import { join } from 'node:path'
 //   py-2xl / px-m       24px / 12px   19.2 / 9.6    16.32 / 8.16     ← tracks the slider
 //   py-6   / px-3       24px / 12px   24   / 12     24    / 12       ← FROZEN
 //
-// 🔑 THE CENSUS SPLITS IN TWO, AND ONLY ONE HALF IS A DEFECT. Measured 2026-09-20 on `a9c03d57e`:
-// **4911 raw spacing utilities** in `src`, of which **3135 (64%) land exactly on a rung**
-// (4/8/12/16/20/24/28px → xs/s/m/l/xl/2xl/3xl) and **1776 (36%) do not** — the app leans hard on
-// half-steps the ramp has never had, dominated by **6px ×996 and 2px ×510**. A value with an exact
-// token is a straight defect: same pixels at the default density, and it starts obeying the slider.
-// A 6px value cannot be converted without either adding rungs to the ramp or changing the spacing,
-// and BOTH are the owner's call — so this rail gates only the first half and merely records the
-// second.
+// 🔑 THE CENSUS SPLITS IN TWO, AND ONLY ONE HALF IS A DEFECT. Measured 2026-09-20 on `a96ec3d0c`,
+// after the first conversion slice: **4845 raw spacing utilities** in `src`, of which
+// **3069 (63%) land exactly on a rung** (4/8/12/16/20/24/28px → xs/s/m/l/xl/2xl/3xl) and
+// **1776 (37%) do not** — the app leans hard on half-steps the ramp has never had, dominated by
+// **6px ×996 and 2px ×510**. A value with an exact token is a straight defect: same pixels at the
+// default density, and it starts obeying the slider. A 6px value cannot be converted without either
+// adding rungs to the ramp or changing the spacing, and BOTH are the owner's call — so this rail
+// gates only the first half and merely records the second.
 //
-// 🔴 THIS RAIL IS THE CEILING ONLY; IT DELIBERATELY SHIPS WITHOUT A CONVERSION SWEEP. The point of
-// a shrink-only ratchet is that it is useful the moment it exists: 3135 is today's floor, a new
-// `gap-2` reds it, and converting any utility lowers it. Landing the number first means the sweep
-// can be done in whatever slices fit, by whoever, without the count silently drifting back up in
-// between — which is exactly what happened to the earlier attempt at this, whose 2963 was measured
-// 745 commits ago and had already been overtaken by 172.
+// 🔴 THE CEILING IS THE GATE; THE SWEEP RUNS IN SLICES BEHIND IT. The point of a shrink-only
+// ratchet is that it is useful the moment it exists: a new `gap-2` reds it, and converting any
+// utility lowers it. It landed first (`a9c03d57e`, ceiling 3135) precisely so the sweep could be
+// done in whatever slices fit, by whoever, without the count silently drifting back up in between —
+// which is exactly what happened to the earlier attempt at this, whose 2963 was measured 745
+// commits ago and had already been overtaken by 172. Slice 1 (`a96ec3d0c`) converted **66
+// utilities across 29 whole files** and re-stated the ceiling at 3069.
 //
 // Two hazards a converting pass will hit, recorded here because they are the reason a sweep is a
 // separate change and not a one-line regex replace:
@@ -71,12 +72,13 @@ const RAW = new RegExp(
 /** px → rung. Tailwind's numeric scale is n × 4px, so the mapping is arithmetic, not taste. */
 const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'xl', 24: '2xl', 28: '3xl' }
 
-/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `a9c03d57e` — today's actual floor, not an aspiration.
+/** 🔴 SHRINK-ONLY. Measured 2026-09-20 on `a96ec3d0c` — today's actual floor, not an aspiration.
  *  A new `gap-2` reds this; converting one lowers it. It may never be RAISED: a ceiling that moves
  *  up on demand is not a ratchet, it is a comment. (An earlier attempt at this rail carried 2963,
  *  measured 745 commits earlier; by the time it was read the tree was at 3135. That is the failure
- *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.) */
-const MAPPABLE_CEILING = 3135
+ *  mode this number is dated and sha-stamped to avoid — re-measure and re-state, never bump.)
+ *  History, each re-stated DOWN by a landed slice: 3135 (`a9c03d57e`, ceiling only) → 3069. */
+const MAPPABLE_CEILING = 3069
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */

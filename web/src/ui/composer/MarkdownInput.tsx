@@ -332,7 +332,7 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
 
   return (
     <div className="relative w-full">
-      <div ref={hostRef} className="w-full overflow-y-auto px-s pt-1" />
+      <div ref={hostRef} className="w-full overflow-y-auto px-s pt-xs" />
       {(onMentionFile || onMentionKnowledge) && (
         <MentionMenu query={mention?.query ?? ''} anchorRef={hostRef} open={!!mention} project={mentionProject}
           leading={mention?.at === 0}

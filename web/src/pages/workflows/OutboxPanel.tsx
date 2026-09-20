@@ -168,7 +168,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                       shape="squircle"
                       onClick={() => setSelected(f.slug === selected ? '' : f.slug)}
                       ariaPressed={f.slug === selected}
-                      className={`w-full justify-start gap-2 px-2${f.slug === selected ? ' bg-surface-high' : ''}`}
+                      className={`w-full justify-start gap-s px-s${f.slug === selected ? ' bg-surface-high' : ''}`}
                     >
                       <span className="min-w-0 flex-1 truncate">{f.artifact || f.slug}</span>
                       {/* `noop` is a real outcome, not a failure: a converged refinement round
@@ -179,7 +179,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                       </span>
                       {!f.self_contained && (
                         <span
-                          data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-warning"
+                          data-type="caption" className="inline-flex shrink-0 items-center gap-xs text-warning"
                           title="A referenced local file could not be copied in, so this version depends on the workspace still existing."
                         >
                           <TriangleAlert size={12} aria-hidden="true" />
@@ -202,7 +202,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                 <Skeleton className="h-24 w-full" />
               ) : (
                 <>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-s">
                     <Segmented
                       ariaLabel="Artifact view"
                       value={tab}
@@ -251,7 +251,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
           )}
 
           <section className="flex flex-col gap-xs border-t border-outline/40 pt-m">
-            <h3 data-type="label-s" className="flex items-center gap-2 fw-500">
+            <h3 data-type="label-s" className="flex items-center gap-s fw-500">
               <Inbox size={14} aria-hidden="true" />
               Hand files to this run
             </h3>
@@ -297,7 +297,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                     {drop.files.map((f) => (
                       <li
                         key={f.filename}
-                        data-type="caption" className="flex items-center gap-2 text-on-surface-low"
+                        data-type="caption" className="flex items-center gap-s text-on-surface-low"
                       >
                         <FileDiff size={12} aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate">{f.filename}</span>
