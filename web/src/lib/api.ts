@@ -4699,6 +4699,16 @@ export interface CodeFinding {
   // clickable chips in the cockpit so the user can jump from "what changed" to it.
   files_touched?: string[]
 }
+export type CommandRunnabilityReason = 'binary_not_on_path' | 'project_manifest_missing'
+export interface CommandRunnability {
+  command: string
+  runnable: boolean
+  binary: string
+  reason?: CommandRunnabilityReason
+}
+export type CodeCommandRunnability = Partial<
+  Record<'verify_command' | 'test_command', CommandRunnability>
+>
 export interface CodeProject {
   id: string; name: string; task: string; summary?: string
   entry_stage: EntryStage; project_kind: ProjectKind; intake_rigor: string
@@ -4713,6 +4723,9 @@ export interface CodeProject {
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
   success_criteria: string | null; verify_command?: string; test_command?: string
+  // Computed for this host + workspace on each detail response; never persisted and
+  // never used to rewrite the configured command.
+  command_runnability?: CodeCommandRunnability
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
@@ -4859,6 +4872,8 @@ export interface Loop {
   // project_kind, verify_command, test_command, queued_task_ids}. design:
   // {token_overrides, targets, exports}. general: {verify_command}.
   kind_config: Record<string, unknown>
+  /** Code-kind detail only: host-local diagnostics, computed and never persisted. */
+  command_runnability?: CodeCommandRunnability
 }
 // The normalized classify result the kind-aware /api/loops/classify returns — the
 // composer/Plan-Review consumes it + the create body can fold it back in (the whole

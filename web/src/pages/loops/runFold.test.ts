@@ -224,6 +224,27 @@ describe('foldReducer — transient lifecycle flags', () => {
     expect(f.stall).toBeNull()
   })
 
+  it('keeps the missing-binary cause so the cockpit gives the command-edit remedy', () => {
+    const f = foldReducer(emptyRunFlags(), 'stage_stalled', {
+      stage: 'verification',
+      title: 'Verify & QA',
+      findings: 5,
+      cause: 'binary',
+      label: 'build',
+      command: 'python -m py_compile bell_times.py',
+      binary: 'python',
+    })
+    expect(f.stall).toEqual({
+      stage: 'verification',
+      title: 'Verify & QA',
+      findings: 5,
+      cause: 'binary',
+      label: 'build',
+      command: 'python -m py_compile bell_times.py',
+      binary: 'python',
+    })
+  })
+
   it('blocked KEEPS the stall (the stall is the reason for the block)', () => {
     let f = foldReducer(emptyRunFlags(), 'stage_stalled', { stage: 'build', title: 'Build', findings: 1 })
     f = foldReducer(f, 'blocked')
