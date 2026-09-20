@@ -115,13 +115,33 @@ const SRC = join(process.cwd(), 'src')
 // cannot pad it, and a mutation two lines down cannot be mistaken for the fetcher.
 const codeOf = (abs: string) =>
   readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+/** An absolute path as the repo-relative form the budget below is keyed on. */
+const rel = (abs: string) => abs.slice(SRC.length + 1)
 
-const SWALLOW = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/
+// 🪤 TWO WIDENINGS, both measured, both of which had been silently hiding real sites.
+//
+// 1. THE PARENTHESISED ARROW BODY. `(() => [])` was matched; `(() => ({}))` and `(() => (''))` were
+//    not, because an arrow returning an object literal MUST wrap it in parens — so the single most
+//    natural way to fabricate a config object was invisible to the one regex looking for
+//    fabrication. Re-running the census with the paren admitted surfaced FIVE more files
+//    (`app/usePlatform.ts`, `settings/AgentDefaultsPanel.tsx`, `settings/UpdatesPanel.tsx`,
+//    `settings/VoicePanel.tsx`, and a second site in `skills/SkillInspector.tsx`) and took the
+//    tree-wide count from 64 to 71. None of them was new; the scanner had never been able to see them.
+// 2. `''` AND `""`. A fabricated empty STRING is the same lie for a scalar read that `[]` is for a
+//    list — `.catch(() => '')` on a name read paints "—" and calls it an answer.
+const SWALLOW = /\.catch\(\(\)\s*=>\s*\(?\s*(\[\]|null|undefined|\{\}|''|"")/
 
-/** Every `useQuery('key', …)` call in a file, as `{ key, args, line }` — `args` is the call's own
- *  argument list, paren-matched from the opening paren to its partner. */
-function cachedCalls(src: string): { key: string; args: string; line: number }[] {
-  const out: { key: string; args: string; line: number }[] = []
+/** Every `useQuery(…)` call in a file, as `{ key, args, line }` — `args` is the call's own argument
+ *  list, paren-matched from the opening paren to its partner.
+ *
+ *  🪤 `key` IS OPTIONAL, AND MAKING IT SO WAS THE THIRD BLIND SPOT. This used to `if (key)` —
+ *  dropping any call whose first argument is not a single-quoted literal — so a template-literal key
+ *  (`` `code:project:${id}` ``) or a constant (`useQuery(WEEK_KEY, …)`) made the whole call
+ *  invisible to every check built on this function. Measured: **51 of 225** `useQuery` invocations,
+ *  23% of the tree, including 11 that were swallowing. The file's own comment used to record one of
+ *  those as a known exclusion; it was eleven. Callers that genuinely need a key now filter on it. */
+function cachedCalls(src: string): { key?: string; args: string; line: number }[] {
+  const out: { key?: string; args: string; line: number }[] = []
   for (const m of src.matchAll(/useQuery(?:<[^>]*>)?\(/g)) {
     const start = (m.index ?? 0) + m[0].length
     let i = start
@@ -133,16 +153,17 @@ function cachedCalls(src: string): { key: string; args: string; line: number }[]
       i++
     }
     const args = src.slice(start, i - 1)
-    const key = args.match(/^\s*'([^']+)'/)?.[1]
-    if (key) out.push({ key, args, line: src.slice(0, m.index).split('\n').length })
+    out.push({ key: args.match(/^\s*'([^']+)'/)?.[1], args, line: src.slice(0, m.index).split('\n').length })
   }
   return out
 }
+// `.tsx?` — `app/usePlatform.ts` is a `.ts` module that calls `useQuery` and swallows, and a
+// `.tsx`-only walker could never see it.
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((n) => {
     const p = join(d, n)
     if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
   })
 
 describe('the migrated surfaces read the error', () => {
@@ -337,9 +358,16 @@ describe('the migrated surfaces read the error', () => {
     // key → [file:line, swallows?]
     const consumers = new Map<string, { at: string; swallows: boolean }[]>()
     for (const abs of files) {
+      // KEYED calls only. This check is about one cache KEY's consumers poisoning each other, so a
+      // call whose key the scanner cannot resolve has nothing to contribute — and folding them in
+      // collapsed every unkeyed call in the tree into a single literal `undefined` bucket, which then
+      // read as eleven consumers of one shared key. A widening has to stop where the property it
+      // feeds stops applying.
       for (const c of cachedCalls(codeOf(abs))) {
+        const key = c.key
+        if (!key) continue
         const at = `${abs.slice(SRC.length + 1)}:${c.line}`
-        consumers.set(c.key, [...(consumers.get(c.key) ?? []), { at, swallows: SWALLOW.test(c.args) }])
+        consumers.set(key, [...(consumers.get(key) ?? []), { at, swallows: SWALLOW.test(c.args) }])
       }
     }
     // Sanity: the scan must actually see the multi-consumer key it was written for.
@@ -347,8 +375,9 @@ describe('the migrated surfaces read the error', () => {
     expect(appsConsumers.length, "the scan must find the 'apps' key's consumers").toBeGreaterThanOrEqual(3)
 
     const adopterKeys = new Set<string>()
-    for (const rel of ADOPTERS) {
-      for (const c of cachedCalls(codeOf(join(SRC, rel)))) adopterKeys.add(c.key)
+    for (const relPath of ADOPTERS) {
+      // Keyed calls only, same reason as the census above: this check is about a KEY's consumers.
+      for (const c of cachedCalls(codeOf(join(SRC, relPath)))) if (c.key) adopterKeys.add(c.key)
     }
     expect(adopterKeys.size, 'the adopters must declare at least one cache key').toBeGreaterThan(0)
 
@@ -363,10 +392,163 @@ describe('the migrated surfaces read the error', () => {
     // `.catch(() => [])` inside the fetcher makes the error branch unreachable by construction: the
     // hook is handed a successful empty list. A surface that renders LoadError while still swallowing
     // is asserting a state it can never enter.
-    for (const rel of ADOPTERS) {
-      const swallowing = cachedCalls(codeOf(join(SRC, rel))).filter((c) => SWALLOW.test(c.args))
-      expect(swallowing.map((c) => `${c.key}:${c.line}`), `${rel} swallows a fetch rejection`).toEqual([])
+    //
+    // 🔑 MEASURED AGAINST §B's BUDGET, NOT AGAINST ZERO — and widening the key scan is what forced
+    // that. `CodeCockpitPage`'s template-literal key made its one `.catch(() => null)` invisible
+    // here, and this file's own comment recorded the exclusion AND the reason it is correct: that
+    // call is an instant-paint seed (`persist: false`) which only ever SETS `project` when it has
+    // data, so a failed seed cannot mask the page's real `loadErr`. With the key scan widened the
+    // call became visible, and a flat `toEqual([])` would have demanded the removal of a swallow the
+    // file had already reasoned was right. Deferring to the budget keeps the two halves from
+    // contradicting each other: an adopter may carry exactly the swallows §B has written down, and
+    // the number still may only fall.
+    for (const relPath of ADOPTERS) {
+      const swallowing = cachedCalls(codeOf(join(SRC, relPath))).filter((c) => SWALLOW.test(c.args))
+      expect(
+        swallowing.length,
+        `${relPath} swallows ${swallowing.length} fetch rejection(s) at line(s) `
+        + `${swallowing.map((c) => c.line).join(', ')}; §B's budget allows ${SWALLOW_BUDGET[relPath] ?? 0}`,
+      ).toBe(SWALLOW_BUDGET[relPath] ?? 0)
     }
+  })
+})
+
+// ── §B THE TREE-WIDE BUDGET — because every check above is scoped to a NAMED LIST ───────────────
+//
+// 🔴 THIS SECTION EXISTS BECAUSE THE ONE ABOVE COULD NOT SEE ITS OWN BLIND SPOT, and the numbers say
+// how badly. Every swallow assertion in §A iterates `ADOPTERS` (16 files) or the keys those files
+// own. So on the day this was written the tree held **71 fetcher swallows across 31 files** and CI
+// was GREEN, because none of the 31 was an adopter. That is not a gap in the list; it is the wrong
+// shape of rail. A list can only ever fail the files someone already thought of, which is why #532's
+// own count went UP across four cycles — 73 → 115 → 122 — with a green rail the whole time.
+//
+// So this half is a CENSUS, not a list, and it is a budget rather than an allowlist:
+//
+//   · a file that swallows and is NOT in the map            → red   (the new-file hole §A had)
+//   · a file that swallows MORE than its number             → red   (the new-site hole a bare
+//                                                                    allowlist-of-names has)
+//   · a file that swallows FEWER than its number            → red   (ratchet the number down in the
+//                                                                    same commit; slack is a hole,
+//                                                                    the ruling `primitiveAdoption`
+//                                                                    already records)
+//
+// 🪤 THE MIDDLE ONE IS THE WHOLE POINT. An allowlist of FILE NAMES with no count is why a defect in
+// this repo went 3 → 9 inside a single already-listed file with CI green. A name says "this file is
+// known"; only a number says "this file is known AND has not got worse".
+//
+// A NUMBER HERE IS A DEBT, NOT A DISPENSATION. Each entry is a fetcher that resolves a rejection
+// into a value the server never sent, and the surface then renders it as an answer. The way to edit
+// this map is downward.
+const SWALLOW_BUDGET: Record<string, number> = {
+  // Measured at `origin/main` 398e6b7a6, then re-measured after the settings hub was converted:
+  // `settingsWidgets.tsx` 23 → 2, tree 71 → 50. Every other entry is untouched by that change and
+  // is recorded here for the first time — previously none of them was visible to any rail.
+  'app/usePlatform.ts': 1,
+  'pages/agents/AgentDetail.tsx': 1,
+  // The one this file already documented as a deliberate keep: an instant-paint seed that only ever
+  // SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.
+  'pages/code/CodeCockpitPage.tsx': 1,
+  'pages/dashboard/PinnedTiles.tsx': 2,
+  'pages/inbox/InboxPage.tsx': 1,
+  'pages/knowledge/KnowledgeCreatePage.tsx': 1,
+  'pages/knowledge/KnowledgeListPage.tsx': 1,
+  'pages/settings/AgentDefaultsPanel.tsx': 1,
+  'pages/settings/ChatPanel.tsx': 1,
+  'pages/settings/DurabilityPanel.tsx': 1,
+  'pages/settings/FeedbackPanel.tsx': 1,
+  'pages/settings/MemoryPanel.tsx': 4,
+  'pages/settings/ModelBackends.tsx': 1,
+  'pages/settings/ModelsPanel.tsx': 3,
+  'pages/settings/MultiInstanceCard.tsx': 1,
+  'pages/settings/NotificationsPanel.tsx': 1,
+  'pages/settings/PacksPanel.tsx': 2,
+  'pages/settings/PromptsPanel.tsx': 1,
+  'pages/settings/ProvidersPanel.tsx': 3,
+  'pages/settings/RoutingPanel.tsx': 1,
+  'pages/settings/SearchPanel.tsx': 1,
+  'pages/settings/SecurityPanel.tsx': 2,
+  'pages/settings/UpdatesPanel.tsx': 1,
+  // The densest single file left, and the one the issue's ninth comment singled out: a failing
+  // `/api/usage/rollup` still renders "No model usage recorded this period."
+  'pages/settings/UsagePanel.tsx': 7,
+  'pages/settings/VoicePanel.tsx': 1,
+  // The hub's THREE remaining swallows, all deliberate and each explained at its definition:
+  // `usePacksInstalled` is byte-identical to `PacksPanel`'s ledger read because they SHARE a key (a
+  // divergent fetcher would prime that key with a different substitute and make the panel's own
+  // error branch unreachable); `useAgentDefaults`' decorating read of the default agent's NAME
+  // renders as '—'; and `useToolsSavings` backs a meter whose absence is a designed state, under a
+  // prior ruling with its own rail (`dashboard/healthUnknown.test.ts`). Every one of the other 21 is
+  // gone — and note what the three have in common: each is a read whose value the surface does not
+  // make a CLAIM about. That is the line, and it is narrower than "this read is unimportant".
+  'pages/settings/settingsWidgets.tsx': 3,
+  'pages/skills/LearningSummaryBlock.tsx': 1,
+  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillsPage.tsx': 2,
+  'pages/tools/ToolsPage.tsx': 1,
+  'pages/triggers/TriggersListPage.tsx': 1,
+}
+
+describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', () => {
+  /** file → how many of its `useQuery` fetchers swallow. Production modules only. */
+  const census = (): Map<string, number> => {
+    const out = new Map<string, number>()
+    for (const abs of walk(SRC)) {
+      const n = cachedCalls(codeOf(abs)).filter((c) => SWALLOW.test(c.args)).length
+      if (n > 0) out.set(rel(abs), n)
+    }
+    return out
+  }
+
+  it('VACUITY: the census still recognises the shape it counts', () => {
+    // A regex that matches nothing reads exactly like a clean tree — the trap this file's sibling
+    // states in its own header. Both floors are deliberately well under the live numbers so ordinary
+    // progress does not trip them, and they are floors on the SCANNER, not on the defect.
+    const c = census()
+    expect(c.size, 'the swallow scanner found no site at all').toBeGreaterThanOrEqual(10)
+    expect([...c.values()].reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(20)
+    // And it must see the two widened forms specifically, or the widening silently rots back.
+    expect(SWALLOW.test('.catch(() => ({}))'), 'the parenthesised object body').toBe(true)
+    expect(SWALLOW.test(".catch(() => '')"), 'the fabricated empty string').toBe(true)
+    expect(SWALLOW.test('.catch((e) => setErr(e))'), 'a CAPTURE is not a swallow').toBe(false)
+  })
+
+  it('every swallowing file is in the budget — a NEW one turns CI red', () => {
+    const unlisted = [...census().keys()].filter((f) => !(f in SWALLOW_BUDGET)).sort()
+    expect(
+      unlisted,
+      'these files swallow a `useQuery` rejection and are not budgeted. Do not add them here — give '
+      + 'the surface an error branch. The layer already reports the failure: `useQuery` returns '
+      + '`error` and a `status` of loading|success|error, and `ui/ListScaffold`\'s `LoadError` (or '
+      + '`BentoCard`\'s `failed`, for a settings-hub tile) renders it.',
+    ).toEqual([])
+  })
+
+  it('and no file swallows MORE times than its budget', () => {
+    const c = census()
+    const over = [...c.entries()]
+      .filter(([f, n]) => f in SWALLOW_BUDGET && n > SWALLOW_BUDGET[f])
+      .map(([f, n]) => `${f}: ${n} > ${SWALLOW_BUDGET[f]}`)
+    // 🪤 The check a name-only allowlist cannot make. Being listed is not a licence to add more.
+    expect(over, 'a budgeted file grew a new swallow').toEqual([])
+  })
+
+  it('and no file swallows FEWER — fixing one ratchets the number down', () => {
+    const c = census()
+    const under = Object.entries(SWALLOW_BUDGET)
+      .filter(([f, n]) => (c.get(f) ?? 0) < n)
+      .map(([f, n]) => `${f}: ${c.get(f) ?? 0} < ${n} — lower it to ${c.get(f) ?? 0}`)
+    // Exact equality, the house rule: "slack is not a safety margin here, it is a hole"
+    // (`primitiveAdoption.baseline.json`). A budget that drifts above the actual re-opens exactly the
+    // room this section closed.
+    expect(under, 'ratchet these down in the same commit that fixed them').toEqual([])
+  })
+
+  it('and the budget names no file that has stopped existing', () => {
+    const all = new Set(walk(SRC).map(rel))
+    const ghosts = Object.keys(SWALLOW_BUDGET).filter((f) => !all.has(f))
+    // A budget that outlives its files stops describing the app and starts describing its history —
+    // the same rot §3 of `lib/data/dataLayerAdoption.test.ts` guards against for its named list.
+    expect(ghosts, 'delete these entries').toEqual([])
   })
 
   it('the primitive is exported from the list kit, beside EmptyState', () => {

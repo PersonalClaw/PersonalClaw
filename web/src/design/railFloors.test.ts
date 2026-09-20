@@ -39,8 +39,10 @@ import { join } from 'node:path'
 // primitive must actually be in use" / "the population must still be visible" is (a) and must sit at the
 // number.
 //
-// This rail keeps the four tightened floors tightened, because the easiest way to make a red rail green is
-// to lower the number it asserts.
+// This rail keeps the tightened floors tightened, because the easiest way to make a red rail green is
+// to lower the number it asserts. (It policed four; one has since been replaced by something stronger
+// than a floor and retired — the argument sits at its old place in the table below, deliberately, so
+// the removal has to be read rather than discovered.)
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
@@ -79,11 +81,25 @@ const TIGHTENED: [string, RegExp, number][] = [
   // measurement, so the header claims a stronger property than the code checks. Some entries are
   // genuinely type (b) anti-vacuity floors where `>=` is correct, so the real fix is splitting the two
   // kinds rather than a blanket `toBe`.
-  [
-    'pages/settings/configReadNotFabricated.test.ts',
-    /the decorating fallbacks in these five files, measured'\)\s*\.toBeGreaterThanOrEqual\((\d+)\)/,
-    33,
-  ],
+  // 🔻 ENTRY RETIRED, not lowered — and the distinction is the whole point of this rail, so read the
+  // argument before restoring it. `configReadNotFabricated.test.ts` no longer HAS a floor to keep
+  // tightened: in the same commit as this removal it replaced the single aggregate
+  // `toBeGreaterThanOrEqual(33)` with PER-FILE EXACT EQUALITY over the same five files — and the
+  // population genuinely SHRANK, 33 → 9 (bento 3 · MemoryPanel 1 · DoctorPanel 1 ·
+  // AgentDefaultsPanel 1 · settingsWidgets 3), because de-swallowing those reads IS the subject of
+  // that commit: `settingsWidgets` goes 27 → 3 as its tiles stop mapping a rejection to `null` and
+  // bind `BentoCard`'s failure band instead. That is the outcome the inner rail exists to encourage
+  // — recorded here so the drop cannot later be mistaken for a floor being lowered.
+  // The new shape is strictly stronger than what this entry policed, and it closes the failure this table's
+  // own history logs four times over: a `>=` floor cannot see an ADDITION, only a removal, so a new
+  // swallowed read could be added indefinitely without reding anything. Exact equality cannot be
+  // quietly lowered either — dropping a count reds the subject immediately, which is the property
+  // this meta-rail was standing in for. Keeping the entry would red main on a regex that matches
+  // nothing (`expected null not to be null`), i.e. it would police the SPELLING of an assertion that
+  // no longer exists rather than the property. The coupling hazard noted above still applies in
+  // reverse: this removal and the subject's rewrite must land together, which is why they are one
+  // commit. If a later change reintroduces an aggregate floor there, add the entry back with its
+  // measured number.
   ['ui/requiredFieldMarked.test.tsx', /population must still be visible to this rail'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 20],
   ['design/controlNameFloor.test.ts', /expected the inline rename\/edit inputs'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 18],
   ['ui/escapeDismissContract.test.tsx', /scrim-bearing overlays'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 10],

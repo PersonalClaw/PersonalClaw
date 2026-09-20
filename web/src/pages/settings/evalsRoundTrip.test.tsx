@@ -388,9 +388,18 @@ describe('a user can find it', () => {
     const at = widgets.indexOf("id: 'evals'")
     const body = widgets.slice(at, at + 2600)
     expect(body).toMatch(/evals evaluations/)
-    // And it must not fabricate a config it never loaded — this tile carries a live switch.
-    expect(body).toMatch(/loading=\{e === undefined && !evalErr\}/)
-    expect(body).toMatch(/Boolean\(evalErr\) && <div/)
+    // And it must not fabricate a config it never loaded — this tile carries a live SWITCH, which is
+    // why it matters more here than on a counter tile: a fabricated `{}` renders the switch in its
+    // "off" position as though that were saved state, and a user who then flips it writes against a
+    // config they never read.
+    //
+    // The spelling moved to `BentoCard`'s `failed` prop (one shared band for all 37 tiles, replacing
+    // fifteen hand-rolled muted captions); the property is unchanged and better held — `loading` no
+    // longer needs `&& !evalErr` because the card tests `failed` first, so the switch cannot render at
+    // all on a failed read.
+    expect(body).toMatch(/loading=\{e === undefined\}/)
+    expect(body).toMatch(/failed=\{eStatus === 'error'\}/)
+    expect(body).toMatch(/error=\{evalErr\}/)
   })
 
   it('distinguishes both in-prose links by more than hue', () => {

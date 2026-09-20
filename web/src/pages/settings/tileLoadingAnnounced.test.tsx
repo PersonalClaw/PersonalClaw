@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Blocks } from 'lucide-react'
@@ -72,6 +72,98 @@ describe('a loading tile says it is busy on the node AT can reach', () => {
     // with the code, not just with a PR description.
     const src = readFileSync(join(process.cwd(), 'src/pages/settings/bento.tsx'), 'utf8')
     expect(src).toMatch(/22 tiles shimmer/)
-    expect(src).toMatch(/aria-busy=\{loading \|\| undefined\}/)
+    // `&& !failed` joined the expression when tiles gained a failure state: a tile whose read has
+    // FAILED is not busy, and leaving `aria-busy` true there would tell assistive tech a request is
+    // still in flight forever. Asserted as behaviour two tests below as well as in source here.
+    expect(src).toMatch(/aria-busy=\{\(loading && !failed\) \|\| undefined\}/)
+  })
+})
+
+// ── The same card's FAILED state, driven rather than grepped ─────────────────────────────────────
+//
+// 🔑 THESE ARE RENDER ASSERTIONS ON PURPOSE. `tileLoadFailure.test.ts` scans `settingsWidgets.tsx`
+// for the `failed=` prop, and a source scan can only ever prove that a STRING is present — it cannot
+// prove the band mounts, that it beats the skeleton branch, or that the retry is reachable. Both
+// halves are needed: the scan covers all 37 tiles cheaply, this covers the component they share.
+describe('a tile whose read FAILED says so, and offers a way out', () => {
+  it('renders the failure instead of the body', () => {
+    render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed
+      error={new Error('gateway timed out')}><div>the body</div></BentoCard>)
+    expect(screen.getByText(/Couldn’t load Apps\./), 'it names the tile').toBeTruthy()
+    expect(screen.getByText('gateway timed out'), "and shows the server's own words").toBeTruthy()
+    expect(screen.queryByText('the body'), 'the body is NOT rendered against absent data').toBeNull()
+  })
+
+  it('beats the loading branch — `failed` wins over `loading`', () => {
+    // 🪤 THE REACHABILITY TRAP. `data === undefined` is true for BOTH states, so every call site
+    // passes `loading` AND `failed` as true on a failed first read. If the card tested `loading`
+    // first the band would be dead code in the only situation it exists for — which is exactly how
+    // "shimmer forever" was the accepted behaviour before this.
+    const { container } = render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} loading failed
+      error={new Error('x')}><div>b</div></BentoCard>)
+    expect(container.querySelectorAll('.animate-pulse').length, 'no skeleton under a failure').toBe(0)
+    expect(screen.getByText(/Couldn’t load Apps\./)).toBeTruthy()
+  })
+
+  it('stops claiming to be busy', () => {
+    render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} loading failed error={new Error('x')}><div>b</div></BentoCard>)
+    expect(screen.getByRole('button', { name: 'Open Apps settings' }).hasAttribute('aria-busy')).toBe(false)
+  })
+
+  it('describes the failure on the nav button WITHOUT renaming it', () => {
+    // The ruling this component already applies to `loading`: folding the state into the accessible
+    // NAME makes the control unfindable by the name it has when it works. A description adds the fact
+    // and leaves the name alone — and it is a description rather than a live region because 22 tiles
+    // can be in flight at once (see the measurement above).
+    render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed error={new Error('gateway timed out')}><div>b</div></BentoCard>)
+    const nav = screen.getByRole('button', { name: 'Open Apps settings' })
+    const described = nav.getAttribute('aria-describedby')
+    expect(described, 'the failure must be reachable from the one node AT lands on').toBeTruthy()
+    const desc = document.getElementById(described!)
+    expect(desc?.textContent).toMatch(/Couldn’t load Apps\..*gateway timed out/)
+    // and the Retry label is NOT in the description — it is its own control with its own name.
+    expect(desc?.textContent).not.toMatch(/Retry/)
+  })
+
+  it('offers a Retry that re-runs the read and does not open the subpage', () => {
+    // The card's whole surface is a nav overlay, so a retry that bubbled would navigate away from the
+    // failure the user just tried to clear.
+    const onRetry = vi.fn()
+    const onClick = vi.fn()
+    render(<BentoCard icon={Blocks} title="Apps" onClick={onClick} failed error={new Error('x')} onRetry={onRetry}><div>b</div></BentoCard>)
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(onClick, 'the click must not reach the nav overlay').not.toHaveBeenCalled()
+  })
+
+  it('omits Retry when the surface has no handle on its read', () => {
+    render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed error={new Error('x')}><div>b</div></BentoCard>)
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+  })
+
+  it('writes a sentence when the rejection has nothing readable to say', () => {
+    // 🪤 The trap `readableErrText` exists for: a browser fetch rejection's `.message` is "Failed to
+    // fetch" / "Load failed", and `errText`'s placeholder for a body it refused to show is "HTTP 502".
+    // All three are truthy, so a naive `error.message ||` would let developer-console text displace a
+    // written sentence — under a headline that has already named what failed.
+    for (const e of [new Error('Failed to fetch'), new Error('Load failed'), new Error('HTTP 502'), {}]) {
+      const { unmount } = render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed error={e}><div>b</div></BentoCard>)
+      expect(screen.getByText(/The server didn’t respond\./), String((e as Error).message)).toBeTruthy()
+      unmount()
+    }
+  })
+
+  it('drops the footer, which describes data the tile no longer has', () => {
+    render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed error={new Error('x')}
+      footer={<>Embedder: local-minilm</>}><div>b</div></BentoCard>)
+    expect(screen.queryByText(/Embedder/), 'a value printed under a "could not load" band').toBeNull()
+  })
+
+  it('and still adds NO per-tile live region, even for a failure', () => {
+    // The contrast with `ui/LoadError` — which IS `role="alert"` — is deliberate and measured. A page
+    // of 28 tiles cannot afford 22 assertive announcements; a full-page load failure can.
+    const { container } = render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} failed error={new Error('x')}><div>b</div></BentoCard>)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[aria-live]')).toBeNull()
   })
 })
