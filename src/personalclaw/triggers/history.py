@@ -80,6 +80,14 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # outcome `TRUE_FAILURE_OUTCOMES` contains. `BLOCKED_INJECTION` is a real member and says the
     # rest of what a reader needs: never auto-retried, and the row names the matched pattern class.
     "blocked_injection": Outcome.BLOCKED_INJECTION.value,
+    # 🔴 THE DAY-BUDGET PAUSE (AG-2). `gateway._fire_store_trigger` writes `needs_input` when the day
+    # ceiling is already spent, and without this key the `.get(status, FAILED)` below would turn a
+    # deliberate, self-resuming pause into a red failure in the runs feed — the identical defect
+    # `blocked_injection` carried above. `DEFERRED`, byte-identical to
+    # `executor.STATUS_TO_OUTCOME["needs_input"]` by design: the executor already glosses that
+    # mapping as "parked awaiting a human", which is exactly what a spent ceiling is — reversible,
+    # not retried, and re-armed by the next day's key in `spend.json`.
+    "needs_input": Outcome.DEFERRED.value,
     # 🔴 A SUPPRESSED fire (WV-15). `service._record_suppression_row` persists the typed outcome in
     # BOTH `trigger` and `status` so criterion 8's "zero silent drops" is real — and every one of
     # them missed this table and projected as `failed`. A quiet-hours skip rendered as a red failure

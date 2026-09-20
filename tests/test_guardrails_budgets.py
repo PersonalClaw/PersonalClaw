@@ -10,6 +10,7 @@ import asyncio
 import json
 import random
 import re
+import types
 
 import pytest
 
@@ -492,6 +493,80 @@ def test_gateway_day_budget_gate(tmp_path, monkeypatch):
     budget_holder["b"] = Budget(max_tokens=1000)
     assert gw._day_budget_exceeded(context="cron 'x'") is True
     assert len(notes) == 2  # notified again after re-arm
+
+
+def test_store_trigger_day_budget_pause_records_each_fire_and_notifies_once(tmp_path, monkeypatch):
+    """A spent day budget pauses every unattended fire without dispatching or spending.
+
+    The notification is one-shot for the exceeded window, while each refused fire gets its own
+    ``needs_input`` row so the Runs feed keeps the pause legible as ``Outcome.DEFERRED``.
+    """
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    from personalclaw.guardrails.budgets import Budget, SpendMeter
+
+    meter = SpendMeter(config_dir=tmp_path)
+    meter.charge(2_000, 0.25)
+    monkeypatch.setattr("personalclaw.guardrails.budgets.get_meter", lambda: meter)
+    monkeypatch.setattr(
+        "personalclaw.guardrails.budgets.budget_from_config",
+        lambda: Budget(max_tokens=1_000),
+    )
+
+    executed: list[dict] = []
+
+    class _Provider:
+        async def execute(self, config, ctx, timeout=30):
+            executed.append(dict(config))
+            return types.SimpleNamespace(success=True)
+
+    monkeypatch.setattr(
+        "personalclaw.action_providers.get_action_provider", lambda _name: _Provider()
+    )
+
+    notes: list[tuple] = []
+
+    class _FakeState:
+        def notify(self, kind, title, body, **kw):
+            notes.append((kind, title, body))
+
+        def push_refresh(self, *topics):
+            return None
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers.history import schedule_run_to_record
+    from personalclaw.triggers.models import Outcome
+
+    gw = object.__new__(GatewayOrchestrator)
+    gw.dashboard_state = _FakeState()
+    gw._budget_notified = False
+    trigger = types.SimpleNamespace(
+        id="clock:budget-pause",
+        kind="clock",
+        workflow={"inline": {"provider": "notify", "config": {"message": "should not run"}}},
+    )
+    before = meter.day_totals()
+
+    asyncio.run(gw._fire_store_trigger(trigger, {"trigger_id": trigger.id}))
+    asyncio.run(gw._fire_store_trigger(trigger, {"trigger_id": trigger.id}))
+
+    after = meter.day_totals()
+    assert executed == []
+    assert (after.tokens, after.dollars) == (before.tokens, before.dollars)
+
+    rows, total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job(trigger.id, 0, 10))
+    assert total == 2
+    assert [row["status"] for row in rows] == ["needs_input", "needs_input"]
+    assert [schedule_run_to_record(row, trigger_id=trigger.id).outcome for row in rows] == [
+        Outcome.DEFERRED.value,
+        Outcome.DEFERRED.value,
+    ]
+    pause = (
+        "paused — the daily automation budget is spent. Unattended runs resume tomorrow, "
+        "or raise the budget in Settings → Guardrails."
+    )
+    assert [row["error"] for row in rows] == [pause, pause]
+    assert len(notes) == 1
 
 
 def test_gateway_unlimited_budget_never_gates(tmp_path, monkeypatch):
