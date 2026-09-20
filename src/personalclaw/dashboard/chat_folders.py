@@ -62,13 +62,22 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
 
     text = ""
     async with _folder_icon_lock:
-        client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+        # 🔴 `get_or_create` is what resolves the `background` use case, so on a provider-less
+        # install — the state every new install starts in — it raises. It used to sit OUTSIDE
+        # this try, so the one failure that is GUARANTEED on a fresh install was the one the
+        # "best-effort" guard did not cover: the error escaped the fire-and-forget task and
+        # asyncio logged 37 unretrieved lines per folder created (#2978). Acquire inside the
+        # guard, and release only a client we actually got.
+        acquired = False
         try:
+            client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+            acquired = True
             text = await asyncio.wait_for(_stream(client), timeout=30)
         except Exception:  # noqa: BLE001 — best-effort background task
             text = ""
         finally:
-            state.sessions.release(BACKGROUND_KEY)
+            if acquired:
+                state.sessions.release(BACKGROUND_KEY)
     icon = text.strip()
     icon, _ = redact_exfiltration_urls(icon)
     icon, _ = redact_credentials(icon)
