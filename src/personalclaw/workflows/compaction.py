@@ -212,7 +212,7 @@ async def complete_with_compaction(
     """Send `prompt` through `fn`, with the two-layer compaction ladder around it.
 
     Returns the model text. Raises whatever `fn` raised if the ladder could not save the
-    call — the caller's existing `_classify_exception` handling is unchanged, so a node
+    call — the caller's existing `classify_exception` handling is unchanged, so a node
     that was going to fail still fails with the same typed failure it always did.
 
     `saves` is the per-node compaction history the anti-thrashing rule reads

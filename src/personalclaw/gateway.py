@@ -3524,6 +3524,16 @@ class GatewayOrchestrator:
                     except Exception as exc:
                         _channel_failure_reasons.append(f"attempt {_attempt} failed: {exc}")
                         logger.exception("Subagent %s channel injection failed", info.id)
+                        # A provider transient is at least as retriable as the timeout above, and
+                        # abandoning here loses a subagent's COMPLETED work: the agent ran, produced
+                        # its result, and nothing delivers it. Retriability comes from the engine's
+                        # taxonomy (`RETRYABLE_CLASSES` = TRANSIENT | NETWORK) rather than a second
+                        # classifier local to this loop, so there is one vocabulary for "may retry".
+                        from personalclaw.workflows.failure_taxonomy import classify_exception
+
+                        if _attempt < _MAX_INJECT_ATTEMPTS and classify_exception(exc).retryable:
+                            _sleep_before_retry = True
+                            continue
                         break
                     finally:
                         if _acquired:
@@ -3545,9 +3555,12 @@ class GatewayOrchestrator:
                     _last_failure_reason, _ = redact_exfiltration_urls(_last_failure_reason)
                     _last_failure_reason, _ = redact_credentials(_last_failure_reason)
                     logger.error(
+                        # The count is the attempts MADE, not `_MAX_INJECT_ATTEMPTS`: an early
+                        # abandon on a non-retriable error is a legitimate outcome, and printing
+                        # the ceiling claimed "all 2 attempts failed" while listing only attempt 1.
                         "Subagent %s: all %d channel injection attempts failed: %s",
                         info.id,
-                        _MAX_INJECT_ATTEMPTS,
+                        len(_channel_failure_reasons),
                         _last_failure_reason,
                     )
                     _notify_all_failed(_last_failure_reason)
