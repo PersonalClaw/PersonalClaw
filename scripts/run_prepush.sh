@@ -120,6 +120,109 @@ while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
   fi
 done
 
+report_dir=$(mktemp -d "${TMPDIR:-/tmp}/personalclaw-prepush.XXXXXX")
+trap 'rm -rf "$report_dir"' EXIT HUP INT TERM
+results_file="$report_dir/results"
+: >"$results_file"
+result_count=0
+failed_count=0
+skipped_count=0
+last_result=""
+
+record_result() {
+  record_name=$1
+  record_status=$2
+  record_reason=$3
+  record_log=$4
+  result_count=$((result_count + 1))
+  detail_file="$report_dir/detail-$result_count"
+  {
+    printf '%s\n' "$record_reason"
+    if [ -n "$record_log" ] && [ -s "$record_log" ]; then
+      cat "$record_log"
+    fi
+  } >"$detail_file"
+  printf '%s|%s|%s\n' "$record_name" "$record_status" "$detail_file" >>"$results_file"
+  last_result=$record_status
+  case "$record_status" in
+    FAIL) failed_count=$((failed_count + 1)) ;;
+    SKIP) skipped_count=$((skipped_count + 1)) ;;
+  esac
+}
+
+run_check() {
+  check_name=$1
+  shift
+  check_log="$report_dir/check-$((result_count + 1)).log"
+  if ! "$@" >"$check_log" 2>&1; then
+    record_result "$check_name" "FAIL" "command exited non-zero: $*" "$check_log"
+    return
+  fi
+  record_result "$check_name" "PASS" "" ""
+}
+
+skip_check() {
+  record_result "$1" "SKIP" "$2" ""
+}
+
+skip_python_checks() {
+  skip_reason=$1
+  skip_check "black" "$skip_reason"
+  skip_check "isort" "$skip_reason"
+  skip_check "flake8" "$skip_reason"
+}
+
+skip_frontend_checks() {
+  skip_reason=$1
+  skip_check "npm-ci" "$skip_reason"
+  skip_check "typecheck-web" "$skip_reason"
+  skip_check "test-web" "$skip_reason"
+  skip_check "build-web" "$skip_reason"
+  skip_check "playwright-chromium" "$skip_reason"
+  skip_check "render-smoke" "$skip_reason"
+}
+
+render_report() {
+  echo ""
+  echo "Gate                  | Result | Failures"
+  echo "-----------------------------------------"
+  while IFS='|' read -r result_name result_status detail_file; do
+    if [ "$result_status" = "FAIL" ]; then
+      result_failures=1
+    else
+      result_failures=0
+    fi
+    printf '%-21s | %-6s | %s\n' "$result_name" "$result_status" "$result_failures"
+  done <"$results_file"
+
+  while IFS='|' read -r result_name result_status detail_file; do
+    [ "$result_status" = "PASS" ] && continue
+    echo ""
+    echo "$result_name $result_status:"
+    sed 's/^/  /' "$detail_file"
+  done <"$results_file"
+
+  echo ""
+  if [ "$failed_count" -gt 0 ]; then
+    echo "SUMMARY: $failed_count of $result_count gate(s) FAILED; $skipped_count gate(s) SKIPPED."
+  elif [ "$skipped_count" -gt 0 ]; then
+    passed_count=$((result_count - skipped_count))
+    echo "SUMMARY: all $passed_count executed gate(s) passed; $skipped_count gate(s) SKIPPED."
+  else
+    echo "SUMMARY: all $result_count gate(s) passed."
+  fi
+}
+
+finish_report() {
+  render_report
+  if [ "$failed_count" -gt 0 ]; then
+    aggregate_exit=1
+  else
+    aggregate_exit=0
+  fi
+  exit "$aggregate_exit"
+}
+
 # Python lint, same tools and scope as CI's `lint` job. Resolve from the in-repo
 # venv (what the Makefile uses) and fall back to PATH; if neither has the dev
 # tools, say so and let the push through rather than blocking on a missing venv —
@@ -137,23 +240,29 @@ if [ "$needs_lint" -eq 1 ]; then
   if [ "$PY_BIN" = "MISSING" ]; then
     echo "pre-push: python changes outgoing but dev tools not found — skipping lint."
     echo "          Install them with: pip install -e '.[dev]'   (CI still checks.)"
+    skip_python_checks "python dev tools (black/isort/flake8) not found; CI still checks"
   else
     echo "pre-push: python changes outgoing — checking lint (black, isort, flake8)."
-    if ! "${PY_BIN}black" --check --quiet src/personalclaw tests harness \
-      || ! "${PY_BIN}isort" --check-only --quiet src/personalclaw tests harness \
-      || ! "${PY_BIN}flake8" src/personalclaw tests harness; then
+    lint_failures_before=$failed_count
+    run_check "black" "${PY_BIN}black" --check --quiet src/personalclaw tests harness
+    run_check "isort" "${PY_BIN}isort" --check-only --quiet src/personalclaw tests harness
+    run_check "flake8" "${PY_BIN}flake8" src/personalclaw tests harness
+    if [ "$failed_count" -ne "$lint_failures_before" ]; then
       echo "" >&2
       echo "pre-push: lint is red — run 'make format' then 'make lint', and commit the" >&2
       echo "          result before pushing. (CI's lint job checks the same thing.)" >&2
-      exit 1
+    else
+      echo "pre-push: python lint green."
     fi
-    echo "pre-push: python lint green."
   fi
+else
+  skip_python_checks "no Python changes outgoing"
 fi
 
 if [ "$needs_gate" -eq 0 ]; then
   echo "pre-push: no frontend changes outgoing — render-smoke gate skipped."
-  exit 0
+  skip_frontend_checks "no frontend changes outgoing"
+  finish_report
 fi
 
 # The render-smoke chain is npm/node all the way down (npm ci -> typecheck ->
@@ -167,7 +276,8 @@ fi
 # degradation only.
 if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
   echo "pre-push: frontend changes outgoing but web toolchain (npm/node) not found — skipping render-smoke locally (CI enforces it)."
-  exit 0
+  skip_frontend_checks "web toolchain (npm/node) not found; CI still checks"
+  finish_report
 fi
 
 # Owner ruling 2026-09-18: on a TOPIC branch, CI is the render-smoke gate. This chain stays
@@ -192,17 +302,35 @@ fi
 if [ "$release_ref" -eq 0 ]; then
   echo "pre-push: frontend changes outgoing on a topic branch — CI is the render-smoke gate"
   echo "          (owner ruling 2026-09-18; main/release/tags still run it locally)."
-  exit 0
+  skip_frontend_checks "topic branch: CI is the render-smoke gate"
+  finish_report
 fi
 
 echo "pre-push: frontend changes outgoing — running the render-smoke gate"
 echo "          (clean npm ci -> typecheck -> vitest -> build -> headless render)."
 
-npm ci
-npm run typecheck:web
-npm run test:web
-npm run build
-npx playwright install chromium
-npm run smoke:render
+run_check "npm-ci" npm ci
+if [ "$last_result" = "PASS" ]; then
+  run_check "typecheck-web" npm run typecheck:web
+  run_check "test-web" npm run test:web
+  run_check "build-web" npm run build
+  build_result=$last_result
+  run_check "playwright-chromium" npx playwright install chromium
+  playwright_result=$last_result
+  if [ "$build_result" = "PASS" ] && [ "$playwright_result" = "PASS" ]; then
+    run_check "render-smoke" npm run smoke:render
+  else
+    skip_check "render-smoke" "requires both build-web and playwright-chromium to pass"
+  fi
+else
+  skip_check "typecheck-web" "requires npm-ci to pass"
+  skip_check "test-web" "requires npm-ci to pass"
+  skip_check "build-web" "requires npm-ci to pass"
+  skip_check "playwright-chromium" "requires npm-ci to pass"
+  skip_check "render-smoke" "requires npm-ci, build-web, and playwright-chromium to pass"
+fi
 
-echo "pre-push: render-smoke gate green."
+if [ "$failed_count" -eq 0 ]; then
+  echo "pre-push: render-smoke gate green."
+fi
+finish_report
