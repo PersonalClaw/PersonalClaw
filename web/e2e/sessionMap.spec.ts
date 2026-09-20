@@ -245,7 +245,9 @@ test.describe('Session Map — the coarse-pointer form (SSM-10)', () => {
 // `driveScriptedTurns`, the shared recipe every spec here uses, and it clicks the composer and the
 // send control. From the moment the rail is on screen this test touches NO pointer API: no click,
 // no hover, no tap, no `mouse.*`. Every rail interaction below is `page.keyboard.press`, which is
-// what makes "a keyboard user can operate the session map" a claim this test actually supports.
+// what makes "a keyboard user can operate the session map" a claim this test actually supports —
+// and the boundary is ASSERTED, not just described: the census opened after the rail mounts counts
+// the click-shaped events for the rest of the walk and requires zero (see its own 🪤 below).
 test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () => {
   test.describe.configure({ timeout: 180_000 })
   // The SSM-11 block's geometry, for its reasons: short enough that the scripted turns OVERFLOW
@@ -272,6 +274,59 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
     await expect(page.locator(RAIL), 'the rail never mounted, so there is nothing to operate').toBeVisible()
     const total = await page.locator(MARK).count()
     expect(total, 'the rail carries too few marks for a cursor walk to prove anything').toBeGreaterThan(3)
+
+    // ── THE CENSUS THAT MAKES THIS BLOCK'S MOUSE-FREE CLAIM AN ASSERTION ──────────────────────
+    // The 🪤 above the describe states the boundary in prose — "from the moment the rail is on screen
+    // this test touches NO pointer API" — and prose is not a gate. Every step below is a
+    // `keyboard.press`, and nothing enforces that it stays one: an author who settles a flake by
+    // replacing the Tab walk with `page.locator(MARK).nth(0).click()` leaves EVERY assertion here
+    // green, because clicking a tick focuses it and activates it too. The test would keep its name
+    // and stop proving the rail is reachable without a mouse (WCAG 2.1.1), which is the only clause
+    // it exists to make. So from here the walk is MEASURED, not merely written that way.
+    //
+    // 🪤 OPENED HERE RATHER THAN IN AN `addInitScript`, AND THE PLACEMENT IS THE DESIGN.
+    // `driveScriptedTurns` clicks the composer and the send control BY DESIGN — it is the shared way
+    // every spec here starts a session, and the prose above excludes it from the claim on purpose —
+    // so a census spanning the page's whole life would count six turns of setup clicks and red on
+    // its first run. The census opens exactly where the claim does: after the rail is on screen,
+    // before the first Tab. Nothing navigates past this point, so a plain `evaluate` survives.
+    //
+    // 🪤 THE FOUR TYPES ARE A CLOSED LIST, AND THE THREE OMISSIONS ARE EACH A FALSE POSITIVE.
+    //   · `click` — a <button> fires one on Enter AND on Space, so the rail's own keyboard
+    //     activation would trip it. The ticks are buttons; both activations below are keys.
+    //   · `mousemove` / `pointermove` — Chromium re-dispatches a move at the unchanged cursor
+    //     position after a scroll, to re-resolve `:hover` under content that moved. This test's
+    //     whole payoff is two smooth-scroll jumps with the cursor parked wherever
+    //     `driveScriptedTurns` left it, so a move-sensitive census would be measuring the jump.
+    // What is left is the click-shaped set: real pointer input produces it, keyboard activation and
+    // scrolling never do. That is precisely the "a `.click()` crept in" signal.
+    await page.evaluate(() => {
+      const w = window as unknown as { __railPointerEvents: string[] }
+      w.__railPointerEvents = []
+      for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup']) {
+        window.addEventListener(type, (e) => { w.__railPointerEvents.push(e.type) }, true)
+      }
+    })
+    /** The click-shaped events seen since the census opened, as `type` strings so a failure names
+     *  WHICH gesture crept in and not only how many. Capture-phase on `window`, which runs before
+     *  any handler in the tree — so a `stopPropagation` cannot hide one from the count. */
+    const pointerEvents = (p: Page) => p.evaluate(() =>
+      [...(window as unknown as { __railPointerEvents: string[] }).__railPointerEvents])
+    // CONTROL, because listeners that never attached also report zero — the vacuous pass this whole
+    // census would otherwise be. Driven by `dispatchEvent` from the body rather than `page.mouse`:
+    // a real gesture is the one thing this test may not make, and a bubbling synthetic event travels
+    // the SAME window-capture path a trusted one does, which is the only property being controlled.
+    await page.evaluate(() => {
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(
+      await pointerEvents(page),
+      'THE POINTER CENSUS IS INERT: two dispatched click-shaped events recorded nothing, so the zero\n' +
+        'asserted at the end of this test would mean "the listeners never attached" rather than "no\n' +
+        'mouse was used" — a vacuous pass on the one clause this test owns.',
+    ).toEqual(['pointerdown', 'mousedown'])
+    await page.evaluate(() => { (window as unknown as { __railPointerEvents: string[] }).__railPointerEvents = [] })
 
     // ── REACH: Tab from the top of the document, no pointer ───────────────────────────────────
     // Focus is dropped first so the walk starts where a fresh keyboard user starts. The rail sits
@@ -368,6 +423,18 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
       page.getByText(`${PROMPT} (6)`, { exact: false }).first(),
       'Space moved the transcript but did not bring the newest turn on screen',
     ).toBeInViewport({ timeout: 10_000 })
+
+    // ── AND NOT ONE POINTER EVENT HAPPENED ────────────────────────────────────────────────────
+    // The assertion that makes every step above mean "by keyboard" rather than "somehow". Read as
+    // the LIST, not the length, so a failure names the gesture instead of a bare count.
+    const seen = await pointerEvents(page)
+    expect(
+      seen,
+      `the page saw ${seen.length} click-shaped event(s) (${[...new Set(seen)].join(', ')}) during a\n` +
+        'walk that claims to use no mouse. Either a `.click()`/`.tap()` crept into this test or a\n' +
+        'helper it calls now uses one — either way the walk no longer proves the rail is\n' +
+        'keyboard-operable, and every other assertion here would still be green (WCAG 2.1.1).',
+    ).toEqual([])
   })
 
   // ── THE GROUND `schemeContrast.test.ts` MEASURES THE MARK TONES AGAINST ────────────────────
