@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -464,9 +464,18 @@ function NewProjectModal({ busy, onClose, onCreate }: {
             here. The primitives also carry the chrome (radius, focus ring, tones, surface) that the
             deleted class strings hand-copied. */}
         <Field label="Name">
+          {/* The placeholder was "Project name (or let the system name it later)…", which offered
+              a path this form has never had (issue 451): Create is disabled while the field is empty,
+              `create()` returns early on a blank, and `clean_name` refuses one server-side.
+              Auto-naming is real but only REFINES a name a project already has, and it is reached
+              by the loop's auto-backing-project flow — not here, which deliberately sends
+              `name_locked: true` so its projects are the one kind that is never auto-named. The
+              copy gives way to the validator rather than the reverse: making blank names legal
+              would mean a new create path through `resolve_project_id(auto_name=…)` — a feature,
+              not a fix. */}
           <TextInput autoFocus value={name} onChange={setName}
             onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
-            placeholder="Project name (or let the system name it later)…"
+            placeholder="Project name…"
             maxLength={MAX_NAME_LEN}
             surface="high" />
         </Field>
@@ -679,7 +688,17 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
           this `titleNode`, so converting the shell alone left `#/projects/<id>` still h1-less — measured,
           after the "fix". Follow the value that actually reaches the slot. */}
       <PageTitle className="truncate">{project.name}</PageTitle>
-      {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
+      {/* No padlock here (issue 449). `name_locked` does not lock the name — it records that the
+          user owns it so the LLM stops auto-renaming (`tasks/models.py`), and `update_project`
+          guards only built-ins and duplicates, so renaming works with the flag set. The icon
+          therefore locked nothing, named the wrong actor, and — because create and both rename
+          confirms all write `name_locked: true` — was on by default for every project a user
+          made, so it carried no signal even relabelled. Deleted rather than reworded: the state
+          it marked is about agent behaviour, and there is no user-facing control to clear it.
+
+          🪤 Issue numbers in THIS comment carry no leading hash on purpose. `design/tokenLint`
+          skips `//` and `*` comment lines but not a JSX brace comment, so a three-digit issue
+          reference inside one is indistinguishable from a raw hex colour and fails the gate. */}
       {!project.is_builtin && (
         <IconButton icon={Pencil} label="Rename" size={24} iconSize={13} onClick={() => { setNameDraft(project.name); setRenaming(true) }} className="shrink-0 -m-0.5" />
       )}

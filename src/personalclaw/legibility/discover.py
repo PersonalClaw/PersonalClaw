@@ -448,13 +448,27 @@ def compute_discover(state: Any = None) -> dict[str, Any]:
     Honors the ``legibility.discover_tips`` kill switch server-side (a disabled
     instance returns ``enabled: false`` with no tips), then returns the visible
     curated tips grouped by area for the hub, alongside counts the dashboard uses.
+
+    ``dismissed_count`` is here because ``visible_count: 0`` has two causes the hub's
+    empty state was congratulating identically (#452): a user who USED every area, and a
+    user who HID the tips. Both are reachable — most tips auto-hide on engagement, and
+    several predicates read the filesystem, so a merely seeded home can start at zero —
+    and the page could not tell them apart from ``visible_count``/``total`` alone.
+    Counted off :func:`load_dismissed`, which is already narrowed to :data:`TIP_IDS`, so
+    it is the number of REAL tips the user hid, never junk an older build persisted.
     """
     from personalclaw.config.loader import AppConfig
 
-    if not AppConfig.load().legibility.discover_tips:
-        return {"enabled": False, "areas": [], "visible_count": 0, "total": len(CATALOG)}
-
     dismissed = load_dismissed()
+    if not AppConfig.load().legibility.discover_tips:
+        return {
+            "enabled": False,
+            "areas": [],
+            "visible_count": 0,
+            "total": len(CATALOG),
+            "dismissed_count": len(dismissed),
+        }
+
     engaged = compute_engaged(state)
     visible = select_visible(dismissed=dismissed, engaged=engaged)
     return {
@@ -462,4 +476,5 @@ def compute_discover(state: Any = None) -> dict[str, Any]:
         "areas": _group_by_area(visible),
         "visible_count": len(visible),
         "total": len(CATALOG),
+        "dismissed_count": len(dismissed),
     }

@@ -295,10 +295,49 @@ def _stub_config(monkeypatch: pytest.MonkeyPatch, *, enabled: bool) -> None:
     monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: cfg))
 
 
-def test_compute_respects_kill_switch(monkeypatch: pytest.MonkeyPatch):
+def test_compute_respects_kill_switch(_entity_home: Path, monkeypatch: pytest.MonkeyPatch):
+    # `_entity_home` is required, not decorative: the payload now carries
+    # `dismissed_count` on BOTH branches, so this path reads the dismissal store and
+    # without the fixture it would read the developer's real home.
     _stub_config(monkeypatch, enabled=False)
     out = dc.compute_discover()
-    assert out == {"enabled": False, "areas": [], "visible_count": 0, "total": len(dc.CATALOG)}
+    assert out == {
+        "enabled": False,
+        "areas": [],
+        "visible_count": 0,
+        "total": len(dc.CATALOG),
+        "dismissed_count": 0,
+    }
+
+
+def test_compute_reports_how_many_tips_the_user_HID(
+    _entity_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """#452 — `visible_count: 0` has two causes and the payload must say which.
+
+    A hub that only receives `visible_count`/`total` cannot tell "you used every area"
+    from "you hid the tips", so its empty state congratulated the user either way. These
+    two cases are the ones that used to be indistinguishable.
+    """
+    _stub_config(monkeypatch, enabled=True)
+
+    # (a) every area engaged, nothing dismissed — the congratulation is EARNED.
+    every_key = {tip.engaged_key: True for tip in dc.CATALOG if tip.engaged_key}
+    monkeypatch.setattr(dc, "compute_engaged", lambda state=None: every_key)
+    earned = dc.compute_discover()
+    assert earned["visible_count"] == 0, "every tip carries an engaged_key, so all ten auto-hide"
+    assert earned["dismissed_count"] == 0
+
+    # (b) nothing engaged, every tip dismissed — same `visible_count`, different cause.
+    monkeypatch.setattr(dc, "compute_engaged", lambda state=None: {})
+    for tip_id in dc.TIP_IDS:
+        dc.dismiss(tip_id)
+    hidden = dc.compute_discover()
+    assert hidden["visible_count"] == 0
+    assert hidden["dismissed_count"] == len(dc.TIP_IDS)
+    # The distinguishing fact: identical visible_count, different dismissed_count.
+    assert earned["visible_count"] == hidden["visible_count"]
+    assert earned["dismissed_count"] != hidden["dismissed_count"]
 
 
 def test_compute_returns_grouped_visible_tips(_entity_home: Path, monkeypatch: pytest.MonkeyPatch):

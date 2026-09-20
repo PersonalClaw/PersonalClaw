@@ -107,12 +107,31 @@ export function detectIncludes(content: string): string[] {
   return out
 }
 
-/** Seed a render-input map from a prompt's variables (uses defaults). */
+/** Types for which `''` is NOT a value the render engine can accept. `int('')` raises and
+ *  `''` matches no `select` option, so seeding one 400s the render — while OMITTING the key
+ *  is the path the engine already handles correctly (`_build_value_ctx` applies `var.default`,
+ *  or leaves an optional variable empty). For `string`/`textarea` the opposite holds: `''` is a
+ *  legitimate value a user may deliberately leave, so those keep their seed (#377). */
+const OMIT_WHEN_UNSET = new Set(['number', 'select'])
+
+/** True when an untouched/cleared value for `v` must be ABSENT on the wire rather than `''`.
+ *  Shared with the typed inputs so "never filled in" and "cleared the field" agree. */
+export function omitWhenBlank(v: PromptVariable): boolean {
+  return OMIT_WHEN_UNSET.has(v.type)
+}
+
+/** Seed a render-input map from a prompt's variables (uses defaults).
+ *
+ *  A `number`/`select` with no default gets NO key: `''` is strictly worse than absent,
+ *  because the engine rejects it (400) where it would have applied the default or treated
+ *  the variable as unset. That 400 is unrecoverable for an OPTIONAL variable — the submit
+ *  gate only checks required ones, so Insert/Send stay enabled and every render fails. */
 export function seedRenderValues(vars: PromptVariable[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const v of vars) {
     if (v.default !== undefined && v.default !== null) out[v.name] = v.default
     else if (v.type === 'boolean') out[v.name] = false
+    else if (omitWhenBlank(v)) continue  // absent ⇒ the engine's own default/unset path
     else out[v.name] = ''
   }
   return out
