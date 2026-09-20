@@ -178,13 +178,51 @@ jobs:
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE"
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE" \
             --github-output >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - name: Build and push image with supply-chain attestations
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.imagetags.outputs.image_tags }}
+          sbom: true
+          provenance: mode=max
+      - name: Export image SBOM attestations (SPDX-JSON)
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
+          IMAGE_NAME: personalclaw-${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p image-sboms
+          docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}' \
+            > image-sboms/attestations.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          directory = Path("image-sboms")
+          attestations = json.loads((directory / "attestations.json").read_text(encoding="utf-8"))
+          for platform in ("linux/amd64", "linux/arm64"):
+              record = attestations.get(platform)
+              document = record.get("SPDX") if isinstance(record, dict) else None
+              if not isinstance(document, dict):
+                  raise SystemExit(f"{platform}: missing SPDX SBOM attestation")
+              if document.get("SPDXID") != "SPDXRef-DOCUMENT":
+                  raise SystemExit(f"{platform}: malformed SPDX document")
+              arch = platform.removeprefix("linux/")
+              output = directory / f"{os.environ['IMAGE_NAME']}-{arch}.spdx.json"
+              output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+              print(f"{platform}: wrote {output}")
+          PY
+          rm image-sboms/attestations.json
+      - name: Upload image SBOM artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-sbom-${{ matrix.name }}
+          path: image-sboms/*.spdx.json
+          if-no-files-found: error
       # RELEASE-BLOCKING per-arch smoke (A2.1). The build above publishes a
       # multi-arch manifest; a manifest that merely *builds* can still ship an
       # arch that cannot start. So pull each arch explicitly and run the image's
@@ -284,6 +322,11 @@ jobs:
           path: dist/
       - uses: actions/download-artifact@v8
         with:
+          pattern: image-sbom-*
+          path: image-sboms/
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
           name: desktop-linux
           path: desktop-dist/
       - name: Extract this version's CHANGELOG section
@@ -317,7 +360,7 @@ jobs:
           # Unquoted on purpose: GH_RELEASE_FLAGS is a closed set of whole flags
           # (`--latest` | `--prerelease`) from the parser above and MUST word-split.
           # shellcheck disable=SC2086
-          gh release create "$GITHUB_REF_NAME" dist/* desktop-dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/* image-sboms/* desktop-dist/* \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             $GH_RELEASE_FLAGS
