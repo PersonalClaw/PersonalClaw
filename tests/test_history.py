@@ -2235,3 +2235,99 @@ class TestCommitmentDeliveryScan:
         assert len(svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00")) == 1
         assert svc.dismiss_commitment(key) is True
         assert svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00") == []
+
+
+class TestConsolidationSessionRelease:
+    """#3256 — `_call_llm` must release only a background session it actually acquired.
+
+    `_Session.semaphore` is an unbounded `asyncio.Semaphore(1)`, so an extra `release()`
+    raises the permit count instead of raising `ValueError`, and `SessionManager.release()`
+    is a no-op only when the key is ABSENT from `_sessions`. On the warm shared
+    `BACKGROUND_KEY` — used by suggestions, follow-ups, auto-title, folder icons, the
+    optimizer and the agent marketplace — an over-release lets a second turn start while
+    holder 1 still has the session, interleaving two turns on one background ACP process.
+    """
+
+    def _consolidator(self, tmp_path, sessions):
+        log = ConversationLog(base_dir=tmp_path / "sessions")
+        log.init()
+        return HistoryConsolidator(log=log, memory=MagicMock(), sessions=sessions)
+
+    @pytest.mark.asyncio
+    async def test_failed_acquire_does_not_release(self, tmp_path):
+        """A raise between session registration and the acquire must not over-release.
+
+        `self._sessions[key] = sess` precedes the `await sess.semaphore.acquire()`, with a
+        `_session_map.set()` disk write in between, so an `OSError` there leaves the session
+        registered but unacquired — and `_call_llm` catches it.
+        """
+        sessions = MagicMock()
+        sessions.get_or_create = AsyncMock(side_effect=OSError("session map write failed"))
+        sessions.release = MagicMock()
+        sessions.recycle_background = AsyncMock()
+        consolidator = self._consolidator(tmp_path, sessions)
+
+        assert await consolidator._call_llm("prompt") is None
+
+        sessions.release.assert_not_called()
+        sessions.recycle_background.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_acquire_does_not_release(self, tmp_path):
+        """Cancellation while blocked on the acquire must not over-release.
+
+        `_consolidate` is fired with `asyncio.create_task` and nothing in `history.py` owns a
+        cancel path, so the cancel arrives from the loop tearing tasks down while this call
+        waits on the semaphore of a mid-turn session. An unconditional `finally` runs on the
+        way out of `CancelledError` too.
+        """
+        blocked = asyncio.Event()
+        sessions = MagicMock()
+
+        async def _never_acquires(*_args, **_kwargs):
+            blocked.set()
+            await asyncio.Event().wait()  # pragma: no cover — cancelled here
+            raise AssertionError("unreachable")
+
+        sessions.get_or_create = _never_acquires
+        sessions.release = MagicMock()
+        sessions.recycle_background = AsyncMock()
+        consolidator = self._consolidator(tmp_path, sessions)
+
+        task = asyncio.create_task(consolidator._call_llm("prompt"))
+        await asyncio.wait_for(blocked.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        sessions.release.assert_not_called()
+        sessions.recycle_background.assert_not_awaited()
+
+    def test_release_and_recycle_are_both_inside_the_acquired_guard(self):
+        """Mechanism control over the AST: pins the source shape, not just the outcome.
+
+        Asserted over the tree rather than as a substring because a substring rail is
+        satisfied by this very docstring. `recycle_background()` is checked alongside
+        `release()` because the two reference sites that call it in a `finally` —
+        `gateway.py` and `context.py` — both put it inside `if acquired:`; an outcome-only
+        test passes if only the release moves.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from personalclaw import history
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(history.HistoryConsolidator._call_llm)))
+        guarded: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            if not (isinstance(node.test, ast.Name) and node.test.id == "acquired"):
+                continue
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute):
+                    guarded.add(inner.func.attr)
+
+        assert "release" in guarded, "release() must sit under `if acquired:`"
+        assert "recycle_background" in guarded, "recycle_background() must sit under it too"
