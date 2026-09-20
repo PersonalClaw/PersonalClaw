@@ -1457,15 +1457,12 @@ def test_the_widened_restore_is_BOUNDED_by_the_inventory(tmp_path: Path) -> None
 def _sel_home(root: Path, tools: list[str], *, key: bytes | None = None) -> Path:
     """A home with a real HMAC-signed SEL log. Signed through the real writer, because the whole
     question is whether imported rows verify — a hand-built fixture could not answer it."""
-    import importlib
-
     root.mkdir(parents=True, exist_ok=True)
     if key is not None:
         (root / "sel_hmac.key").write_bytes(key)
     os.environ["PERSONALCLAW_HOME"] = str(root)
     from personalclaw import sel as sel_mod
 
-    importlib.reload(sel_mod)
     sel_mod.SecurityEventLog._instance = None
     sel_mod.SecurityEventLog._initialized = False
     log = sel_mod.SecurityEventLog()
@@ -1475,12 +1472,9 @@ def _sel_home(root: Path, tools: list[str], *, key: bytes | None = None) -> Path
 
 
 def _sel_verify(root: Path) -> tuple[int, int]:
-    import importlib
-
     os.environ["PERSONALCLAW_HOME"] = str(root)
     from personalclaw import sel as sel_mod
 
-    importlib.reload(sel_mod)
     sel_mod.SecurityEventLog._instance = None
     sel_mod.SecurityEventLog._initialized = False
     return sel_mod.SecurityEventLog().verify_integrity(max_entries=None)
@@ -1494,6 +1488,24 @@ def _restore_home():
         os.environ.pop("PERSONALCLAW_HOME", None)
     else:
         os.environ["PERSONALCLAW_HOME"] = prev
+
+
+def test_the_SEL_fixture_helpers_preserve_the_public_class_identity(
+    tmp_path, _restore_home
+) -> None:
+    """Changing fixture homes must not reload a module imported across the test process.
+
+    Other modules import ``SecurityEventLog`` during collection. Reloading ``personalclaw.sel``
+    replaces the class object underneath those references, making later ``isinstance`` checks
+    depend on which xdist worker happened to run this helper first.
+    """
+    from personalclaw import sel as sel_mod
+
+    security_event_log = sel_mod.SecurityEventLog
+    home = _sel_home(tmp_path / "sel", ["bash"])
+    assert sel_mod.SecurityEventLog is security_event_log
+    assert _sel_verify(home) == (1, 1)
+    assert sel_mod.SecurityEventLog is security_event_log
 
 
 def test_the_SEL_merge_is_SKIPPED_when_the_HMAC_KEY_DIFFERS(tmp_path, _restore_home) -> None:

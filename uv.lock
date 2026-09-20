@@ -1902,7 +1902,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.34" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "cron-descriptor", specifier = ">=1.4,<3" },
-    { name = "croniter", specifier = ">=2.0,<7" },
+    { name = "croniter", specifier = ">=2.0,<3" },
     { name = "cryptography", specifier = ">=42" },
     { name = "cryptography", marker = "extra == 'oauth2'", specifier = ">=42" },
     { name = "faiss-cpu", marker = "extra == 'embeddings'", specifier = ">=1.7" },
