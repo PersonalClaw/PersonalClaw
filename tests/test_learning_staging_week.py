@@ -89,7 +89,8 @@ def test_every_day_in_the_window_gets_a_bucket(store):
     week = store.week(days=7, now=now)
     assert len(week["buckets"]) == 7
     assert all(b["passes"] == 0 for b in week["buckets"])
-    assert len(week["silent_days"]) == 7
+    assert week["silent_days"] == []
+    assert week["first_pass_day"] == ""
 
 
 def test_buckets_come_back_in_date_order(store, monkeypatch):
@@ -215,32 +216,40 @@ def test_cost_is_summed_per_day_and_overall(store, monkeypatch):
     assert today["cost_usd"] == pytest.approx(0.02)
 
 
-# ── never-ran vs ran-then-died (LEARN-1) ──
+# ── first-pass floor ──
 
 
-def test_has_ever_run_is_false_with_zero_recorded_runs(store):
-    """A fresh install's silent week is a zero-state, not a warning — the panel needs a field
-    that says so, because the window rows alone cannot tell never-ran from ran-then-died."""
+def test_first_pass_day_is_empty_with_zero_recorded_runs(store):
+    """A fresh install's empty week is a zero-state, not seven warning days."""
     week = store.week(days=7, now=time.time())
-    assert week["has_ever_run"] is False
-    assert len(week["silent_days"]) == 7
+    assert week["first_pass_day"] == ""
+    assert week["silent_days"] == []
 
 
-def test_one_recorded_run_flips_has_ever_run(store, monkeypatch):
+def test_one_recorded_run_sets_the_local_first_pass_day(store, monkeypatch):
     now = time.time()
     _record(store, monkeypatch, outcome=FlushOutcome.FLUSH_OK, at=now)
-    assert store.week(days=7, now=now)["has_ever_run"] is True
+    assert store.week(days=7, now=now)["first_pass_day"] == _day(now)
 
 
-def test_has_ever_run_is_unbounded_not_a_window_proxy(store, monkeypatch):
-    """THE distinction. A pass far outside the window still counts as "ever ran": an
-    all-silent-window proxy would read False here and calm a ran-then-died instance — the
-    exact failure the silent-days chip exists to expose."""
+def test_first_pass_day_is_unbounded_not_a_window_proxy(store, monkeypatch):
+    """A pass outside the window still establishes the floor for a ran-then-died instance."""
     now = time.time()
     _record(store, monkeypatch, outcome=FlushOutcome.FLUSH_OK, at=now - 30 * DAY)
     week = store.week(days=3, now=now)
     assert all(b["passes"] == 0 for b in week["buckets"])  # the window is silent…
-    assert week["has_ever_run"] is True  # …but the instance ran and died: still a warning
+    assert week["first_pass_day"] == _day(now - 30 * DAY)
+    assert week["silent_days"] == [b["day"] for b in week["buckets"]]
+
+
+def test_days_before_the_first_pass_are_not_silent(store, monkeypatch):
+    now = time.time()
+    _record(store, monkeypatch, outcome=FlushOutcome.FLUSH_OK, at=now - DAY)
+
+    week = store.week(days=4, now=now)
+
+    assert week["first_pass_day"] == _day(now - DAY)
+    assert week["silent_days"] == [_day(now)]
 
 
 # ── window handling ──
@@ -268,7 +277,7 @@ def test_the_panel_serializes_for_an_api(store):
         "error_days",
         "produced_total",
         "cost_usd",
-        "has_ever_run",
+        "first_pass_day",
     }
     for bucket in week["buckets"]:
         assert set(bucket) == {
