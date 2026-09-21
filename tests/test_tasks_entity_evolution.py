@@ -2,6 +2,7 @@
 plans, three note channels, the exit-criteria complete-gate, and project label
 derivation from the task list."""
 
+import json
 import re
 import time
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from personalclaw.tasks.native import NativeTaskProvider
 
 #: The `created_at` spelling — a note's time must be comparable to its task's.
 _ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_NOTE_LANES = ("notes", "research_notes", "execution_notes")
 
 # ── Normalizers ──
 
@@ -79,8 +81,13 @@ class TestNoteNormalize:
     def test_stamp_dates_an_undated_note(self):
         """#383: nothing ever supplied a note timestamp, so the detail panel's per-note
         relative time could never render."""
-        for item in ("bare string", {"content": "c"}, {"content": "c", "timestamp": ""}):
+        for item in ("bare string", {"content": "c"}):
             assert _ISO_Z.match(normalize_note(item, stamp=True)["timestamp"]), item
+
+    def test_stamp_leaves_a_key_present_empty_timestamp_undated(self):
+        """#3265: key presence identifies a note the form read back from the server."""
+        note = normalize_note({"content": "legacy", "timestamp": ""}, stamp=True)
+        assert note["timestamp"] == ""
 
     def test_stamp_never_overwrites_an_incoming_timestamp(self):
         """The create/edit form sends the whole lane back, so a re-send must not re-date."""
@@ -159,6 +166,16 @@ def provider(tmp_path):
         yield NativeTaskProvider()
 
 
+def _stored_task(provider, task_id):
+    return json.loads(provider._task_path(task_id).read_text())
+
+
+def _forge_legacy_note(provider, task_id, field_name):
+    data = _stored_task(provider, task_id)
+    data[field_name] = [{"content": f"legacy {field_name}", "timestamp": ""}]
+    provider._task_path(task_id).write_text(json.dumps(data))
+
+
 class TestNativeEvolvedFields:
     @pytest.mark.asyncio
     async def test_note_channels_persist(self, provider):
@@ -208,6 +225,60 @@ class TestNativeEvolvedFields:
         notes = updated.to_dict()["notes"]
         assert notes[0]["timestamp"] == kept["timestamp"]
         assert _ISO_Z.match(notes[1]["timestamp"])
+
+    @pytest.mark.asyncio
+    async def test_a_plain_read_leaves_legacy_notes_undated(self, provider):
+        """A: reading an old task must not invent dates for any note lane."""
+        task = await provider.create_task(title="legacy")
+        for field_name in _NOTE_LANES:
+            _forge_legacy_note(provider, task.id, field_name)
+
+        loaded = (await provider.get_task(task.id)).to_dict()
+
+        for field_name in _NOTE_LANES:
+            assert loaded[field_name][0]["timestamp"] == ""
+
+    @pytest.mark.asyncio
+    async def test_b_edit_without_note_fields_leaves_legacy_notes_undated(self, provider):
+        """B: an edit that does not resend notes must leave their persisted dates alone."""
+        task = await provider.create_task(title="legacy")
+        for field_name in _NOTE_LANES:
+            _forge_legacy_note(provider, task.id, field_name)
+
+        await provider.update_task(task.id, title="renamed")
+
+        stored = _stored_task(provider, task.id)
+        for field_name in _NOTE_LANES:
+            assert stored[field_name][0]["timestamp"] == ""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field_name", _NOTE_LANES)
+    async def test_c_resending_a_legacy_lane_keeps_its_empty_timestamp(self, provider, field_name):
+        """C: the edit form resends each existing note with ``timestamp: ""``."""
+        task = await provider.create_task(title="legacy")
+        _forge_legacy_note(provider, task.id, field_name)
+        resent = (await provider.get_task(task.id)).to_dict()[field_name]
+
+        await provider.update_task(task.id, **{field_name: resent})
+
+        assert _stored_task(provider, task.id)[field_name][0]["timestamp"] == ""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field_name", _NOTE_LANES)
+    async def test_d_append_dates_only_the_keyless_note(self, provider, field_name):
+        """D: key-present legacy + keyless append is the old-vs-new discriminator."""
+        task = await provider.create_task(title="legacy")
+        _forge_legacy_note(provider, task.id, field_name)
+        legacy = (await provider.get_task(task.id)).to_dict()[field_name][0]
+
+        await provider.update_task(
+            task.id,
+            **{field_name: [legacy, {"content": f"new {field_name}"}]},
+        )
+
+        stored = _stored_task(provider, task.id)[field_name]
+        assert stored[0]["timestamp"] == ""
+        assert _ISO_Z.match(stored[1]["timestamp"])
 
     @pytest.mark.asyncio
     async def test_exit_criteria_stored_statused(self, provider):

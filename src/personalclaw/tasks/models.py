@@ -192,17 +192,21 @@ def normalize_note(item: Any, *, stamp: bool = False) -> dict:
     """Canonical note: ``{content, timestamp}`` (carries any legacy ``phase``/ ``created_at``
     through for back-compat readers).
 
-    ``stamp=True`` dates a note that arrives WITHOUT a timestamp — see `_as_note_list` for why
-    only a write may pass it. An incoming timestamp always wins, so re-sending an existing note
-    (the create/edit form sends the whole lane back) never re-dates it.
+    ``stamp=True`` dates a note that arrives WITHOUT the ``timestamp`` key — see `_as_note_list`
+    for why only a write may pass it. A present key always wins, including ``timestamp: ""`` on
+    a legacy note, so re-sending an existing note (the create/edit form sends the whole lane back)
+    never re-dates it.
     """
     if isinstance(item, str):
         return {"content": item, "timestamp": _now_iso() if stamp else ""}
     if isinstance(item, dict):
-        existing = str(item.get("timestamp") or item.get("created_at") or "")
+        timestamp_present = "timestamp" in item
+        existing = str(
+            (item.get("timestamp") if timestamp_present else item.get("created_at")) or ""
+        )
         out = {
             "content": str(item.get("content") or ""),
-            "timestamp": existing or (_now_iso() if stamp else ""),
+            "timestamp": existing or (_now_iso() if stamp and not timestamp_present else ""),
         }
         if item.get("phase"):
             out["phase"] = item["phase"]
