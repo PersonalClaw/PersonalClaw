@@ -1,5 +1,7 @@
-import { useId, useState, type ReactNode } from 'react'
+import { Fragment, useId, useState, type ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { Toggle } from '../../ui/Toggle'
+import { QuietButton } from '../../ui/QuietButton'
 
 /** Minimal JSON-Schema helpers for the tool inspector. A tool's `parameters` is
  *  a JSON Schema object ({type:'object', properties, required}); we render its
@@ -38,6 +40,90 @@ export function schemaProps(parameters: unknown): { props: [string, JsonSchema][
   const s = (parameters ?? {}) as JsonSchema
   const props = Object.entries(s.properties ?? {})
   return { props, required: new Set(s.required ?? []) }
+}
+
+/** Whether a field carries a configured value beyond its schema default.
+ *
+ *  The Advanced disclosure uses this for its live "N set" marker. Defaults do not count: a form
+ *  that seeds `provider: "native"` from the schema has not been customized. A false/zero value DOES
+ *  count when there is no matching default — both are real settings, not empty sentinels. */
+function schemaValueIsSet(value: unknown, schema: JsonSchema): boolean {
+  if (value === undefined || value === null || value === '') return false
+  if (schema.default === undefined) return true
+  if (Object.is(value, schema.default)) return false
+  try {
+    return JSON.stringify(value) !== JSON.stringify(schema.default)
+  } catch {
+    return true
+  }
+}
+
+/** One field-list policy for every JSON-Schema form.
+ *
+ *  Optional properties tagged `advanced` sit behind an accessible disclosure; required fields stay
+ *  visible even when tagged. If EVERY field would be hidden, the list stays flat — a disclosure
+ *  ranks secondary fields but must never erase the whole form. The trigger, tool, workflow, model
+ *  and app-config surfaces all render through this component while retaining their own field
+ *  controls via `renderField`.
+ *
+ *  The disclosure states both how many fields it hides and, when applicable, how many already carry
+ *  configured values. `configured` names write-only values (stored secrets) whose blank form value
+ *  would otherwise make that marker lie. */
+export function SchemaFields<S extends JsonSchema>({
+  fields,
+  required,
+  values = {},
+  configured = [],
+  advancedFieldClassName = 'flex flex-col gap-m',
+  renderField,
+}: {
+  fields: [string, S][]
+  required: readonly string[] | ReadonlySet<string>
+  values?: Record<string, unknown>
+  configured?: readonly string[] | ReadonlySet<string>
+  advancedFieldClassName?: string
+  renderField: (name: string, schema: S, required: boolean) => ReactNode
+}) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const requiredSet = new Set(required)
+  const configuredSet = new Set(configured)
+  const isAdvanced = ([name, schema]: [string, S]) =>
+    !requiredSet.has(name) && schemaMeta(schema).tags?.includes('advanced')
+
+  // With nothing left to rank, keep the whole form visible instead of rendering an empty surface
+  // above a disclosure. `native-tasks` is the shipped one-field example of this shape.
+  const allAdvanced = fields.length > 0 && fields.every(isAdvanced)
+  const advancedFields = allAdvanced ? [] : fields.filter(isAdvanced)
+  const visibleFields = allAdvanced ? fields : fields.filter((field) => !isAdvanced(field))
+  const setCount = advancedFields.filter(([name, schema]) =>
+    configuredSet.has(name) || schemaValueIsSet(values[name], schema)).length
+
+  const render = ([name, schema]: [string, S]) => (
+    <Fragment key={name}>{renderField(name, schema, requiredSet.has(name))}</Fragment>
+  )
+
+  return (
+    <>
+      {visibleFields.map(render)}
+      {advancedFields.length > 0 && (
+        <div className="border-t border-outline-variant/40 pt-m">
+          <QuietButton ariaExpanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>
+            <ChevronDown
+              size={14}
+              aria-hidden
+              className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+            />
+            Advanced ({advancedFields.length}{setCount > 0 ? `, ${setCount} set` : ''})
+          </QuietButton>
+          {advancedOpen && (
+            <div className={`mt-m ${advancedFieldClassName}`}>
+              {advancedFields.map(render)}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  )
 }
 
 /** Required keys that carry no usable value, in the order given.

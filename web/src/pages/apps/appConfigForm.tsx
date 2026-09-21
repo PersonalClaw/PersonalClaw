@@ -1,13 +1,11 @@
 import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
 import { Field, Select, TextArea } from '../../ui/forms'
-import { QuietButton } from '../../ui/QuietButton'
 import { api } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import {
   missingRequired,
-  schemaMeta,
   SchemaField,
+  SchemaFields,
   type JsonSchema,
   type SchemaMeta,
 } from '../tools/schema'
@@ -109,22 +107,9 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
 }) {
   const needsPrompt = Object.values(props).some((p) => p['x-meta']?.widget === 'prompt')
   const { widgets } = usePromptWidgets(needsPrompt)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const fields = Object.entries(props)
-  const isAdvanced = ([key, p]: [string, SchemaProp]) =>
-    !required.includes(key) && schemaMeta(p).tags?.includes('advanced')
-  // A schema whose every field is tagged `advanced` would collapse its whole form
-  // behind the disclosure and render nothing — the bundled `native-tasks` app is
-  // exactly that shape (one optional tagged field). Disclosure is a way to rank
-  // fields, so with nothing left to rank it has no work to do: fall back to the
-  // flat form rather than hiding a config surface entirely.
-  const allAdvanced = fields.length > 0 && fields.every(isAdvanced)
-  const advancedFields = allAdvanced ? [] : fields.filter(isAdvanced)
-  const visibleFields = allAdvanced ? fields : fields.filter((f) => !isAdvanced(f))
 
-  const renderField = ([key, p]: [string, SchemaProp]) => {
+  const renderField = (key: string, p: SchemaProp, isRequired: boolean) => {
         const meta = p['x-meta'] ?? {}
-        const isRequired = required.includes(key)
         const label = (meta.label || key) + (isRequired ? ' *' : '')
         const v = cur[key]
         const fieldId = `app-cfg-${appName}-${key}`
@@ -196,22 +181,13 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
   }
 
   return (
-    <>
-      {visibleFields.map(renderField)}
-      {advancedFields.length > 0 && (
-        <div className="border-t border-outline-variant/40 pt-m">
-          <QuietButton ariaExpanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>
-            <ChevronDown size={14} className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
-            Advanced
-          </QuietButton>
-          {advancedOpen && (
-            <div className="mt-m flex flex-col gap-m">
-              {advancedFields.map(renderField)}
-            </div>
-          )}
-        </div>
-      )}
-    </>
+    <SchemaFields
+      fields={Object.entries(props)}
+      required={required}
+      values={cur}
+      configured={secretSet}
+      renderField={renderField}
+    />
   )
 }
 

@@ -3,7 +3,7 @@ import { type ActionProvider, type PromptItem, type PromptVariable } from '../..
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
-import { buildArgs, schemaProps, SchemaField } from '../tools/schema'
+import { buildArgs, schemaProps, SchemaField, SchemaFields } from '../tools/schema'
 import { usePromptWidgets } from '../prompts/promptWidgets'
 import { actionIcon } from './triggerMeta'
 
@@ -74,10 +74,16 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
             <p className="text-on-surface-low text-[0.8125rem]">This action takes no configuration.</p>
           ) : (
             <div className="flex flex-col gap-m">
-              {props.map(([name, schema]) => (
-                <SchemaField key={name} name={name} schema={schema} required={required.has(name)}
-                  value={config[name]} onChange={(v) => setField(name, v)} widgets={widgets} />
-              ))}
+              <SchemaFields
+                key={selected.name}
+                fields={props}
+                required={required}
+                values={config}
+                renderField={(name, schema, isRequired) => (
+                  <SchemaField name={name} schema={schema} required={isRequired}
+                    value={config[name]} onChange={(v) => setField(name, v)} widgets={widgets} />
+                )}
+              />
             </div>
           )}
 
