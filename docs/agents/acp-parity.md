@@ -671,7 +671,7 @@ because that defect was never one of the 63 cells.
 | Session mechanics | Reasoning effort | `supported_efforts: []` on all 27 agents (`K2`), yet a bind with `reasoning_effort: "low"` is accepted, persisted and echoed back (`K10`) | **CLI** for the axis; **host seam** to stop offering the control (`G21`) | `kiro-cli 2.18.1` |
 | Session mechanics | Pipe-death retry / re-queue | `kill -9` on the session's process tree mid-turn ended the stream with `ACP prompt timed out`; nothing was retried or re-queued and no replacement process appeared for that turn. The **next** turn respawned transparently (`K38`, `G42`) | **Host seam** | `kiro-cli 2.18.1` |
 | Approvals / safety | Two of the six script-hook kinds never fire on the ACP path | Over 25+ turns: `SessionStart` 1, `UserPromptSubmit` 17, `Stop` 15 — and `PostToolUse` **0**, `Error` **0**. The `Error` miss is not for lack of errors: a `-32601` and a real `-32603` model-unavailable both failed to fire it (`K40`, `G41`) | **Host seam** (`AAP-8`) | `kiro-cli 2.18.1` |
-| Approvals / safety | OS sandbox wrap — **`ENV`, not a verdict** | The host logs `No OS-level sandbox available — app-level checks only` at boot on this platform, so there is no host wrap engaged and no confinement boundary to probe (`K47`). Recorded as an environment limit in both directions. kiro brings its own sandbox layer, which is not the host's mechanism | **Platform** | `kiro-cli 2.18.1` |
+| Approvals / safety | OS sandbox wrap — **CONFIRMED** | **Corrected 2026-09-21 (#3271):** the host's macOS capability probe now tests the third-party interpreter instead of refusing by OS version. Against the project venv's Python listing `~/.ssh`, unsandboxed/`none`/`standard`/`cc` each saw 8 entries; `strict` was denied with `PermissionError`, rc 1. The host wrap is therefore an enforced confinement boundary on this platform | **Correction tracked by #3271** — remove the false macOS 26+ refusal and retain runtime capability detection | macOS 27.0 (build 26A428) |
 
 ### Not yet measured — NONE. Residual CLOSED 2026-08-23 (1 → 0)
 
@@ -704,10 +704,9 @@ can silently void one:
 - **kiro intermittently exposes no shell tool at all** — 3 of 5 turns (`K85`, cause likely `G81`). A
   drive that assumes a shell tool is present can therefore measure an absence that is really a flake.
 
-One cell on this column remains `ENV` rather than a verdict: **OS sandbox wrap** — the host itself
-reports `No OS-level sandbox available — app-level checks only` on this platform, so there is nothing
-to confine and nothing to probe (`K47`). `ENV` is not a coverage hole; it is the honest mark for a
-platform that cannot host the mechanism.
+No cell on this column remains `ENV`: **OS sandbox wrap** is now confirmed on macOS 27.0. The
+runtime probe selects Seatbelt, weaker levels can list all 8 `~/.ssh` entries, and `strict` denies
+the same third-party Python invocation with `PermissionError`, rc 1 (#3271).
 
 ## gemini-cli — unverified
 

@@ -23,7 +23,6 @@ import functools
 import json
 import logging
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -358,32 +357,19 @@ def _probe_unshare() -> bool:
 def _probe_sandbox_exec() -> bool:
     """Return True if macOS ``sandbox-exec`` actually works.
 
-    Uses a file-based profile and targets /usr/bin/true as
-    fallback) to match the real sandbox_exec_argv() invocation.  macOS ≥ 26
-    refuses sandbox_apply() for third-party binaries, so probing with just
-    ``true`` gives false positives.
+    Uses a file-based profile and targets the current Python interpreter to
+    match the third-party binary shape used by real ``sandbox_exec_argv()``
+    invocations.  Probing with an Apple-signed system binary can give false
+    positives when ``sandbox_apply()`` rejects third-party callers.
     """
     if sys.platform != "darwin":
         return False
-    # macOS 26+ refuses sandbox_apply() for third-party callers entirely.
-    try:
-        mac_ver = platform.mac_ver()[0]
-        if mac_ver:
-            major = int(mac_ver.split(".")[0])
-            if major >= 26:
-                logger.info(
-                    "sandbox-exec unavailable: macOS %s denies sandbox_apply for third-party binaries",  # noqa: E501
-                    mac_ver,
-                )
-                return False
-    except (ValueError, IndexError):
-        pass
     sb = shutil.which("sandbox-exec")
     if sb is None:
         return False
     # Probe with file-based profile targeting a representative binary
-    target = "/usr/bin/true"
-    target_arg: list[str] = []
+    target = sys.executable
+    target_arg = ["-c", "pass"]
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_probe_")
     try:
         os.write(fd, b"(version 1)(allow default)")
