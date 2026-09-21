@@ -2640,8 +2640,8 @@ async def list_conflicts(request: web.Request) -> web.Response:
     about which source to trust, which is the owner's call — so there is deliberately no
     "resolve" endpoint that would let the system pick a winner on its own.
 
-    `basis` rides along on every row because a deterministic finding and a model's opinion warrant
-    different confidence, and a reader cannot tell them apart from the claim text alone.
+    Every row is a deterministic finding, so no row carries a tier label: `find_conflicts` is the
+    only writer, and a field whose value is the same on every row tells a reader nothing.
     """
     store = _store(request)
     limit = _int_param(request, "limit", 100, low=1, high=500)

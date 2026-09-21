@@ -971,10 +971,9 @@ export interface ChatSessionSummary {
 }
 /** One recorded disagreement between two stored claims (KNOWLEDGE-SYNTHESIS §3.2).
  *
- *  `basis` matters to a reader: `deterministic` means two claims provably cannot both hold,
- *  `model` means a fast model thought so. Rendering them identically would give an opinion the
- *  weight of a proof. `prefer` is the source-precedence ladder's advice — "" when it cannot
- *  decide, which is the honest answer for two same-tier sources. */
+ *  Every conflict is a deterministic finding — two claims that provably cannot both hold — so
+ *  there is no tier to distinguish on a row. `prefer` is the source-precedence ladder's advice —
+ *  "" when it cannot decide, which is the honest answer for two same-tier sources. */
 export type KnowledgeConflict = {
   item_id: string
   item_title: string
@@ -983,7 +982,6 @@ export type KnowledgeConflict = {
   left_item: string
   right_item: string
   kind: 'value' | 'polarity' | 'number'
-  basis: 'deterministic' | 'model'
   prefer: 'left' | 'right' | ''
   detail: string
   confidence: number
