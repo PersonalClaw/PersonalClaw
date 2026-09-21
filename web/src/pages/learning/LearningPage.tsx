@@ -441,11 +441,6 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
 /** The capture week panel. An EMPTY day is the point: an aggregate health view cannot see a day where
  *  capture never ran, which is the failure the staging tier exists to expose. */
 function WeekPanel({ week }: { week: StagingWeek }) {
-  const silentDays = week.silent_days.filter((day) => (
-    week.first_pass_day === undefined
-    || (week.first_pass_day !== '' && day >= week.first_pass_day)
-  ))
-
   return (
     <div className="flex flex-col gap-m">
       <div className="flex flex-wrap items-center gap-s">
@@ -455,13 +450,13 @@ function WeekPanel({ week }: { week: StagingWeek }) {
             chip and tiles cannot contradict each other. */}
         {week.first_pass_day === '' ? (
           <span data-type="caption" className="text-on-surface-low">no capture pass has run yet</span>
-        ) : silentDays.length > 0 ? (
+        ) : week.silent_days.length > 0 ? (
           <span
             className="inline-flex items-center gap-1.5 rounded-pill px-m h-6 text-[0.75rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}
             title="No capture pass ran on these days. An aggregate view cannot distinguish this from a quiet day."
           >
-            <AlertTriangle size={12} /> {silentDays.length} silent
+            <AlertTriangle size={12} /> {week.silent_days.length} silent
           </span>
         ) : null}
       </div>
