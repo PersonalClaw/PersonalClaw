@@ -4,6 +4,8 @@ import { Box, Search, Users } from 'lucide-react'
 import { EmptyState } from '../ui/ListScaffold'
 import { ArtifactGrid } from './artifacts/ArtifactGrid'
 
+const artifactEmptyHint = 'Artifacts are named, versioned snapshots — widgets, docs, images, and files agents produce. Ask the agent to create a document, spreadsheet or deck; text files can also be saved as an artifact from the Files page.'
+
 // ── "You have none" is not "none match" ─────────────────────────────────────
 //
 // A list body that is empty is TWO different situations, and they need different
@@ -29,9 +31,9 @@ describe('ArtifactGrid empty states', () => {
     render(<ArtifactGrid artifacts={[]} onOpen={() => {}} onBrowseFiles={onBrowseFiles} />)
     expect(screen.getByText('No artifacts')).toBeInTheDocument()
     // The hint is the one that teaches how artifacts come to exist.
-    expect(screen.getByText(/Ask the agent to save one/)).toBeInTheDocument()
+    expect(screen.getByText(artifactEmptyHint)).toBeInTheDocument()
     // PEP-2: and the hint's own advice is reachable, not just readable.
-    expect(screen.getByRole('button', { name: /Browse files/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Browse text files' })).toBeInTheDocument()
   })
 
   it('says "no matching" — and drops the create advice — when a filter is active', () => {
@@ -39,9 +41,9 @@ describe('ArtifactGrid empty states', () => {
     expect(screen.getByText('No matching artifacts')).toBeInTheDocument()
     expect(screen.queryByText('No artifacts')).not.toBeInTheDocument()
     // Telling someone with a full library to create their first artifact was the whole bug.
-    expect(screen.queryByText(/Ask the agent to save one/)).not.toBeInTheDocument()
+    expect(screen.queryByText(artifactEmptyHint)).not.toBeInTheDocument()
     // The PEP-2 on-ramp inherits that rule: no create advice on a filtered-to-nothing list.
-    expect(screen.queryByRole('button', { name: /Browse files/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Browse text files' })).not.toBeInTheDocument()
   })
 })
 
