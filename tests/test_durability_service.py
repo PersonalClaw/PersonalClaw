@@ -765,6 +765,83 @@ class TestEndpoints:
             assert resp.status == 200
             assert (await resp.json())["ok"] is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "job,key",
+        [("export", "last_export"), ("snapshot", "last_snapshot"), ("drill", "last_drill")],
+    )
+    async def test_a_manual_run_stamps_the_same_key_the_tick_does(self, job, key, monkeypatch):
+        """#361: "Run now" did the work and recorded nothing for export/snapshot.
+
+        The stamp is what "Last run of each job" renders AND what `_due()` measures, so an
+        unstamped success left the panel reporting the old timestamp and let the scheduler
+        redo the job — a redundant full snapshot — on the next tick. Driven through the
+        endpoint, not the helper, because the endpoint is where the omission lived.
+        """
+        from aiohttp.test_utils import TestClient, TestServer
+
+        monkeypatch.setattr(
+            service,
+            {
+                "export": "run_incremental_export",
+                "snapshot": "run_nightly_snapshot",
+                "drill": "run_restore_drill",
+            }[job],
+            lambda *a, **k: service.JobResult(job, ok=True, detail="fine"),
+        )
+        assert key not in service.load_state()
+        async with TestClient(TestServer(self._app())) as client:
+            resp = await client.post("/api/durability/run", json={"job": job})
+            assert resp.status == 200
+        stamped = service.load_state().get(key, 0)
+        assert stamped, f"a successful manual {job} must stamp {key}"
+        assert not service._due(
+            service.load_state(), key, 60.0
+        ), f"a just-run {job} must no longer read as due, or the tick redoes the work"
+
+    @pytest.mark.asyncio
+    async def test_a_manual_run_that_skipped_does_not_stamp(self, monkeypatch):
+        """A single-flight collision is not a run. Stamping one would let a concurrent
+        scheduled pass satisfy the schedule on the strength of work it never did."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        monkeypatch.setattr(
+            service,
+            "run_nightly_snapshot",
+            lambda *a, **k: service.JobResult("nightly_snapshot", skipped="already running"),
+        )
+        async with TestClient(TestServer(self._app())) as client:
+            await client.post("/api/durability/run", json={"job": "snapshot"})
+        assert "last_snapshot" not in service.load_state()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_manual_export_stays_due_but_a_failed_drill_does_not(self, monkeypatch):
+        """The two stamp rules are different ON PURPOSE, and both survive the endpoint.
+
+        A failed hourly export must be retried next tick; a failed monthly drill must NOT
+        re-run every tick and bury the user in notifications — its verdict is stamped with
+        the warning instead, which is what the archive browser reads.
+        """
+        from aiohttp.test_utils import TestClient, TestServer
+
+        monkeypatch.setattr(
+            service,
+            "run_incremental_export",
+            lambda *a, **k: service.JobResult("incremental_export", ok=False, detail="disk full"),
+        )
+        monkeypatch.setattr(
+            service,
+            "run_restore_drill",
+            lambda *a, **k: service.JobResult("restore_drill", ok=False, detail="corrupt"),
+        )
+        async with TestClient(TestServer(self._app())) as client:
+            await client.post("/api/durability/run", json={"job": "export"})
+            await client.post("/api/durability/run", json={"job": "drill"})
+        state = service.load_state()
+        assert "last_export" not in state, "a failed export must stay due"
+        assert state.get("last_drill"), "a failed drill must still be stamped"
+        assert state["last_drill_ok"] is False, "and stamped with its real verdict"
+
 
 class TestServiceLoop:
     @pytest.mark.asyncio

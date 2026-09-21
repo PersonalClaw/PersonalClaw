@@ -371,13 +371,16 @@ async def api_durability_run(request: web.Request) -> web.Response:
         "drill": lambda: service.run_restore_drill(notifier=notifier),
     }
     result = await asyncio.get_event_loop().run_in_executor(None, runners[job])
-    if job == "drill" and not result.skipped:
-        # An on-demand drill is a real drill: its verdict must reach the archive browser
-        # exactly as the scheduled tick's does, or "run drill now" would show a stale
-        # pass next to an archive that just failed.
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: service.persist_drill_result(result)
-        )
+    # 🔴 EVERY job stamps, not just the drill. A hand-run job is a real run: the same
+    # `durability_state.json` key the tick writes is what "Last run of each job" reads AND
+    # what `_due()` measures, so an unstamped manual run left the panel showing the old
+    # timestamp seconds after a success and let the scheduler redo the work — a redundant
+    # full snapshot — on the next tick (#361). `job_stamp_fields` owns which jobs stamp on
+    # failure (drill, with its verdict) and which only on success (export, snapshot), and a
+    # skip never stamps, so a single-flight collision cannot satisfy the schedule.
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.persist_job_result(job, result)
+    )
     _audit_api(
         request,
         f"durability_run:{job}",
