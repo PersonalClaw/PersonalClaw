@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { Field, Select, TextArea } from '../../ui/forms'
 import { api } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { missingRequired } from '../tools/schema'
+import {
+  missingRequired,
+  SchemaField,
+  type JsonSchema,
+  type SchemaMeta,
+} from '../tools/schema'
+import { usePromptWidgets } from '../prompts/promptWidgets'
 
 /** Serialize a structured config value for the JSON editor's text buffer. */
 export function serializeJsonField(value: unknown, expected: 'array' | 'object'): string {
@@ -61,10 +67,7 @@ function JsonField({ label, help, expected, value, onChange }: {
 }
 
 // One JSON-Schema property as the app config UI understands it (Draft-07 + x-meta).
-export interface SchemaProp {
-  type?: string
-  default?: unknown
-  enum?: unknown[]
+export interface SchemaProp extends JsonSchema {
   // Constraint keywords the platform enforces (#616) — validate_config's
   // supported set; the form mirrors them as native input attributes.
   minimum?: number
@@ -72,7 +75,7 @@ export interface SchemaProp {
   minLength?: number
   maxLength?: number
   pattern?: string
-  'x-meta'?: { label?: string; help?: string; sensitive?: boolean }
+  'x-meta'?: SchemaMeta
 }
 
 export interface AppConfigSchema {
@@ -101,6 +104,9 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
   // placeholder; typing a new value replaces the secret, blank keeps it (#43).
   secretSet?: string[]
 }) {
+  const needsPrompt = Object.values(props).some((p) => p['x-meta']?.widget === 'prompt')
+  const { widgets } = usePromptWidgets(needsPrompt)
+
   return (
     <>
       {Object.entries(props).map(([key, p]) => {
@@ -110,6 +116,19 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         const v = cur[key]
         const fieldId = `app-cfg-${appName}-${key}`
         const secretAlreadySet = !!meta.sensitive && secretSet.includes(key)
+        if (meta.widget && widgets[meta.widget]) {
+          return (
+            <SchemaField
+              key={key}
+              name={key}
+              schema={p}
+              required={isRequired}
+              value={v}
+              onChange={(nv) => set(key, nv)}
+              widgets={widgets}
+            />
+          )
+        }
         if (Array.isArray(p.enum) && p.enum.length) {
           return (
             <Field key={key} label={label} hint={meta.help}>
