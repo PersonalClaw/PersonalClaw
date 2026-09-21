@@ -43,6 +43,22 @@ class LLMJudge:
         self._provider: ModelProvider | None = None
 
     async def start(self) -> None:
+        """Build and start the ONE provider this judge grades with.
+
+        One provider per judge SESSION, not per :meth:`judge_turn`, and that is a
+        measurement constraint rather than an optimization: every consumer compares the
+        scores against each other — ``sampling`` picks the max over a slate,
+        ``learning.replay`` weighs arm A against arm B — so two turns graded by two
+        different models produce numbers that cannot be compared, and a max over them is
+        not a winner. That is why the direct-resolve chain advance the non-interactive
+        one-shot consumers get (MODEL-USE-CASES-V2 T2.4, ``llm_helpers``) stops at this
+        seam: the factory a caller hands in has already returned by the time a call fails,
+        so advancing to chain entry N+1 would have to happen HERE, mid-slate, and swap the
+        grader out from under a comparison already in progress. Chain fallback still
+        applies at RESOLUTION time inside the factory's
+        ``resolve_provider_for_use_case`` (breaker-OPEN and unbuildable entries are
+        skipped), so a known-down entry never becomes the grader in the first place.
+        """
         provider = self._factory("eval_judge")
         await provider.start()
         self._provider = provider

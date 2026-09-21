@@ -505,6 +505,217 @@ class TestCallFailureAdvance:
         assert not resolve.call_args.kwargs.get("model_override")
 
 
+# ── T2.4: the same advance for the DIRECT resolve consumers ──────────────────
+# MUCV-6's clause is "… in one_shot_completion AND THE DIRECT RESOLVE CONSUMERS".
+# Every arm below is discriminating: it fails outright if the advance is deleted from
+# the site (the site returns its degraded value / raises instead of the next entry's
+# text), and the exclusion arm fails if someone later "unifies" the interactive path
+# into the walk.
+
+
+class _Chunk:
+    """One EVENT_TEXT_CHUNK-shaped event."""
+
+    def __init__(self, text: str) -> None:
+        from personalclaw.llm.base import EVENT_TEXT_CHUNK
+
+        self.kind = EVENT_TEXT_CHUNK
+        self.text = text
+
+
+class _ScriptedProvider:
+    """A provider whose stream is scripted per resolved ref.
+
+    ``script`` is either the text to emit, or an ``Exception`` to raise, or a
+    ``(partial_text, Exception)`` pair — emit, then fail mid-stream.
+    """
+
+    def __init__(self, ref: str, script) -> None:
+        self._ref = ref
+        self._script = script
+        self.started = False
+        self.shutdown_calls = 0
+
+    async def start(self) -> None:
+        if isinstance(self._script, Exception) and isinstance(self._script, ConnectionError):
+            # A "cannot even start" entry — distinct from one that starts then fails.
+            raise self._script
+        self.started = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+    async def _emit(self):
+        script = self._script
+        if isinstance(script, tuple):
+            text, exc = script
+            yield _Chunk(text)
+            raise exc
+        if isinstance(script, Exception):
+            raise script
+        yield _Chunk(script)
+
+    def complete(self, _messages):
+        return self._emit()
+
+    def stream(self, _prompt):
+        return self._emit()
+
+
+def _scripted_resolver(scripts: dict[str, object], calls: list[str]):
+    """A ``resolve_provider_for_use_case`` stand-in keyed by the ref it is given."""
+
+    def fake_resolve(use_case, **kw):
+        ref = kw.get("model_override") or ""
+        calls.append(ref)
+        return _ScriptedProvider(ref, scripts[ref] if ref else scripts["__plain__"])
+
+    return fake_resolve
+
+
+class TestDirectConsumerAdvance:
+    """The non-interactive DIRECT resolve consumers walk the same chain."""
+
+    @pytest.mark.asyncio
+    async def test_knowledge_node_advances_past_a_failed_entry0(self, isolated_store, monkeypatch):
+        """DISCRIMINATING: without the advance this returns "" (the node's degrade)."""
+        from unittest.mock import patch
+
+        from personalclaw.knowledge.pipeline.nodes import _llm
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1", "p2"})
+        uc.save_active_models({"image_modality": ["p1:m1", "p2:m2"]})
+        calls: list[str] = []
+        resolver = _scripted_resolver(
+            {"p1:m1": RuntimeError("breaker open"), "p2:m2": "recovered"}, calls
+        )
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            side_effect=resolver,
+        ):
+            out = await _llm.complete_text("image_modality", "describe")
+        assert out == "recovered"
+        assert calls == ["p1:m1", "p2:m2"]  # rebuilt from N+1, once per remaining entry
+
+    @pytest.mark.asyncio
+    async def test_knowledge_node_single_entry_chain_takes_plain_path(
+        self, isolated_store, monkeypatch
+    ):
+        """The clause's one-entry rule: today's plain resolve, NO model_override."""
+        from unittest.mock import patch
+
+        from personalclaw.knowledge.pipeline.nodes import _llm
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1"})
+        uc.save_active_models({"image_modality": ["p1:m1"]})
+        calls: list[str] = []
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            side_effect=_scripted_resolver({"__plain__": "plain text"}, calls),
+        ):
+            out = await _llm.complete_text("image_modality", "describe")
+        assert out == "plain text"
+        assert calls == [""]  # one resolve, no override
+
+    @pytest.mark.asyncio
+    async def test_knowledge_node_whole_chain_failure_keeps_the_last_partial(
+        self, isolated_store, monkeypatch
+    ):
+        """An exhausted chain degrades (never raises into the pipeline) and hands back
+        the LAST attempt's partial text — two models' partials cannot be concatenated."""
+        from unittest.mock import patch
+
+        from personalclaw.knowledge.pipeline.nodes import _llm
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1", "p2"})
+        uc.save_active_models({"image_modality": ["p1:m1", "p2:m2"]})
+        calls: list[str] = []
+        resolver = _scripted_resolver(
+            {
+                "p1:m1": ("first-half", RuntimeError("dropped")),
+                "p2:m2": ("second-half", RuntimeError("dropped too")),
+            },
+            calls,
+        )
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            side_effect=resolver,
+        ):
+            out = await _llm.complete_text("image_modality", "describe")
+        assert calls == ["p1:m1", "p2:m2"]
+        assert out == "second-half"
+
+    @pytest.mark.asyncio
+    async def test_loop_gate_judge_advances_past_a_failed_entry0(self, isolated_store, monkeypatch):
+        """DISCRIMINATING: without the advance this returns "" — a can't-judge that
+        stalls a complete stage while a live fallback sits one entry down."""
+        from unittest.mock import patch
+
+        from personalclaw.loop import gates
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1", "p2"})
+        uc.save_active_models({"reasoning": ["p1:m1", "p2:m2"]})
+        calls: list[str] = []
+        resolver = _scripted_resolver(
+            {"p1:m1": ConnectionError("provider down"), "p2:m2": "PASS — criteria met"}, calls
+        )
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            side_effect=resolver,
+        ):
+            out = await gates.judge_verdict("grade this")
+        assert out == "PASS — criteria met"
+        assert gates.verdict_rendered(out) is True
+        assert calls == ["p1:m1", "p2:m2"]
+
+    @pytest.mark.asyncio
+    async def test_loop_gate_judge_single_entry_chain_takes_plain_path(
+        self, isolated_store, monkeypatch
+    ):
+        from unittest.mock import patch
+
+        from personalclaw.loop import gates
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1"})
+        uc.save_active_models({"reasoning": ["p1:m1"]})
+        calls: list[str] = []
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            side_effect=_scripted_resolver({"__plain__": "FAIL"}, calls),
+        ):
+            out = await gates.judge_verdict("grade this")
+        assert out == "FAIL"
+        assert calls == [""]
+
+    @pytest.mark.asyncio
+    async def test_interactive_screen_frame_resolve_does_NOT_advance(
+        self, isolated_store, monkeypatch
+    ):
+        """The load-bearing EXCLUSION: the interactive chat turn advances at call-start
+        only. A vision describe on a human-watched turn must resolve ONCE and let the
+        caller drop the optional annotation, not stack a second provider's timeout.
+        DISCRIMINATING in the other direction — it fails if this is ever unified."""
+        from unittest.mock import patch
+
+        from personalclaw.dashboard import chat_runner
+
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1", "p2"})
+        uc.save_active_models({"image_modality": ["p1:m1", "p2:m2"]})
+        calls: list[str] = []
+        resolver = _scripted_resolver(
+            {"__plain__": RuntimeError("vision provider down"), "p2:m2": "never reached"}, calls
+        )
+        with (
+            patch(
+                "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+                side_effect=resolver,
+            ),
+            pytest.raises(RuntimeError, match="vision provider down"),
+        ):
+            await chat_runner._describe_screen_frame("data:image/png;base64,AA==")
+        assert calls == [""]  # resolved once, with NO model_override — no chain walk
+
+
 # ── T1.4: the PUT accepts ordered chains for every use case ──────────────────
 
 
