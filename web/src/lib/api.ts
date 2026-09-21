@@ -6632,8 +6632,9 @@ export const api = {
     get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
-  // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
-  // occurrence from the recurrence each trigger already carries — read-only, no store changes.
+  // The week-grid projection (AUTO-A3). `start`/`until` are offset-qualified local datetimes; the
+  // backend computes every occurrence from the recurrence each trigger already carries — read-only,
+  // no store changes.
   triggersWeek: (start?: string, days = 7, until?: string) => {
     const qs = new URLSearchParams()
     if (start) qs.set('start', start)

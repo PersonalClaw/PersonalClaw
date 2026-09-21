@@ -12,6 +12,7 @@
 process.env.TZ = 'America/Santiago'
 
 import { describe, expect, it, afterAll } from 'vitest'
+import { localIso, zoneCaption } from './WeekGridView'
 import { buildWeekGrid, weekDays, weekEnd, weekSummary } from './weekGrid'
 import type { WeekOccurrence } from '../../lib/api'
 
@@ -47,6 +48,27 @@ describe('the drawn week IS the requested window, across DST (issue 608)', () =>
       const prev = new Date(days[i - 1]); prev.setDate(prev.getDate() + 1)
       expect(days[i].getDate()).toBe(prev.getDate())
     }
+  })
+
+  it('qualifies both request bounds with their actual browser offsets', () => {
+    const start = new Date(2026, 8, 2)
+    const end = weekEnd(start)
+    const wireStart = localIso(start)
+    const wireEnd = localIso(end)
+
+    expect(start.getTimezoneOffset(), 'control: the browser worker is not UTC').not.toBe(0)
+    expect(start.getTimezoneOffset(), 'control: this week crosses an offset change')
+      .not.toBe(end.getTimezoneOffset())
+    expect(wireStart).toMatch(/[+-]\d{2}:\d{2}$/)
+    expect(wireEnd).toMatch(/[+-]\d{2}:\d{2}$/)
+    expect(Date.parse(wireStart)).toBe(start.getTime())
+    expect(Date.parse(wireEnd)).toBe(end.getTime())
+  })
+
+  it('names the browser window zone alongside the server projection zone', () => {
+    expect(zoneCaption('America/Santiago', 'UTC'))
+      .toBe('window: America/Santiago · projection: UTC')
+    expect(zoneCaption('America/Santiago', 'America/Santiago')).toBe('')
   })
 
   it('every occurrence inside the 167h window lands in a column — none dropped', () => {
