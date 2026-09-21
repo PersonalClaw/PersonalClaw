@@ -144,6 +144,21 @@ describe('the knowledge delete states what the backend really takes', () => {
 })
 
 describe('no destructive dialog names its subject NOWHERE', () => {
+  const FIXED_SUBJECT_DIALOGS = [
+    {
+      file: 'pages/settings/AccountPanel.tsx',
+      title: "'Turn off password sign-in?'",
+    },
+    {
+      file: 'pages/settings/AccountPanel.tsx',
+      title: "'Turn off the 2FA requirement?'",
+    },
+    {
+      file: 'pages/settings/SecurityPanel.tsx',
+      title: "'Allow egress to all private networks?'",
+    },
+  ]
+
   const walk = (d: string): string[] =>
     readdirSync(d).flatMap((n) => {
       const p = join(d, n)
@@ -179,14 +194,24 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // this fixed list plus the assertion below that each still holds exactly one such dialog. A second
     // one appearing in any of them changes the count and fails, which is when the judgement needs
     // re-making by a person.
+    //
+    // Fixed settings controls are different from list rows: "password sign-in", "the 2FA
+    // requirement", and "all private networks" are the subjects themselves, not placeholders for
+    // one item selected from a collection. Keep their exact literal titles in a counted inventory
+    // instead of requiring fake interpolation merely to satisfy this source scan. `ToggleRow` is a
+    // typed forwarding boundary; its callers supply the required title/body, and the dedicated
+    // confirmWeakeningToggles suite verifies the two consumers introduced with that boundary.
     const SINGLE_SUBJECT_SURFACES = [
       'pages/code/CodeCockpitPage.tsx',      // one project per cockpit
       'pages/files/browse/FileViewer.tsx',   // one open file
       'pages/workflows/WorkflowRunDetail.tsx',  // one run
     ]
     const anonymous: string[] = []
+    const fixedSubjectsSeen = new Set<string>()
+    let typedForwardersSeen = 0
     for (const abs of walk(SRC)) {
-      if (SINGLE_SUBJECT_SURFACES.includes(abs.replace(SRC + '/', ''))) continue
+      const rel = abs.replace(SRC + '/', '')
+      if (SINGLE_SUBJECT_SURFACES.includes(rel)) continue
       const src = strip(readFileSync(abs, 'utf8'))
       for (const m of src.matchAll(/confirm\(\s*\{/g)) {
         const obj = objectAt(src, src.indexOf('{', m.index!))
@@ -194,11 +219,31 @@ describe('no destructive dialog names its subject NOWHERE', () => {
         const titleAndBody = (obj.match(/title:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
           + (obj.match(/body:[\s\S]*?(?=\n\s*\w+:|$)/)?.[0] ?? '')
         if (!titleAndBody.includes('${')) {
-          anonymous.push(`${abs.replace(SRC + '/', '')}: ${(obj.match(/title: ([^\n]*)/)?.[1] ?? '?').slice(0, 46)}`)
+          const fixed = FIXED_SUBJECT_DIALOGS.find(
+            (dialog) => dialog.file === rel && obj.includes(`title: ${dialog.title}`),
+          )
+          if (fixed) {
+            fixedSubjectsSeen.add(`${fixed.file}:${fixed.title}`)
+            continue
+          }
+          if (
+            rel === 'pages/settings/settingsUI.tsx'
+            && /title:\s*confirmOn\.title/.test(obj)
+            && /body:\s*confirmOn\.body/.test(obj)
+          ) {
+            typedForwardersSeen++
+            continue
+          }
+          anonymous.push(`${rel}: ${(obj.match(/title: ([^\n]*)/)?.[1] ?? '?').slice(0, 46)}`)
         }
       }
     }
     expect(anonymous, 'a dialog that identifies its subject in neither title nor body').toEqual([])
+    expect(
+      [...fixedSubjectsSeen].sort(),
+      'the fixed-setting exemption must stay exact and non-vacuous',
+    ).toEqual(FIXED_SUBJECT_DIALOGS.map((dialog) => `${dialog.file}:${dialog.title}`).sort())
+    expect(typedForwardersSeen, 'ToggleRow must forward one required title/body pair').toBe(1)
   })
 
   it('each single-subject surface still holds exactly one such dialog', () => {
