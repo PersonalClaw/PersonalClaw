@@ -485,31 +485,29 @@ class TestStaleSessionWorkspacesAreReaped:
         assert "86400" not in src, "the age budget lives in context_management, not here"
 
 
-class TestResetStateUntracksParentPid:
-    @pytest.mark.xfail(reason="pre-existing on main (v0.1.0 baseline) — #6", strict=False)
-    def test_reset_state_untracks_parent_pid(self) -> None:
-        """Verify _reset_state calls _untrack_pid with the saved PID."""
-        from personalclaw.acp.client import AcpClient
+class TestTransportTeardownUntracksParentPid:
+    def test_teardown_untracks_parent_pid(self) -> None:
+        """Verify transport teardown calls _untrack_pid with the saved PID."""
+        from personalclaw.acp.transport import AcpProcess
 
-        client = AcpClient.__new__(AcpClient)
-        client._process = None
-        client._pid = 54321
-        client._session_id = None
-        client._buffer = bytearray()
-        client._cancelled = False
-        client._resumed = False
-        client._sandbox_handle = None
-        client._child_pids = {}
-        client._stderr_lines = deque(["some error"], maxlen=20)
+        transport = AcpProcess(command=[], work_dir=".")
+        transport._process = None
+        transport._pid = 54321
+        transport._sandbox_handle = None
+        transport._child_pids = {}
+        transport._stderr_lines = deque(["some error"], maxlen=20)
         mock_task = Mock()
         mock_task.done.return_value = False
-        client._stderr_task = mock_task
+        transport._stderr_task = mock_task
 
-        with patch("personalclaw.session._untrack_pid") as mock_untrack:
-            client._reset_state()
+        with (
+            patch("personalclaw.session._untrack_pid") as mock_untrack,
+            patch("personalclaw.session._untrack_session_pid"),
+        ):
+            transport.teardown()
 
-        assert client._pid is None
-        assert len(client._stderr_lines) == 0
-        assert client._stderr_task is None
+        assert transport._pid is None
+        assert len(transport._stderr_lines) == 0
+        assert transport._stderr_task is None
         mock_task.cancel.assert_called_once()
         mock_untrack.assert_called_once_with(54321)
