@@ -72,11 +72,6 @@ def is_valid_username(value: str) -> bool:
     return value == slugify_username(value)
 
 
-def suggest_username(display_name: str) -> str:
-    """The username to pre-fill from the operator's display name."""
-    return slugify_username(display_name)
-
-
 def contributor_label(contributor: object, owner: str) -> str:
     """``" (from <handle>)"`` for another contributor's record, else ``""``.
 

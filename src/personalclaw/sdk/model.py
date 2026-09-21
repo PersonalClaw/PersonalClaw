@@ -25,7 +25,11 @@ from personalclaw.llm.base import (  # noqa: F401
     ModelProvider,
 )
 from personalclaw.llm.branded_specs import BrandedProviderSpec  # noqa: F401
-from personalclaw.llm.capabilities import Capability, ProviderCapability  # noqa: F401
+from personalclaw.llm.capabilities import (  # noqa: F401
+    Capability,
+    ProviderCapability,
+    StructuredOutput,
+)
 from personalclaw.llm.catalog import (  # noqa: F401
     ConnectionResult,
     ModelCatalog,
@@ -94,6 +98,14 @@ __all__ = [
     "EVENT_TOOL_CALL",
     "Capability",
     "ProviderCapability",
+    # The GRADED native-structured-output claim a model app advertises on its
+    # ProviderCapability. Exported because a provider that supports server-side schema
+    # enforcement has to name the enum member, and the bundled `ollama-models` app was
+    # reconstructing it as `type(ProviderCapability.__dataclass_fields__[...].default)` —
+    # which yields the right object at runtime but is unreadable, untypeable (mypy sees
+    # `type[Any] | type[Literal[_MISSING_TYPE.MISSING]]`), and exactly the "reach around
+    # the boundary" the native capability contract tells you to fix by promoting the symbol.
+    "StructuredOutput",
     "PromptCache",
     "CACHE_HINT_KEY",
     "Credential",

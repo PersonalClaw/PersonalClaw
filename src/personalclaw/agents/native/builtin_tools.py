@@ -183,6 +183,13 @@ _CATEGORY_OF: dict[str, str] = {
 # The platform (always-on) categories — surfaced by the core platform provider,
 # never user-removable. The rest are installable app providers.
 PLATFORM_CATEGORIES: frozenset[str] = frozenset({"filesystem", "shell", "core"})
+# The tool NAMES the platform bundle owns, derived from the category map rather than
+# listed again — a second hand-written list would drift the moment a category gains a
+# tool. `/api/tools/invoke` reads it to tell "no such tool" apart from "this tool is the
+# platform's and the platform has no workspace to run in" (#3310).
+PLATFORM_TOOL_NAMES: frozenset[str] = frozenset(
+    name for name, category in _CATEGORY_OF.items() if category in PLATFORM_CATEGORIES
+)
 # category → (provider_name, display) for the installable app providers.
 APP_CATEGORY_PROVIDERS: dict[str, tuple[str, str]] = {
     "knowledge": ("personalclaw-knowledge-tools", "Knowledge Tools"),
@@ -2233,10 +2240,23 @@ class NativeBuiltinToolProvider(ToolProvider):
 # bundle (filesystem/shell/core) is always-on; the rest are installable apps.
 
 
-def create_platform_tools_provider(config: dict | None = None) -> "NativeBuiltinToolProvider":
+def create_platform_tools_provider(
+    config: dict | None = None, *, cwd: "Path | str | None" = None
+) -> "NativeBuiltinToolProvider":
     """The always-on platform tool surface: filesystem + shell + the tool_result_get
-    affordance. The native agent's foundation — never user-removable."""
+    affordance. The native agent's foundation — never user-removable.
+
+    ``cwd`` is the workspace these tools are CONFINED to (``_resolve`` refuses any path
+    that escapes it). A consumer that only ENUMERATES the surface can leave it unset —
+    ``list_tools`` never touches cwd, which is why ``GET /api/tools`` and the group
+    partition construct without one. A consumer that EXECUTES must pass it, because the
+    instance fallback is ``Path.cwd()``: the directory the gateway process happens to be
+    running in, which is a repo checkout or whatever a service manager set. Confining
+    the file and shell tools to *that* is the same containment-decision-falls-through-to-
+    an-ambient-value shape ``session._resolve_acp_spawn_cwd`` refuses (#3310).
+    """
     return NativeBuiltinToolProvider(
+        cwd=Path(cwd) if cwd else None,
         categories=PLATFORM_CATEGORIES,
         provider_name="personalclaw-filesystem",
         display="Filesystem & Shell Tools",

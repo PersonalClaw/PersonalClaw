@@ -122,6 +122,84 @@ class TestSearchForContext:
         assert H.KNOWLEDGE_FETCH_TOP_N == 3
         assert H.KNOWLEDGE_FETCH_MAX_TOKENS == 4096
 
+    def test_the_module_constants_do_not_drift_from_the_declared_defaults(self):
+        """#1783 — the two knobs now have a model, and these constants are only the
+        unreadable-config fallback. Two defaults that can disagree is how the pre-fix
+        shape got a live reader with no declaration in the first place."""
+        from personalclaw.config.loader import KnowledgeConfig
+        from personalclaw.dashboard.handlers import knowledge as H
+
+        declared = KnowledgeConfig()
+        assert H.KNOWLEDGE_FETCH_TOP_N == declared.fetch_top_n
+        assert H.KNOWLEDGE_FETCH_MAX_TOKENS == declared.fetch_max_tokens
+
+    def _pin_fetch_cfg(self, monkeypatch, *, top_n: int, max_tokens: int):
+        """Pin the two fetch knobs on the config the handler reads.
+
+        On `AppConfig.load`, deliberately: before #1783 the handler read the raw
+        config.json and never consulted the model at all, so a test that only wrote a
+        file would pass against a handler that ignored the declaration.
+        """
+        from personalclaw.config.loader import AppConfig
+
+        cfg = AppConfig.load()
+        cfg.knowledge.fetch_top_n = top_n
+        cfg.knowledge.fetch_max_tokens = max_tokens
+        monkeypatch.setattr(
+            "personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: cfg)
+        )
+
+    def test_fetch_max_tokens_is_read_from_the_config_model(self, mock_knowledge_app, monkeypatch):
+        """#1783 — `knowledge.fetch_max_tokens` is live behaviour that was declared nowhere.
+
+        `test_max_tokens_default_when_absent` above is the vacuity floor: with nothing
+        configured the same request answers 4096, so this 777 can only come from the knob.
+        """
+        self._pin_fetch_cfg(monkeypatch, top_n=3, max_tokens=777)
+        body = self._ctx(mock_knowledge_app, "q=auth")
+        assert body["max_tokens"] == 777
+
+    def test_fetch_top_n_is_read_from_the_config_model(self, tmp_path, monkeypatch):
+        """The same for the result count — asserted against a corpus big enough to exceed it."""
+        from personalclaw.knowledge.store import KnowledgeStore
+
+        store = KnowledgeStore(str(tmp_path / "k.db"))
+        for i in range(5):
+            store.create_typed_item(
+                item_type="note", title=f"Kafka {i}", content="kafka tip", summary="kafka"
+            )
+
+        self._pin_fetch_cfg(monkeypatch, top_n=5, max_tokens=4096)
+        assert len(self._ctx(store, "q=kafka")["results"]) == 5, "floor: 5 items do match"
+
+        self._pin_fetch_cfg(monkeypatch, top_n=2, max_tokens=4096)
+        assert len(self._ctx(store, "q=kafka")["results"]) == 2
+
+    def test_a_per_request_limit_still_overrides_the_configured_top_n(self, tmp_path, monkeypatch):
+        from personalclaw.knowledge.store import KnowledgeStore
+
+        store = KnowledgeStore(str(tmp_path / "k.db"))
+        for i in range(5):
+            store.create_typed_item(
+                item_type="note", title=f"Kafka {i}", content="kafka tip", summary="kafka"
+            )
+        self._pin_fetch_cfg(monkeypatch, top_n=2, max_tokens=4096)
+        assert len(self._ctx(store, "q=kafka&limit=4")["results"]) == 4
+
+    def test_the_two_fetch_knobs_are_patchable(self):
+        """The round-trip contract's write path — the half that was missing entirely."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        assert _EDITABLE_CONFIG["knowledge.fetch_top_n"]["min"] == 1
+        assert _EDITABLE_CONFIG["knowledge.fetch_max_tokens"]["min"] == 1
+
+    def test_the_token_budget_ceiling_matches_the_handlers_own_ceiling(self):
+        """A PATCH may not accept a budget the handler will silently clamp away."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.dashboard.handlers.knowledge import _CONTEXT_MAX_TOKENS_CEILING
+
+        assert _EDITABLE_CONFIG["knowledge.fetch_max_tokens"]["max"] == _CONTEXT_MAX_TOKENS_CEILING
+
     def _ctx(self, store, query_string):
         import asyncio
         from types import SimpleNamespace

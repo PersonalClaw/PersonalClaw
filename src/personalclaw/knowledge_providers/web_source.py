@@ -56,13 +56,15 @@ is a source to drop.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from html import unescape
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from urllib.parse import urljoin, urlsplit
 
 from personalclaw.knowledge_providers import conditional_get
@@ -132,6 +134,18 @@ USE_TOP_SELECTORS = 5
 #: needs JavaScript" (almost no text, no items) — two failures with completely different
 #: remediations that would otherwise both surface as "found nothing".
 JS_SHELL_MAX_TEXT_CHARS = 400
+
+#: Tier 3's post-navigate wait (§(d)/BA-6). The gateway session's ``navigate`` only SENDS
+#: ``Page.navigate`` — it does not await the load event — and a client-rendered page then builds
+#: its DOM some unknown time after that, so reading the DOM in the same breath as the navigate
+#: returns the pre-render shell: no extractable text, ``ok=False``, and the content cursor never
+#: advances. The wait is BOUNDED because a watched-source tick is a scheduled actuator: at the
+#: ceiling it extracts whatever the DOM holds rather than hanging or raising. 10s matches the
+#: ceiling ``browse/loop.py``'s SUBMIT verification already uses for "wait for the page to do
+#: something" (5 polls × 2s); the poll interval is short so an already-rendered page pays one
+#: interval and no more.
+BROWSE_SETTLE_TIMEOUT_SECONDS = 10.0
+BROWSE_SETTLE_POLL_SECONDS = 0.25
 
 #: Per-poll and per-item ceilings, mirroring ``feed_source``: one pathological page must not
 #: dominate the shared loop or the process's memory.
@@ -931,6 +945,16 @@ def apply_hygiene(rows: list[dict], *, page_url: str, spec: dict) -> list[Source
     return out
 
 
+def _visible_text(dom: Element) -> str:
+    """The page's visible text — ``<body>``'s when there is one, the whole tree otherwise.
+
+    ``Element.text`` already excludes ``script``/``style``/``noscript``, so this is prose the
+    reader would see, not the bundle a shell ships to build it.
+    """
+    body = next((n for n in dom.iter_descendants() if n.tag == "body"), dom)
+    return body.text
+
+
 def looks_like_js_shell(html: str, dom: Element) -> bool:
     """Whether this page is a client-rendered shell rather than a document (§2.3).
 
@@ -943,8 +967,84 @@ def looks_like_js_shell(html: str, dom: Element) -> bool:
     if not html:
         return False
     has_script = any(node.tag == "script" for node in dom.iter_descendants())
-    body = next((n for n in dom.iter_descendants() if n.tag == "body"), dom)
-    return has_script and len(body.text) < JS_SHELL_MAX_TEXT_CHARS
+    return has_script and len(_visible_text(dom)) < JS_SHELL_MAX_TEXT_CHARS
+
+
+def looks_rendered(html: str) -> bool:
+    """Whether ``html`` is a page that has finished building itself (§2.3, tier 3's wait).
+
+    Two clauses, because a pre-render DOM arrives in two shapes:
+
+    * it is not :func:`looks_like_js_shell` — the SAME measured discrimination tiers 1 and 2
+      escalate on, so a page that reaches the browse tier and is STILL a shell has not rendered;
+    * and it has some visible text at all — which is what catches the other shape, the empty
+      document a not-yet-committed ``Page.navigate`` leaves in place. That document carries no
+      script, so the shell clause alone would call it a rendered page and read nothing.
+    """
+    if not html:
+        return False
+    dom = parse_html(html)
+    return bool(_visible_text(dom)) and not looks_like_js_shell(html, dom)
+
+
+def make_browse_settle(
+    *,
+    timeout: float = BROWSE_SETTLE_TIMEOUT_SECONDS,
+    interval: float = BROWSE_SETTLE_POLL_SECONDS,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    now: Callable[[], float] | None = None,
+) -> Callable[[Any], Awaitable[None]]:
+    """Tier 3's post-navigate wait: hold until the page has RENDERED, then let the tick read it.
+
+    The policy, in one sentence: re-read the DOM every ``interval`` until it :func:`looks_rendered`
+    **and** two consecutive reads agree, giving up at ``timeout``. Both halves are load-bearing.
+
+    * The rendered check is why this beats a plain quiescence wait: a shell whose hydration has
+      not started yet is perfectly quiescent, and stopping there is exactly the pre-render read
+      this wait exists to prevent.
+    * The agreement check is why it beats a fixed sleep in the other direction: a page that is
+      already a document costs ONE interval and stops, and a page that renders progressively is
+      not read half-built.
+
+    The deliberate trade: a page that ships script and renders FEWER than
+    :data:`JS_SHELL_MAX_TEXT_CHARS` of text is, by §2.3's measurement, indistinguishable from one
+    that never rendered — so it waits out the ceiling and is then extracted anyway. That costs a
+    bounded wait on the tier that is already the last and most expensive one, and it is the right
+    way round: the other choice reads every JS page too early, which is the defect.
+
+    Never raises, and never hangs. At the ceiling it simply returns and the runner extracts the
+    DOM as it stands — a slow page must stay the SOFT tick failure a browser fault already is,
+    and a scheduled actuator must not be able to block on a page that never settles. A DOM read
+    that faults returns too, leaving the fault for the runner's own read to report. The loop is
+    bounded by a poll count as well as by the clock, so it terminates even under an injected
+    clock that does not advance.
+    """
+    _sleep = sleep or asyncio.sleep
+    _now = now or time.monotonic
+    step = max(0.0, interval)
+    max_polls = int(max(0.0, timeout) / step) + 2 if step else 2
+
+    async def _settle(page: Any) -> None:
+        deadline = _now() + max(0.0, timeout)
+        previous: str | None = None
+        for _ in range(max_polls):
+            try:
+                current = str(await page.html() or "")
+            except Exception:  # noqa: BLE001 — the runner's own read reports the fault
+                return
+            if current == previous and looks_rendered(current):
+                return
+            previous = current
+            if _now() >= deadline:
+                break
+            await _sleep(step)
+        logger.debug(
+            "browse settle: the page had not settled into a document after %.1fs; "
+            "extracting the DOM as it stands",
+            timeout,
+        )
+
+    return _settle
 
 
 # ── the provider ────────────────────────────────────────────────────────────────────
@@ -1136,8 +1236,14 @@ class WebSourceProvider(KnowledgeSourceProvider):
             from personalclaw.browse.plans import KIND_WATCH_PAGE, BrowsePlan, execute_tick
             from personalclaw.guardrails.autonomy import RUNG_ONE_TAP
 
+            # `settle` is not optional HERE, whatever its default is on the runner: this tier is
+            # reached only because tiers 1 and 2 already saw a shell, so reading the DOM straight
+            # after the navigate reads that same shell again and reports "no extractable text"
+            # forever without advancing the cursor. See `make_browse_settle` for the policy.
             runner = make_content_tick_runner(
-                open_session=make_gateway_opener(), resolve_url=lambda: cdp_url
+                open_session=make_gateway_opener(),
+                resolve_url=lambda: cdp_url,
+                settle=make_browse_settle(),
             )
             plan = BrowsePlan(
                 id=f"web-source:{source_id}" if source_id else "web-source-preview",

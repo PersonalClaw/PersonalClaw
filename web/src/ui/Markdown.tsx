@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { createContext, memo, useContext, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { physics } from '../design/motion'
 import { fvs } from '../design/fontWeight'
@@ -218,14 +218,31 @@ function looksLikeFile(s: string): boolean {
   return t.length <= 200 && !t.includes(' ') && FILE_PATH_RE.test(t)
 }
 
-function renderCode({ className, children }: any) {
+/** Does this `code` element sit inside a `<pre>`? That is the GROUND TRUTH for
+ *  block-vs-inline, and the only signal that gets the single-line cases right:
+ *  `mdast-util-to-hast` wraps every block code node — fenced with a language,
+ *  fenced without one, and 4-space indented — in a `<pre>`, and never wraps an
+ *  inline code span (whose value cannot contain a newline at all, since
+ *  CommonMark folds line endings inside a span to spaces). Measured for all five
+ *  shapes in `fencedCodeIsBlock.test.tsx`. Provided by the `pre` override below;
+ *  read by both `code` call sites (COMPONENTS and componentsWith). */
+const InPre = createContext(false)
+
+function renderCode({ className, children, inPre }: any) {
   const m = /language-(\w+)/.exec(className || '')
   const str = String(children).replace(/\n$/, '')
-  // Block vs inline: react-markdown only tags fenced code with a `language-*`
-  // class when a language is given — a fenced block with NO language has no
-  // className and would otherwise be mistaken for inline code. Treat anything
-  // with a className OR a newline (i.e. a real multi-line fence) as a block.
-  const isBlock = !!className || str.includes('\n')
+  // Block vs inline. `inPre` decides it; the other two are independent fallbacks
+  // for a raw-HTML `<code>` that rehype-raw hands us with no `<pre>` around it.
+  //
+  // 🔴 #2515: this used to be `!!className || str.includes('\n')` alone. A fence with
+  // NO language has no className, and react-markdown's trailing newline is stripped
+  // one line above — so a SINGLE-LINE no-language fence failed both tests and rendered
+  // as an inline chip. Measured in a real browser: one 217-char unbreakable token in
+  // such a fence became a 1424px `<code>` with `white-space: normal` and
+  // `overflow-x: visible` inside a 338px region, so it could neither wrap nor scroll,
+  // and it dragged every unrelated line in that result onto a 1424px canvas. The same
+  // bytes plus one newline were already a contained, scrollable `<pre>`.
+  const isBlock = inPre || !!className || str.includes('\n')
   if (!isBlock) return <code className="rounded-sm bg-surface-high px-1.5 py-0.5 text-[0.85em] font-mono text-primary-emphasis">{children}</code>
   const lang = m?.[1]
   if (lang === 'mermaid') return <MermaidBlock code={str} />
@@ -234,8 +251,10 @@ function renderCode({ className, children }: any) {
 }
 
 const COMPONENTS: Record<string, React.ComponentType<any>> = {
-  code: renderCode,
-  pre({ children }: any) { return <>{children}</> },
+  code(props: any) { return renderCode({ ...props, inPre: useContext(InPre) }) },
+  // Still an unwrapper — the block renderers below bring their own `<pre>`. It only
+  // marks the subtree, so the `code` child can tell a fence from an inline span.
+  pre({ children }: any) { return <InPre.Provider value={true}>{children}</InPre.Provider> },
   table({ children }: any) { return <div className="my-3 overflow-x-auto"><table data-type="body-s" className="w-full border-collapse">{children}</table></div> },
   th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
@@ -274,6 +293,60 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
 
 const REMARK: PluggableList = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]
 const REHYPE: PluggableList = [[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
+
+/** ── `inline` mode: the SAME renderer, for a sink that cannot hold a block ──────────────
+ *
+ *  🔴 SIX PROSE SINKS RENDERED MARKDOWN AS LITERAL TEXT (#2515) — app descriptions on the
+ *  Store card and both detail panels, the Tools list row, app-config help, and tool
+ *  parameter descriptions. Every one of them carries the SAME authored field the inspector
+ *  already renders correctly through `<Markdown>` two lines above, so a description reading
+ *  "Sync your **vault** via `rsync`" came out with its asterisks and backticks on screen.
+ *
+ *  Four of those six cannot take the block renderer, and the reasons are structural, not
+ *  cosmetic:
+ *   · `line-clamp-2` clamps the element that CARRIES the text flow (it is `-webkit-box`),
+ *     so a nested `<p>` breaks the clamp outright and the card grows to the prose.
+ *   · `Field`'s hint sink is a `<p>`; a `<div>` inside a `<p>` is invalid markup the
+ *     parser closes early.
+ *   · the Tools row is a `<button>`, so a rendered `<a>` there is `nested-interactive`
+ *     (axe, serious) — links render as styled TEXT here, never anchors.
+ *
+ *  🪤 NOT A SECOND RENDERER. Same `Markdown` entry point, same remark pipeline, same
+ *  component vocabulary — block containers are unwrapped and flattened to running text, so
+ *  a heading or a table in a two-line description degrades to its words instead of
+ *  reflowing the grid. Two deliberate differences:
+ *   · no `rehype-raw` / `rehype-katex`. The block renderer's doc says "source is trusted
+ *     (our own backend)"; THESE sinks carry third-party manifest prose — `app.json`
+ *     descriptions, MCP tool and parameter descriptions — so raw HTML is not passed
+ *     through and LaTeX is not parsed.
+ *   · no colour of its own. Each sink owns its ink (`text-on-surface-low`,
+ *     `text-on-surface-var`, caption), so inline mode inherits rather than forcing
+ *     `text-on-surface` the way the block wrapper does. That is what keeps these six
+ *     visually unchanged apart from the formatting they were missing.
+ */
+const INLINE_UNWRAP = [
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br', 'img', 'pre',
+  'ul', 'ol', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+]
+
+const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
+  // Always the inline pill — `renderCode` resolves a fenced block to a `<div>`/`<pre>`
+  // surface (and a ```mermaid fence to a diagram), which is precisely what must not
+  // appear inside a clamped one-liner.
+  // `px-xs`, not the block renderer's raw `px-1.5 py-0.5`: this chip is new code, so it takes the
+  // tokenised rung and rides the density slider (`design/spacingTokenRamp.test.ts`). It pads tighter
+  // than block mode deliberately — these sinks are one or two clamped lines of running prose, and
+  // there is no vertical padding because a taller chip is what would push a clamped row around.
+  code({ children }: any) { return <code className="rounded-sm bg-surface-high px-xs text-[0.85em] font-mono text-primary-emphasis">{children}</code> },
+  strong({ children }: any) { return <strong style={fvs(600)}>{children}</strong> },
+  em({ children }: any) { return <em className="italic">{children}</em> },
+  del({ children }: any) { return <del className="opacity-70">{children}</del> },
+  // The list wrapper is unwrapped, so the items land directly in the flow — a trailing
+  // space keeps "onetwothree" from happening.
+  li({ children }: any) { return <span>{children}{' '}</span> },
+  // Inert by design: three of the four inline sinks sit inside a click target.
+  a({ children }: any) { return <span className="underline underline-offset-2 decoration-current/40">{children}</span> },
+}
 
 // Bare file paths inside prose (not just inline-code): /a/b.ext, ~/a/b.ext, or
 // workspace-relative a/b.ext with an extension. Conservative to avoid prose.
@@ -384,6 +457,10 @@ function componentsWith(
   return {
     ...base,
     code({ className, children }: any) {
+      // Read unconditionally (Rules of Hooks) — the file-path branch below returns early.
+      // This is the SECOND `renderCode` call site; a fix that only threads the signal into
+      // COMPONENTS would leave chat, the highest-traffic consumer, on the old predicate.
+      const inPre = useContext(InPre)
       const str = String(children).replace(/\n$/, '')
       if (onFileClick && !className && looksLikeFile(str)) {
         return (
@@ -393,7 +470,7 @@ function componentsWith(
           </button>
         )
       }
-      return renderCode({ className, children })
+      return renderCode({ className, children, inPre })
     },
     p({ children }: any) { return <p data-type="body-m" className="my-1.5 leading-relaxed">{L(children)}</p> },
     li({ children }: any) { return <li data-type="body-m" className="leading-relaxed">{L(children)}</li> },
@@ -422,8 +499,12 @@ function MarkdownText({ children, onFileClick, chatSessionKey, citations }: {
   return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
+export const Markdown = memo(function Markdown({ children, className, inline, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
+  /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
+   *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
+   *  click target. See `INLINE_UNWRAP` above for what it costs and why. */
+  inline?: boolean
   /** Chat session key — enables "Regenerate" on a deleted inline image's placeholder
    *  (re-runs at the same slug; server recovers the prompt from this session). */
   chatSessionKey?: string
@@ -440,6 +521,15 @@ export const Markdown = memo(function Markdown({ children, className, onFileClic
   // shape renders as readable text instead of crashing React (#31).
   const text = typeof children === 'string' ? children : stringifyChildren(children)
   if (!text.trim()) return null
+  // An inline sink is a clamp/hint/click-target, never a widget host, so it takes the
+  // flattening pass and no `<div>` and no colour of its own (the sink owns its ink).
+  if (inline) {
+    return (
+      <span className={className}>
+        <ReactMarkdown remarkPlugins={REMARK} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>{text}</ReactMarkdown>
+      </span>
+    )
+  }
   // Split out `<widget>` blocks; render each as a sandboxed iframe, prose as MD.
   const segments = parseWidgetBlocks(text, streaming)
   if (segments.length === 1 && segments[0].type === 'md') {

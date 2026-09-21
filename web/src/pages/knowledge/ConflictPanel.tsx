@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Scale, Sparkles } from 'lucide-react'
+import { AlertTriangle, Scale } from 'lucide-react'
 import { api, type KnowledgeConflict } from '../../lib/api'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -14,11 +14,11 @@ import { accentChip } from '../../design/accent'
  *  sources, which is the owner's to make. A "resolve" button here would invite the system to
  *  discard evidence, and a discarded claim is unrecoverable.
  *
- *  `basis` is rendered distinctly because a deterministic finding and a fast model's opinion
- *  deserve different trust, and the claim text alone does not say which one you are looking
- *  at. `prefer` shows the source-precedence ladder's advice, and shows nothing when the ladder
- *  cannot decide — two same-tier sources genuinely have no winner, and inventing one would
- *  manufacture authority out of arrival order. */
+ *  Every row is a proven conflict — two claims that provably cannot both hold — so the header
+ *  states that flatly instead of grading trust per row. `prefer` shows the source-precedence
+ *  ladder's advice, and shows nothing when the ladder cannot decide — two same-tier sources
+ *  genuinely have no winner, and inventing one would manufacture authority out of arrival
+ *  order. */
 export function ConflictPanel() {
   const [conflicts, setConflicts] = useState<KnowledgeConflict[] | null>(null)
 
@@ -51,25 +51,16 @@ export function ConflictPanel() {
 }
 
 function ConflictRow({ conflict }: { conflict: KnowledgeConflict }) {
-  const proven = conflict.basis === 'deterministic'
   return (
     <div data-type="body-s" className="rounded-lg border border-outline-variant bg-surface p-3">
       <div data-type="caption" className="mb-2 flex items-center gap-2 text-on-surface-low">
-        {proven
-          ? <AlertTriangle size={13} className="text-warning" aria-hidden />
-          : <Sparkles size={13} aria-hidden />}
-        <span style={fvs(600)}>{proven ? 'Provable conflict' : 'Possible conflict'}</span>
+        {/* Unconditional, because every recorded conflict is proven: the store's only writer is
+            the deterministic tier. No confidence percentage rides along for the same reason —
+            printing "100%" on a proof implies a scale it is not measured on. */}
+        <AlertTriangle size={13} className="text-warning" aria-hidden />
+        <span style={fvs(600)}>Provable conflict</span>
         <span aria-hidden>·</span>
         <span>{conflict.kind}</span>
-        {!proven && (
-          <>
-            <span aria-hidden>·</span>
-            {/* Stated for the model tier only: a proof has no meaningful confidence to show,
-                and printing "100%" next to it would imply the two tiers are the same kind of
-                claim measured on one scale. */}
-            <span>{Math.round(conflict.confidence * 100)}% confident</span>
-          </>
-        )}
       </div>
 
       <ClaimSide

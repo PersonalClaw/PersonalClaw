@@ -58,6 +58,7 @@ lint:
 	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS)
 	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS)
 	$(PYTHON) -m mypy $(PKG) $(HARNESS)
+	$(PYTHON) scripts/lint_bundled_apps.py $(PYTHON)
 
 ## test: run pytest
 test:

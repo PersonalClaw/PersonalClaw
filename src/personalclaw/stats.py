@@ -162,11 +162,11 @@ def cache_hit_pct(
     cached tokens, so they must be added back to recover the turn's whole prompt.
     Evidence:
 
-    * ``llm/anthropic.py:529-531`` (and its twin at ``:715-717``) assigns
+    * ``llm/anthropic.py:539-541`` (and its twin at ``:725-727``) assigns
       ``input_tokens`` verbatim from ``usage.input_tokens``, while the cache counts
       come from the SDK's separate ``cache_creation_input_tokens`` /
       ``cache_read_input_tokens`` fields via ``_read_cache_usage``
-      (``llm/anthropic.py:84-98``). No arithmetic ever relates the three.
+      (``llm/anthropic.py:85-99``). No arithmetic ever relates the three.
     * ``pricing.py:106-113`` bills them additively — ``input * in_rate + cache_read *
       cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
       already contained the cached tokens, the shipped cost model would double-bill

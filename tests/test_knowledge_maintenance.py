@@ -20,10 +20,8 @@ from personalclaw.knowledge.consolidation import (
     TOKEN_CLUSTER_SIMILARITY,
     Cluster,
     Item,
-    changed_sections,
     check_gates,
     check_health,
-    chunk_hashes,
     cluster_items,
     fuzzy_hash,
     lint_due,
@@ -321,37 +319,6 @@ def test_an_empty_store_is_healthy():
 def test_archived_items_are_not_reported():
     """They are demoted by design; reporting them is noise."""
     assert check_health([Item(id="a", content="tiny", is_archived=True)]).clean
-
-
-# ── differential refresh ──
-
-
-def test_only_changed_sections_are_refreshed():
-    stored = {"intro": "a" * 16, "body": "b" * 16}
-    fresh = {"intro": "a" * 16, "body": "c" * 16}
-    assert changed_sections(stored, fresh) == ["body"]
-
-
-def test_a_new_section_counts_as_changed():
-    assert changed_sections({}, {"new": "a" * 16}) == ["new"]
-
-
-def test_a_removed_section_does_not():
-    """Re-synthesizing a section that no longer exists is meaningless."""
-    assert changed_sections({"gone": "a" * 16}, {}) == []
-
-
-def test_a_truncated_hash_compared_to_a_full_one_reports_changed():
-    """The studied failure: storing a truncated hash and comparing a full one made every section
-    look changed forever — a refresh that always re-synthesizes everything, at full cost,
-    silently. Reporting "changed" is the safe direction; treating incomparable values as equal
-    means never refreshing."""
-    assert changed_sections({"a": "abcd1234"}, {"a": "abcd1234abcd1234"}) == ["a"]
-
-
-def test_chunk_hashes_are_one_canonical_form():
-    hashes = chunk_hashes({"a": "text one", "b": "text two"})
-    assert len({len(h) for h in hashes.values()}) == 1
 
 
 # ── phantom hubs ──

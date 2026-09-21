@@ -300,6 +300,78 @@ def _doctor_timezone() -> list[str]:
     return [f"timezone: unresolved — schedules fall back to {facts['resolved']}"]
 
 
+def _doctor_external_vector_store() -> list[str]:
+    """Print the bound external chunk-vector index's own report, or nothing (#3139).
+
+    ``VectorStoreProvider.describe()`` is the contract's diagnostics surface — every app
+    implemented it, core called it NOWHERE, so the one question a user with an external
+    backend asks ("is my store actually being used, and does it have my vectors?") had no
+    answer on any surface. An empty-but-reachable index is the silent case: search simply
+    returns no chunk hits, which is indistinguishable from "no matches".
+
+    Silent when no backend is bound, because the bundled ``vec0`` path is the default and a
+    row saying "not using a feature you did not enable" is noise on every install.
+
+    Returns ``issues`` entries only for the two states a user must act on: unreachable, and
+    reachable-but-empty while the local corpus holds embedded chunks. A count that merely
+    DISAGREES prints a warning without failing — a backfill in flight is a normal transient.
+    """
+    try:
+        from personalclaw.vector_stores.registry import active_provider
+
+        provider = active_provider()
+    except Exception:
+        return []
+    if provider is None:
+        return []
+
+    name = getattr(provider, "name", "?")
+    try:
+        # By contract describe() reports `reachable=False` rather than raising; a backend
+        # that breaks that must not take the doctor down with it.
+        info = provider.describe()
+    except Exception as exc:
+        print(f"  chunk index: ⚠️  {name}: describe() raised ({str(exc)[:80]})")
+        return [f"vector store {name}: describe() raised"]
+
+    local = None
+    try:
+        from personalclaw.knowledge import get_knowledge_store
+
+        local = int(
+            get_knowledge_store()
+            .db.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL")
+            .fetchone()[0]
+        )
+    except Exception:
+        # A local read failure is the knowledge store's own problem, reported elsewhere.
+        pass
+
+    shape = f"{info.backend}/{info.collection}"
+    if info.dimension is not None:
+        shape += f" dim {info.dimension}"
+    count = "unknown" if info.count is None else str(info.count)
+    local_txt = "" if local is None else f", local {local}"
+    if not info.reachable:
+        print(f"  chunk index: ❌ {name} ({shape}) unreachable")
+        # The provider's own sentence, which by contract carries the reason and no secret.
+        if info.detail:
+            print(f"               {info.detail}")
+        print("               Knowledge chunk search returns nothing while it is down —")
+        print("               it does NOT fall back to the built-in index.")
+        return [f"vector store {name} unreachable"]
+
+    print(f"  chunk index: ✅ {name} ({shape}) — {count} vector(s){local_txt}")
+    if local and info.count == 0:
+        print(f"               Empty while {local} local chunk(s) are embedded — searches")
+        print("               find no chunks. Fix: re-enable the app to backfill, or")
+        print("               reindex from Settings → Doctor → Maintenance.")
+        return [f"vector store {name} empty"]
+    if local is not None and info.count is not None and info.count != local:
+        print("               ⚠️  count differs from local — a backfill may be in flight.")
+    return []
+
+
 def _doctor_maintenance() -> None:
     """Print the remediation engine's health score and the deficits behind it.
 
@@ -690,6 +762,7 @@ def _doctor() -> None:
         print("  embeddings:  ✅ enabled")
     else:
         print("  embeddings:  ⏹ disabled (pick an embedding model in Settings → Models)")
+    issues.extend(_doctor_external_vector_store())
 
     _doctor_maintenance()
 

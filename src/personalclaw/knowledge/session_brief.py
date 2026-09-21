@@ -31,16 +31,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
 #: Default ceiling for a whole brief. `KnowledgeConfig.session_brief_max_tokens` overrides it.
 #: Small on purpose: this is injected into EVERY run in a project, so its cost is paid over and
 #: over and a generous default would be a permanent tax nobody attributes to the right feature.
 DEFAULT_MAX_TOKENS = 800
-
-#: The usual ~4 chars/token approximation. Used rather than a tokenizer because this runs at run
-#: start on the hot path, and being wrong by 10% on a budget is fine while being slow is not.
-CHARS_PER_TOKEN = 4
 
 #: Kinds that earn a place before anything else, in order. A decision is the highest-value thing
 #: in the store for a resumed run: the journal says what happened, the decision says WHY, and
@@ -177,7 +175,9 @@ def compose(
     Items are dropped WHOLE. A truncated decision is worse than an absent one: half a rationale
     reads as a complete one, and a run would act on the half it saw.
     """
-    budget_chars = max(0, int(max_tokens)) * CHARS_PER_TOKEN
+    # Nominal ratio rather than a tokenizer: this runs at run start on the hot path, and
+    # being wrong by 10% on a budget is fine while being slow is not.
+    budget_chars = max(0, int(max_tokens)) * NOMINAL_CHARS_PER_TOKEN
     ranked = sorted(items, key=_rank)
     chosen: list[BriefItem] = []
     used = 0

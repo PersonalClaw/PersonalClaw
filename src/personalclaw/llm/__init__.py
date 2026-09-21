@@ -2,13 +2,17 @@
 
 Core holds the generic infra (the ModelProvider ABC + the two supported inference
 PROTOCOL clients, ``openai`` + ``anthropic``, exposed via ``personalclaw.sdk.model``).
-The model *providers* (openai/anthropic/vllm/bedrock/ollama/…) are ALL standalone apps
-under ``apps/<name>-models/`` that register via the app loader when installed — none are
-eager-imported here. Ollama is no exception: its full implementation
-(``apps/ollama-models/provider.py`` — a bespoke wire client for Ollama's ``/api/*``
-dialect + local-model pull/delete catalog) lives in the app and imports core contracts
-only through ``personalclaw.sdk.model``. It loads like every other model app via its
-manifest ``implementation`` entry-point when the ``ollama-models`` app is enabled. Only
+The model *providers* (openai/anthropic/vllm/bedrock/ollama/…) are ALL apps that register
+via the app loader when enabled — none are eager-imported here. Ollama is no exception:
+its full implementation (a bespoke wire client for Ollama's ``/api/*`` dialect plus a
+local-model pull/delete catalog) lives in the ``ollama-models`` app's own provider module
+and imports core contracts only through ``personalclaw.sdk.model``. It loads like every
+other model app via its manifest ``implementation`` entry-point when the app is enabled.
+
+``ollama-models`` is BUNDLED (it ships inside the wheel under the native-app tree and
+auto-installs at first boot) while the others are Store installs — but that is a shipping
+decision, not an architectural one. A bundled app reaches core through exactly the same
+SDK boundary and the same typed handler; nothing here knows it is bundled. Only
 ``acp_agent`` (the ACP agent-runtime type, not a model provider) registers on import here.
 """
 

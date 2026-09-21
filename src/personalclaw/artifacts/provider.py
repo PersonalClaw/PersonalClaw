@@ -57,9 +57,25 @@ class ArtifactProvider(ABC):
         """
         ...
 
-    def find_similar(self, name: str, *, kind: str | None = None) -> Artifact | None:
+    def find_similar(
+        self, name: str, *, kind: str | None = None, project_id: str | None = None
+    ) -> Artifact | None:
         """The existing artifact whose name matches *name* by slug, or None — the
-        list-before-save dedup hint. Default returns None (a backend opts in)."""
+        list-before-save dedup hint. Default returns None (a backend opts in).
+
+        ``project_id`` is present-vs-absent like ``list``'s ``folder``, and deliberately
+        unlike ``list``'s own truthy ``project_id``: ``None`` means every Project (no
+        filter), ``""`` means only *unscoped* artifacts, and an id means that Project. A
+        truthy check would read ``""`` as "no filter", so an unscoped save would dedup
+        against every Project's library — which is how one Project's document overwrote
+        another's (#3309).
+
+        That spelling is **fail-safe, not stylistic**: ``_current_project_id`` returns ``""``
+        for an unscoped session *and* on any resolution failure. Under a truthy filter a
+        failure degrades to "dedup against every Project" and can still overwrite another
+        Project's document; here it degrades to "dedup against unscoped only", which mints
+        a new row. No test can bind that failure path, so the spelling is its only guard.
+        """
         return None
 
     def set_folder(self, slug: str, folder_id: str) -> Artifact | None:

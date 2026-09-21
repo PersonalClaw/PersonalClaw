@@ -9,6 +9,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A fresh install now ships a working model provider: `ollama-models` is bundled.**
+- **`StructuredOutput` is exported from `personalclaw.sdk.model`.**
 - **A skill now says HOW it came to exist, not only which tier it lives in.**
 - **CSV is a generated document format, and it stores as text rather than as a binary body.**
 - **A pack's staged roster could be deployed only by `curl`. `POST /api/packs/{name}/roster/deploy` shipped complete — route, handler, `deploy_roster`, and the `roster` rows already on the `/api/packs/installed` wire — with no control anywhere in the dashboard**
@@ -62,6 +64,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **A watched page that builds itself with JavaScript now reports content instead of nothing, forever.**
+- **Re-ingesting a document now re-embeds only the sections that changed.**
+- **A bundled app's CODE now reaches an already-installed home, not just its `app.json`.**
+- **`POST /api/tools/invoke` can now run the nine filesystem and shell tools it always listed.**
 - **Workflow `rewind` and `run-from` now stop at the same committed-effect boundary as edits, and tool-bearing stages are inside that boundary.**
 - **Notification settings no longer advertise production-unowned rows.**
 - **Pre-first-pass days no longer render as silent capture failures.**

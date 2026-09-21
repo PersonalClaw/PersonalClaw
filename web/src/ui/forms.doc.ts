@@ -13,7 +13,7 @@ const docs: UiDoc[] = [
       'The wrapper for a labeled form control: a caption-tier label row (with an optional right slot for a SoonTag) above the control, plus an optional hint below it. It publishes its label id via context so the wrapped control associates with it via aria-labelledby — turning the sighted-only label into a real accessible name with zero call-site changes.',
     props: [
       { name: 'label', description: 'The visible caption-tier label (the Eyebrow primitive, sentence case per the Weight-First rule); carries a stable id exposed to the wrapped control for aria-labelledby.' },
-      { name: 'hint', description: 'Optional muted helper text rendered below the control.' },
+      { name: 'hint', description: 'Optional muted helper text rendered below the control. A node, not just a string, so a call site whose hint text came from OUTSIDE the app (an app manifest\'s `x-meta.help`, a tool schema description) can render it through the markdown renderer — our own hint sentences stay plain strings.' },
       { name: 'right', description: 'Optional slot on the label row (e.g. a SoonTag) aligned to the right.' },
       { name: 'children', description: 'The wrapped control (TextInput / Select / …).' },
     ],

@@ -60,7 +60,7 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 106,
+      "inert": 100,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
@@ -79,19 +79,13 @@
         "sdk_export:ContextBuilder",
         "sdk_export:ConversationLog",
         "sdk_export:EVENT_COMPACTION_STATUS",
-        "sdk_export:EVENT_COMPLETE",
         "sdk_export:EVENT_PERMISSION_REQUEST",
-        "sdk_export:EVENT_TEXT_CHUNK",
-        "sdk_export:EVENT_THINKING_CHUNK",
-        "sdk_export:EVENT_TOOL_CALL",
         "sdk_export:GatewayServices",
         "sdk_export:HOOK_REPLY",
         "sdk_export:HistoryConsolidator",
         "sdk_export:LINK_WINDOW_SECS",
-        "sdk_export:LLMEvent",
         "sdk_export:MAX_SESSION_TTL_SECS",
         "sdk_export:MemoryService",
-        "sdk_export:ModelProvider",
         "sdk_export:OutboundMessage",
         "sdk_export:ProviderSettings",
         "sdk_export:STOP_REASON_CANCELLED",
@@ -177,9 +171,8 @@
       ]
     },
     "src/personalclaw/sdk/credentials.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "sdk_export:Credential",
         "sdk_export:CredentialStore"
       ]
     },
@@ -236,9 +229,8 @@
       ]
     },
     "src/personalclaw/sdk/local_model.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "sdk_export:LocalModel",
         "sdk_export:LocalModelProvider"
       ]
     },
@@ -267,32 +259,14 @@
       ]
     },
     "src/personalclaw/sdk/model.py": {
-      "inert": 28,
+      "inert": 10,
       "surfaces": [
         "sdk_export:AnthropicProvider",
-        "sdk_export:CancelOutcome",
-        "sdk_export:Capability",
-        "sdk_export:Credential",
         "sdk_export:CredentialMissing",
-        "sdk_export:EVENT_COMPLETE",
-        "sdk_export:EVENT_TEXT_CHUNK",
-        "sdk_export:EVENT_THINKING_CHUNK",
-        "sdk_export:EVENT_TOOL_CALL",
-        "sdk_export:KIND_OUTSIDE",
-        "sdk_export:LLMEvent",
         "sdk_export:MediaCatalog",
         "sdk_export:MediaModel",
         "sdk_export:ModelCatalog",
-        "sdk_export:ModelInfo",
-        "sdk_export:ModelManager",
-        "sdk_export:ModelProvider",
         "sdk_export:OpenAIProvider",
-        "sdk_export:PromptCache",
-        "sdk_export:ProviderCapability",
-        "sdk_export:ProviderEntry",
-        "sdk_export:PullProgress",
-        "sdk_export:infer_capabilities",
-        "sdk_export:make_think_splitter",
         "sdk_export:model_context_window",
         "sdk_export:openai_compatible_list_models",
         "sdk_export:register_media_catalog",
@@ -449,9 +423,9 @@
       "config_reader": 13,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 230,
+      "sdk_export": 204,
       "trigger_kind": 0
     },
-    "inert": 251
+    "inert": 225
   }
 }

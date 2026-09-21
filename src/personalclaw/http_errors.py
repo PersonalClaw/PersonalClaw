@@ -514,6 +514,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The call resolves as destructive and did not acknowledge that. Fix: re-send with "
         '"confirm_risk": "destructive".'
     ),
+    # 503, and NOT the `tool not found` 404 this used to fall through to (#3310). The nine
+    # filesystem/shell tools are confined to the workspace root, so with no usable root there
+    # is nowhere to run them — a configuration-absent answer about the HOST, like
+    # `tts_disabled`, not a statement that the tool does not exist. The distinction is the
+    # whole point: a cron script told "no such tool: bash" would go looking for something to
+    # reinstall, while this names the setting to fix.
+    "workspace_unresolved": (
+        "No usable workspace directory resolved, so the filesystem and shell tools have no "
+        "folder to run in. Fix: set a workspace root (PERSONALCLAW_WORKSPACE, or the "
+        "workspace directory in Settings)."
+    ),
     # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
     # a switched-off capability, not a malformed request. 503 rather than 403 to match the
     # sibling refusal on the same route ("no TTS voice selected"), which is also a

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import { cx } from './cx'
 import { Eyebrow } from './Eyebrow'
 
@@ -83,7 +83,17 @@ export function FieldError({ children, className }: {
   return <p role="alert" data-type="body-s" className={cx('text-danger', className)}>{children}</p>
 }
 
-export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
+export function Field({ label, hint, right, children }: {
+  label: string
+  /** A node, not just a string, because a hint can be AUTHORED prose rather than ours — an
+   *  app's `meta.help` is markdown its author wrote, and it renders through `<Markdown inline>`
+   *  at the call site. Deliberately not parsed HERE: the 300-odd hints this component already
+   *  carries are our own sentences, and running them through a markdown parser would turn a
+   *  `snake_case` field name into emphasis. The publisher knows whether its text is markdown. */
+  hint?: ReactNode
+  right?: ReactNode
+  children: ReactNode
+}) {
   const labelId = useId()
   const hintId = useId()
   return (
@@ -423,14 +433,27 @@ export function Select({ value, onChange, options, disabled, name, id, ariaLabel
   const autoId = useId()
   const claimsFieldLabel = !!labelId && !name && !ariaLabel
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={id || name || autoId}
-      aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
-      aria-describedby={hintId} aria-required={required || undefined}
-      title={disabled ? disabledReason || undefined : undefined}
-      data-type={FIELD_ROLE[size]}
-      className={cx('w-full appearance-none rounded-md pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SURFACE[surface], FIELD_SIZE[size])}>
-      {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
-    </select>
+    // `appearance-none` removes the platform's own dropdown arrow, and the `pr-8` below has
+    // always RESERVED the gutter for a replacement that was never drawn — so this control
+    // looked exactly like a read-only text field, and the only way to discover it opens a menu
+    // was to click it. The glyph is the affordance; the reserved gutter is where it goes.
+    // Geometry mirrors `TextInput`'s trailing slot (`top-1/2 -translate-y-1/2`), so a Select and
+    // a TextInput in the same row put their trailing marks on one line.
+    <div className="relative w-full">
+      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={id || name || autoId}
+        aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
+        aria-describedby={hintId} aria-required={required || undefined}
+        title={disabled ? disabledReason || undefined : undefined}
+        data-type={FIELD_ROLE[size]}
+        className={cx('w-full appearance-none rounded-md pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SURFACE[surface], FIELD_SIZE[size])}>
+        {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
+      </select>
+      {/* Decorative: the `<select>` is the control, and a click here must reach it —
+          `pointer-events-none` keeps the glyph out of hit-testing entirely. Dims WITH the
+          control, or a disabled field would advertise a menu it will not open. */}
+      <ChevronDown size={16} aria-hidden="true"
+        className={cx('pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-low', disabled && 'opacity-50')} />
+    </div>
   )
 }
 

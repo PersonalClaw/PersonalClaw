@@ -35,6 +35,7 @@ from personalclaw.request_validation import (
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -1715,6 +1716,9 @@ async def batch_embed_items(request: web.Request) -> web.Response:
 
 # ---------- Knowledge Fetch (for chat context injection) ----------
 
+#: Last-resort fallbacks for an unreadable config, mirroring `KnowledgeConfig.fetch_top_n` /
+#: `fetch_max_tokens` — which is where the real defaults now live (#1783). A test pins the two
+#: pairs together so this cannot drift into a second, disagreeing default.
 KNOWLEDGE_FETCH_TOP_N = 3
 KNOWLEDGE_FETCH_MAX_TOKENS = 4096
 # Hard ceiling for a per-request ?max_tokens override (guards against an unbounded
@@ -1723,8 +1727,8 @@ _CONTEXT_MAX_TOKENS_CEILING = 32000
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token for English text."""
-    return len(text) // 4
+    """Rough token estimate at the repo's one nominal chars-per-token ratio."""
+    return len(text) // NOMINAL_CHARS_PER_TOKEN
 
 
 async def search_for_context(request: web.Request) -> web.Response:
@@ -1740,15 +1744,22 @@ async def search_for_context(request: web.Request) -> web.Response:
     if not q:
         return web.json_response({"error": "q parameter required"}, status=400)
 
-    from personalclaw.config.loader import config_path
-
-    cfg_path = config_path()
+    # Through the config MODEL, not a raw `json.loads(config_path())` (#1783). Both knobs
+    # were read straight out of the file with these module constants as fallbacks, and
+    # declared nowhere — so a hand-edited `"fetch_top_n": 0` or `"fetch_max_tokens": "lots"`
+    # reached this handler unvalidated, and there was no `_meta`, no bounds and no write
+    # path. `KnowledgeConfig` now declares both and `load()` floors them, so the reader
+    # inherits the validation instead of re-implementing half of it.
     try:
-        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        from personalclaw.config.loader import AppConfig
+
+        _knowledge_cfg = AppConfig.load().knowledge
+        top_n = int(getattr(_knowledge_cfg, "fetch_top_n", KNOWLEDGE_FETCH_TOP_N))
+        max_tokens = int(getattr(_knowledge_cfg, "fetch_max_tokens", KNOWLEDGE_FETCH_MAX_TOKENS))
     except Exception:
-        cfg = {}
-    top_n = cfg.get("knowledge", {}).get("fetch_top_n", KNOWLEDGE_FETCH_TOP_N)
-    max_tokens = cfg.get("knowledge", {}).get("fetch_max_tokens", KNOWLEDGE_FETCH_MAX_TOKENS)
+        logger.debug("knowledge fetch config unreadable — using shipped defaults", exc_info=True)
+        top_n = KNOWLEDGE_FETCH_TOP_N
+        max_tokens = KNOWLEDGE_FETCH_MAX_TOKENS
 
     try:
         limit = int(request.query.get("limit", top_n))
@@ -2640,8 +2651,8 @@ async def list_conflicts(request: web.Request) -> web.Response:
     about which source to trust, which is the owner's call — so there is deliberately no
     "resolve" endpoint that would let the system pick a winner on its own.
 
-    `basis` rides along on every row because a deterministic finding and a model's opinion warrant
-    different confidence, and a reader cannot tell them apart from the claim text alone.
+    Every row is a deterministic finding, so no row carries a tier label: `find_conflicts` is the
+    only writer, and a field whose value is the same on every row tells a reader nothing.
     """
     store = _store(request)
     limit = _int_param(request, "limit", 100, low=1, high=500)

@@ -64,7 +64,7 @@ automatic skill machinery:
 | `skills.auto_refine_on_deviation` | `false` | Update an auto-created skill when the agent succeeds via a different tool sequence (requires `auto_create_from_sessions`). |
 | `skills.auto_min_tool_calls` | `5` | Minimum tool calls for a session to qualify for skill extraction. |
 | `skills.auto_similarity_threshold` | `0.85` | Skip creation when an existing skill's description overlaps ≥ this fraction. |
-| `skills.progressive_disclosure_threshold` | `8` | When more skills than this match a turn, inject only their index (name+description) and let the agent pull bodies on demand. `0` = always inline. |
+| `skills.progressive_disclosure_threshold` | `2` | When more skills than this match a turn, inject only their index (name+description) and let the agent pull bodies on demand. Clamped to `max_triggered - 1`, since the match list is already capped at `max_triggered` and a threshold at or above it can never be exceeded. `0` = always inline (never clamped). |
 
 ## After-turn learning (`learning.*`)
 

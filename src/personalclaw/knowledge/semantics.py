@@ -266,8 +266,50 @@ def chunk_hash(text: str) -> str:
     Separate from `content_hash` so a large reference document can be refreshed section by
     section: re-embedding a 40k-character report because one paragraph changed is the cost
     this exists to avoid.
+
+    🔴 The ONE chunk-hash form. There used to be a second — `consolidation.chunk_hashes`
+    built on `consolidation.fuzzy_hash` — and two forms is the same defect as no form:
+    `changed_sections` can only trust a comparison whose sides were produced identically.
+    The dedup hash is the wrong instrument here, and not merely a duplicate one:
+    `normalize_for_dedup` strips every non-alphanumeric character, so `A > B` and `A < B`
+    hash equal and a refresh would never re-embed that edit. Whitespace-only normalization
+    is the rule this needs — a reflowed paragraph is not an edit; a changed character is.
     """
     return hashlib.sha256(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:32]
+
+
+def chunk_hashes(sections: dict[str, str]) -> dict[str, str]:
+    """Per-section hashes in ONE canonical form, so a later comparison can be trusted."""
+    return {str(k): chunk_hash(str(v)) for k, v in sections.items()}
+
+
+def changed_sections(stored: dict[str, str], fresh: dict[str, str]) -> list[str]:
+    """Which sections of a re-fetched source actually changed.
+
+    The invariant that matters: BOTH sides must be the same hash form. The studied failure was
+    storing a truncated hash and comparing a full one, which made every section look changed
+    forever — a refresh that always re-synthesizes everything, at full cost, silently.
+
+    A section present in `fresh` but not `stored` counts as changed (it is new); one present in
+    `stored` but not `fresh` does NOT (it was removed, and re-synthesizing a deleted section is
+    meaningless).
+    """
+    out: list[str] = []
+    for key, digest in fresh.items():
+        prior = stored.get(key)
+        if prior is None or not _same_hash_form(prior, digest) or prior != digest:
+            out.append(key)
+    return sorted(out)
+
+
+def _same_hash_form(left: str, right: str) -> bool:
+    """Guard against comparing a truncated hash to a full one.
+
+    Returns False on a length mismatch, which makes `changed_sections` report the section as
+    changed — the safe direction (re-synthesize once) rather than the silent one (treat two
+    incomparable values as equal and never refresh).
+    """
+    return len(left) == len(right)
 
 
 # ── Confidence aggregation ──

@@ -869,6 +869,37 @@ class VectorStoreTypeHandler(_TypeHandler):
         from personalclaw.vector_stores.registry import register_provider
 
         register_provider(getattr(instance, "name", "") or ext.name, instance)
+        self._backfill_corpus()
+
+    @staticmethod
+    def _backfill_corpus() -> None:
+        """Synchronise the EXISTING corpus into the store that was just bound (#3139).
+
+        Registration is the binding, and the per-item write-through only fires on the next
+        write — so a user who enables a backend over a library they already built got an
+        empty index, an empty index is REACHABLE, and the fail-soft WARNING therefore never
+        fired. The chunk arm just answered nothing, indistinguishable from "no matches".
+
+        Cheap on every boot: the backfill compares the backend's own ``describe().count``
+        against the local embedded-chunk count and returns without walking when they agree.
+
+        Guarded, because ``_enable_one`` turns any exception here into "this app failed to
+        enable". A store that cannot be filled yet is still bound and still searchable once
+        reachable; marking the app broken over it would be a worse answer than a WARNING.
+        """
+        try:
+            from personalclaw.knowledge import get_knowledge_store
+
+            result = get_knowledge_store().reindex_external_vector_store()
+        except Exception as exc:  # noqa: BLE001 - a backfill must never fail an enable
+            logger.warning("external vector store: corpus backfill failed: %s", exc)
+            return
+        if result.get("chunks"):
+            logger.info(
+                "external vector store: backfilled %d chunk(s) across %d item(s)",
+                result["chunks"],
+                result["items"],
+            )
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.vector_stores.registry import unregister_provider

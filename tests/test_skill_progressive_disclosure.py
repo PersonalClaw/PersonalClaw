@@ -140,3 +140,120 @@ def test_at_threshold_inlines_bodies(tmp_path, monkeypatch):
     msg, _ = builder.build_message("deploy widget now", is_new_session=False)
     assert "BODY-0" in msg  # inlined at/below threshold
     assert "INDEX only" not in msg
+
+
+# ── #1783: the two knobs are ORDERED, so the branch above is reachable at defaults ──
+#
+# `max_triggered` and `progressive_disclosure_threshold` are two absolute counts over the
+# same list, and surfacing truncates that list to `max_triggered` BEFORE `context.py` asks
+# `len(triggered) > progressive_disclosure_threshold`. Shipped at 3 and 8, the question had
+# no reachable `True` answer: every test above had to raise `max_triggered` to 10 to see the
+# index path at all, which is the tell. The clamp makes the pair ordered by construction.
+
+
+def test_the_shipped_defaults_are_ordered():
+    from personalclaw.config.loader import SkillsConfig
+
+    cfg = SkillsConfig()
+    assert cfg.progressive_disclosure_threshold < cfg.max_triggered, (
+        "a threshold at or above max_triggered cannot be exceeded by a list capped at "
+        "max_triggered — the index branch would be dead code behind a settings row"
+    )
+
+
+def test_an_unordered_pair_is_clamped_to_max_triggered_minus_one():
+    from personalclaw.config.loader import SkillsConfig
+
+    # The exact pre-fix shipped pair.
+    cfg = SkillsConfig(max_triggered=3, progressive_disclosure_threshold=8)
+    assert cfg.progressive_disclosure_threshold == 2
+
+
+def test_an_already_ordered_pair_is_left_alone():
+    from personalclaw.config.loader import SkillsConfig
+
+    cfg = SkillsConfig(max_triggered=10, progressive_disclosure_threshold=8)
+    assert cfg.progressive_disclosure_threshold == 8
+
+
+def test_zero_still_means_disabled_and_is_never_clamped_up():
+    """0 is the owner's "always inline" choice. Arithmetic must not pick it, and must not
+    overwrite it — a clamp that turned 0 into 1 would silently enable a control the owner
+    turned off."""
+    from personalclaw.config.loader import SkillsConfig
+
+    for max_triggered in (1, 3, 10):
+        cfg = SkillsConfig(max_triggered=max_triggered, progressive_disclosure_threshold=0)
+        assert cfg.progressive_disclosure_threshold == 0
+
+
+def test_the_clamp_floors_at_one_rather_than_disabling_the_control():
+    """`max_triggered - 1` is 0 at `max_triggered=1`, and 0 means DISABLED — so the clamp
+    must floor at 1 rather than let arithmetic turn the control off."""
+    from personalclaw.config.loader import SkillsConfig
+
+    cfg = SkillsConfig(max_triggered=1, progressive_disclosure_threshold=5)
+    assert cfg.progressive_disclosure_threshold == 1
+
+
+def test_the_load_fallback_matches_the_dataclass_default(tmp_path, monkeypatch):
+    """`load()`'s `.get()` fallback is a second default that can drift from the first."""
+    from personalclaw.config import loader as loader_mod
+    from personalclaw.config.loader import AppConfig, SkillsConfig
+
+    monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
+    assert (
+        AppConfig.load().skills.progressive_disclosure_threshold
+        == SkillsConfig().progressive_disclosure_threshold
+    )
+
+
+def _pristine_cfg(monkeypatch):
+    """Pin a SHIPPED-DEFAULT config — no overrides, so the assertion is about the defaults."""
+    from personalclaw.config.loader import AppConfig
+
+    cfg = AppConfig()
+    monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: cfg))
+    return cfg
+
+
+def test_the_index_branch_fires_on_the_shipped_defaults(tmp_path, monkeypatch):
+    """The WIRING assertion, not the clamp's: a real turn on untouched config reaches the
+    index path. Every other index-path test in this file raises `max_triggered` to 10 first;
+    this one changes nothing, and would have failed on the pre-fix defaults."""
+    _pristine_cfg(monkeypatch)
+    builder = _builder_with_skills(tmp_path, 5)
+    msg, _ = builder.build_message("deploy widget now", is_new_session=False)
+    assert "INDEX only" in msg
+    assert "BODY-0" not in msg
+
+
+def test_a_single_match_still_inlines_on_the_shipped_defaults(tmp_path, monkeypatch):
+    """The floor for the test above — the default is a threshold, not "always index"."""
+    _pristine_cfg(monkeypatch)
+    builder = _builder_with_skills(tmp_path, 1)
+    msg, _ = builder.build_message("deploy widget now", is_new_session=False)
+    assert "BODY-0" in msg
+    assert "INDEX only" not in msg
+
+
+def test_the_unreadable_config_arm_no_longer_hardcodes_a_threshold(tmp_path, monkeypatch):
+    """#1783 clause 4 — `context.py`'s `except` arm used the literal `8`, re-creating the
+    inert state on any config-load failure: the same bug one layer down, reachable by a
+    malformed config.json. It now constructs `SkillsConfig()`, so it inherits the clamp."""
+    import personalclaw.context as context_mod
+
+    class _Boom:
+        @classmethod
+        def load(cls):
+            raise RuntimeError("config.json is malformed")
+
+    # Pristine first so SURFACING (which reads the loader's own AppConfig) still caps at the
+    # shipped `max_triggered`; only `context.py`'s threshold lookup is made to fail.
+    _pristine_cfg(monkeypatch)
+    monkeypatch.setattr(context_mod, "AppConfig", _Boom)
+    builder = _builder_with_skills(tmp_path, 5)
+    msg, _ = builder.build_message("deploy widget now", is_new_session=False)
+    assert (
+        "INDEX only" in msg
+    ), "a failed config load fell back to a threshold the surfaced list can never exceed"

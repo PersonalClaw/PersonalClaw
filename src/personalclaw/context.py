@@ -1746,10 +1746,19 @@ class ContextBuilder:
             # instead of inlining every matched body (token efficiency at scale).
             # At/below the threshold (the common case) inline as before — no extra
             # round-trip. 0 disables (always inline).
+            # The fallback constructs `SkillsConfig()` rather than restating a literal
+            # (#1783). The literal here was `8` against a `max_triggered` of 3, so an
+            # unreadable config re-created the exact inert state the clamp in
+            # `SkillsConfig.__post_init__` exists to prevent — the same bug, one layer down,
+            # reachable by nothing more than a malformed config.json. Going through the
+            # dataclass means this arm inherits the ordering rule instead of contradicting
+            # it, and it cannot raise: it is a pure default construction, no file IO.
             try:
                 _disclosure_threshold = AppConfig.load().skills.progressive_disclosure_threshold
             except Exception:
-                _disclosure_threshold = 8
+                from personalclaw.config.loader import SkillsConfig
+
+                _disclosure_threshold = SkillsConfig().progressive_disclosure_threshold
             if _disclosure_threshold and len(triggered) > _disclosure_threshold:
                 index_lines = [
                     "[Relevant skills — INDEX only. Call skill_invoke{name} to load a "

@@ -142,7 +142,7 @@ List the numbered snapshot versions of an artifact by slug.
 
 ### `deck_create`
 
-Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a versioned artifact. Each `##` heading starts a slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's speaker notes. A leading `#` titles the deck. Write an outline, not prose — paragraphs on a slide are what makes generated decks unreadable. Returns the slug and a download URL.
+Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a versioned artifact. Each `##` heading starts a slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's speaker notes. A leading `#` titles the deck. Write an outline, not prose — paragraphs on a slide are what makes generated decks unreadable. Re-running with the same `name` (or the same `slug`) updates that deck and bumps its version instead of creating a near-duplicate — to make a SEPARATE deck, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 
@@ -169,7 +169,7 @@ Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a
 
 ### `document_create`
 
-Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. Re-running with the same `slug` updates that document and bumps its version instead of creating a near-duplicate. Returns the slug and a download URL.
+Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. Re-running with the same `name` (or the same `slug`) updates that document and bumps its version instead of creating a near-duplicate — to make a SEPARATE document, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 
@@ -246,7 +246,7 @@ Generate an image from a text prompt (or edit an existing one), using the model 
 
 ### `sheet_create`
 
-Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Returns the slug and a download URL.
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 

@@ -246,6 +246,79 @@ def test_a_ttl_becomes_an_absolute_expiry(home, ctx, persist):
     assert expires  # absolute, not relative
 
 
+def _expiry_of(home, title: str) -> str:
+    store = _open(home)
+    return list(store.db.execute("SELECT expires_at FROM items WHERE title=?", (title,)))[0][
+        "expires_at"
+    ]
+
+
+def _set_default_ttl(monkeypatch, value: str) -> None:
+    """Pin `knowledge.default_ttl` on the config the provider reads.
+
+    Patched on `AppConfig.load`, not written to a file, because the assertion below is
+    about the provider's READ — a fixture that wrote config.json would pass just as well
+    against a provider that ignored the field, which is the bug.
+    """
+    from personalclaw.config.loader import AppConfig
+
+    cfg = AppConfig.load()
+    cfg.knowledge.default_ttl = value
+    monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: cfg))
+
+
+def test_a_write_with_no_ttl_inherits_knowledge_default_ttl(home, ctx, persist, monkeypatch):
+    """#1783 — `knowledge.default_ttl` shipped with a user-facing label and NO reader.
+
+    The mechanism was complete on both sides (`ttl_to_expiry` → `check_persist`); what was
+    missing is this fallback, so a store configured to expire knowledge after 30 days
+    expired nothing unless every individual write repeated the value. The vacuity floor is
+    the next test: with the field blank, the same write stores no expiry at all, so this
+    assertion cannot be satisfied by some unrelated expiry path.
+    """
+    _set_default_ttl(monkeypatch, "30d")
+    run(persist.execute({"kind": "probe", "title": "DT", "content": "x"}, ctx))
+    assert _expiry_of(home, "DT"), "a write with no `ttl` did not inherit knowledge.default_ttl"
+
+
+def test_a_blank_default_ttl_still_stores_no_expiry(home, ctx, persist, monkeypatch):
+    """The floor for the test above, and the shipped default: blank means never expires."""
+    _set_default_ttl(monkeypatch, "")
+    run(persist.execute({"kind": "probe", "title": "DTB", "content": "x"}, ctx))
+    assert not _expiry_of(home, "DTB")
+
+
+def test_the_actions_own_ttl_still_wins_over_the_default(home, ctx, persist, monkeypatch):
+    """The fallback is a fallback: a node that names its own TTL is not overridden."""
+    _set_default_ttl(monkeypatch, "365d")
+    run(persist.execute({"kind": "probe", "title": "DTW", "content": "x", "ttl": "1h"}, ctx))
+    hour = _expiry_of(home, "DTW")
+
+    _set_default_ttl(monkeypatch, "")
+    run(persist.execute({"kind": "probe", "title": "DTW2", "content": "y", "ttl": "1h"}, ctx))
+    assert hour[:13] == _expiry_of(home, "DTW2")[:13], (
+        "the action's own 1h ttl moved when knowledge.default_ttl changed — "
+        "the default is overriding the caller instead of backing it"
+    )
+
+
+def test_an_explicit_expires_at_beats_the_default_ttl(home, ctx, persist, monkeypatch):
+    """`check_persist` prefers an absolute `expires_at`; the fallback must not disturb that."""
+    _set_default_ttl(monkeypatch, "30d")
+    run(
+        persist.execute(
+            {
+                "kind": "probe",
+                "title": "DTX",
+                "content": "x",
+                "expires_at": "2030-01-01T00:00:00+00:00",
+            },
+            ctx,
+        )
+    )
+    assert _expiry_of(home, "DTX").startswith("2030-01-01")
+
+
 def test_provenance_is_auto_filled_from_the_payload(home, ctx, persist):
     """`ActionContext` carries only event/context/payload — reading run ids off it as
     attributes (as an earlier version did) silently produced "unknown" for every item."""

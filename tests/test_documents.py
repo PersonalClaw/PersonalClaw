@@ -9,6 +9,8 @@ opening the output in a real application before the session may close.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from personalclaw.documents import available_formats, get_writer
@@ -784,6 +786,332 @@ class TestDocumentRegenerate:
         )
         types = [e.type for e in prov.get(slug).events]
         assert "iterated" in types
+
+
+# ── A repeat NAME dedups too, not only a repeat slug ─────────────────────────
+# The explicit-slug arm above was covered and worked; the arm an agent actually
+# takes was not. `_document_create` only consulted `prov.get(slug)`, and `slug` is
+# "" on a normal generated-document call, so two identical `deck_create` calls with
+# the same `name` minted `q3-review` AND `q3-review-2`, each at version 1. Nothing
+# under tests/ asserted the no-twin property for the no-slug path, which is why it
+# shipped and stayed broken. The collision is resolved through the SAME
+# `prov.find_similar` call `artifact_save` makes, so there is one dedup, not two.
+
+
+class TestDocumentNameDedup:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        # Pinned, not incidental: with no bound Project `_current_project_id` falls through
+        # to `_session_bound_project_id`, which asks the GATEWAY when it can resolve a
+        # session key. An inherited PERSONALCLAW_SESSION_KEY would make the unscoped arms
+        # below depend on a live gateway; blanking it keeps them a pure function of tmp_path.
+        monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "")
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    @staticmethod
+    def _quiet(outcome, slug="", error=""):
+        return None
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _project(project_id: str):
+        """Bind a Project for the turn, the way the native runtime's `_invoke` does."""
+        from personalclaw.agents.native import builtin_tools as _bt
+
+        toks = _bt.bind_tool_context(cwd="/tmp", agent="a", project_id=project_id)
+        try:
+            yield
+        finally:
+            _bt.reset_tool_context(toks)
+
+    @staticmethod
+    def _docx_text(prov, slug: str) -> str:
+        """The stored bytes read back as text — the issue proved the corruption by reading
+        the body, so a version number alone is not enough to prove A was left alone."""
+        import io
+
+        from docx import Document
+
+        data, _mime = prov.raw_bytes(slug)
+        return "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
+
+    def test_two_identical_no_slug_calls_update_in_place(self, tmp_path, monkeypatch):
+        """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        args = {"name": "Q3 review", "markdown": "# Q3\n\n- one\n- two\n"}
+
+        first = _document_create(prov, "deck_create", dict(args), "s1", self._quiet)
+        second = _document_create(prov, "deck_create", dict(args), "s2", self._quiet)
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        slugs = [a.slug for a in prov.list()]
+        assert slugs == ["q3-review"], f"a repeat name minted a twin: {slugs}"
+        assert prov.get("q3-review").version == 2
+        assert len(prov.list_versions("q3-review")) == 2
+        assert prov.get("q3-review").events[-1].type == "iterated"
+        # The reply must not call a version bump a creation — an agent told "Created"
+        # goes looking for a second file.
+        assert second.startswith("Updated pptx: q3-review (v2"), second
+        assert first.startswith("Created pptx: q3-review (v1"), first
+
+    def test_the_deduped_update_carries_the_new_bytes(self, tmp_path, monkeypatch):
+        """An in-place update that kept the first render would be worse than a twin."""
+        import io
+
+        from pptx import Presentation
+
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Alpha\n\n- a\n"},
+            None,
+            self._quiet,
+        )
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Bravo\n\n- b\n"},
+            None,
+            self._quiet,
+        )
+
+        data, _mime = prov.raw_bytes("deck")
+        text = "\n".join(
+            shape.text_frame.text
+            for slide in Presentation(io.BytesIO(data)).slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+        )
+        assert "Bravo" in text
+        assert "Alpha" not in text
+
+    def test_an_explicit_slug_still_wins_and_still_bumps(self, tmp_path, monkeypatch):
+        """The arm that already worked, pinned: an explicit slug is unchanged."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report"},
+            None,
+            self._quiet,
+        )
+
+        assert "Error" not in reply, reply
+        assert [a.slug for a in prov.list()] == ["report"]
+        assert prov.get("report").version == 2
+
+    def test_an_explicit_unused_slug_still_creates_under_it(self, tmp_path, monkeypatch):
+        """A caller who wants a SECOND document of the same name says so with a slug —
+        which is the escape hatch, so no `force` parameter was added."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report-fork"},
+            None,
+            self._quiet,
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["report", "report-fork"]
+        assert prov.get("report").version == 1
+        assert prov.get("report-fork").version == 1
+
+    def test_the_same_name_at_a_different_format_is_a_different_document(
+        self, tmp_path, monkeypatch
+    ):
+        """Dedup is scoped to the kind: a pptx must not eat a same-named docx."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Plan", "markdown": "# Plan"}, None, self._quiet
+        )
+        _document_create(
+            prov, "deck_create", {"name": "Plan", "markdown": "## Plan\n\n- a\n"}, None, self._quiet
+        )
+
+        kinds = sorted((a.kind, a.version) for a in prov.list())
+        assert kinds == [("docx", 1), ("pptx", 1)], kinds
+        assert len(prov.list()) == 2
+
+    def test_a_different_name_still_creates_a_second_document(self, tmp_path, monkeypatch):
+        """Vacuity floor: the assertions above would hold if dedup swallowed everything."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Alpha", "markdown": "# A"}, None, self._quiet
+        )
+        _document_create(
+            prov, "document_create", {"name": "Bravo", "markdown": "# B"}, None, self._quiet
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["alpha", "bravo"]
+
+    def test_an_oversized_regeneration_still_refuses_before_storing(self, tmp_path, monkeypatch):
+        """Name-dedup runs AFTER the size cap, so the refusal cannot bump a version."""
+        from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov, "sheet_create", {"name": "Sales", "format": "csv", "rows": [["a"]]}, None, _audit
+        )
+        assert "Error" not in first, first
+
+        reply = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Sales",
+                "format": "csv",
+                "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+            },
+            None,
+            _audit,
+        )
+
+        assert "the generated csv came to 1.5MB (cap 1MB)" in reply
+        assert [a.slug for a in prov.list()] == ["sales"]
+        assert prov.get("sales").version == 1, "a refusal must not bump the existing version"
+        assert audited[-1][0] == "denied"
+        assert audited[-1][2].startswith("oversized ")
+
+    # ── #3309: the dedup lookup was Project-blind ─────────────────────────────
+    # DHT-5 (above) resolved a repeat NAME through `find_similar`, but that scan ran
+    # `self.list(kind=kind)` with no Project, so it saw EVERY Project's library. Project B
+    # creating "Weekly Note" therefore found Project A's artifact, updated it in place and
+    # left `project_id: project-a` — A silently held B's bytes (recoverable only from
+    # version history) and B's page never showed the document. One code path serves all
+    # five document formats (csv/docx/pdf/pptx/xlsx), so docx here proves all of them.
+
+    def test_a_second_projects_document_does_not_touch_the_firsts(self, tmp_path, monkeypatch):
+        """THE #3309 regression: two Projects, one name ⇒ two artifacts, A untouched."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            first = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Alpha week\n"},
+                "s-a",
+                self._quiet,
+            )
+        with self._project("project-b"):
+            second = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Bravo week\n"},
+                "s-b",
+                self._quiet,
+            )
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        rows = {a.slug: a for a in prov.list()}
+        assert sorted(rows) == [
+            "weekly-note",
+            "weekly-note-2",
+        ], f"B's create reached A's artifact: {sorted(rows)}"
+        assert rows["weekly-note"].project_id == "project-a"
+        assert rows["weekly-note-2"].project_id == "project-b"
+        # B must be told it CREATED — "Updated" would send it looking for a v1 it never made.
+        assert second.startswith("Created docx: weekly-note-2 (v1"), second
+        # A's bytes, not just A's version: the in-place update is what corrupted it.
+        assert rows["weekly-note"].version == 1
+        assert "Alpha week" in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" not in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" in self._docx_text(prov, "weekly-note-2")
+
+    def test_the_same_project_twice_still_dedups(self, tmp_path, monkeypatch):
+        """The intended behaviour, pinned: scoping the lookup must not disable it."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# One\n"},
+                "s1",
+                self._quiet,
+            )
+            reply = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Two\n"},
+                "s2",
+                self._quiet,
+            )
+
+        assert [a.slug for a in prov.list()] == ["weekly-note"]
+        assert reply.startswith("Updated docx: weekly-note (v2"), reply
+        assert prov.get("weekly-note").project_id == "project-a"
+        assert "Two" in self._docx_text(prov, "weekly-note")
+
+    def test_an_unscoped_session_dedups_only_against_unscoped_artifacts(
+        self, tmp_path, monkeypatch
+    ):
+        """`_current_project_id()` returns "" — a str — for an unscoped session, never None.
+        So "" must mean *only unscoped*, which is why the new filter is present-vs-absent:
+        a truthy check would read "" as "no filter" and leave the global dedup in place."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        # Two unscoped calls still dedup to one row at v2.
+        _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# One\n"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# Two\n"}, None, self._quiet
+        )
+        assert [a.slug for a in prov.list()] == ["loose"]
+        assert reply.startswith("Updated docx: loose (v2"), reply
+        assert prov.get("loose").project_id == ""
+
+        # But an unscoped call must not reach a Project-scoped row of the same name.
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Filed", "markdown": "# In A\n"},
+                None,
+                self._quiet,
+            )
+        unscoped = _document_create(
+            prov, "document_create", {"name": "Filed", "markdown": "# Nowhere\n"}, None, self._quiet
+        )
+
+        assert unscoped.startswith("Created docx: filed-2 (v1"), unscoped
+        rows = {a.slug: a for a in prov.list()}
+        assert rows["filed"].project_id == "project-a"
+        assert rows["filed"].version == 1
+        assert rows["filed-2"].project_id == ""
+        assert "In A" in self._docx_text(prov, "filed")
 
 
 # ── The V1 gate, as a rail: generate with the TOOL, parse it back, diff ──

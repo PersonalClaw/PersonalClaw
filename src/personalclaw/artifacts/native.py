@@ -441,16 +441,33 @@ class NativeArtifactProvider(ArtifactProvider):
         out.sort(key=lambda a: a.updated_at or a.created_at, reverse=True)
         return out
 
-    def find_similar(self, name: str, *, kind: str | None = None) -> Artifact | None:
+    def find_similar(
+        self, name: str, *, kind: str | None = None, project_id: str | None = None
+    ) -> Artifact | None:
         """The most-recent existing artifact whose name matches *name* by slug — the
         list-before-save dedup hint (ARTIFACTS S1). Same slug derivation as save, so a
         re-save of "Sales Dashboard" finds the prior one instead of minting a ``-2``.
-        Returns None when nothing matches. A read-only scan; never raises into save."""
+        Returns None when nothing matches. A read-only scan; never raises into save.
+
+        Present-vs-absent, like ``list``'s ``folder`` above: None = every Project (the
+        default, so an unscoped caller keeps today's behaviour), "" = only *unscoped*
+        artifacts, an id = that Project.
+
+        Filtered HERE rather than forwarded into ``list``, and that is the whole fix:
+        ``list``'s ``project_id`` is TRUTHY, so ``list(project_id="")`` means "no filter"
+        and an unscoped save would still dedup across every Project — the half-fix that
+        leaves #3309 alive. ``list``'s spelling cannot simply be flipped either: it is
+        reached straight off the REST query string (``handlers.py``), where a present-but-
+        empty ``?project_id=`` means "all" to today's clients, and adding a second
+        present-vs-absent parameter beside it would mint two spellings of one filter.
+        """
         target = slugify(name or "")
         if not target:
             return None
         try:
             for art in self.list(kind=kind):  # newest-first
+                if project_id is not None and art.project_id != project_id:
+                    continue
                 if slugify(art.name) == target or art.slug == target:
                     return art
         except Exception:

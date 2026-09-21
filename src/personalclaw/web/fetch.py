@@ -22,13 +22,11 @@ from urllib.parse import urldefrag, urlparse
 from personalclaw.net import STRICT, EgressBlocked, egress_policy_for
 from personalclaw.net import fetch as net_fetch
 from personalclaw.net.policy import EgressPolicy
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.web.extract import extract_main_content
 
 logger = logging.getLogger(__name__)
 
-# ~4 chars per token (the same heuristic the Tavily adapter uses) — token budgets are
-# converted to char windows for offset pagination.
-_CHARS_PER_TOKEN = 4
 _DEFAULT_MAX_TOKENS = 5000
 
 # Per-session provenance: session_key → set of canonical URLs seen this session. A
@@ -232,7 +230,8 @@ async def web_fetch(
 
     # ④ token economy — offset pagination over a char window derived from max_tokens.
     total = len(full_text)
-    budget = max(1, max_tokens) * _CHARS_PER_TOKEN
+    # Token budgets become char windows for offset pagination, at the nominal ratio.
+    budget = max(1, max_tokens) * NOMINAL_CHARS_PER_TOKEN
     start = max(0, start_index)
     window = full_text[start : start + budget]
     end = start + len(window)
@@ -297,7 +296,7 @@ async def web_extract(
     fetched = await web_fetch(
         url,
         session_key=session_key,
-        max_tokens=_EXTRACT_CONTENT_CHARS // _CHARS_PER_TOKEN,
+        max_tokens=_EXTRACT_CONTENT_CHARS // NOMINAL_CHARS_PER_TOKEN,
         require_provenance=require_provenance,
         policy=policy,
     )

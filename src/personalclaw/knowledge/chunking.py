@@ -115,6 +115,37 @@ def chunk_text(content: str, *, max_chars: int = MAX_CHARS, overlap: int = OVERL
     return kept
 
 
+def section_key(chunk: Chunk) -> str:
+    """The stable identity of the section a chunk belongs to, for differential refresh.
+
+    The heading TEXT, not its position: an edit that inserts a new section must not renumber
+    every section after it, or a one-paragraph change to the top of a document would re-embed
+    the whole thing — the exact cost differential refresh exists to avoid.
+
+    Prefixed so a preamble can never collide with a heading (``_HEADING`` requires non-space
+    content, so a real label is never empty). Two sections that share a heading text share a
+    key deliberately: `section_texts` then hashes their union, so a change to either re-embeds
+    both. That is over-refresh, which is the safe direction — the failure to avoid is a change
+    no hash notices.
+    """
+    return f"h:{chunk.section}" if chunk.section else "p:"
+
+
+def section_texts(chunks: list[Chunk]) -> dict[str, str]:
+    """Section key → that section's text, as the hashable input to a differential refresh.
+
+    Built from the CHUNKS rather than re-split from the document, so the sections compared
+    across two generations are exactly the sections the chunk layer was written from. Size-split
+    chunks repeat their `OVERLAP` tail in this concatenation; that is deterministic, so the
+    digest stays stable and change-sensitive, which is all a comparison needs.
+    """
+    out: dict[str, str] = {}
+    for chunk in chunks:
+        key = section_key(chunk)
+        out[key] = f"{out[key]}\n{chunk.text}" if key in out else chunk.text
+    return out
+
+
 def _split_into_sections(lines: list[str]) -> list[tuple[str | None, list[tuple[int, str]]]]:
     """Group physical lines into (heading-label, [(lineno, text), …]) sections.
 
