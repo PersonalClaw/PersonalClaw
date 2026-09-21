@@ -5,7 +5,7 @@ no reader: `ParamSpec.to_dict()` ships the type to the MCP tool listing, `templa
 it into a prompt, and the launch form printed it as a caption. Nothing checked a caller's value
 against it. Measured on `origin/main` by executing the real run-start path:
 
-    service._missing_required_inputs(spec, {"apply": "banana", ...})  -> []
+    the then-declared-only required-input check                    -> []
     service._with_declared_defaults(spec, {"apply": "banana", ...})   -> unchanged
     start_run(..., inputs={"apply": "banana", "min_cluster_size": "not-a-number"})
         -> run b9aae0d3 CREATED, store row: {"apply": "banana", "min_cluster_size": "not-a-number"}
@@ -200,8 +200,8 @@ class TestPassThroughs:
     ) -> None:
         """`_with_declared_defaults` writes `""` for every optional input with no default, so a
         blank value means "declared but unset" here. Whether that is ACCEPTABLE is
-        `_missing_required_inputs`' question; answering it twice is how two checks come to
-        disagree — and a required blank is already refused by the form's `missingRequired`."""
+        `apply_extraction`'s question; answering it twice is how two checks come to disagree —
+        and a required blank is already refused by the form's `missingRequired`."""
         coerced, errors = contracts.coerce_declared_inputs(NUM, {"size": blank})
         assert errors == [] and coerced["size"] == blank
 
