@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api, type ActionProvider, type PromptItem, type PromptVariable } from '../../lib/api'
+import { useEffect, useMemo } from 'react'
+import { type ActionProvider, type PromptItem, type PromptVariable } from '../../lib/api'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
-import { buildArgs, schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
+import { buildArgs, schemaProps, SchemaField } from '../tools/schema'
+import { usePromptWidgets } from '../prompts/promptWidgets'
 import { actionIcon } from './triggerMeta'
 
 /** Pick an Action provider + render its schema-driven config form. The available
@@ -38,20 +39,8 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   // The "workflow" widget is gone with the run-workflow action provider
   // (WORKFLOWS-V2 Phase 1). No provider declares that widget any more, so the
   // registry below would never render it; Slice 3 restores both together.
-  const [prompts, setPrompts] = useState<PromptItem[]>([])
   const needsPrompt = props.some(([, s]) => s['x-meta']?.widget === 'prompt')
-  useEffect(() => {
-    if (needsPrompt && prompts.length === 0) api.prompts('user').then(setPrompts).catch(() => {})
-  }, [needsPrompt])  // eslint-disable-line react-hooks/exhaustive-deps
-
-  const widgets: WidgetMap = useMemo(() => ({
-    prompt: ({ value, onChange, placeholder }) => (
-      <Combobox
-        options={prompts.map((p) => ({ value: p.name, label: p.name, description: p.description || undefined }))}
-        value={String(value ?? '')} onChange={onChange} placeholder={placeholder || 'Pick a saved prompt…'}
-        emptyText="No saved prompts" />
-    ),
-  }), [prompts])
+  const { prompts, widgets } = usePromptWidgets(needsPrompt)
 
   return (
     <div className="flex flex-col gap-l">

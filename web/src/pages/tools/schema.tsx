@@ -15,6 +15,7 @@ export interface SchemaMeta {
   help?: string
   widget?: string
   tags?: string[]
+  sensitive?: boolean
 }
 
 export interface JsonSchema {
