@@ -5,9 +5,6 @@ topology in ``build()``. These are NOT user-editable data: the graph shape + lif
 are owned here in code. Users tune only per-node execution parameters (enable/backend/
 use-case/timeout) via config; they cannot rewire a graph.
 
-Task A ships the text/document graphs (pure-python, no extraction model needed). The
-media + full video conditional DAG land in Task B (#47) as additional subclasses.
-
 Terminal stages (consolidate-pool → insights → chunk+embed) are NOT graph nodes —
 they run once over the whole extracted-content pool after the graph completes (see
 ``runner.py``), because they operate on the item bundle, not a single node's input.
@@ -18,11 +15,6 @@ from __future__ import annotations
 from personalclaw.knowledge.pipeline.graph import NodeSpec, PipelineGraph
 from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RAW
 
-# The 13 native types and the graph class each routes to. Text-backed types share the
-# single-passthrough graph; file/document types share the document-read graph. Media
-# types (image/audio/video) get real graphs in Task B — until then they route to the
-# document-read graph (which falls back to content) so they never hard-fail.
-#
 # `decision` (PROACTIVE-ASSISTANT §2.1) is listed EXPLICITLY rather than left to the
 # `DocumentGraph` fallback in `graph_for`: a decision has no file, so the fallback would
 # route it through the document reader and degrade to its raw content by accident. The
@@ -30,7 +22,6 @@ from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RA
 # produce a similar result is not that contract.
 _TEXT_TYPES = {"note", "gist", "journal", "fleeting", "decision"}
 _DOC_TYPES = {"pdf", "document", "sheet", "slides"}
-_MEDIA_TYPES = {"image", "audio", "video"}
 
 
 class PassthroughGraph(PipelineGraph):
