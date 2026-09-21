@@ -121,6 +121,20 @@ function tsxFiles(dir: string, acc: string[] = []): string[] {
   return acc
 }
 
+/** The ceiling above and the per-file pin below both classify at file level, so one `className`
+ *  carrying BOTH a tokenised and a raw spacing utility is invisible to either: the raw side can be
+ *  a half-step the ceiling never counted (e.g. `py-0.5`, 2px, no rung), and the tokenised side keeps
+ *  the file's TOKENISED-not-empty pin satisfied. #3220 found this shape twice — `px-s py-0.5` and
+ *  `gap-x-s gap-y-1.5` — each element split across two different spacing regimes on one line. */
+function sameElementMixedSpacing(src: string): string[] {
+  const mixed: string[] = []
+  for (const m of src.matchAll(/className="([^"]*)"/g)) {
+    const cls = m[1]
+    if ([...cls.matchAll(RAW)].length > 0 && [...cls.matchAll(TOKENISED)].length > 0) mixed.push(cls)
+  }
+  return mixed
+}
+
 function census() {
   const mappable: string[] = []
   const noToken: string[] = []
@@ -199,6 +213,42 @@ describe('spacing rides the density scale', () => {
         })
         .map((m) => m[0])
       expect(raw, `${rel} reintroduced a rung-equivalent raw value the density slider cannot move`).toEqual([])
+    }
+  })
+
+  it('🔴 no className on these two swept elements mixes a tokenised and a raw spacing utility', () => {
+    // Positive controls: the exact two pairs #3220 found, replanted as literal strings — proves the
+    // detector still catches them even though the real files below no longer carry either.
+    expect(
+      sameElementMixedSpacing('<span className="shrink-0 rounded-pill px-s py-0.5 tabular-nums" />'),
+      'must catch px-s mixed with raw py-0.5',
+    ).toEqual(['shrink-0 rounded-pill px-s py-0.5 tabular-nums'])
+    expect(
+      sameElementMixedSpacing('<ul className="grid items-center gap-x-s gap-y-1.5" />'),
+      'must catch gap-x-s mixed with raw gap-y-1.5',
+    ).toEqual(['grid items-center gap-x-s gap-y-1.5'])
+    // Negative controls: the same two elements in their fixed, fully-tokenised form — must not fire.
+    expect(
+      sameElementMixedSpacing('<span className="shrink-0 rounded-pill px-s py-xs tabular-nums" />'),
+      'must not flag an element that is fully tokenised',
+    ).toEqual([])
+    expect(
+      sameElementMixedSpacing('<ul className="grid items-center gap-x-s gap-y-s" />'),
+      'must not flag an element that is fully tokenised',
+    ).toEqual([])
+    // An all-raw element is the aggregate ceiling's job, not this leg's.
+    expect(
+      sameElementMixedSpacing('<div className="px-3 py-2" />'),
+      "all-raw is the ceiling rail's job, not this leg's",
+    ).toEqual([])
+
+    for (const rel of ['pages/chat/WorkflowProgressCard.tsx', 'pages/settings/ChatPanel.tsx']) {
+      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      expect(
+        sameElementMixedSpacing(code),
+        `${rel} mixes a tokenised and a raw spacing utility on one element — density-scale one side, ` +
+          'frozen-default the other',
+      ).toEqual([])
     }
   })
 
