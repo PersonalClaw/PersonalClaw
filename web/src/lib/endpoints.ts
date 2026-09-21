@@ -50,7 +50,11 @@ export interface CompanionEndpoint {
   label: string
   base_url: string
   kind: EndpointKind
-  /** Nonce naming a REMOTE-USER-AUTH `sessions.json` device row. Not a token; not a secret. */
+  /** Reserved; always `''` on a row any shell creates, because no route hands this out. The nonce
+   *  naming a REMOTE-USER-AUTH `sessions.json` device row IS the session credential: `revoke_nonce`
+   *  (`dashboard/token_auth.py:294`, `:801`) and `forget_session` (`dashboard/session_store.py:429`)
+   *  both take it, and live session state is keyed on it (`token_auth.py:142`). Do not go hunting
+   *  for a value to put here — the device session travels as an httponly cookie instead. */
   device_session_ref: string
 }
 
