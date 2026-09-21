@@ -441,6 +441,19 @@ def _validate_shape(
             gate = None
         if gate in (GateKind.VERIFY_COMMAND, GateKind.VERIFY_SCRIPT) and not cfg.get("verify"):
             _add(res, "WF_MISSING_VERIFY", f"{raw} gate needs a `verify` block", path)
+        if gate == GateKind.LADDER:
+            criteria = cfg.get("criteria")
+            if not isinstance(criteria, list) or not criteria:
+                _add(
+                    res,
+                    "WF_MISSING_CRITERIA",
+                    "ladder gate needs a non-empty `criteria` list",
+                    path,
+                )
+        if gate == GateKind.JUDGE:
+            prompt = cfg.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                _add(res, "WF_MISSING_PROMPT", "judge gate needs a non-empty `prompt`", path)
         if gate == GateKind.EXPRESSION and not cfg.get("expr"):
             _add(res, "WF_MISSING_EXPR", "expression gate needs an `expr`", path)
 
