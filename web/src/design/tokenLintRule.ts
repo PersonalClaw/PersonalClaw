@@ -24,7 +24,7 @@ export const RAW_PX = /style=\{\{[^}]*?\b\d+px\b/
 export const PX_OK_CONTEXT = /minmax\(|repeat\(|\bmin\(|\bmax\(|\bclamp\(|\b(border|outline)(-[a-z]+)?:\s*[^;}]*\d+px|border[A-Z][a-zA-Z]*:\s*[`'"]?\s*\$?\{?[^}]*\d+px|Math\.(min|max)\(/
 
 /** A px inside a calc() that already references a token (e.g.
- *  calc(var(--content-width) + 160px)) is a legitimate token+offset. */
+ *  calc(var(--spacing-l) + 1px)) is a legitimate token+offset. */
 export const CALC_WITH_TOKEN = /calc\([^)]*var\(/
 
 /** Line-level verdict, shared by the host lint and the app-bundle lint. Returns

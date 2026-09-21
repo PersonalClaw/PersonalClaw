@@ -7,6 +7,7 @@ import { X, Maximize2, Minimize2 } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
 import type { RouteProps } from '../app/useQueryState'
+import { SURFACE_WIDTHS } from '../app/appearance'
 
 const MIN_W = 320, MAX_W = 720, DEFAULT_W = 420
 // A docked panel must never be WIDER THAN THE SCREEN. The dock is `shrink-0` inside
@@ -158,7 +159,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
         transition={reduce ? spring.effects : { ...physics.fluid, stiffness: 240 + expr(120, 0.4) }}>
         {header}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto px-l py-l" style={{ maxWidth: 'calc(var(--content-width) + 200px)' }}>{children}</div>
+          <div className="mx-auto px-l py-l" style={{ maxWidth: SURFACE_WIDTHS.expandedSidePanel }}>{children}</div>
         </div>
       </motion.div>,
       document.body,
