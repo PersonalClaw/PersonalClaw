@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from personalclaw.prompt_providers.base import PromptSnippet
+from personalclaw.prompt_providers.base import PromptRenderError, PromptSnippet
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,9 @@ def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) 
             if template is None:
                 return None
         return render_template(template, values or {}, resolver=(lambda n: provider.get_snippet(n)))
+    except PromptRenderError as exc:
+        logger.warning("render_use_case_prompt failed for %r: %s", use_case, exc)
+        return None
     except Exception:
         logger.debug("render_use_case_prompt failed for %r", use_case, exc_info=True)
         return None
