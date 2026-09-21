@@ -695,10 +695,6 @@ def test_frontend_display_map_kinds_all_resolve():
         pytest.skip("web/ not present in this checkout")
     tolerated = {
         "schedule",  # pre-existing drift (T1.1 inventory); no emitter, kept for old rows
-        # The retired loop/stalled registration never had a wire mapping, but an older build may
-        # still have persisted the bare fallback. Keep its display label without restoring an
-        # inert configurable row.
-        "stalled",
         # Bare kinds whose pair emits a legacy flat string instead. Kept for persisted history.
         "alert",  # inbox/alert     → emits `inbox_alert`
         "result",  # cron/result     → emits `cron`
@@ -729,8 +725,7 @@ def test_the_tolerated_list_does_not_outlive_its_reason():
     if keys is None:
         pytest.skip("web/ not present in this checkout")
     bare = {k.kind for k in nk.all_kinds()}
-    retired_history_only = {"stalled"}
     for key in keys - _wire_vocabulary():
         assert (
-            key in bare or key in retired_history_only or key == "schedule"
+            key in bare or key == "schedule"
         ), f"{key!r} is neither a registered kind nor a pinned historical display key"
