@@ -577,22 +577,34 @@ async def start_run(
         return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
 
     spec = definition if isinstance(definition, dict) else definition.to_dict()
-    missing = _missing_required_inputs(spec, inputs or {})
-    if missing:
-        # Refused BEFORE tokens are spent — a run that fails three nodes deep on a missing
-        # input has already cost money for nothing.
+    # Use the SAME tree-derived schema the planner review emits. A declared-only check misses
+    # `{{inputs.x}}` when the definition forgot to declare x, which is precisely the drift
+    # `resolve_unfilled_inputs` exists to make impossible.
+    from personalclaw.workflows import contracts as contracts_mod
+
+    contract_spec = {
+        "inputs": spec.get("inputs") or {},
+        "root": spec.get("root") or {},
+    }
+    extraction = contracts_mod.apply_extraction(
+        contracts_mod.resolve_unfilled_inputs(contract_spec),
+        # Use the contract's explicit envelope. Passing the flat start payload is ambiguous when
+        # a workflow legitimately declares an object parameter named ``extracted``.
+        {"extracted": dict(inputs or {})},
+    )
+    if not extraction.all_filled:
+        # Refused BEFORE tokens are spent, with the extraction contract intact so a calling model
+        # can ask one follow-up and retry instead of parsing a binding failure after launch.
         return _service_failure(
             "WF_RUN_MISSING_INPUTS",
-            f"missing required input(s): {', '.join(missing)}",
-            missing=missing,
+            f"missing required input(s): {', '.join(extraction.missing)}",
+            **extraction.to_dict(),
         )
-    # Declared TYPES are enforced, for the same reason and at the same door as the required check
+    # Declared TYPES are enforced, for the same reason and at the same door as the derived check
     # above: a mistyped input caught here costs nothing, and caught at node 7 has already paid for
     # six nodes — or worse, has quietly run with a value the caller never chose. Coerced rather
     # than merely rejected, because a string is what an HTML form, a shell and a chat planner all
     # produce for a number; only a value that cannot BE its declared type is refused.
-    from personalclaw.workflows import contracts as contracts_mod
-
     inputs, type_errors = contracts_mod.coerce_declared_inputs(spec, dict(inputs or {}))
     if type_errors:
         return _service_failure(
@@ -2372,20 +2384,6 @@ async def _raw_def(name: str) -> Any | None:
         if found is not None:
             return found
     return None
-
-
-def _missing_required_inputs(spec: dict[str, Any], provided: dict[str, Any]) -> list[str]:
-    declared = spec.get("inputs") or {}
-    if not isinstance(declared, dict):
-        return []
-    missing: list[str] = []
-    for key, meta in declared.items():
-        if not isinstance(meta, dict) or not meta.get("required"):
-            continue
-        if key in provided or meta.get("default") is not None:
-            continue
-        missing.append(str(key))
-    return sorted(missing)
 
 
 def _with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:

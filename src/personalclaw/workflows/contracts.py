@@ -312,8 +312,8 @@ def coerce_declared_inputs(
     * a declared type outside :data:`DECLARED_TYPES` — see its note;
     * ``None`` and ``""`` — this system's own "declared but unset" marker, written by
       `service._with_declared_defaults` for every optional input with no default. Whether a blank
-      value is acceptable is `_missing_required_inputs`' question, not this one; asking it twice is
-      how two checks come to disagree.
+      value is acceptable is `apply_extraction`'s question, not this one; asking it twice is how
+      two checks come to disagree.
     """
     declared_raw = spec.get("inputs")
     declared: dict[str, Any] = declared_raw if isinstance(declared_raw, dict) else {}

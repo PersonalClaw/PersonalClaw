@@ -1,4 +1,4 @@
-"""Surfacing channels 2 and 3, scope resolution, pre-fill and the doctor (TASKS-SOPS §2 — S59).
+"""Surfacing channels 2 and 3, scope resolution, preflight and the doctor (TASKS-SOPS §2 — S59).
 
 Channel 1 (semantic match) is the old mechanism and stays where it is. This module owns the two
 channels a per-turn embedding match structurally CANNOT express, plus the three contracts that
@@ -13,8 +13,8 @@ decide whether a match is allowed to become a suggestion:
 * **R18 — layered scope resolution.** Narrower shadows wider, and a shadowed def stays VISIBLE
   with a state. A silently hidden def is the failure that makes a user rewrite a procedure they
   already had.
-* **R11 — pre-fill + requirements preflight.** A suggestion whose requirements are unmet fails AT
-  SUGGESTION TIME naming the missing item, rather than dying mid-run.
+* **R11 — requirements preflight.** A suggestion whose requirements are unmet fails AT SUGGESTION
+  TIME naming the missing item, rather than dying mid-run.
 * **The reachability doctor.** The mirror failure of over-firing: a def nothing can reach. gbrain's
   audit found 63 silently unreachable skills on its first run.
 
@@ -847,89 +847,6 @@ def preflight_message(findings: Sequence[Finding]) -> str:
         suffix = f" → {finding.settings_path}" if finding.settings_path else ""
         lines.append(f"  - {finding.requirement}: {finding.state.value}{suffix}")
     return "\n".join(lines)
-
-
-@dataclass
-class PreFill:
-    """The schema-driven extraction result (R11).
-
-    `all_filled` is RE-DERIVED here rather than trusted from the model. A model that reports
-    `all_filled: true` while omitting a required input produces a `workflow_start` call that fails
-    validation at the engine — after the user has been told the workflow is ready to go.
-    """
-
-    extracted: dict[str, Any] = field(default_factory=dict)
-    missing: list[str] = field(default_factory=list)
-    follow_up: str = ""
-    all_filled: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "extracted": dict(self.extracted),
-            "missing": list(self.missing),
-            "follow_up": self.follow_up,
-            "all_filled": self.all_filled,
-        }
-
-
-def build_prefill(
-    schema: dict[str, Any],
-    candidates: Sequence[dict[str, Any]],
-    *,
-    declined: Iterable[str] = (),
-) -> PreFill:
-    """Extract inputs from turn candidates against the def's input schema.
-
-    Three rules the plan states, each of which is a defect if dropped:
-
-    * **Only USER messages count as truth.** A value the agent proposed, or one that arrived inside
-      fenced/pasted content, is not something the user asked for — pre-filling from it puts words
-      in their mouth and then runs on them.
-    * **Latest value wins.** A user who corrects themselves mid-turn means the correction.
-    * **`all_filled` is re-validated against the schema**, never taken from the extractor.
-
-    A DECLINED optional is never re-asked. Re-asking is how a follow-up question becomes an
-    interrogation, and the user already answered ("no").
-    """
-    props = dict(schema.get("properties") or {})
-    required = [str(k) for k in (schema.get("required") or [])]
-    skip = {str(x) for x in declined}
-
-    extracted: dict[str, Any] = {}
-    for candidate in candidates:
-        if str(candidate.get("role", "")) != "user":
-            continue
-        if candidate.get("fenced") or candidate.get("pasted"):
-            continue
-        for key, value in dict(candidate.get("values") or {}).items():
-            if key in props and value is not None and value != "":
-                extracted[str(key)] = value  # latest wins: later candidates overwrite
-
-    missing = [key for key in required if key not in extracted]
-    optional_missing = [
-        key for key in props if key not in required and key not in extracted and key not in skip
-    ]
-    follow_up = ""
-    if missing:
-        follow_up = f"To start this workflow I need: {', '.join(missing)}."
-    elif optional_missing:
-        follow_up = f"Optionally, you can also set: {', '.join(optional_missing)}."
-    return PreFill(
-        extracted=extracted,
-        missing=missing,
-        follow_up=follow_up,
-        all_filled=not missing,
-    )
-
-
-def suggestion_inputs(prefill: PreFill) -> dict[str, Any]:
-    """What goes into `workflow_start(inputs=...)`.
-
-    Only the extracted values — never a placeholder for a missing one. A placeholder
-    would pass the engine's presence check and then execute a step against a made-up
-    value, which is worse than the run refusing to start.
-    """
-    return dict(prefill.extracted)
 
 
 # ── The reachability doctor ──
