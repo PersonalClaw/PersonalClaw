@@ -191,7 +191,7 @@ def test_a_drill_result_round_trips_through_state(home, ok):
         detail="snap-1: 3 database(s) verified" if ok else "snap-1: integrity_check said bad",
         extra={"snapshot": "snap-1.tar.gz", "databases_checked": 3},
     )
-    service.persist_drill_result(result, at=1_800_000_000.0)
+    service.persist_job_result("drill", result, at=1_800_000_000.0)
     drill = service.last_drill()
     assert drill["ran"] is True
     assert drill["ok"] is ok

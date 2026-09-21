@@ -45,6 +45,16 @@ TICK_SECS = 5 * 60
 
 _STATE_FILE = "durability_state.json"
 
+# job name -> the `durability_state.json` key whose cadence `_due()` measures. One map, so
+# a job that can be run by hand and a job the tick schedules can never stamp different keys
+# and drift apart. `drill` is deliberately absent: it carries a verdict, not just a stamp,
+# so `job_stamp_fields` builds its whole block.
+_STAMP_KEYS = {
+    "export": "last_export",
+    "history": "last_history",
+    "snapshot": "last_snapshot",
+}
+
 
 @dataclass
 class JobResult:
@@ -109,31 +119,52 @@ def save_state(state: dict) -> None:
         logger.debug("durability: could not persist service state", exc_info=True)
 
 
-def drill_fields(result: JobResult, *, at: float) -> dict:
-    """The drill OUTCOME fields for `durability_state.json` (§6's "validate status").
+def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
+    """The `durability_state.json` fields ONE finished job contributes — or `{}`.
 
-    Only `last_drill` (a timestamp) was ever persisted, so the archive browser could
-    say *when* the last drill ran but not whether it PASSED — and a drill that passed
-    and one that failed rendered identically. §6 asks for the validate status, so the
-    verdict is persisted alongside the stamp.
+    🔴 THE STAMP RULE LIVES HERE, ONCE, because there are two callers and they disagreed:
+    the tick (which owns its own batch `save_state`) and the on-demand
+    `POST /api/durability/run`. The endpoint stamped only the drill, so a hand-run
+    `export`/`snapshot` did the work and recorded nothing — "Last run of each job" stayed
+    stale, and `_due()` reads the same stamp, so the scheduler redid the job on the next
+    tick (#361). One rule table, so a third caller cannot invent a fourth behaviour.
 
-    Built here rather than inline at each call site because there are two: the tick
-    (which owns its own `save_state`) and the on-demand `POST /api/durability/run`.
+    The rules are NOT uniform and the difference is deliberate:
+
+    * `export`/`snapshot` stamp only on a real success — a failed export must stay due
+      and be retried on the next tick, which is the whole point of an hourly cadence.
+    * `drill` stamps on ANY non-skip, failure included: a failing drill must not retry
+      every tick and bury the user in notifications. The warning is already delivered,
+      so the VERDICT is stamped with it (§6's "validate status") and the archive browser
+      can show *whether* the last drill passed, not just when it ran.
+
+    A skip always returns `{}` — "another run already holds the lock" is not a run, and
+    stamping it would let a collision satisfy the schedule.
     """
-    extra = result.extra or {}
-    return {
-        "last_drill": at,
-        "last_drill_ok": bool(result.ok),
-        "last_drill_detail": result.detail,
-        "last_drill_archive": str(extra.get("snapshot", "") or ""),
-        "last_drill_databases": int(extra.get("databases_checked", 0) or 0),
-    }
+    if result.skipped:
+        return {}
+    if job == "drill":
+        extra = result.extra or {}
+        return {
+            "last_drill": at,
+            "last_drill_ok": bool(result.ok),
+            "last_drill_detail": result.detail,
+            "last_drill_archive": str(extra.get("snapshot", "") or ""),
+            "last_drill_databases": int(extra.get("databases_checked", 0) or 0),
+        }
+    key = _STAMP_KEYS.get(job, "")
+    if not key or not result.ok:
+        return {}
+    return {key: at}
 
 
-def persist_drill_result(result: JobResult, *, at: float | None = None) -> None:
-    """Record a drill outcome for callers that do not own a `save_state` of their own."""
+def persist_job_result(job: str, result: JobResult, *, at: float | None = None) -> None:
+    """Record one job outcome for callers that do not own a `save_state` of their own."""
+    fields = job_stamp_fields(job, result, at=at if at is not None else time.time())
+    if not fields:
+        return
     state = load_state()
-    state.update(drill_fields(result, at=at if at is not None else time.time()))
+    state.update(fields)
     save_state(state)
 
 
@@ -750,35 +781,31 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
     stamp = now or time.time()
     results: list[JobResult] = []
 
+    # Every branch stamps through `job_stamp_fields` rather than assigning its own key:
+    # the rule (including "export only on success" vs "drill even on failure") is defined
+    # once there, so the tick and `POST /api/durability/run` cannot diverge (#361).
     if force == "export" or _due(state, "last_export", HOURLY_SECS, now=stamp):
         result = run_incremental_export()
         results.append(result)
-        if result.ok and not result.skipped:
-            state["last_export"] = stamp
+        state.update(job_stamp_fields("export", result, at=stamp))
 
     # Time-travel's hourly memory commit (§5). Its own cadence key so an export
     # failure never starves it and vice versa — they mitigate different losses.
     if force == "history" or _due(state, "last_history", HOURLY_SECS, now=stamp):
         result = run_history_commit()
         results.append(result)
-        if result.ok and not result.skipped:
-            state["last_history"] = stamp
+        state.update(job_stamp_fields("history", result, at=stamp))
 
     if force == "snapshot" or _due(state, "last_snapshot", NIGHTLY_SECS, now=stamp):
         result = run_nightly_snapshot()
         results.append(result)
-        if result.ok and not result.skipped:
-            state["last_snapshot"] = stamp
+        state.update(job_stamp_fields("snapshot", result, at=stamp))
 
     drills_on = _cfg().restore_drills
     if force == "drill" or (drills_on and _due(state, "last_drill", DRILL_SECS, now=stamp)):
         result = run_restore_drill(notifier=notifier)
         results.append(result)
-        # Stamped even on failure: a failing drill must not retry every tick and
-        # bury the user in notifications. The warning is already delivered — and the
-        # VERDICT is now stamped with it, so the archive browser can show it.
-        if not result.skipped:
-            state.update(drill_fields(result, at=stamp))
+        state.update(job_stamp_fields("drill", result, at=stamp))
 
     # Sync (§4): the staleness window is the schedule — pull+push no more often than
     # sync_stale_after_secs. `run_sync_job` is self-guarding (disabled/unconfigured →
