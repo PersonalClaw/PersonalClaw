@@ -259,7 +259,10 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
   // surfaces can see it. **A region that only exists in a disclosed state is invisible to a sweep of
   // undisclosed ones**, and the fix is to enforce measured members here rather than to sweep harder.
   const OVERFLOWS_WITH_REAL_DATA: [string, string][] = [
-    ['pages/settings/ArchivePanel.tsx', 'Session transcript'],
+    // Renamed from "Session transcript" (#464): the box holds the lines compaction or rotation
+    // dropped out of a session, not the session's transcript, so the old name overstated the scope
+    // of what the region contains. Still static and still a name, not the content.
+    ['pages/settings/ArchivePanel.tsx', 'Trimmed messages from this session'],
   ]
 
   it('a capped box MEASURED to overflow is named — it is no longer latent', () => {
