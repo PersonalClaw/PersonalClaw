@@ -45,6 +45,7 @@ while not terminal:
 | `container_env.py` | container workspace backends — the workspace-manifest model, docker/nerdctl/Apple-container CLI drivers, `detect_backend()` |
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
+| `engine_support.py` | the preparation every dispatcher in `engine.py` shares, lifted out so that file stays inside its size band (#3253): config resolution that SKIPS the keys holding a condition (`conditions` parses those; interpolating `{{a}} && {{b}}` would report a broken binding for a well-formed expression), the three-field journalled-prompt envelope that never persists a BLOCKED call's body, the `model_tier` → use-case → concrete `Provider:model_id` chain read from the live active selection (so a `cross_model` judge is validated against the model it will actually run on, and an unbound axis fails closed as an empty family), and the `judge_samples` count clamped at `MAX_JUDGE_SAMPLES` because each sample is a full reasoning-tier completion. Holds no dispatch logic of its own |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
 | `conditions.py` | the ONE boolean-condition dialect: gate `expr`, loop `until`, `success_when` |
 | `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |

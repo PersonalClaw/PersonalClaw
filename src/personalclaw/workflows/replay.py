@@ -43,7 +43,7 @@ from personalclaw.workflows import execution_hints
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
 from personalclaw.workflows.bindings import BindingContext
-from personalclaw.workflows.engine import resolve_config
+from personalclaw.workflows.engine_support import resolve_config
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     InstanceState,

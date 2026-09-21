@@ -22,8 +22,6 @@ import pytest
 
 from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.engine import (
-    DEFAULT_MODEL_TIERS,
-    MAX_JUDGE_SAMPLES,
     MAX_WF_DEPTH,
     NodeResult,
     apply_judge_contract,
@@ -37,6 +35,10 @@ from personalclaw.workflows.engine import (
     dispatch_transform,
     dispatch_visualize,
     dispatch_wait,
+)
+from personalclaw.workflows.engine_support import (
+    DEFAULT_MODEL_TIERS,
+    MAX_JUDGE_SAMPLES,
     resolve_use_case,
 )
 from personalclaw.workflows.failure_taxonomy import classify_exception

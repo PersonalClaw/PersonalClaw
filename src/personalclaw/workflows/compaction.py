@@ -223,7 +223,7 @@ async def complete_with_compaction(
     """
     resolve = model_resolver
     if resolve is None:
-        from personalclaw.workflows.engine import resolve_axis_model
+        from personalclaw.workflows.engine_support import resolve_axis_model
 
         resolve = resolve_axis_model
     # A pinned model is the one that will actually run; otherwise the axis head is, and

@@ -820,7 +820,7 @@ def test_a_home_fixture_set_wins_over_the_shipped_one(bench_home):
 
 
 def test_the_tiers_are_the_engines_own_tier_table():
-    from personalclaw.workflows.engine import DEFAULT_MODEL_TIERS
+    from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS
 
     assert set(jb.TIERS) == set(DEFAULT_MODEL_TIERS)
     assert [jb.use_case_for_tier(t) for t in jb.TIERS] == [DEFAULT_MODEL_TIERS[t] for t in jb.TIERS]
@@ -829,7 +829,7 @@ def test_the_tiers_are_the_engines_own_tier_table():
 def test_the_top_sample_column_is_the_engines_ceiling():
     """Benchmarking a sample count no live gate can ask for would recommend an
     unreachable configuration."""
-    from personalclaw.workflows.engine import MAX_JUDGE_SAMPLES
+    from personalclaw.workflows.engine_support import MAX_JUDGE_SAMPLES
 
     assert max(jb.SAMPLE_COUNTS) == MAX_JUDGE_SAMPLES
     assert min(jb.SAMPLE_COUNTS) == 1
