@@ -38,7 +38,7 @@ from typing import Any
 
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool
-from personalclaw.workflows import leases, longrun, ownership
+from personalclaw.workflows import engine_support, leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.failure_taxonomy import classify_exception
@@ -72,14 +72,6 @@ logger = logging.getLogger(__name__)
 #: PROMPT-level only — this is the code check that did not previously exist.
 MAX_WF_DEPTH = 3
 WF_DEPTH_KEY = "__wf_depth"
-
-#: node `model_tier` → model use case. A tier is an INTENT; the use-case bridge owns the
-#: mapping to a real provider, so a template stays portable across provider setups.
-DEFAULT_MODEL_TIERS = {
-    "reasoning": "reasoning",
-    "standard": "orchestration",
-    "fast": "background",
-}
 
 
 @dataclass
@@ -175,111 +167,6 @@ def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -
     )
 
 
-# ── binding helpers ──────────────────────────────────────────────────────────
-
-
-def _condition_keys(node: Node) -> frozenset[str]:
-    """Config keys holding a CONDITION — parsed by `conditions`, never interpolated.
-
-    Interpolating one can only do harm. `resolve` reads a value that both starts and ends
-    with braces as ONE whole reference (`bindings._WHOLE_RE`), so a two-term
-    `{{a}} && {{b}}` resolves as a single path named `a}} && {{b` and fails — a gate would
-    report a broken binding for an expression that is perfectly well formed. The dispatcher
-    re-reads the raw value anyway, so nothing is lost by leaving these alone.
-
-    `expr` is a condition ONLY on a gate: on a `transform` it is the value-producing
-    expression, and skipping resolution there would hand the next node a template instead
-    of data. `success_when` is a condition on every kind, and is evaluated after the node
-    ran — its `output.*` root does not exist at config-resolution time at all.
-    """
-    if node.kind is NodeKind.GATE:
-        return frozenset({"expr", "success_when"})
-    return frozenset({"success_when"})
-
-
-def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Failure | None]:
-    """Resolve every binding in a node's config, except its conditions.
-
-    A `BindingError` becomes a USER failure rather than an exception: the spec is wrong,
-    the run should say so precisely, and a traceback in a run log tells a non-developer
-    nothing actionable.
-    """
-    raw = dict(node.config or {})
-    held = {key: raw.pop(key) for key in _condition_keys(node) if key in raw}
-    try:
-        resolved = resolve(raw, ctx)
-        resolved.update(held)
-        return resolved, None
-    except BindingError as exc:
-        return {}, Failure(
-            failure_class=FailureClass.USER,
-            cause_plain=f"binding failed: {exc}",
-            remediation=(
-                "check the referenced node id and field exist, or add a `| default(...)` "
-                "pipe if the value is genuinely optional"
-            ),
-        )
-
-
-def journalled_prompt(wire: Any, composed: str) -> dict[str, Any]:
-    """The three `NodeResult` prompt fields, from what the wire recorder captured (#3166).
-
-    Returned as kwargs because every `return NodeResult(...)` on a model-calling path has to carry
-    all three together: a stored body without its `prompt_redacted` flag is the half-fix that
-    leaves a reader unable to tell a substituted prompt from a verbatim one.
-
-    `captured` False means no `ModelCallGuard` was in the path — a test injecting `completion`, or a
-    provider resolved without the wrap. Then the composed prompt IS what went out, because the
-    scan is the only thing that would have changed it, so journaling it is exact rather than lax.
-
-    A BLOCKED call is the one case with no body at all: nothing reached a provider, and the
-    composed prompt is the text that was refused for carrying a credential. Journaling that would
-    persist to disk precisely the secret the block existed to stop — so the body is dropped and the
-    categories carry why. (No path writes it today: the controller only stores a prompt on the
-    SUCCESS branch. This keeps it safe if that ever changes.)
-    """
-    if wire is None or not getattr(wire, "captured", False):
-        return {
-            "resolved_prompt": composed,
-            "prompt_redacted": False,
-            "prompt_scan_categories": (),
-        }
-    return {
-        "resolved_prompt": "" if wire.blocked else wire.text,
-        "prompt_redacted": bool(wire.redacted),
-        "prompt_scan_categories": tuple(wire.categories),
-    }
-
-
-def resolve_use_case(node: Node, tiers: dict[str, str] | None = None) -> str:
-    """Map a node's declared tier to a model use case."""
-    table = dict(DEFAULT_MODEL_TIERS)
-    table.update({str(k): str(v) for k, v in (tiers or {}).items()})
-    tier = str((node.config or {}).get("model_tier", "standard") or "standard")
-    return table.get(tier, "background")
-
-
-def resolve_axis_model(use_case: str) -> str:
-    """The concrete ``"Provider:model_id"`` ref the engine WOULD resolve for one axis.
-
-    Reads the head of the active-selection CHAIN — the exact model
-    `one_shot_completion` resolves for this use case — so a `cross_model` judge is
-    validated against the model it will ACTUALLY run on, not a guess. Returns ``""``
-    when nothing is bound (which the caller treats as an undeterminable family, so a
-    cross-model gate fails closed rather than certifying against an unknown).
-
-    Injected into `dispatch_gate` as `judge_model_resolver` so a test can pin a
-    candidate family with no live provider.
-    """
-    try:
-        from personalclaw.providers.use_cases import active_model_refs
-
-        refs = active_model_refs(use_case)
-    except Exception:  # noqa: BLE001 — an unresolvable axis is an undeterminable family
-        return ""
-    return str(refs[0]) if refs else ""
-
-
 def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
     """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
     SHORT-CIRCUIT the model call, or None to proceed to the judge (LOOPS-EVOLUTION criterion 2).
@@ -342,29 +229,6 @@ def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
             recoverable=False,
         ),
     )
-
-
-#: Ceiling on `judge_samples`. Each sample is a full reasoning-tier completion, so an author typo
-#: (`judge_samples: 30`) would quietly cost 30× on a gate that runs every loop iteration. Five is
-#: past any real use — the shipped template asks for 3 — so hitting this bound means a mistake.
-MAX_JUDGE_SAMPLES = 5
-
-
-def _judge_sample_count(cfg: dict[str, Any]) -> int:
-    """How many independent samples this judge gate takes. Always ≥ 1.
-
-    Absent/invalid → 1, which is the pre-S145 behaviour: a gate that never asked for sampling must
-    not start paying for it. Clamped at `MAX_JUDGE_SAMPLES` — see that constant for why a typo
-    here is expensive rather than merely wrong.
-    """
-    raw = cfg.get("judge_samples", 1)
-    try:
-        count = int(raw)
-    except (TypeError, ValueError):
-        return 1
-    if count < 1:
-        return 1
-    return min(count, MAX_JUDGE_SAMPLES)
 
 
 def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceState, Failure | None]:
@@ -505,7 +369,7 @@ async def dispatch_infer(
     triggers one aggressive re-compaction + retry before the node fails. `compaction_saves`
     is this node's compaction history, which the anti-thrashing rule reads.
     """
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     prompt = str(cfg.get("prompt", "") or "")
@@ -516,7 +380,7 @@ async def dispatch_infer(
             "check the prompt template and its bindings",
         )
 
-    use_case = resolve_use_case(node, tiers)
+    use_case = engine_support.resolve_use_case(node, tiers)
     fn = completion
     if fn is None:
         from personalclaw.llm_helpers import one_shot_completion
@@ -544,7 +408,7 @@ async def dispatch_infer(
             return NodeResult(
                 state=InstanceState.FAILED,
                 failure=classify_exception(exc),
-                **journalled_prompt(wire, prompt),
+                **engine_support.journalled_prompt(wire, prompt),
             )
 
     output: Any = text
@@ -559,7 +423,7 @@ async def dispatch_infer(
                     remediation="add an explicit schema to the prompt, or split into a "
                     "produce-then-extract pair",
                 ),
-                **journalled_prompt(wire, prompt),
+                **engine_support.journalled_prompt(wire, prompt),
             )
         output = parsed
     return NodeResult(
@@ -568,7 +432,7 @@ async def dispatch_infer(
         # Tokens stay estimated from the COMPOSED prompt: the estimate is about what this node
         # spent, and a redaction changes the text by a few characters, not the work.
         tokens=_estimate_tokens(prompt, text),
-        **journalled_prompt(wire, prompt),
+        **engine_support.journalled_prompt(wire, prompt),
     )
 
 
@@ -589,7 +453,7 @@ async def dispatch_visualize(
     Output is the genui DSL + the ready-to-embed `<widget>` block, so a downstream node
     (a tile render, a digest) can bind `{{nodes.<id>.output.widget}}` directly.
     """
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     if "data" not in cfg:
@@ -714,7 +578,7 @@ async def dispatch_stage(
             f"workflow nesting depth cap ({MAX_WF_DEPTH}) reached — not spawning",
             "flatten the workflow, or move the nested work into a separate run",
         )
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     prompt = str(cfg.get("prompt", "") or "")
@@ -1095,7 +959,7 @@ async def dispatch_action(
     a clean DONE. Reporting it as success would make a fire-and-forget action look
     verified.
     """
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     name = str(cfg.get("provider", "") or "")
@@ -1229,7 +1093,7 @@ async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeR
     subtle half of active-edge gating: a 3-way fan-out with one fast leg and two waiting
     legs would otherwise fire its join after the fast leg alone.
     """
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     until = cfg.get("until_ts")
@@ -1462,7 +1326,7 @@ async def dispatch_gate(
     payload. `verify_command`/`verify_script` run a deterministic validator through the
     injected `verify` callable. A stage may REQUEST completion; only this flips it.
     """
-    cfg, failure = resolve_config(node, ctx)
+    cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     raw = str(cfg.get("kind", "") or "")
@@ -1624,7 +1488,11 @@ async def dispatch_gate(
         # A judge reasons, so it resolves on the reasoning tier unless told otherwise —
         # and the closed enum is demanded explicitly, because a judge that answers in
         # prose forces the scheduler to route on parsed sentiment.
-        use_case = resolve_use_case(node, tiers) if node.config.get("model_tier") else "reasoning"
+        use_case = (
+            engine_support.resolve_use_case(node, tiers)
+            if node.config.get("model_tier")
+            else "reasoning"
+        )
 
         # 🔴 CROSS-MODEL JUDGE ISOLATION (WF2LOO-11). `isolation: cross_model` demands a judge on a
         # DIFFERENT model FAMILY than the worker — a same-family "independent" judge shares the
@@ -1656,7 +1524,7 @@ async def dispatch_gate(
                     "bind a model for the worker tier so its family is known, or use "
                     "isolation: fresh",
                 )
-            resolve_candidate = judge_model_resolver or resolve_axis_model
+            resolve_candidate = judge_model_resolver or engine_support.resolve_axis_model
             candidate = str(resolve_candidate(use_case) or "")
             # `_family_of` reads the family out of a bare id OR a "Provider:model_id" ref, so the
             # active-chain ref both the worker and the candidate carry validates directly.
@@ -1719,7 +1587,7 @@ async def dispatch_gate(
         # is 3, and inheriting it here would have tripled the model spend of all 7 live gates in a
         # change about enforcement. Aggregation is now `judge_contract.aggregate_samples` itself —
         # the merged `Verdict` removed the cross-vocabulary reason this branch had to restate it.
-        samples = _judge_sample_count(cfg)
+        samples = engine_support._judge_sample_count(cfg)
         # The contract's standing cross-check, when the gate declares a deterministic one. No
         # bundled judge gate does today, so this costs nothing; without it,
         # `validate_verdict`'s "a judge PASS that contradicts `exit 1`" escalation could never
@@ -1769,7 +1637,7 @@ async def dispatch_gate(
                     return NodeResult(
                         state=InstanceState.FAILED,
                         failure=classify_exception(exc),
-                        **journalled_prompt(wire, instruction),
+                        **engine_support.journalled_prompt(wire, instruction),
                     )
                 texts.append(str(text))
                 answer = parse_judge_json(text)
@@ -1823,7 +1691,7 @@ async def dispatch_gate(
                     "deterministic check",
                 ),
                 tokens=sampled_tokens,
-                **journalled_prompt(wire, instruction),
+                **engine_support.journalled_prompt(wire, instruction),
             )
         decision = aggregate_samples(judged, hints)
         state, failure = _judge_gate_outcome(decision, node)
@@ -1876,14 +1744,14 @@ async def dispatch_gate(
                 wake_at=now + float(timeout) if timeout > 0 else 0.0,
                 ask=_ask_payload(node, cfg),
                 tokens=sampled_tokens,
-                **journalled_prompt(wire, instruction),
+                **engine_support.journalled_prompt(wire, instruction),
             )
         return NodeResult(
             state=state,
             output=output,
             failure=failure,
             tokens=sampled_tokens,
-            **journalled_prompt(wire, instruction),
+            **engine_support.journalled_prompt(wire, instruction),
         )
 
     # approval / event: park for a human or an external signal. The deadline is

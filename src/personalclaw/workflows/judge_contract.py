@@ -107,7 +107,7 @@ observed itself. That is the precondition becoming *satisfiable* before it becom
 ── The seams this does not own ──
 
 `JudgeHints.judge_samples` / `sample_count()` are NOT the gate's sample count: the gate reads
-`config.judge_samples` per node (default 1, clamped by `engine.MAX_JUDGE_SAMPLES`).
+`config.judge_samples` per node (default 1, clamped by `engine_support.MAX_JUDGE_SAMPLES`).
 Defaulting to this module's `DEFAULT_JUDGE_SAMPLES` of 3 would have tripled the model spend
 of all 7 live gates in a change whose subject is enforcement, so the node keeps the say.
 `marginal_threshold` is read only by `Ratchet.RELAXED`; no bundled template declares it.

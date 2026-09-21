@@ -85,12 +85,8 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
-from personalclaw.workflows.engine import (
-    DEFAULT_MODEL_TIERS,
-    NodeResult,
-    dispatch,
-    resolve_axis_model,
-)
+from personalclaw.workflows.engine import NodeResult, dispatch
+from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict

@@ -178,7 +178,7 @@ def test_every_note_type_in_the_tree_is_mapped():
     import re
     from pathlib import Path
 
-    from personalclaw.dashboard.state import BROADCAST_NOTE_TYPES
+    from personalclaw.dashboard.ws_state import BROADCAST_NOTE_TYPES
 
     src = Path(__file__).resolve().parent.parent / "src"
     found: dict[str, str] = {}

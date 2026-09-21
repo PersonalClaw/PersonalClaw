@@ -895,7 +895,7 @@ class TestContradictionReviewFastTier:
             KnowledgePersistActionProvider,
         )
         from personalclaw.workflows.bindings import BindingContext
-        from personalclaw.workflows.engine import resolve_config
+        from personalclaw.workflows.engine_support import resolve_config
 
         persist_node = self._persist()
         judge_node = self._judge()
@@ -983,7 +983,7 @@ class TestContradictionReviewFastTier:
             KnowledgePersistActionProvider,
         )
         from personalclaw.workflows.bindings import BindingContext
-        from personalclaw.workflows.engine import resolve_config
+        from personalclaw.workflows.engine_support import resolve_config
 
         persist_node = self._persist()
         judge_node = self._judge()
@@ -1053,7 +1053,7 @@ class TestContradictionReviewFastTier:
         token anywhere. Only `security.fence_untrusted` produces that.
         """
         from personalclaw.workflows.bindings import BindingContext
-        from personalclaw.workflows.engine import resolve_config
+        from personalclaw.workflows.engine_support import resolve_config
 
         judge = self._judge()
         attack = (
@@ -1144,7 +1144,7 @@ class TestContradictionReviewFastTier:
         )
 
     def test_the_judge_resolves_to_the_fast_background_use_case(self) -> None:
-        from personalclaw.workflows.engine import resolve_use_case
+        from personalclaw.workflows.engine_support import resolve_use_case
 
         judge = self._judge()
         assert (judge.config or {}).get(
@@ -1232,7 +1232,7 @@ class TestContradictionReviewFastTier:
         )
         from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
         from personalclaw.workflows.bindings import BindingContext
-        from personalclaw.workflows.engine import resolve_config
+        from personalclaw.workflows.engine_support import resolve_config
 
         persist_node = self._persist()
         persist = KnowledgePersistActionProvider()

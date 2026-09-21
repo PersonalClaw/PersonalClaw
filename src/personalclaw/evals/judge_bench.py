@@ -128,7 +128,7 @@ POSITIONS = (POSITION_FIRST, POSITION_SECOND)
 #: recommendation applies when two adequate rows cost the same.
 TIERS = ("fast", "standard", "reasoning")
 
-#: The sample counts §6 names. 5 is also `engine.MAX_JUDGE_SAMPLES`, so the top column is
+#: The sample counts §6 names. 5 is also `engine_support.MAX_JUDGE_SAMPLES`, so the top column is
 #: the most a live gate can ask for — asserted in the tests rather than assumed here.
 SAMPLE_COUNTS = (1, 3, 5)
 
@@ -181,12 +181,12 @@ class JudgeBenchError(ValueError):
 def use_case_for_tier(tier: str) -> str:
     """The model use case a judge tier resolves to.
 
-    Reads the engine's own `DEFAULT_MODEL_TIERS` (imported lazily — `workflows.engine`
+    Reads the engine's own `DEFAULT_MODEL_TIERS` (imported lazily — `workflows.engine_support`
     is a heavy module and this one is imported by a CLI path), so the benchmark measures
     the axes a template's `model_tier` actually selects rather than a parallel table that
     would drift the first time the engine's changed.
     """
-    from personalclaw.workflows.engine import DEFAULT_MODEL_TIERS
+    from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS
 
     table = dict(DEFAULT_MODEL_TIERS)
     if tier not in table:
@@ -198,7 +198,7 @@ def model_ref_for_tier(tier: str) -> str:
     """The concrete ``"Provider:model"`` a tier resolves to today, or ``""`` when nothing
     is bound. This is the ref the Models panel binds, so the recommendation names the
     exact string a user clicks rather than an intent they must translate."""
-    from personalclaw.workflows.engine import resolve_axis_model
+    from personalclaw.workflows.engine_support import resolve_axis_model
 
     return resolve_axis_model(use_case_for_tier(tier))
 
