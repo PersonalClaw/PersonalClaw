@@ -19,7 +19,7 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
-    # Two upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
+    # Three upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
     # and dependabot cannot read prose — so it re-proposes widening them every week and each
     # such PR is unmergeable on the merits, not on CI. Ignoring only the MAJOR bump keeps
     # minor/patch updates flowing, which is the half that is safe.
@@ -39,6 +39,16 @@ updates:
       # migration (update the import with a fallback, verify the transport), never a version bump.
       - dependency-name: mcp
         versions: [">=2"]
+      # `croniter>=2.0,<3`: croniter majors 2 and 6 DISAGREE ON THE CRON GRAMMAR — `0 9 * * * * *`,
+      # `0 9 * * * * 2026`, `0 9 * * * 30 *` and `5-1 * * * *` all parse differently, so a fresh
+      # editable install (which resolved 6.2.4 while CI's `uv sync --locked` resolved 2.0.7) fails
+      # tests CI passes. `tests/test_cron_expr_corpus.py:69` asserts this specifier string verbatim
+      # to hold the parser on the major the shared frontend/backend corpus was measured against, so
+      # a widening PR reds that rail by construction. Moving it is a grammar migration, not a bump
+      # (full argument: `docs/maintainers/local-pytest-determinism.md`, "Installer-dependent cron
+      # grammar"). Added after #3282 proposed `<7` and was closed on the merits.
+      - dependency-name: croniter
+        versions: [">=3"]
       # `isort>=8,<9`: isort 9 reorders imports this tree already formats to a byte-clean state
       # under 8 — measured at 8 files flagged on an untouched tree — so a major here reds the
       # lint gate for every contributor on a change none of them made.
