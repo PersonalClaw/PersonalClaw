@@ -624,7 +624,6 @@ def test_gaps_never_writes(home, ctx):
     "field_name",
     [
         "synthesis_window",
-        "lint_every_n_persists",
         "consolidate_min_cluster",
         "consolidate_min_hours",
     ],

@@ -1,6 +1,29 @@
 {
   "generated_from": "scripts/generate_inert_surface_baseline.py",
   "per_file": {
+    "src/personalclaw/config/learning.py": {
+      "inert": 1,
+      "surfaces": [
+        "config_reader:learning.min_evidence"
+      ]
+    },
+    "src/personalclaw/config/loader.py": {
+      "inert": 12,
+      "surfaces": [
+        "config_reader:agent.self_qa.fix_branch_enabled",
+        "config_reader:ambient.genui_enabled",
+        "config_reader:ambient.surfaces_max_layer",
+        "config_reader:ambient.tiles_enabled",
+        "config_reader:ambient.tray_enabled",
+        "config_reader:packs.connector_catalog_url",
+        "config_reader:routing.energy_sampling",
+        "config_reader:sources.daily_request_budget",
+        "config_reader:voice.confirmation_phrases",
+        "config_reader:voice.duplex_mute_enabled",
+        "config_reader:voice.exit_phrases",
+        "config_reader:voice.push_to_talk_chord"
+      ]
+    },
     "src/personalclaw/inbox.py": {
       "inert": 1,
       "surfaces": [
@@ -423,11 +446,12 @@
   "totals": {
     "by_kind": {
       "config": 0,
+      "config_reader": 13,
       "editable_config": 0,
       "enum": 8,
       "sdk_export": 230,
       "trigger_kind": 0
     },
-    "inert": 238
+    "inert": 251
   }
 }

@@ -245,15 +245,6 @@ class LearningConfig:
             "principles so it cannot grow without displacing one you already accepted.",
         ),
     )
-    min_session_score: float = field(
-        default=0.0,
-        metadata=_meta(
-            "Minimum Session Score",
-            "Sessions scoring below this (0.0-1.0, weighted toward decisions rather "
-            "than raw turn count) are skipped by the session-end consolidation pass. "
-            "0 = score every session; raise it to stop paying to learn from thin ones.",
-        ),
-    )
     context_budget_tokens: int = field(
         default=4000,
         metadata=_meta(

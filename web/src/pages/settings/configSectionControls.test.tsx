@@ -116,22 +116,6 @@ describe('Settings › Workflows writes workflows.* (issue #2801, the 21-key blo
     await userEvent.type(quiet, '{Enter}')
     expect(patchConfig).toHaveBeenCalledWith('workflows.default_quiet_windows', '22:00-08:00')
   })
-
-  it('renders NO control for the remaining INERT allowlisted path (issue #465)', async () => {
-    const { WorkflowsPanel } = await import('./WorkflowsPanel')
-    render(<WorkflowsPanel />)
-    await screen.findByRole('switch', { name: /workflow engine/i })
-    // `workflows.max_active_runs` is allowlisted, bounded and `_meta`-labelled with a promise the
-    // code does not keep — zero readers outside the plumbing. Giving an inert knob a control does
-    // not fix it; it makes the promise more convincing. It stays uncontrolled until #465 wires the
-    // reader or drops the allowlist row.
-    expect(screen.queryByRole('spinbutton', { name: /max active runs/i })).toBeNull()
-    // 🪤 NO ASSERTION FOR `workflows.max_concurrent_nodes`. It was the second inert path here until
-    // the #465 half of this change DELETED it from `WorkflowsConfig` and the allowlist, and an
-    // assertion that a control does not exist for a field that does not exist either is vacuous —
-    // it would pass with this whole panel deleted. `tests/test_inert_config_paths.py` makes the
-    // claim that can actually fail: gone from the schema AND the write path.
-  })
 })
 
 describe('Settings › Autonomous loops writes loops.* (issue #2801)', () => {

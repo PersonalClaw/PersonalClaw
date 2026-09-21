@@ -1794,14 +1794,6 @@ class KnowledgeConfig:
             "context limit, with nothing indicating why.",
         ),
     )
-    lint_every_n_persists: int = field(
-        default=12,
-        metadata=_meta(
-            "Knowledge Lint Cadence",
-            "Writes between semantic lint passes. Counted in WRITES rather than hours: a store "
-            "nobody added to does not need linting, and a busy week needs it more than once.",
-        ),
-    )
     embed_batch_size: int = field(
         default=32,
         metadata=_meta(
@@ -1887,15 +1879,6 @@ class KnowledgeConfig:
             "a project. Small by default because it is paid on EVERY run — a generous budget "
             "becomes a permanent cost nobody attributes to the right feature. Items are dropped "
             "whole when the budget binds, and the brief says how many it left out.",
-        ),
-    )
-    conflict_model_pass: bool = field(
-        default=True,
-        metadata=_meta(
-            "Semantic Conflict Check",
-            "After the free deterministic check, send claims it could not separate to one "
-            "fast-model call to look for contradictions. Off leaves only the provable conflicts "
-            "flagged — cheaper, and it still catches the numeric and polarity cases.",
         ),
     )
     consolidate_min_hours: int = field(
@@ -2185,8 +2168,8 @@ class WorkflowsConfig:
     keyword tie. It is a real reader this time — not the inert knob it was under the old
     SOP feature — so the field is live and wired through all four config points.
     `enabled` keeps its meaning as the feature kill-switch; the engine's own keys
-    (max_active_runs, the per-lane `max_concurrent_*_nodes` caps, model_tiers, retention.*)
-    arrive with Slice 0, each wired through all four config points.
+    (the per-lane `max_concurrent_*_nodes` caps, model_tiers, retention.*) arrive with
+    Slice 0, each wired through all four config points.
 
     There is deliberately NO bare `max_concurrent_nodes` total. It was declared here with a
     `_meta` promising "total node slots per run, partitioned across typed lanes", and nothing
@@ -2201,14 +2184,6 @@ class WorkflowsConfig:
             "Enabled",
             "Master switch for the workflow engine. Turning it off stops new runs "
             "from starting without touching stored definitions.",
-        ),
-    )
-    max_active_runs: int = field(
-        default=10,
-        metadata=_meta(
-            "Max Active Runs",
-            "How many workflow runs may execute at once. A trigger firing faster than "
-            "its runs finish would otherwise stack them without bound.",
         ),
     )
     self_schedule_max_outstanding: int = field(
@@ -2400,8 +2375,6 @@ class WorkflowsConfig:
     def __post_init__(self) -> None:
         # Clamp rather than reject: a nonsensical value from a hand-edited config must
         # not stop the gateway booting, and 0 concurrency would deadlock every run.
-        if self.max_active_runs < 1:
-            object.__setattr__(self, "max_active_runs", 1)
         if self.default_node_timeout_total_secs < 0:
             object.__setattr__(self, "default_node_timeout_total_secs", 0)
         if self.default_node_timeout_stall_secs < 0:
@@ -4054,7 +4027,6 @@ class AppConfig:
             ),
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
-                max_active_runs=_safe_int(workflows_data.get("max_active_runs", 10), 10),
                 self_schedule_max_outstanding=_safe_int(
                     workflows_data.get("self_schedule_max_outstanding", 20), 20
                 ),
@@ -4117,7 +4089,6 @@ class AppConfig:
                 min_lesson_confidence=_safe_float(learning_data.get("min_lesson_confidence"), 0.5),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
-                min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
@@ -4141,7 +4112,6 @@ class AppConfig:
                 default_ttl=str(knowledge_data.get("default_ttl", "") or ""),
                 max_mentions_per_claim=int(knowledge_data.get("max_mentions_per_claim", 20) or 20),
                 synthesis_window=int(knowledge_data.get("synthesis_window", 20) or 20),
-                lint_every_n_persists=int(knowledge_data.get("lint_every_n_persists", 12) or 12),
                 embed_batch_size=int(knowledge_data.get("embed_batch_size", 32) or 32),
                 embed_retry_budget=int(knowledge_data.get("embed_retry_budget", 3) or 3),
                 maintenance_max_staleness_secs=int(
@@ -4171,7 +4141,6 @@ class AppConfig:
                 session_brief_max_tokens=_safe_int(
                     knowledge_data.get("session_brief_max_tokens"), 800
                 ),
-                conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
                 auto_ingest_artifacts=bool(knowledge_data.get("auto_ingest_artifacts", True)),
                 # KL-20. Same three-valued vocabulary as `memory.vault_mode` (one tuple,
                 # `MEMORY_VAULT_MODES`, not a second spelling), and it fails to `off` rather
