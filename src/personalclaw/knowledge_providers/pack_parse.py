@@ -11,10 +11,9 @@ that came from a stranger.
 module also uses — denies *file reads* of credential paths; its Seatbelt profile is
 ``(allow default)`` plus deny-read rules and its Linux launcher unshares only
 ``CLONE_NEWUSER``/``CLONE_NEWNS``. Neither denies network, and on a host where
-``detect_backend()`` answers ``none`` (this project's own macOS 26 dev machine, where
-``sandbox_apply`` is refused for third-party callers) it is not applied at all. So the OS
-sandbox is a real control over the *filesystem* and no control whatsoever over *egress*, and
-pretending otherwise would leave the property this atom exists for resting on nothing.
+``detect_backend()`` answers ``none`` it is not applied at all. So the OS sandbox is a real
+control over the *filesystem* and no control whatsoever over *egress*, and pretending
+otherwise would leave the property this atom exists for resting on nothing.
 
 The live rail is therefore in-process, installed by :data:`_PARSE_HARNESS_SRC` before the pack
 script is executed. It is **three mechanisms plus a verification**, and the division of labour

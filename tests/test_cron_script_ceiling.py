@@ -16,10 +16,10 @@ would break a busy host, and the durable pids/memory bound is PHF-2's Linux cgro
 an rlimit. ``oom_score_adj`` is Linux-only and silently skipped here. So NOFILE is what is
 driven below, and it is the only ceiling this seam enforces on this platform.
 
-Second platform note: on macOS >= 26 ``sandbox-exec`` is refused for third-party callers, so
-``detect_backend`` returns ``none`` and the OS wrap is a pass-through. The composition of the
-ceiling with a real *exec wrapper* is therefore driven through a surrogate of the same shape
-(see the last test) rather than left unexercised.
+Second platform note: not every host has a working OS sandbox backend, so
+``detect_backend`` can return ``none`` and make the OS wrap a pass-through. The composition
+of the ceiling with a real *exec wrapper* is therefore driven through a surrogate of the
+same shape (see the last test) rather than left unexercised.
 """
 
 from __future__ import annotations
@@ -222,16 +222,16 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
     )
     # Settle the sandbox backend BEFORE opening the measurement window below.
     #
-    # `wrap_argv` derives the backend on first use, and on a macOS host older than 26 that
-    # derivation SPAWNS a host-fact capability probe (`sandbox-exec -f
-    # /tmp/personalclaw_probe_*.sb /usr/bin/true`). The spy below monkeypatches `run` on the
-    # shared `subprocess` MODULE object, so it captures every spawn in the process and cannot
-    # tell that probe apart from the cron child's own — it counted both. Whether it saw one or
-    # two therefore depended on whether some earlier test in the same pytest-split shard had
-    # already warmed the cache, which is exactly how this assertion came up `2 == 1` on the
-    # `(3.13, macos-14, 4)` leg while passing on every host where the probe short-circuits.
-    # Settling it here makes the window hold the cron spawn and nothing else, on every host
-    # and in any shard, so the count below stays an exact 1 rather than a tolerance.
+    # `wrap_argv` derives the backend on first use, and that derivation can SPAWN a host-fact
+    # capability probe (`sandbox-exec -f /tmp/personalclaw_probe_*.sb <python> -c pass`).
+    # The spy below monkeypatches `run` on the shared `subprocess` MODULE object, so it
+    # captures every spawn in the process and cannot tell that probe apart from the cron
+    # child's own — it counted both. Whether it saw one or two therefore depended on whether
+    # some earlier test in the same pytest-split shard had already warmed the cache, which is
+    # exactly how this assertion came up `2 == 1` on the `(3.13, macos-14, 4)` leg while
+    # passing on every host where the probe short-circuits. Settling it here makes the window
+    # hold the cron spawn and nothing else, on every host and in any shard, so the count below
+    # stays an exact 1 rather than a tolerance.
     detect_backend(config_mode="standard")  # the mode `run_script_sandboxed` passes
 
     seen: list[list[str]] = []
@@ -274,11 +274,11 @@ def test_the_ceiling_survives_an_intervening_os_sandbox_wrapper(
 
     This is the property that makes the outside ordering correct — rlimits inherit through
     ``exec``, so the shim does not need to run inside the sandbox to bound what the sandboxed
-    child consumes. It cannot be driven through the real backend on every host (macOS >= 26
-    denies ``sandbox_apply`` for third-party callers, so ``detect_backend`` returns ``none``
-    there and both orderings produce the same argv), so stand in a wrapper with the same
-    shape the real macOS wrap has — ``env -u NAME <argv>``, the literal prefix
-    ``sandbox_exec_argv`` builds — and check the ceiling still lands on the far side of it.
+    child consumes. It cannot be driven through the real backend on every host because the
+    binary may be absent or its runtime capability probe may fail, leaving both orderings
+    with the same argv. So stand in a wrapper with the same shape the real macOS wrap has —
+    ``env -u NAME <argv>``, the literal prefix ``sandbox_exec_argv`` builds — and check the
+    ceiling still lands on the far side of it.
     """
     _set_sandbox_config(monkeypatch, tmp_path, nofile=_CEILING, max_pids=0, max_rss_mb=0)
     monkeypatch.setattr(
