@@ -67,6 +67,18 @@ _HAS_GIT = shutil.which("git") is not None
 
 requires_git = pytest.mark.skipif(not _HAS_GIT, reason="git not available")
 
+_WORKFLOWS_TEST_TIMEOUT_SECONDS = 46
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give workflow tests a measured ceiling without replacing an explicit one."""
+    for item in items:
+        if (
+            item.path.name.startswith("test_workflows_")
+            and item.get_closest_marker("timeout") is None
+        ):
+            item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
+
 
 @pytest.fixture(autouse=True)
 def _ensure_event_loop():
