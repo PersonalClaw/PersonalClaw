@@ -516,6 +516,42 @@ class TestRunRoutes:
         resp = await H.api_run_rewind(req)
         assert resp.status == 400 and "node_id" in _body(resp)["error"]["message"]
 
+    async def test_rewind_threads_explicit_cascade_confirmation(self, monkeypatch) -> None:
+        seen: dict = {}
+
+        def rewind(run_id, node_id, **kwargs):
+            seen.update(kwargs)
+            return {"ok": True, "preview": {}}
+
+        monkeypatch.setattr(H.service, "rewind_run", rewind)
+        req = _req(
+            "POST",
+            "/api/workflows/runs/x/rewind",
+            state=_State(None),
+            body={"node_id": "work", "confirm_cascade": True},
+        )
+        req.match_info["run_id"] = "abc"
+        assert (await H.api_run_rewind(req)).status == 200
+        assert seen["confirm_cascade"] is True
+
+    async def test_run_from_threads_explicit_cascade_confirmation(self, monkeypatch) -> None:
+        seen: dict = {}
+
+        def run_from(run_id, node_id, **kwargs):
+            seen.update(kwargs)
+            return {"ok": True, "preview": {}}
+
+        monkeypatch.setattr(H.service, "run_from", run_from)
+        req = _req(
+            "POST",
+            "/api/workflows/runs/x/run-from",
+            state=_State(None),
+            body={"node_id": "seed", "confirm_cascade": True},
+        )
+        req.match_info["run_id"] = "abc"
+        assert (await H.api_run_from(req)).status == 200
+        assert seen["confirm_cascade"] is True
+
     async def test_fork_returns_201(self, provider) -> None:
         await provider.save_def(name="fork-wf", root=SPEC_ROOT)
         started = _body(

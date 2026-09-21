@@ -3,7 +3,7 @@
 The journal cache memoizes *outputs* only. Without effect identity, resume/rewind/fork
 double-fire external effects — a Slack message sent twice, a task created twice, a VM
 provisioned twice. That is the biggest correctness hole in a journaled-replay design
-(WF2-R1), and this module is the fix: every side-effecting `action` dispatch records a
+(WF2-R1), and this module is the fix: every tool-bearing dispatch records a
 typed effect event in `events.jsonl`, keyed by an idempotency key derived from the
 execution identity, not the wall clock.
 

@@ -7874,9 +7874,9 @@ export const api = {
     post<WorkflowTriageResult>(`/api/workflows/runs/${encodeURIComponent(id)}/review/triage`, body),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
-  rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
+  rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean; confirm_cascade?: boolean }) =>
     post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/rewind`, body),
-  workflowRunFrom: (id: string, body: { node_id: string }) =>
+  workflowRunFrom: (id: string, body: { node_id: string; confirm_cascade?: boolean }) =>
     post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/run-from`, body),
   forkWorkflowRun: (id: string, body?: { checkpoint_id?: string; note?: string }) =>
     post<{ child_run_id: string; fork_axis: string; shared_axes: string[]; isolation_notes: string[] }>(
