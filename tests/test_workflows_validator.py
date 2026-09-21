@@ -14,6 +14,8 @@ advisory-only would leave that to template-author discipline.
 
 from __future__ import annotations
 
+import pytest
+
 from personalclaw.workflows.models import Node
 from personalclaw.workflows.validator import (
     contract_reads_for_root,
@@ -217,6 +219,28 @@ class TestStructuralRules:
             _wrap({"kind": "gate", "id": "g", "config": {"kind": "expression"}})
         )
         assert validate_spec(_wrap({"kind": "gate", "id": "g", "config": {"kind": "approval"}})).ok
+
+    @pytest.mark.parametrize(
+        ("gate_kind", "field_config", "expected_code"),
+        [
+            ("verify_command", {}, "WF_MISSING_VERIFY"),
+            ("verify_script", {}, "WF_MISSING_VERIFY"),
+            ("ladder", {}, "WF_MISSING_CRITERIA"),
+            ("ladder", {"criteria": {}}, "WF_MISSING_CRITERIA"),
+            ("ladder", {"criteria": []}, "WF_MISSING_CRITERIA"),
+            ("judge", {}, "WF_MISSING_PROMPT"),
+            ("judge", {"prompt": "   "}, "WF_MISSING_PROMPT"),
+            ("expression", {}, "WF_MISSING_EXPR"),
+        ],
+    )
+    def test_every_runtime_required_gate_field_is_refused_at_author_time(
+        self,
+        gate_kind: str,
+        field_config: dict,
+        expected_code: str,
+    ) -> None:
+        config = {"kind": gate_kind, **field_config}
+        assert expected_code in _codes(_wrap({"kind": "gate", "id": "g", "config": config}))
 
     def test_model_tier_is_a_closed_set(self) -> None:
         spec = _wrap({"kind": "infer", "id": "i", "config": {"prompt": "p", "model_tier": "turbo"}})
