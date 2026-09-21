@@ -25,6 +25,16 @@ export const WIDTH_PRESETS: Record<WidthPreset, string> = {
   full: '100%',
 }
 
+/** Fixed caps for surfaces whose usable width must not follow the page content
+ *  preference. These preserve the intended dimensions of the former
+ *  default-preset offsets while keeping the shipped full-width preset page-only. */
+export const SURFACE_WIDTHS = {
+  modal: '1260px',
+  expandedSidePanel: '1300px',
+  snipOverlay: '1420px',
+  loopCockpit: '1440px',
+} as const
+
 /** The factory default content width — ONE declaration, because there used to be two and they disagreed.
  *
  *  🪤 THE PRESET NAMED `'default'` IS NOT THE DEFAULT PRESET, and that is exactly how this happened. The

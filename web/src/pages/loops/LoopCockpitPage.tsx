@@ -38,6 +38,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
 import { type SkillUsed, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { SURFACE_WIDTHS } from '../../app/appearance'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { loopStatusLabel, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
@@ -475,7 +476,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         .sort((a, b) => a.cycle - b.cycle)
     : (c.marginal_scores ?? []).map((s, i) => ({ cycle: i + 1, score: s }))
   const { byCycle, pending } = groupNudges(c.nudges ?? [])
-  const W = 'calc(var(--content-width) + 340px)'
+  const W = SURFACE_WIDTHS.loopCockpit
 
   // ── time math ──
   const cycleTs = (c.findings ?? []).map((f) => f.ts).filter((t): t is number => typeof t === 'number').sort((a, b) => a - b)
