@@ -7,6 +7,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
+import { confirm } from '../../ui/dialog'
 import { Surface } from '../../ui/Surface'
 import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput } from '../../ui/forms'
 
@@ -308,7 +309,7 @@ export function SavedToast({ show }: { show: boolean }) {
  *  Owning the flash state here is the point: five copies of "toggle, patch, flash for 1500ms" is
  *  five places for that timing to drift, on rows that sit in the same settings tree and are read
  *  as one family. */
-export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
+export function ToggleRow({ label, hint, cfg, field, patch, danger, confirmOn }: {
   label: string
   hint?: string
   cfg: Record<string, unknown>
@@ -324,10 +325,21 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
   patch: (k: string, v: never, cb: () => void, label?: string) => void
   /** Show a warning glyph while ON — for a switch that relaxes a safety default. */
   danger?: boolean
+  /** Confirm before turning this switch ON — for the one direction that relaxes a security/safety
+   *  default (issue #753). Opt-in per row, not a `ToggleRow`-wide default: most switches in this
+   *  family are harmless, and a dialog on every one would be friction with no security value.
+   *  Cancel leaves the switch untouched and writes nothing; turning it back OFF never prompts. */
+  confirmOn?: { title: string; body: React.ReactNode; confirmLabel?: string }
 }) {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
   const on = Boolean(cfg[field])
+  const onChange = async (next: boolean) => {
+    if (next && confirmOn && !(await confirm({
+      title: confirmOn.title, body: confirmOn.body, confirmLabel: confirmOn.confirmLabel ?? 'Turn on', danger: true,
+    }))) return
+    patch(field, next as never, flash, label)
+  }
   return (
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
@@ -345,7 +357,7 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
 
             The wording is this prop's OWN doc sentence, so the label and the contract cannot drift. */}
         {danger && on && <AlertTriangle size={14} className="text-warn" role="img" aria-label="Relaxes a safety default" />}
-        <Toggle on={on} onChange={(v) => patch(field, v as never, flash, label)} label={label} />
+        <Toggle on={on} onChange={onChange} label={label} />
       </div>
     </Row>
   )

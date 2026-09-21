@@ -85,9 +85,15 @@ describe('every consumer that relaxes a safety default marks itself', () => {
     // Two today. A floor rather than an equality: a new safety-relaxing switch should not red this, but
     // the population going EMPTY would mean the prop is dead and the glyph unreachable — at which point
     // the render assertions above are testing a path nobody takes.
+    //
+    // 🪤 The span window is sized to the LONGEST such row, not to a round number. A `danger` row now also
+    // carries a `confirmOn` block (~680 chars), and a window shorter than that never reaches the closing
+    // `/>`, so the row stops matching and this floor reads zero for a reason that has nothing to do with
+    // the glyph. The match stays non-greedy, so a wider window still takes the first `/>` and can never
+    // swallow the next element.
     let consumers = 0
     for (const abs of walk(PANELS)) {
-      for (const m of strip(readFileSync(abs, 'utf8')).matchAll(/<ToggleRow\b[\s\S]{0,400}?\/>/g)) {
+      for (const m of strip(readFileSync(abs, 'utf8')).matchAll(/<ToggleRow\b[\s\S]{0,1200}?\/>/g)) {
         if (/\bdanger\b/.test(m[0])) consumers++
       }
     }

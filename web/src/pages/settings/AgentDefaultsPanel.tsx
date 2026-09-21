@@ -103,7 +103,12 @@ export function AgentDefaultsPanel() {
           <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
-            hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
+            hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger
+            confirmOn={{
+              title: 'Turn on YOLO mode?',
+              body: 'Every tool-approval confirmation will be skipped, for every session, until you turn this off again — there is no expiry. Only enable this inside a sandbox or for trusted automation.',
+              confirmLabel: 'Turn on YOLO mode',
+            }} />
         </RowGroup>
       </Section>
 
@@ -156,7 +161,12 @@ export function AgentDefaultsPanel() {
           <NumberRow label="Max scenarios per run" cfg={selfQa} field="max_scenarios_per_fire" patch={patchSelfQa} min={1} max={20}
             hint="Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start." />
           <ToggleRow label="Propose fix branches" cfg={selfQa} field="fix_branch_enabled" patch={patchSelfQa} danger
-            hint="On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review." />
+            hint="On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review."
+            confirmOn={{
+              title: 'Let the companion propose fix branches?',
+              body: 'On every confirmed failure, the companion will open a pclaw/selfqa-<sha> branch in your watched repository carrying a proposed diff — with no further confirmation. It is never merged or pushed automatically.',
+              confirmLabel: 'Allow fix branches',
+            }} />
         </RowGroup>
       </Section>
     </div>
