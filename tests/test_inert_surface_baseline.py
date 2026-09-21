@@ -2,11 +2,11 @@
 
 ``inert-surface-baseline.json`` is a GENERATED census (by
 ``scripts/generate_inert_surface_baseline.py``) of *declared-but-inert surfaces* across
-five seam kinds — config keys, enum members, trigger kinds, ``_EDITABLE_CONFIG`` entries,
-and SDK exports — each being a place where something is declared and nothing on the other
-side of the seam consumes or produces it. That defect passes ordinary tests because they
-hand-build the state the missing writer should have created; only a census of both ends
-catches it.
+six seam kinds — config keys, config readers, enum members, trigger kinds,
+``_EDITABLE_CONFIG`` entries, and SDK exports — each being a place where something is
+declared and nothing on the other side of the seam consumes or produces it. That defect
+passes ordinary tests because they hand-build the state the missing writer should have
+created; only a census of both ends catches it.
 
 This suite is the ratchet that keeps the census honest. It regenerates in-memory and
 asserts every per-file inert counter **may only shrink** versus the committed baseline:
@@ -60,8 +60,11 @@ from pathlib import Path
 import pytest
 
 from scripts.generate_inert_surface_baseline import (
+    KIND_CONFIG_READER,
     _attribute_names_in_src,
+    _ConfigFieldDeclaration,
     _enum_members,
+    _inert_config_reader_paths,
     _inert_enum_members,
     _iterated_enum_classes,
     _parse,
@@ -86,6 +89,7 @@ def _committed_inventory() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.timeout(300)
 def test_no_per_file_counter_rose_vs_committed_baseline():
     """The ratchet: no file's inert-surface count may exceed its committed count.
 
@@ -108,6 +112,7 @@ def test_no_per_file_counter_rose_vs_committed_baseline():
     )
 
 
+@pytest.mark.timeout(300)
 def test_committed_baseline_is_not_stale_on_the_shrink_side():
     """Every committed per-file count must be >= the current count.
 
@@ -132,6 +137,7 @@ def test_committed_baseline_is_not_stale_on_the_shrink_side():
     )
 
 
+@pytest.mark.timeout(300)
 def test_committed_baseline_byte_matches_a_fresh_render():
     """Belt-and-suspenders on both directions at once: while the population is unchanged the
     committed file is byte-identical to a fresh render. This is what makes a legitimate
@@ -152,13 +158,13 @@ def test_render_is_deterministic():
     """Generating twice yields byte-identical output — no set-ordering, no timestamps, no
     absolute paths. Determinism is the whole contract; without it the ratchet is noise.
 
-    🔴 The timeout is RAISED, not the work reduced, and the number is measured. Two builds
-    take **13.1s** on an idle machine (6.7s + 6.4s) — nowhere near the suite's 120s default.
-    But `build_baseline()` is a CPU-bound AST walk of the whole tree, run twice, competing
-    with 17 other xdist workers, and CI starved it past 120s twice (#1205, #1222). That is
-    ≥9x, so 300s is headroom rather than a new cliff. Measured again through pytest
-    rather than raw calls: this ONE test took **51.5s** under light local load, so the
-    margin under 120s was thin, not comfortable — the 13.1s figure is the floor.
+    🔴 The timeout is RAISED, not the work reduced, and the number is measured. Before the
+    sixth census kind, two builds took **13.1s** on an idle machine (6.7s + 6.4s), but CI
+    starved the CPU-bound whole-tree walk past 120s twice (#1205, #1222). With the sixth
+    kind, one cold six-kind build measured **76.5s** on the shared host under the mandated
+    three-worker cap. The parser cache removes duplicate parsing inside a process, but both
+    calls still recollect and render every surface, so 300s remains measured headroom rather
+    than a new cliff.
 
     Serializing this test instead is NOT available: the suite runs `--dist worksteal`
     (`pyproject.toml`), which ignores `xdist_group` — measured in PHF-9, where switching to
@@ -187,6 +193,7 @@ def test_baseline_is_well_shaped_and_sorted():
             kind = s.split(":", 1)[0]
             assert kind in {
                 "config",
+                "config_reader",
                 "enum",
                 "trigger_kind",
                 "editable_config",
@@ -264,6 +271,125 @@ def test_a_cleanup_that_shrinks_a_counter_does_not_red_the_ratchet():
     shrunk[victim]["surfaces"].pop()
     shrunk[victim]["inert"] -= 1
     assert regressions(per_file, shrunk) == []
+
+
+# ── config-reader census: the #322/#364 calibration pair ─────────────────────
+
+
+def test_config_reader_reproduces_the_two_paid_for_findings(tmp_path):
+    """The sixth kind catches the historical Chat fields and ``agent.sandbox``.
+
+    The fixture carries every false-clear trap from #364: an imported module with the same
+    terminal word, a GitHub-label description, and a comment about the toggle. None is an
+    AST field read. It also pins both supported clear paths: a config accessor called by
+    production code, and a direct field read outside config.
+    """
+    config_file = tmp_path / "config_models.py"
+    files = _fixture_tree(
+        tmp_path,
+        {
+            "config_models.py": """
+                class DashboardConfig:
+                    send_on_enter = True
+                    show_timestamps = False
+                    show_thinking_inline = False
+                    simplified_tool_names = False
+                    confirm_close_session = True
+
+                    def to_dict(self):
+                        return {
+                            "send_on_enter": self.send_on_enter,
+                            "show_timestamps": self.show_timestamps,
+                        }
+
+                class AgentConfig:
+                    sandbox = "auto"
+
+                class WorkflowsConfig:
+                    max_concurrent_llm_nodes = 4
+
+                    def lane_caps(self):
+                        return {"llm": self.max_concurrent_llm_nodes}
+
+                class LearningConfig:
+                    min_session_score = 0.0
+                """,
+            "runtime.py": """
+                import personalclaw.sandbox
+
+                GITHUB_LABEL_DESCRIPTION = "agent.sandbox controls process isolation"
+                module_reference = personalclaw.sandbox
+
+                # The agent.sandbox toggle used to promise a global sandbox policy.
+
+                def limits(cfg):
+                    return cfg.workflows.lane_caps()
+
+                def unreachable_score_branch(cfg):
+                    return cfg.learning.min_session_score
+                """,
+        },
+    )
+    declarations = [
+        _ConfigFieldDeclaration(path, config_file, owner, field)
+        for path, owner, field in [
+            ("dashboard.send_on_enter", "DashboardConfig", "send_on_enter"),
+            ("dashboard.show_timestamps", "DashboardConfig", "show_timestamps"),
+            ("dashboard.show_thinking_inline", "DashboardConfig", "show_thinking_inline"),
+            ("dashboard.simplified_tool_names", "DashboardConfig", "simplified_tool_names"),
+            ("dashboard.confirm_close_session", "DashboardConfig", "confirm_close_session"),
+            ("agent.sandbox", "AgentConfig", "sandbox"),
+            (
+                "workflows.max_concurrent_llm_nodes",
+                "WorkflowsConfig",
+                "max_concurrent_llm_nodes",
+            ),
+            ("learning.min_session_score", "LearningConfig", "min_session_score"),
+        ]
+    ]
+
+    inert = set(
+        _inert_config_reader_paths(
+            files,
+            declarations,
+            editable_paths={decl.path for decl in declarations},
+        )
+    )
+    assert inert == {
+        "agent.sandbox",
+        "dashboard.confirm_close_session",
+        "dashboard.send_on_enter",
+        "dashboard.show_thinking_inline",
+        "dashboard.show_timestamps",
+        "dashboard.simplified_tool_names",
+    }
+
+
+@pytest.mark.timeout(300)
+def test_the_real_config_reader_census_fires_and_clears_an_accessor():
+    """Vacuity + real-tree calibration in both directions."""
+    inv = build_inventory()
+    assert inv["totals"]["by_kind"][KIND_CONFIG_READER] > 0
+    flagged = {surface for bucket in inv["per_file"].values() for surface in bucket["surfaces"]}
+    assert f"{KIND_CONFIG_READER}:routing.energy_sampling" in flagged
+    for wired in [
+        "agent.self_qa.enabled",
+        "external_access.a2a.enabled",
+        "external_access.openai.enabled",
+        "inbox.enabled",
+        "knowledge.embed_batch_size",
+        "knowledge.embed_retry_budget",
+        "knowledge.max_mentions_per_claim",
+        "knowledge.require_citations",
+        "knowledge.similarity_degree_cap",
+        "knowledge.synthesis_window",
+        "learning.self_model_enabled",
+        "resilience.remediation.enabled",
+        "sources.enabled",
+        "workflows.max_concurrent_llm_nodes",
+        "workflows.retention_per_def",
+    ]:
+        assert f"{KIND_CONFIG_READER}:{wired}" not in flagged
 
 
 # ── enum census: whole-enum iteration clears a class (PHF-12) ────────────────

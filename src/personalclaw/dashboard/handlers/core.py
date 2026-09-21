@@ -992,7 +992,6 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # the box, or shortening a stall timeout because a node is wedged. Requiring a
     # restart to change them would mean restarting mid-run to fix a run.
     "workflows.enabled": {"type": "bool"},
-    "workflows.max_active_runs": {"type": "int", "min": 1, "max": 100},
     "workflows.self_schedule_max_outstanding": {"type": "int", "min": 0, "max": 200},
     # No `workflows.max_concurrent_nodes`: the two per-lane caps below are the live partition,
     # and the bare total that claimed to be "partitioned across typed lanes" was read by
@@ -1056,7 +1055,6 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # that acts on what WORKED rather than on corrections — a user who finds that presumptuous
     # should be able to stop it without a restart.
     "learning.self_model_enabled": {"type": "bool"},
-    "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},
     # EA-6: the replay harness's switch and its ceiling. Both live-editable, and the ceiling
@@ -1096,7 +1094,6 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # what a store is being used for, and finding it means adjusting and watching — which a
     # restart per attempt makes nobody do.
     "knowledge.synthesis_window": {"type": "int", "min": 1, "max": 200},
-    "knowledge.lint_every_n_persists": {"type": "int", "min": 1, "max": 1000},
     # KL-14's anti-starvation window. Floor 60s rather than 1: below a minute this stops
     # being a staleness window and becomes "run every tick", which defeats the coalescing
     # the watermark exists for. `maintenance.max_staleness_secs()` enforces its own floor
@@ -1133,7 +1130,6 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},
-    "knowledge.conflict_model_pass": {"type": "bool"},
     # PEP-7: the artifact→knowledge mirror's master switch. Live-editable deliberately — the
     # listener reads it per artifact save, so turning it on backfills and turning it off stops
     # new indexing without a restart. Nothing already indexed is removed by turning it off;
