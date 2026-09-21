@@ -786,6 +786,191 @@ class TestDocumentRegenerate:
         assert "iterated" in types
 
 
+# ── DHT-5 clause 2: a repeat NAME dedups too, not only a repeat slug ─────────
+# The explicit-slug arm above was covered and worked; the arm an agent actually
+# takes was not. `_document_create` only consulted `prov.get(slug)`, and `slug` is
+# "" on a normal generated-document call, so two identical `deck_create` calls with
+# the same `name` minted `q3-review` AND `q3-review-2`, each at version 1. Nothing
+# under tests/ asserted the no-twin property for the no-slug path, which is why it
+# shipped and stayed broken. The collision is resolved through the SAME
+# `prov.find_similar` call `artifact_save` makes, so there is one dedup, not two.
+
+
+class TestDocumentNameDedup:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    @staticmethod
+    def _quiet(outcome, slug="", error=""):
+        return None
+
+    def test_two_identical_no_slug_calls_update_in_place(self, tmp_path, monkeypatch):
+        """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        args = {"name": "Q3 review", "markdown": "# Q3\n\n- one\n- two\n"}
+
+        first = _document_create(prov, "deck_create", dict(args), "s1", self._quiet)
+        second = _document_create(prov, "deck_create", dict(args), "s2", self._quiet)
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        slugs = [a.slug for a in prov.list()]
+        assert slugs == ["q3-review"], f"a repeat name minted a twin: {slugs}"
+        assert prov.get("q3-review").version == 2
+        assert len(prov.list_versions("q3-review")) == 2
+        assert prov.get("q3-review").events[-1].type == "iterated"
+        # The reply must not call a version bump a creation — an agent told "Created"
+        # goes looking for a second file.
+        assert second.startswith("Updated pptx: q3-review (v2"), second
+        assert first.startswith("Created pptx: q3-review (v1"), first
+
+    def test_the_deduped_update_carries_the_new_bytes(self, tmp_path, monkeypatch):
+        """An in-place update that kept the first render would be worse than a twin."""
+        import io
+
+        from pptx import Presentation
+
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Alpha\n\n- a\n"},
+            None,
+            self._quiet,
+        )
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Bravo\n\n- b\n"},
+            None,
+            self._quiet,
+        )
+
+        data, _mime = prov.raw_bytes("deck")
+        text = "\n".join(
+            shape.text_frame.text
+            for slide in Presentation(io.BytesIO(data)).slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+        )
+        assert "Bravo" in text
+        assert "Alpha" not in text
+
+    def test_an_explicit_slug_still_wins_and_still_bumps(self, tmp_path, monkeypatch):
+        """The arm that already worked, pinned: an explicit slug is unchanged."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report"},
+            None,
+            self._quiet,
+        )
+
+        assert "Error" not in reply, reply
+        assert [a.slug for a in prov.list()] == ["report"]
+        assert prov.get("report").version == 2
+
+    def test_an_explicit_unused_slug_still_creates_under_it(self, tmp_path, monkeypatch):
+        """A caller who wants a SECOND document of the same name says so with a slug —
+        which is the escape hatch, so no `force` parameter was added."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report-fork"},
+            None,
+            self._quiet,
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["report", "report-fork"]
+        assert prov.get("report").version == 1
+        assert prov.get("report-fork").version == 1
+
+    def test_the_same_name_at_a_different_format_is_a_different_document(
+        self, tmp_path, monkeypatch
+    ):
+        """Dedup is scoped to the kind: a pptx must not eat a same-named docx."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Plan", "markdown": "# Plan"}, None, self._quiet
+        )
+        _document_create(
+            prov, "deck_create", {"name": "Plan", "markdown": "## Plan\n\n- a\n"}, None, self._quiet
+        )
+
+        kinds = sorted((a.kind, a.version) for a in prov.list())
+        assert kinds == [("docx", 1), ("pptx", 1)], kinds
+        assert len(prov.list()) == 2
+
+    def test_a_different_name_still_creates_a_second_document(self, tmp_path, monkeypatch):
+        """Vacuity floor: the assertions above would hold if dedup swallowed everything."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Alpha", "markdown": "# A"}, None, self._quiet
+        )
+        _document_create(
+            prov, "document_create", {"name": "Bravo", "markdown": "# B"}, None, self._quiet
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["alpha", "bravo"]
+
+    def test_an_oversized_regeneration_still_refuses_before_storing(self, tmp_path, monkeypatch):
+        """Name-dedup runs AFTER the size cap, so the refusal cannot bump a version."""
+        from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov, "sheet_create", {"name": "Sales", "format": "csv", "rows": [["a"]]}, None, _audit
+        )
+        assert "Error" not in first, first
+
+        reply = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Sales",
+                "format": "csv",
+                "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+            },
+            None,
+            _audit,
+        )
+
+        assert "the generated csv came to 1.5MB (cap 1MB)" in reply
+        assert [a.slug for a in prov.list()] == ["sales"]
+        assert prov.get("sales").version == 1, "a refusal must not bump the existing version"
+        assert audited[-1][0] == "denied"
+        assert audited[-1][2].startswith("oversized ")
+
+
 # ── DFE-3's V1 gate, as a rail: generate with the TOOL, parse it back, diff ──
 # `test_docx_roundtrip.py` calls `render_docx` directly, so the seam between the tool
 # the agent actually invokes and the parser is joined by nothing. That is the DFE-2
