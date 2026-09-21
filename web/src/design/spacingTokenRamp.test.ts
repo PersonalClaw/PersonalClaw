@@ -32,9 +32,15 @@ import { join } from 'node:path'
 // done in whatever slices fit, by whoever, without the count silently drifting back up in between —
 // which is exactly what happened to the earlier attempt at this, whose 2963 was measured 745
 // commits ago and had already been overtaken by 172. Slice 1 (`a96ec3d0c`) converted **66
-// utilities across 29 whole files** and re-stated the ceiling at 3069. Slice 2 (`10313aa02`)
-// converted **14 utilities across 2 whole files** and re-stated it at 3055. Slice 3 (`2e007601b`)
-// converted **40 utilities in `settings/DoctorPanel.tsx`** and re-stated it at 3015.
+// utilities across 29 whole files** and re-stated the ceiling at 3069. Slice 2 (`2e007601b`)
+// converted **14 utilities across 2 files** and re-stated it at 3055 — 2 files, but NOT *whole* ones:
+// it left `py-0.5` in `chat/WorkflowProgressCard` and `gap-y-1.5` in `settings/ChatPanel`, one each,
+// **both sitting on an element it had just converted** (`px-2 py-0.5` → `px-s py-0.5`,
+// `gap-x-2 gap-y-1.5` → `gap-x-s gap-y-1.5`). Neither survivor is rung-equivalent, so the ceiling and
+// the per-file pin were both satisfied while two elements ran split across the two spacing regimes —
+// that is exactly the shape #3220 was filed for, and the last leg below is what now guards it.
+// Slice 3 (`53a80172d`) converted **40 utilities in `settings/DoctorPanel.tsx`** and re-stated it
+// at 3015.
 //
 // 🪤 SLICE 3'S FINDING — A SECOND RATCHET OWNS PART OF THIS SWEEP'S TERRITORY, so a whole-file pass
 // is not always reachable. DoctorPanel held 48 mappable values, not 40. The other 8 are the four
@@ -121,16 +127,38 @@ function tsxFiles(dir: string, acc: string[] = []): string[] {
   return acc
 }
 
+/** 🔴 EVERY LITERAL `className` SPELLING, BECAUSE THE LEG BELOW IS ONLY AS WIDE AS THIS MATCH.
+ *  Matching the double-quoted form alone put the bypass one stylistic keystroke away *inside the file
+ *  the leg guards*: `chat/WorkflowProgressCard` already writes two of its classNames as template
+ *  literals, one of them carrying a rung, so re-spelling the fixed element as
+ *  ``className={`shrink-0 rounded-pill px-s py-0.5 tabular-nums`}`` scored 6 passed (6) — the
+ *  reintroduction the leg exists to catch, going green. A ratchet that a reformat walks out of is the
+ *  defect, not the guard, so all three literal forms are matched.
+ *
+ *  Two shapes are deliberately NOT matched, and both are safe: a bare expression
+ *  (`className={look.spin ? 'animate-spin' : ''}`) has no literal class list to inspect, and a
+ *  template literal containing a NESTED backtick terminates the `[^`]*` run early and simply misses
+ *  rather than mis-reporting — neither guarded file has one. */
+const CLASS_ATTR = /className=(?:"([^"]*)"|\{`([^`]*)`\}|\{'([^']*)'\})/g
+
 /** The ceiling above and the per-file pin below both classify at file level, so one `className`
  *  carrying BOTH a tokenised and a raw spacing utility is invisible to either: the raw side can be
  *  a half-step the ceiling never counted (e.g. `py-0.5`, 2px, no rung), and the tokenised side keeps
  *  the file's TOKENISED-not-empty pin satisfied. #3220 found this shape twice — `px-s py-0.5` and
- *  `gap-x-s gap-y-1.5` — each element split across two different spacing regimes on one line. */
+ *  `gap-x-s gap-y-1.5` — each element split across two different spacing regimes on one line.
+ *
+ *  ⚠️ A ZERO IS NOT A SECOND REGIME. `0 × var(--space-scale)` is 0 at every density, so `p-0` beside
+ *  `gap-s` is not "density-scale one side, frozen-default the other" — there is nothing to diverge.
+ *  The PM census counted **32** `gap-0`/`p-0` sites as correctly raw forever, and neither swept file
+ *  has one today, so flagging them would be a latent wrong-reason CI red rather than a finding. Zero
+ *  is excluded from the raw side only HERE; the aggregate ceiling already ignores it a different way
+ *  (0px has no rung, so it lands in the recorded half-step population, not the gated one). */
 function sameElementMixedSpacing(src: string): string[] {
   const mixed: string[] = []
-  for (const m of src.matchAll(/className="([^"]*)"/g)) {
-    const cls = m[1]
-    if ([...cls.matchAll(RAW)].length > 0 && [...cls.matchAll(TOKENISED)].length > 0) mixed.push(cls)
+  for (const m of src.matchAll(CLASS_ATTR)) {
+    const cls = m[1] ?? m[2] ?? m[3]
+    const raw = [...cls.matchAll(RAW)].filter((r) => Number(r[2]) !== 0)
+    if (raw.length > 0 && [...cls.matchAll(TOKENISED)].length > 0) mixed.push(cls)
   }
   return mixed
 }
@@ -227,6 +255,22 @@ describe('spacing rides the density scale', () => {
       sameElementMixedSpacing('<ul className="grid items-center gap-x-s gap-y-1.5" />'),
       'must catch gap-x-s mixed with raw gap-y-1.5',
     ).toEqual(['grid items-center gap-x-s gap-y-1.5'])
+    // Third positive control: the SAME mix, re-spelled as a template literal. This is the form that
+    // scored 6 passed (6) against the `className="…"`-only matcher, and it is the form
+    // `WorkflowProgressCard` already uses twice — so the bypass was a reformat away in the guarded
+    // file itself. Interpolation must not defeat it either, which is the realistic shape there.
+    expect(
+      sameElementMixedSpacing('<span className={`shrink-0 rounded-pill px-s py-0.5 tabular-nums`} />'),
+      'must catch the same mix re-spelled as a template literal',
+    ).toEqual(['shrink-0 rounded-pill px-s py-0.5 tabular-nums'])
+    expect(
+      sameElementMixedSpacing('<span className={`inline-flex items-center gap-xs py-0.5 ${look.tone}`} />'),
+      'an interpolation must not hide the mix',
+    ).toEqual(['inline-flex items-center gap-xs py-0.5 ${look.tone}'])
+    expect(
+      sameElementMixedSpacing("<ul className={'grid items-center gap-x-s gap-y-1.5'} />"),
+      'must catch the same mix inside a braced single-quoted string',
+    ).toEqual(['grid items-center gap-x-s gap-y-1.5'])
     // Negative controls: the same two elements in their fixed, fully-tokenised form — must not fire.
     expect(
       sameElementMixedSpacing('<span className="shrink-0 rounded-pill px-s py-xs tabular-nums" />'),
@@ -241,6 +285,22 @@ describe('spacing rides the density scale', () => {
       sameElementMixedSpacing('<div className="px-3 py-2" />'),
       "all-raw is the ceiling rail's job, not this leg's",
     ).toEqual([])
+    // And a ZERO is scale-invariant, so it is not the second regime this leg names — without this,
+    // any of the 32 `gap-0`/`p-0` sites landing beside a rung would red CI for a reason that is
+    // arithmetically false.
+    expect(
+      sameElementMixedSpacing('<div className="m-0 grid items-center gap-x-s gap-y-s" />'),
+      'a zero utility is 0 at every density — nothing diverges, so it is not a mixed regime',
+    ).toEqual([])
+    expect(
+      sameElementMixedSpacing('<div className="gap-0 p-0 px-s" />'),
+      'gap-0 / p-0 are correctly raw forever',
+    ).toEqual([])
+    // But a zero must not shield a real half-step on the same element.
+    expect(
+      sameElementMixedSpacing('<div className="m-0 gap-x-s gap-y-1.5" />'),
+      'excluding zero must not swallow a genuine half-step beside it',
+    ).toEqual(['m-0 gap-x-s gap-y-1.5'])
 
     for (const rel of ['pages/chat/WorkflowProgressCard.tsx', 'pages/settings/ChatPanel.tsx']) {
       const code = strip(readFileSync(join(SRC, rel), 'utf8'))
