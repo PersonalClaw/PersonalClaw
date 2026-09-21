@@ -31,16 +31,19 @@ def test_non_darwin_returns_false():
     assert _probe_sandbox_exec() is False
 
 
+# Regression input: the old implementation consumed this value and returned False
+# before reaching subprocess.run. The fixed implementation must ignore the version.
 @patch.object(platform, "mac_ver", return_value=_MAC_VER_26_PLUS)
 @patch("personalclaw.sandbox.sys.platform", "darwin")
 @patch("personalclaw.sandbox.shutil.which", return_value="/usr/bin/sandbox-exec")
 @patch("personalclaw.sandbox.subprocess.run")
-def test_macos_26_plus_probe_enables_strict_wrapping(mock_run, mock_which, mock_mac_ver):
+def test_macos_26_plus_still_probes_and_enables_strict_wrapping(mock_run, mock_which, mock_mac_ver):
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=b"", stderr=b""
     )
 
     assert _probe_sandbox_exec() is True
+    assert mock_mac_ver.call_count == 0
     assert mock_run.call_args.args[0][-3:] == [sys.executable, "-c", "pass"]
 
     original = [sys.executable, "-c", "pass"]
