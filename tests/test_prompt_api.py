@@ -17,12 +17,14 @@ from personalclaw.dashboard.handlers import (
     api_prompt_syntax,
     api_prompts,
     api_skill_detail,
+    api_skills_create,
     api_snippet_create,
     api_snippet_delete,
     api_snippet_detail,
     api_snippet_render,
     api_snippets,
 )
+from personalclaw.skills.loader import DIRECT_SKILL_MAX_CONTENT_CHARS
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +67,14 @@ def _provider():
 
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def _skill_body(name, *, description="A useful skill.", body="# Skill\nDo useful work."):
+    lines = ["---", f"name: {name}"]
+    if description is not None:
+        lines.append(f"description: {description}")
+    lines.extend(["---", body])
+    return "\n".join(lines) + "\n"
 
 
 # ── snippet CRUD over the API ────────────────────────────────────────────────
@@ -446,12 +456,74 @@ class TestSkillDetailPut:
         assert loader.load_skill("editable") == "# Original\nUntouched."
 
     def test_put_valid_string_content_succeeds(self, tmp_path):
-        r, loader = self._put_req(tmp_path, "editable", {"content": "# Updated\nNew body."})
-        loader.create_skill("editable", "# Original\nUntouched.")
+        updated = _skill_body("editable", body="# Updated\nNew body.")
+        r, loader = self._put_req(tmp_path, "editable", {"content": updated})
+        loader.create_skill("editable", _skill_body("editable", body="# Original\nUntouched."))
         resp = _run(api_skill_detail(r))
         assert resp.status == 200
         assert _body(resp)["ok"] is True
-        assert loader.load_skill("editable") == "# Updated\nNew body."
+        assert loader.load_skill("editable") == updated
+
+
+class TestSkillWriteBodyValidation:
+    @staticmethod
+    def _state(tmp_path):
+        from personalclaw.skills import SkillsLoader
+
+        loader = SkillsLoader(skills_path=tmp_path, install_builtins=False)
+        state = SimpleNamespace(context_builder=SimpleNamespace(skills=loader))
+        return state, loader
+
+    @pytest.mark.parametrize(
+        ("content", "error_fragment"),
+        [
+            ("# No frontmatter\n", "frontmatter"),
+            (_skill_body("different-name"), "must match"),
+            (_skill_body("editable", description=None), "description"),
+            (
+                _skill_body("editable", body="x" * (DIRECT_SKILL_MAX_CONTENT_CHARS + 1)),
+                "exceeds",
+            ),
+        ],
+        ids=["missing-frontmatter", "divergent-name", "missing-description", "oversized"],
+    )
+    def test_create_rejects_invalid_body_before_write(self, tmp_path, content, error_fragment):
+        state, loader = self._state(tmp_path)
+        r = _req(name="editable", body={"name": "editable", "content": content})
+        r.app = {"state": state}
+
+        resp = _run(api_skills_create(r))
+
+        assert resp.status == 400
+        assert error_fragment in _body(resp)["error"]
+        assert loader.load_skill("editable") is None
+
+    @pytest.mark.parametrize(
+        ("content", "error_fragment"),
+        [
+            ("# No frontmatter\n", "frontmatter"),
+            (_skill_body("different-name"), "must match"),
+            (_skill_body("editable", description=None), "description"),
+            (
+                _skill_body("editable", body="x" * (DIRECT_SKILL_MAX_CONTENT_CHARS + 1)),
+                "exceeds",
+            ),
+        ],
+        ids=["missing-frontmatter", "divergent-name", "missing-description", "oversized"],
+    )
+    def test_update_rejects_invalid_body_before_write(self, tmp_path, content, error_fragment):
+        state, loader = self._state(tmp_path)
+        original = _skill_body("editable", body="# Original\nUntouched.")
+        assert loader.create_skill("editable", original)
+        r = _req(name="editable", body={"content": content})
+        r.method = "PUT"
+        r.app = {"state": state}
+
+        resp = _run(api_skill_detail(r))
+
+        assert resp.status == 400
+        assert error_fragment in _body(resp)["error"]
+        assert loader.load_skill("editable") == original
 
 
 # ── #635: one value-map contract across render/preview (both wire keys accepted) ──

@@ -43,6 +43,13 @@ ecosystem, which is the point.
 | `resources` | no | Files beside `SKILL.md` an agent may load on demand. See below. |
 | `context_tier` | no | `light` / `standard` (default) / `heavy` — how much prompt this skill may spend. See below. |
 
+Those are the loader's tolerant read rules, including for skills copied in from
+another harness. The dashboard's create and update routes are deliberately stricter
+before they write: the body must have parseable frontmatter whose `name` exactly
+matches the directory/API key, its `description` must be non-empty, and the complete
+body must be at most 50,000 characters. A rejected edit leaves the existing file
+unchanged.
+
 Unknown fields are read and kept, not rejected — a foreign harness's extra
 frontmatter is preserved rather than treated as an error, though PersonalClaw
 does nothing with it.
