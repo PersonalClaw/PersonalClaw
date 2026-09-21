@@ -9,7 +9,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from personalclaw.hooks import fire_tool_hooks, get_global_hook_store
 from personalclaw.llm.base import (
@@ -24,6 +24,8 @@ from personalclaw.sel import sel as _sel
 
 _PROMPT_BUSY_RETRIES = 2
 _PROMPT_BUSY_DELAY = 1.5  # seconds between retries
+
+_ChainResult = TypeVar("_ChainResult")
 
 
 class PromptBusyExhaustedError(Exception):
@@ -352,6 +354,116 @@ def _enforces_json_schema_natively(model_ref: str) -> bool:
         return False
 
 
+# ── Call-failure chain advance (MODEL-USE-CASES-V2 T2.4) ─────────────────────
+# ONE walk, shared by every NON-INTERACTIVE consumer of the use-case chain. It lives
+# here because ``one_shot_completion`` was the first consumer, not because it is the
+# only one: the direct ``resolve_provider_for_use_case`` consumers on the
+# non-interactive axes (the knowledge-pipeline nodes, the loop stage-gate judge) need
+# exactly this walk, and a second hand-rolled copy of it would be a divergence defect
+# — two answers to "should we try the next model" drifting apart.
+#
+# The INTERACTIVE chat/code_tools stream is deliberately NOT a consumer: it advances at
+# call-start only, via the seam's own resolution-time chain walk (the breaker-OPEN skip
+# in ``provider_bridge.resolve_provider_for_use_case``). See that seam's comment for
+# why — a human-watched turn must not stack N provider timeouts, and its provider is a
+# NativeAgentRuntime holding per-turn tool/transcript state that cannot be rebuilt
+# mid-stream.
+
+
+def use_case_chain(use_case: str) -> list[str]:
+    """The ordered resolution chain for ``use_case``, or ``[]`` when unreadable.
+
+    A tolerant read of :func:`personalclaw.providers.use_cases.resolution_chain` that
+    NEVER raises: a missing or corrupt ``active_models.json`` must leave the caller on
+    its plain single-resolution path, not fail the completion.
+
+    Callers gate on ``len(chain) > 1`` themselves rather than handing a one-entry chain
+    to :func:`run_over_use_case_chain`, and that is deliberate: "a one-entry chain takes
+    today's plain path" is a rule about WHICH resolution call is made. The walk passes
+    ``model_override=<ref>``; a plain resolve passes none, which additionally admits the
+    implicit-capability fallback and (in ``one_shot_completion``) the last-resort
+    registry build. Collapsing the two would silently change single-binding behaviour.
+
+    The composer/session override is deliberately NOT plumbed through here. Every
+    consumer of this walk is NON-INTERACTIVE (one-shot completions, the knowledge
+    pipeline nodes, the loop stage-gate judge), and a session override is a property
+    of an interactive composer turn — there is no session to override on these axes.
+    Forwarding it would also widen ``resolution_chain``'s call shape for no caller.
+    """
+    try:
+        from personalclaw.providers.use_cases import resolution_chain
+
+        return list(resolution_chain(use_case))
+    except Exception:  # noqa: BLE001 — an unreadable chain degrades to the plain path
+        logger.debug("use_case_chain: chain unreadable for %r", use_case, exc_info=True)
+        return []
+
+
+async def run_over_use_case_chain(
+    use_case: str,
+    chain: list[str],
+    run: Callable[[Any], Awaitable[_ChainResult]],
+    *,
+    entry_kwargs: Callable[[str], Awaitable[dict]] | None = None,
+    no_advance: tuple[type[BaseException], ...] = (),
+    label: str = "chain",
+) -> _ChainResult:
+    """Run ``run`` against ``chain`` entry 0, advancing to N+1 on a call failure.
+
+    The call-failure half of the fallback chain (MODEL-USE-CASES-V2 T2.4), complementing
+    the seam's resolution-time breaker skip: a ``CircuitOpenError``/provider failure from
+    entry N rebuilds from entry N+1 — once per remaining entry, bounded by chain length —
+    so a declared fallback actually serves a call that a live provider dropped mid-flight
+    rather than only one that was already known-down at resolution time.
+
+    ``run`` receives one resolved provider and owns its whole lifecycle (start / stream /
+    shutdown); it must RAISE on failure, because a swallowed error is indistinguishable
+    from a good answer and would pin the walk to entry 0 forever.
+
+    ``entry_kwargs`` derives the per-ENTRY build kwargs (budget/constraint) for the ref
+    about to run — per entry, not once, because the walk can advance from a capable model
+    to an incapable one mid-call.
+
+    ``no_advance`` names the exception types that must NOT burn the chain. The canonical
+    member is ``OutputContractError``: the model RESPONDED, so a contract miss is a prompt
+    problem, and walking a whole chain of models for it would spend N calls on the same
+    bad prompt. It is re-raised unchanged.
+
+    An exhausted chain raises ONE ``RuntimeError`` naming the axis, the chain length and
+    the last error — one clear error, not N stack traces.
+    """
+    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+
+    last_exc: Exception | None = None
+    for i, ref in enumerate(chain):
+        try:
+            kw = await entry_kwargs(ref) if entry_kwargs is not None else {}
+            provider = resolve_provider_for_use_case(use_case, model_override=ref, **kw)
+        except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
+            last_exc = exc
+            continue
+        try:
+            return await run(provider)
+        except no_advance:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a failed call advances
+            last_exc = exc
+            if i + 1 < len(chain):
+                logger.warning(
+                    "%s advance: %s entry %d (%s) failed (%s) — trying next",
+                    label,
+                    use_case,
+                    i,
+                    ref,
+                    type(exc).__name__,
+                )
+    raise RuntimeError(
+        f"every model in the {use_case!r} fallback chain failed "
+        f"({len(chain)} entr{'y' if len(chain) == 1 else 'ies'}); "
+        f"last error: {last_exc}"
+    ) from last_exc
+
+
 async def one_shot_completion(
     prompt: str,
     *,
@@ -542,43 +654,19 @@ async def one_shot_completion(
     # entry N+1 for THIS call — once per remaining entry, bounded by chain length.
     # An OutputContractError does NOT advance (the model responded; the contract
     # miss is not a provider outage). A one-entry/empty chain takes the plain
-    # resolution path below — today's exact behavior.
-    try:
-        from personalclaw.providers.use_cases import resolution_chain
-
-        _chain = resolution_chain(resolved_uc)
-    except Exception:
-        _chain = []
+    # resolution path below — today's exact behavior. The walk itself is
+    # :func:`run_over_use_case_chain`, shared with the other non-interactive
+    # consumers of the chain so there is exactly one answer to "advance?".
+    _chain = use_case_chain(resolved_uc)
     if len(_chain) > 1:
-        last_exc: Exception | None = None
-        for i, ref in enumerate(_chain):
-            try:
-                entry_provider = resolve_provider_for_use_case(
-                    resolved_uc, model_override=ref, **(await _entry_kw(ref))
-                )
-            except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
-                last_exc = exc
-                continue
-            try:
-                return await _run(entry_provider)
-            except OutputContractError:
-                raise
-            except Exception as exc:  # noqa: BLE001 — a failed call advances
-                last_exc = exc
-                if i + 1 < len(_chain):
-                    logger.warning(
-                        "one_shot chain advance: %s entry %d (%s) failed (%s) — trying next",
-                        resolved_uc,
-                        i,
-                        ref,
-                        type(exc).__name__,
-                    )
-        # The whole chain failed — surface ONE clear error, not N stack traces.
-        raise RuntimeError(
-            f"every model in the {resolved_uc!r} fallback chain failed "
-            f"({len(_chain)} entr{'y' if len(_chain) == 1 else 'ies'}); "
-            f"last error: {last_exc}"
-        ) from last_exc
+        return await run_over_use_case_chain(
+            resolved_uc,
+            _chain,
+            _run,
+            entry_kwargs=_entry_kw,
+            no_advance=(OutputContractError,),
+            label="one_shot chain",
+        )
 
     provider = None
     # The single-entry / empty chain resolves the axis itself, so the budget is derived

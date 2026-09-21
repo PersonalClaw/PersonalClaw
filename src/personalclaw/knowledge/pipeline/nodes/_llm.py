@@ -6,6 +6,13 @@ already verified the use-case is resolvable (``can_resolve_use_case``) before a
 model-backed node runs, so these helpers assume a model exists — but still degrade to
 ``""`` on any provider error rather than raising (the node then reports failure and
 the item goes partial).
+
+Ingestion is a NON-INTERACTIVE axis, so a declared fallback chain gets the call-failure
+advance too (MODEL-USE-CASES-V2 T2.4): with >1 entry bound, a provider failure from
+entry N rebuilds from N+1 through the one shared walk in ``llm_helpers``. Before that,
+a node resolved exactly once and degraded to ``""`` on the first ``CircuitOpenError`` —
+so a user who had bound a fallback model watched the pipeline produce nothing while a
+live model sat unused one position down the chain.
 """
 
 from __future__ import annotations
@@ -20,31 +27,72 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
 
     *images* (paths) are attached for vision use-cases when the provider supports
     multimodal content blocks. Returns ``""`` on any failure.
-    """
-    try:
-        from personalclaw.llm.base import EVENT_TEXT_CHUNK
-        from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
-        provider = resolve_provider_for_use_case(use_case)
-    except Exception:
-        # Resolution failing (no provider for the use-case, bad binding) is a real reason
-        # a node produces nothing — surface it at WARNING, not DEBUG, so a misconfigured
-        # vision/ocr binding is diagnosable instead of a silent empty node.
-        logger.warning("knowledge node: could not resolve use-case %s", use_case, exc_info=True)
-        return ""
+    With a >1-entry chain bound to *use_case*, a provider failure advances to the next
+    entry (T2.4) instead of degrading on the first one. A one-entry/unbound axis takes
+    the plain single-resolve path below — byte-for-byte the previous behaviour, including
+    its two distinct WARNING lines. The chain path keeps the "partial text survives a
+    total failure" degrade by handing back the LAST attempt's chunks: two models' partial
+    answers cannot be concatenated, so each attempt replaces rather than extends.
+    """
+    from personalclaw.llm.base import EVENT_TEXT_CHUNK
+    from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
+    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
     messages = _build_messages(prompt, images)
-    parts: list[str] = []
-    try:
-        async for ev in provider.complete(messages):
-            if ev.kind == EVENT_TEXT_CHUNK:
-                parts.append(getattr(ev, "text", "") or "")
-    except Exception:
-        # A provider error here is why an item goes partial with empty extraction — it
-        # must be visible (WARNING), not swallowed at DEBUG, or the failure is invisible.
-        logger.warning("knowledge node completion failed (use-case %s)", use_case, exc_info=True)
+    # The chunks of the most recent FAILED attempt. ``_collect`` must re-raise so the
+    # walk can advance — a swallowed error would pin it to entry 0 — so the partial is
+    # stashed here for the degrade path rather than returned.
+    partial: list[str] = []
+
+    async def _collect(provider) -> str:
+        parts: list[str] = []
+        try:
+            async for ev in provider.complete(messages):
+                if ev.kind == EVENT_TEXT_CHUNK:
+                    parts.append(getattr(ev, "text", "") or "")
+        except Exception:
+            partial[:] = parts
+            raise
         return "".join(parts)
-    result = "".join(parts).strip()
+
+    chain = use_case_chain(use_case)
+    if len(chain) > 1:
+        try:
+            text = await run_over_use_case_chain(
+                use_case, chain, _collect, label="knowledge node chain"
+            )
+        except Exception:
+            # Every entry failed. ONE warning naming the axis and the chain length — the
+            # walk already logged each advance, so this is the summary, not N traces.
+            logger.warning(
+                "knowledge node: every entry in the %s chain failed (%d entries)",
+                use_case,
+                len(chain),
+                exc_info=True,
+            )
+            return "".join(partial)
+    else:
+        try:
+            provider = resolve_provider_for_use_case(use_case)
+        except Exception:
+            # Resolution failing (no provider for the use-case, bad binding) is a real
+            # reason a node produces nothing — surface it at WARNING, not DEBUG, so a
+            # misconfigured vision/ocr binding is diagnosable instead of a silent empty
+            # node.
+            logger.warning("knowledge node: could not resolve use-case %s", use_case, exc_info=True)
+            return ""
+        try:
+            text = await _collect(provider)
+        except Exception:
+            # A provider error here is why an item goes partial with empty extraction —
+            # it must be visible (WARNING), not swallowed at DEBUG, or the failure is
+            # invisible.
+            logger.warning(
+                "knowledge node completion failed (use-case %s)", use_case, exc_info=True
+            )
+            return "".join(partial)
+    result = text.strip()
     if not result:
         # No exception but empty output — the model returned nothing (or dropped the
         # image blocks). Surface it: this is the difference between "ran, said nothing"
