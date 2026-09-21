@@ -183,3 +183,92 @@ async def test_reset_endpoint_unticks_the_action_plan(tmp_path):
         assert [a["content"] for a in after["action_plan"]] == ["step one", "step two"]
         assert after["exit_criteria"][0]["met"] is False
         assert after["execution_notes"] == []
+
+
+@pytest.mark.asyncio
+async def test_reset_defers_engine_owned_fields_on_a_managed_task(tmp_path):
+    """A task a workflow run still owns must not have reset overwrite what the run established.
+    `status`, `evidence`, `attempts`, `preview`, and `blocked_kind` stay with the run; the user's
+    own progress — `execution_notes` — still clears, and the response discloses which task ids
+    were only partially reset."""
+    from personalclaw.tasks import registry
+    from tests.test_tasks_api import _client
+
+    async with _client(tmp_path) as client:
+        projects = (await (await client.get("/api/projects")).json())["projects"]
+        repeatable = next(p for p in projects if p["name"] == REPEATABLE_PROJECT)
+        tl = await (
+            await client.post(
+                "/api/task-lists", json={"name": "Weekly", "project_id": repeatable["id"]}
+            )
+        ).json()
+        created = await (
+            await client.post(
+                "/api/tasks",
+                json={
+                    "title": "engine-run step",
+                    "task_list_id": tl["id"],
+                    "workflow_binding": {
+                        "run_id": "r-1",
+                        "node_id": "impl",
+                        "node_path": "root",
+                        "managed": True,
+                        "fingerprint": "abc123",
+                    },
+                    "execution_notes": [{"content": "did it"}],
+                },
+            )
+        ).json()
+        # The engine, not the HTTP door, settles a managed task — the same way
+        # `loop/tasks_link.py` writes a run's outcome straight through the façade.
+        await registry.update_task(
+            created["id"],
+            status="done",
+            evidence=[{"kind": "note", "detail": "engine finding"}],
+            attempts=[{"n": 1, "outcome": "ok"}],
+            preview="engine preview",
+        )
+
+        r = await client.post(f"/api/task-lists/{tl['id']}/reset", json={"confirm": True})
+        assert r.status == 200, await r.text()
+        body = await r.json()
+        assert body["partially_reset_task_ids"] == [created["id"]]
+
+        after = await (await client.get(f"/api/tasks/{created['id']}")).json()
+        assert after["status"] == "done", "the run's status must survive a reset"
+        assert after["evidence"] == [{"kind": "note", "detail": "engine finding"}]
+        assert after["attempts"] == [{"n": 1, "outcome": "ok"}]
+        assert after["preview"] == "engine preview"
+        assert after["workflow_binding"]["managed"] is True
+        assert after["execution_notes"] == [], "user-owned progress must still clear"
+
+
+@pytest.mark.asyncio
+async def test_reset_still_clears_every_field_on_an_unmanaged_task(tmp_path):
+    """🪤 The vacuity floor for the managed-task deferral above: an ordinary task in the same
+    list must reset exactly as it always has — the deferral is scoped to `managed(t)`, not to
+    reset as a whole."""
+    from tests.test_tasks_api import _client
+
+    async with _client(tmp_path) as client:
+        projects = (await (await client.get("/api/projects")).json())["projects"]
+        repeatable = next(p for p in projects if p["name"] == REPEATABLE_PROJECT)
+        tl = await (
+            await client.post(
+                "/api/task-lists", json={"name": "Weekly", "project_id": repeatable["id"]}
+            )
+        ).json()
+        task = await (
+            await client.post("/api/tasks", json={"title": "plain step", "task_list_id": tl["id"]})
+        ).json()
+        done = await client.put(f"/api/tasks/{task['id']}", json={"status": "done"})
+        assert done.status == 200, await done.text()
+
+        r = await client.post(f"/api/task-lists/{tl['id']}/reset", json={"confirm": True})
+        assert r.status == 200, await r.text()
+        body = await r.json()
+        assert body["reset_task_ids"] == [task["id"]]
+        assert body["partially_reset_task_ids"] == []
+
+        after = await (await client.get(f"/api/tasks/{task['id']}")).json()
+        assert after["status"] == "open"
