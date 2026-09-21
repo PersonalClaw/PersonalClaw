@@ -6752,7 +6752,7 @@ export const api = {
   createTaskList: (body: Record<string, unknown>) => post<TaskListItem>('/api/task-lists', body),
   updateTaskList: (id: string, body: Record<string, unknown>) => put<TaskListItem>(`/api/task-lists/${encodeURIComponent(id)}`, body),
   deleteTaskList: (id: string) => del(`/api/task-lists/${encodeURIComponent(id)}`),
-  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, { confirm: true }),
+  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[]; partially_reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, { confirm: true }),
 
   // workflows
 

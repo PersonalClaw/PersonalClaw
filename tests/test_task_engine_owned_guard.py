@@ -269,9 +269,11 @@ def test_every_NON_ENGINE_write_door_consults_the_guard():
     unenforced). So this reads the source of each door that can reach `registry.update_task` with
     caller-supplied fields and requires the refusal in it. A new door reds HERE.
 
-    `hierarchy_handlers`' task-list reset is deliberately absent: it writes a fixed
-    `task_reset_payload`, and only for lists under the `Repeatable` project — it is not a
-    caller-supplied field write.
+    `hierarchy_handlers`' task-list reset is deliberately absent from this particular rail: it
+    writes a fixed `task_reset_payload`, not caller-supplied fields, so a 409 is the wrong shape
+    for it — it needs a payload FILTER instead (see `test_reset_door_filters_engine_owned_fields`
+    below and `test_every_update_task_call_site_is_classified`, which is what catches reset going
+    unguarded in EITHER sense — refusal or filter).
     """
     import inspect
 
@@ -288,4 +290,109 @@ def test_every_NON_ENGINE_write_door_consults_the_guard():
         f"{unguarded} reach the task write path with caller-supplied fields and never consult "
         "`registry.engine_owned_refusal`. A managed task's engine-owned fields are writable "
         "through them (#390)."
+    )
+
+
+def test_reset_door_filters_engine_owned_fields_instead_of_refusing():
+    """The task-list reset door (issue #3203) is a FOURTH non-engine write path onto
+    `registry.update_task`, and it is caller-independent — every terminal task in the list gets
+    the same `task_reset_payload`, managed or not. So it cannot use `engine_owned_refusal` (that
+    resolver answers a 409; reset must still apply the user-owned half of the same payload) —
+    it must filter `ENGINE_OWNED_FIELDS` out of the payload itself, guarded by `managed(t)`."""
+    import inspect
+
+    from personalclaw.tasks import hierarchy_handlers
+
+    src = inspect.getsource(hierarchy_handlers.api_task_lists_reset)
+    assert "managed(" in src and "ENGINE_OWNED_FIELDS" in src, (
+        "the reset door does not consult managed()/ENGINE_OWNED_FIELDS — a managed task's "
+        "status/evidence/attempts/preview/blocked_kind would be overwritten by a plain reset"
+    )
+    assert "engine_owned_refusal" not in src, (
+        "reset must not reach for the refusal resolver — it needs a field filter that still "
+        "applies the user-owned half of the reset, not a 409 that blocks the whole call"
+    )
+
+
+# ── the full call-site census: every registry.update_task caller, classified ────────────────
+
+# Classified by relative path under src/personalclaw, counting non-definition lines that reach
+# `.update_task(`. A count changing here — including to zero, i.e. a file disappearing — means a
+# door was added, removed, or moved, and the person who caused that must re-classify it.
+_UPDATE_TASK_CALL_SITES: dict[str, int] = {
+    # the façade's own call into the provider implementation it routes to
+    "tasks/registry.py": 1,
+    # guarded doors: PUT /api/tasks/{id} and POST /api/tasks/bulk op:update, both behind
+    # registry.engine_owned_refusal (#390)
+    "tasks/handlers.py": 2,
+    # guarded door: the agent's task_update tool, behind the same refusal resolver
+    "agents/native/builtin_tools.py": 1,
+    # the non-engine door this issue closes: filtered by managed()/ENGINE_OWNED_FIELDS instead
+    # of refused, because it is not a caller-supplied-field write (see the filter test above)
+    "tasks/hierarchy_handlers.py": 1,
+    # engine/loop writers: the workflow controller and its loop kinds settle a managed task's
+    # own fields directly through the façade — the one writer `engine_owned_refusal` deliberately
+    # never blocks (see registry.engine_owned_refusal's docstring)
+    "loop/watchdog.py": 1,
+    "loop/kinds/sdlc.py": 1,
+    "loop/tasks_link.py": 4,
+    "loop/manager.py": 1,
+}
+
+
+def _update_task_call_line_counts() -> dict[str, int]:
+    import re
+    from pathlib import Path
+
+    src_root = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
+    call_re = re.compile(r"\.update_task\(")
+    def_re = re.compile(r"^\s*(async\s+)?def\s+update_task\b")
+    counts: dict[str, int] = {}
+    for path in src_root.rglob("*.py"):
+        n = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if def_re.match(line):
+                continue
+            if call_re.search(line):
+                n += 1
+        if n:
+            counts[str(path.relative_to(src_root))] = n
+    return counts
+
+
+def test_every_update_task_call_site_is_classified():
+    """The census the issue asked for: every non-test call site that reaches
+    `registry.update_task` (or, for the façade itself, the provider's own `update_task`),
+    classified into guarded doors, engine/loop writers, the façade, and the one non-engine
+    door that defers field-wise. 12 sites total. A 13th — anywhere in the tree — reds here
+    instead of silently joining "engine/loop writers" or disappearing from the count."""
+    found = _update_task_call_line_counts()
+    assert found == _UPDATE_TASK_CALL_SITES, (
+        f"the update_task call-site census drifted: found {found}, classified "
+        f"{_UPDATE_TASK_CALL_SITES}. Classify the new/removed site before updating this table."
+    )
+    assert sum(_UPDATE_TASK_CALL_SITES.values()) == 12
+
+
+def test_reconcile_direct_status_writes_are_declared():
+    """`tasks/reconcile.py` bypasses the `registry.update_task` façade entirely — it mutates a
+    `Task` object's `.status` in place as part of the dependency-cascade walk, and its caller
+    persists the result. That is not a fifth unguarded door: it is an engine-derived write (the
+    walk never touches a `blocked_reason_kind == "manual"` task), but it writes the one
+    engine-owned field (`status`) the census above cannot see because it never calls
+    `update_task`. Declaring it here keeps it out of a future census's blind spot."""
+    import inspect
+    import re
+
+    from personalclaw.tasks import reconcile
+
+    src = inspect.getsource(reconcile.reconcile_blocked_status)
+    direct_status_writes = re.findall(r"\bt\.status\s*=\s*TaskStatus\.", src)
+    assert len(direct_status_writes) == 2, (
+        f"expected exactly 2 direct `.status =` assignments in reconcile_blocked_status "
+        f"(auto-block and auto-unblock), found {len(direct_status_writes)} — reclassify"
+    )
+    assert "blocked_reason_kind ==" in src, (
+        "the manual-block exemption (never auto-touch a manually blocked task) must still guard "
+        "these direct writes"
     )
