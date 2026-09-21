@@ -307,8 +307,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "attempt to emit OOXML or base64. Use this when the user wants a file to "
                 "send, print or hand to someone; use artifact_save with kind='markdown' "
                 "or 'document' when they just want to read it in the app. Re-running with "
-                "the same `slug` updates that document and bumps its version instead of "
-                "creating a near-duplicate. Returns the slug and a download URL."
+                "the same `name` (or the same `slug`) updates that document and bumps its "
+                "version instead of creating a near-duplicate — to make a SEPARATE "
+                "document, give it a different name. Returns the slug and a download URL."
             ),
             "inputSchema": {
                 "type": "object",
@@ -351,7 +352,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a "
                 "single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS "
                 "AS NUMBERS (not strings) so the result can be summed and charted — that "
-                "is the main reason to produce a spreadsheet rather than a table. Returns "
+                "is the main reason to produce a spreadsheet rather than a table. "
+                "Re-running with the same `name` (or the same `slug`) updates that "
+                "spreadsheet and bumps its version instead of creating a near-duplicate — "
+                "to make a SEPARATE spreadsheet, give it a different name. Returns "
                 "the slug and a download URL."
             ),
             "inputSchema": {
@@ -386,6 +390,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "under it become bullets, and `<!-- notes: ... -->` becomes that slide's "
                 "speaker notes. A leading `#` titles the deck. Write an outline, not "
                 "prose — paragraphs on a slide are what makes generated decks unreadable. "
+                "Re-running with the same `name` (or the same `slug`) updates that deck and "
+                "bumps its version instead of creating a near-duplicate — to make a "
+                "SEPARATE deck, give it a different name. "
                 "Returns the slug and a download URL."
             ),
             "inputSchema": {
@@ -1218,15 +1225,29 @@ def _document_create(
 
     display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
     slug = str(args.get("slug") or "").strip()
-    # Re-generating under an existing slug UPDATES in place and bumps a version rather
-    # than minting a "-2" twin — the same dedup posture artifact_save takes.
-    if slug and prov.get(slug) is not None:
+    # Re-generating the same document UPDATES in place and bumps a version rather than
+    # minting a "-2" twin — the same dedup posture artifact_save takes. An explicit slug
+    # names the target directly; WITHOUT one the collision is resolved by NAME, through the
+    # very `prov.find_similar` call `artifact_save` makes above, so there is one dedup
+    # implementation rather than two that can disagree. Scoped to this format's kind so a
+    # regenerated pptx never swallows a same-named markdown.
+    #
+    # Updated in place rather than refused with a hint — `artifact_save`'s answer — because
+    # the hint has nowhere to land: a document tool's whole job this turn is to produce the
+    # file, and a caller who really wants a second document of the same name says so by
+    # passing a new `slug`.
+    target = slug if slug and prov.get(slug) is not None else ""
+    if not slug:
+        similar = prov.find_similar(display_name, kind=fmt)
+        if similar is not None:
+            target = similar.slug
+    if target:
         if binary:
             # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
             # snapshot (there is no non-snapshotting binary update, because a binary body
             # has no diffable draft state to hold back).
             art = prov.update_binary(
-                slug,
+                target,
                 data=data,
                 mime=_DOC_MIME.get(fmt, "application/octet-stream"),
                 event_type="iterated",
@@ -1235,7 +1256,7 @@ def _document_create(
             )
         else:
             art = prov.update(
-                slug,
+                target,
                 content=text_content,
                 snapshot=True,
                 event_type="iterated",
@@ -1271,8 +1292,12 @@ def _document_create(
                 project_id=_current_project_id(),
             )
     _audit("success", art.slug)
+    # "Created" vs "Updated": name-dedup makes the update path a routine outcome of a plain
+    # repeat call, and an agent told it "Created" a v2 has been told the one thing that is
+    # not true about what just happened — it would go looking for a second file.
+    verb = "Updated" if target else "Created"
     return (
-        f"Created {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
+        f"{verb} {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
         f"Download at /api/artifacts/{art.slug}/raw"
     )
 
