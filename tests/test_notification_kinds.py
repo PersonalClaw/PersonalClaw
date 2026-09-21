@@ -511,36 +511,53 @@ def test_the_loop_OUTCOME_events_emit_their_own_typed_kinds():
     assert nk.kind_for_legacy("error").default_severity == nk.SEV_ERROR
 
 
-def test_EVERY_MATRIX_ROW_IS_REACHABLE_FROM_SOME_WIRE_STRING():
-    """A configurable control that nothing can address is a lie in the settings UI (#341/#415).
+def _owner_module_path(owner: str) -> pathlib.Path:
+    assert owner.startswith("personalclaw."), f"notification owner is outside core: {owner}"
+    return SRC.joinpath(*owner.split(".")[1:]).with_suffix(".py")
 
-    `rules_document()` draws one row per registered pair, but `notify()` takes a flat wire string,
-    so a pair no string maps to can never be delivered: the mode pill saves, the row round-trips,
-    and the note lands on whatever `system/*` row its emitter's generic severity string resolves to
-    instead. Measured before the fix: 5 of 32 rows were unaddressable —  `loop/complete`,
-    `loop/failed`, `loop/stalled`, `cron/failed` and `guardrails/autonomy_revocation`, the last one
-    despite a registration comment asserting the opposite.
 
-    The exemption list is PINNED so it can only shrink, and every entry needs a reason. This is the
-    direction the pre-existing suite could not see: it walked the maps (the compliant population)
-    and so could never notice a registered pair absent from all of them.
+def _imports_notification_registry(path: pathlib.Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "personalclaw.notification_kinds":
+                return True
+            if node.module == "personalclaw" and any(
+                alias.name == "notification_kinds" for alias in node.names
+            ):
+                return True
+        if isinstance(node, ast.Import) and any(
+            alias.name == "personalclaw.notification_kinds" for alias in node.names
+        ):
+            return True
+    return False
+
+
+def test_EVERY_CONFIGURABLE_MATRIX_ROW_HAS_A_DECLARED_PRODUCTION_OWNER():
+    """A configurable row needs an accountable production module, not merely a wire alias (#341).
+
+    Wire reachability cannot prove ownership: computed kinds made a literal/constant grep report
+    23 false gaps on the ruling's calibration tree. The registry declaration is the capability
+    contract instead. Resolution-only rows stay registered for old persisted wires but are not
+    matrix controls; pinning that population prevents a future missing owner from silently hiding
+    a row.
     """
-    reachable = set(nk._WIRE_TO_PAIR.values())
-    unreachable = sorted(
-        f"{k.source}/{k.kind}" for k in nk.all_kinds() if (k.source, k.kind) not in reachable
+    resolution_only = sorted(k.key for k in nk.all_kinds() if k.owner is None)
+    assert resolution_only == ["system/session"], (
+        f"the resolution-only population changed to {resolution_only} — either declare the "
+        "production owner or justify and pin another historical-only wire"
     )
-    assert unreachable == [
-        # No emitter to give a wire string TO, and the events its label names ("Loop stalled or
-        # blocked") are deliberately delivered as `loop/needs_input` instead: the watchdog routes
-        # `stagnant`/`blocked` through `emit_attention_item` because a loop waiting on the user is a
-        # standing request, not a moment. Pointing them here would move stalled and blocked loops
-        # OUT of the "Loop needs your input" rule — the rule a user is most likely to have set to
-        # always interrupt — so making this row fire is a product decision, not a routing fix.
-        "loop/stalled",
-    ], (
-        f"the unaddressable-row population changed to {unreachable} — a new entry means a matrix "
-        "row nothing can deliver to; give its emitter a wire string rather than widening this list"
-    )
+
+    configurable = nk.configurable_kinds()
+    assert configurable, "the configurable registry is empty — ownership rail went vacuous"
+    assert all(k.owner for k in configurable)
+    for owner in sorted({str(k.owner) for k in configurable}):
+        path = _owner_module_path(owner)
+        assert path.is_file(), f"notification owner module does not exist: {owner} ({path})"
+        assert _imports_notification_registry(path), (
+            f"notification owner {owner} does not import notification_kinds — its declared "
+            "ownership is disconnected from the contract it owns"
+        )
 
 
 def test_notify_action_provider_allowed_kinds_are_registered():
@@ -678,6 +695,10 @@ def test_frontend_display_map_kinds_all_resolve():
         pytest.skip("web/ not present in this checkout")
     tolerated = {
         "schedule",  # pre-existing drift (T1.1 inventory); no emitter, kept for old rows
+        # The retired loop/stalled registration never had a wire mapping, but an older build may
+        # still have persisted the bare fallback. Keep its display label without restoring an
+        # inert configurable row.
+        "stalled",
         # Bare kinds whose pair emits a legacy flat string instead. Kept for persisted history.
         "alert",  # inbox/alert     → emits `inbox_alert`
         "result",  # cron/result     → emits `cron`
@@ -708,5 +729,8 @@ def test_the_tolerated_list_does_not_outlive_its_reason():
     if keys is None:
         pytest.skip("web/ not present in this checkout")
     bare = {k.kind for k in nk.all_kinds()}
+    retired_history_only = {"stalled"}
     for key in keys - _wire_vocabulary():
-        assert key in bare or key == "schedule", f"{key!r} is not a registered kind at all"
+        assert (
+            key in bare or key in retired_history_only or key == "schedule"
+        ), f"{key!r} is neither a registered kind nor a pinned historical display key"

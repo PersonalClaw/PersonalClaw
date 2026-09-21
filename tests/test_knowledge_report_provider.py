@@ -568,6 +568,40 @@ def test_the_write_goes_through_the_persist_provider(home, reports, provider, ct
     assert len(seen) == 1 and seen[0]["kind"] == FINDING_KIND
 
 
+def test_a_successfully_persisted_finding_is_emitted_by_the_runner(
+    home, reports, provider, ctx, model, persist, monkeypatch
+):
+    emitted: list[tuple[object, dict]] = []
+    state = object()
+
+    monkeypatch.setattr(
+        "personalclaw.inbox_providers.native_source.get_dashboard_state", lambda: state
+    )
+    monkeypatch.setattr(
+        "personalclaw.inbox.emit_attention_item",
+        lambda actual_state, **kwargs: emitted.append((actual_state, kwargs)) or "inbox-1",
+    )
+    seed(ctx, title="Latency regressed", tags=["perf"])
+    defn_for(reports)
+
+    result = run(provider.execute({"report_id": "rep-1"}, ctx))
+
+    assert result.success, result.error
+    assert len(emitted) == 1
+    actual_state, note = emitted[0]
+    assert actual_state is state
+    assert (note["source"], note["kind"]) == (
+        "knowledge",
+        krp.notification_kinds.RESEARCH_FINDING,
+    )
+    assert note["title"] == "Weekly perf"
+    assert note["refs"] == {
+        "research_report_id": "rep-1",
+        "knowledge_item_id": "itm-new",
+    }
+    assert note["dedup_key"] == "research_finding:itm-new"
+
+
 # ── bullet 7: failure records the error without advancing the run stamp ──
 
 

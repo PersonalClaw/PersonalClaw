@@ -1323,9 +1323,10 @@ class DashboardState(DashboardWebSocketState):
         exchange for nothing the phone needs.
         """
         try:
-            from personalclaw import notification_rules, push
+            from personalclaw import notification_kinds, notification_rules, push
 
-            rule = notification_rules.resolve_rule("approval", "requested")
+            registered = notification_kinds.kind_for_legacy(notification_kinds.APPROVAL)
+            rule = notification_rules.resolve_rule(registered.source, registered.kind)
             if rule.mode == "never" or "push" not in rule.targets:
                 return
             push.deliver_async("approval", approval_id)

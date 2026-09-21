@@ -95,6 +95,10 @@ class NotificationKind:
     #: only when a rule sets ``verify:true``, which the rules PUT rejects for a
     #: non-verifiable kind.
     verifiable: bool = False
+    #: Dotted module that owns a production emission path for this kind. ``None`` means
+    #: resolution-only: old persisted wire values still resolve, but the kind is not a
+    #: configurable row because no current producer can consult that policy.
+    owner: str | None = None
 
     @property
     def key(self) -> str:
@@ -130,8 +134,13 @@ def unregister(source: str, kind: str) -> bool:
 
 
 def all_kinds() -> list[NotificationKind]:
-    """Every registered kind, ordered by source then kind (stable for the rules UI)."""
+    """Every registered kind, ordered by source then kind."""
     return sorted(_REGISTRY.values(), key=lambda k: (k.source, k.kind))
+
+
+def configurable_kinds() -> list[NotificationKind]:
+    """Registered kinds with a declared production owner, in stable matrix order."""
+    return [kind for kind in all_kinds() if kind.owner is not None]
 
 
 def resolve_kind(source: str, kind: str) -> NotificationKind:
@@ -208,35 +217,154 @@ _KINDS: tuple[NotificationKind, ...] = (
     # prevent. So `cron/failed` ranks SEV_ERROR **to preserve the delivery users have today** while
     # the row becomes reachable again — a scheduled job that breaks keeps riding through a raised
     # min_severity, and now does it under a row the user can actually configure.
-    NotificationKind("cron", "result", "Scheduled job result", "immediate", SEV_INFO),
-    NotificationKind("cron", "failed", "Scheduled job failed", "immediate", SEV_ERROR),
-    # heartbeat — 5 sites in gateway.py
-    NotificationKind("heartbeat", "status", "Heartbeat", "immediate", SEV_INFO),
-    # loop watchdog — dynamic kind via _NOTIFY_EVENTS (8 events → 4 flat kinds)
-    NotificationKind("loop", "complete", "Loop complete", "immediate", SEV_INFO),
-    NotificationKind("loop", "failed", "Loop failed", "immediate", SEV_ERROR),
-    NotificationKind("loop", "stalled", "Loop stalled or blocked", "immediate", SEV_WARNING),
     NotificationKind(
-        "loop", "needs_input", "Loop needs your input", "immediate", SEV_WARNING, attention=True
+        "cron",
+        "result",
+        "Scheduled job result",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.triggers.delivery",
     ),
-    NotificationKind("loop", "progress", "Loop progress", "immediate", SEV_INFO),
+    NotificationKind(
+        "cron",
+        "failed",
+        "Scheduled job failed",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.triggers.delivery",
+    ),
+    # heartbeat — 5 sites in gateway.py
+    NotificationKind(
+        "heartbeat",
+        "status",
+        "Heartbeat",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.gateway",
+    ),
+    # loop watchdog — dynamic kind via _NOTIFY_EVENTS (8 events → 4 flat kinds)
+    NotificationKind(
+        "loop",
+        "complete",
+        "Loop complete",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.loop.watchdog",
+    ),
+    NotificationKind(
+        "loop",
+        "failed",
+        "Loop failed",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.loop.watchdog",
+    ),
+    NotificationKind(
+        "loop",
+        "needs_input",
+        "Loop needs your input",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        owner="personalclaw.loop.watchdog",
+    ),
+    NotificationKind(
+        "loop",
+        "progress",
+        "Loop progress",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.loop.watchdog",
+    ),
     # inbox — the user-configured keyword/name alert (inbox.py:301)
-    NotificationKind("inbox", "alert", "Inbox alert", "immediate", SEV_WARNING),
+    NotificationKind(
+        "inbox",
+        "alert",
+        "Inbox alert",
+        "immediate",
+        SEV_WARNING,
+        owner="personalclaw.inbox",
+    ),
     # agent / subagent / hooks
-    NotificationKind("agent", "message", "Agent message", "immediate", SEV_INFO),
-    NotificationKind("agent", "subagent", "Subagent update", "immediate", SEV_INFO),
-    NotificationKind("hook", "fired", "Trigger fired", "immediate", SEV_INFO),
+    NotificationKind(
+        "agent",
+        "message",
+        "Agent message",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.dashboard.handlers.messaging",
+    ),
+    NotificationKind(
+        "agent",
+        "subagent",
+        "Subagent update",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.gateway",
+    ),
+    NotificationKind(
+        "hook",
+        "fired",
+        "Trigger fired",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.dashboard.handlers.hooks",
+    ),
     # system-level warnings and drift
-    NotificationKind("system", "warning", "System warning", "immediate", SEV_WARNING),
-    NotificationKind("system", "error", "System error", "immediate", SEV_ERROR),
-    NotificationKind("system", "info", "Notice", "immediate", SEV_INFO),
-    NotificationKind("system", "success", "Success", "immediate", SEV_INFO),
+    NotificationKind(
+        "system",
+        "warning",
+        "System warning",
+        "immediate",
+        SEV_WARNING,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "error",
+        "System error",
+        "immediate",
+        SEV_ERROR,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "info",
+        "Notice",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
+    NotificationKind(
+        "system",
+        "success",
+        "Success",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.action_providers.notify_provider",
+    ),
     # INFO, not warning: the flat "app.route.drift" string was unlisted in the old severity
     # map (⇒ info). Promoting it would start delivering it under a raised min_severity.
-    NotificationKind("system", "route_drift", "App route drift", "immediate", SEV_INFO),
-    NotificationKind("system", "session", "Session notice", "immediate", SEV_INFO),
+    NotificationKind(
+        "system",
+        "route_drift",
+        "App route drift",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.tool_providers.app_routes",
+    ),
+    # Resolution-only: old persisted `session` notifications keep their label and severity,
+    # but no production emitter owns the row, so Settings must not offer inert policy for it.
+    NotificationKind("system", "session", "Session notice", "immediate", SEV_INFO, owner=None),
     # learning / feedback
-    NotificationKind("learning", "retire", "Retired a learned signal", "immediate", SEV_INFO),
+    NotificationKind(
+        "learning",
+        "retire",
+        "Retired a learned signal",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.feedback",
+    ),
     # ── Attention kinds (S2+) ────────────────────────────────────────────
     # These carry a durable inbox item, so `attention=True`. They have NO legacy flat
     # string — nothing emitted them before `emit_attention_item` existed — which is why
@@ -250,6 +378,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         attention=True,
         verifiable=True,
+        owner="personalclaw.inbox",
     ),
     # Mechanical revocation (ES-15) tells the user that earned autonomy was taken back and
     # that re-granting is theirs to do. WARNING, not INFO: the floor has already dropped
@@ -267,6 +396,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_WARNING,
         attention=True,
+        owner="personalclaw.inbox",
     ),
     # 🪤 REGISTERED LATE, AND THE COST WAS VISIBLE. `learning/proposals.py` and
     # `planning/scratchpad.py` both emit `kind="proposal"` and neither was registered, so
@@ -283,6 +413,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         attention=True,
         verifiable=True,
+        owner="personalclaw.inbox",
     ),
     NotificationKind(
         "planning",
@@ -292,6 +423,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         attention=True,
         verifiable=True,
+        owner="personalclaw.inbox",
     ),
     NotificationKind(
         "system",
@@ -301,25 +433,48 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_WARNING,
         attention=True,
         verifiable=True,
+        owner="personalclaw.inbox",
     ),
-    NotificationKind("system", "digest", "Daily digest", "immediate", SEV_INFO, attention=True),
+    NotificationKind(
+        "system",
+        "digest",
+        "Daily digest",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.notification_rules",
+    ),
     # The monthly spend recap (MRT-3). `digest` by DEFAULT, unlike every other kind here: a
     # recap of a month that already closed is the least urgent thing the system emits, and
     # interrupting for it would teach a user to mute the channel that also carries a budget
     # warning. `attention=False` — the recap persists no row of its own; the digest it rides
     # into is the durable item.
-    NotificationKind("system", "usage_recap", "Monthly usage recap", "digest", SEV_INFO),
+    NotificationKind(
+        "system",
+        "usage_recap",
+        "Monthly usage recap",
+        "digest",
+        SEV_INFO,
+        owner="personalclaw.action_providers.usage_recap_provider",
+    ),
     # apps — an installed app's source offers a newer version (APE-7). Attention-bearing
     # (a durable inbox row deep-links to the app), emitted once per (name, latest_version)
     # via emit_attention_item on the existing /api/apps read path — no polling loop.
     NotificationKind(
-        "apps", "update", "App update available", "immediate", SEV_INFO, attention=True
+        "apps",
+        "update",
+        "App update available",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.inbox",
     ),
     # knowledge — one finding written by a scheduled research report (WF2KNO-12).
     # Attention-bearing: the report runs while nobody is watching, so a transient toast is
     # the one delivery shape that can lose the whole point of the feature. Emitted through
     # `inbox.emit_attention_item`, so the durable row and the notification are the same
-    # event by construction; the report machinery adds no sender of its own.
+    # event by construction; the report runner invokes that shared path rather than adding
+    # a second sender.
     #
     # `immediate` like everything else here, NOT `digest`, even though a weekly report is
     # the most digest-shaped thing this system emits: a default that quietly stops toasting
@@ -332,6 +487,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_INFO,
         attention=True,
+        owner="personalclaw.action_providers.knowledge_report_provider",
     ),
     # learning — the periodic identity report (LV-4). Attention-bearing: the report is
     # composed while nobody is watching and the durable row is what links the artifact, so
@@ -343,7 +499,13 @@ _KINDS: tuple[NotificationKind, ...] = (
     # Not `digest`: same reasoning as `knowledge/research_finding` — a default that quietly
     # stops toasting is experienced as "notifications broke".
     NotificationKind(
-        "learning", "report", "Identity report", "immediate", SEV_INFO, attention=True
+        "learning",
+        "report",
+        "Identity report",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        owner="personalclaw.inbox",
     ),
     # approval — the phone milestone (MOBILE-COMPANION `MC-5`). Registered so the rules
     # matrix carries a row for "a run is blocked waiting on me", which is the one
@@ -353,7 +515,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     # NOT `attention=True`, deliberately: a pending approval is an in-memory future with a
     # timeout (`DashboardState._approval_futures`), not a durable inbox row. Claiming
     # otherwise would put an item in the attention list that vanishes on restart.
-    NotificationKind("approval", "requested", "Approval needed", "immediate", SEV_WARNING),
+    NotificationKind(
+        "approval",
+        "requested",
+        "Approval needed",
+        "immediate",
+        SEV_WARNING,
+        owner="personalclaw.dashboard.state",
+    ),
     # user — a note the user captured themselves (INU-9). The FIRST kind whose emitter is a
     # person rather than a subsystem, and the whole registration exists so it is not a
     # phantom: `emit_attention_item` calls `state.notify` unconditionally, so this pair WOULD
@@ -374,10 +543,24 @@ _KINDS: tuple[NotificationKind, ...] = (
     # as FILTERED and withholds it. A note is not a claim about the world, it is what the
     # user said; a skeptic model that "refuted" it would hide the user's own words from them.
     NotificationKind(
-        "user", "note", "Note you captured", "badge", SEV_INFO, attention=True, verifiable=False
+        "user",
+        "note",
+        "Note you captured",
+        "badge",
+        SEV_INFO,
+        attention=True,
+        verifiable=False,
+        owner="personalclaw.inbox",
     ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
-    NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
+    NotificationKind(
+        GENERIC_SOURCE,
+        GENERIC_KIND,
+        "Uncategorized",
+        "immediate",
+        SEV_INFO,
+        owner="personalclaw.inbox",
+    ),
 )
 
 #: Flat legacy `kind` string → registered `(source, kind)`.
