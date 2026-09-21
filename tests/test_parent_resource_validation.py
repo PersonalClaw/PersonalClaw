@@ -347,3 +347,147 @@ async def test_agent_metadata_put_still_saves_for_a_real_agent():
 
     assert response.status == 200
     assert agent_metadata.load("reviewer") == "prefers small diffs"
+
+
+# ── #2940 residuals discovered by the all-src GET census ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_memory_backlinks_distinguish_unknown_from_unlinked_entity(monkeypatch):
+    from personalclaw.dashboard.handlers import memory as handlers
+
+    service = MagicMock()
+    service.graph_entities.return_value = [{"id": "real-entity"}]
+    service.graph_backlinks.return_value = []
+    monkeypatch.setattr(handlers, "_get_service", lambda _state: service)
+
+    missing = await handlers.api_memory_entity_backlinks(
+        _request(
+            "GET",
+            f"/api/memory/entities/{GHOST}/backlinks",
+            match_info={"entity_id": GHOST},
+            state=SimpleNamespace(),
+        )
+    )
+    existing = await handlers.api_memory_entity_backlinks(
+        _request(
+            "GET",
+            "/api/memory/entities/real-entity/backlinks",
+            match_info={"entity_id": "real-entity"},
+            state=SimpleNamespace(),
+        )
+    )
+
+    assert missing.status == 404
+    assert _body(missing) == {"error": "no such entity"}
+    assert existing.status == 200
+    assert _body(existing) == {"links": []}
+    service.graph_backlinks.assert_called_once_with("real-entity")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "suffix", "empty_body"),
+    [
+        ("get_entity_related", "related", {"related": []}),
+        ("get_entity_items", "items", []),
+    ],
+)
+async def test_knowledge_entity_reads_distinguish_unknown_from_unlinked_entity(
+    tmp_path, monkeypatch, handler_name, suffix, empty_body
+):
+    from personalclaw.dashboard.handlers import knowledge as handlers
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = KnowledgeStore(tmp_path / "knowledge.db")
+    store.add_entity("Real Empty Entity", "concept")
+    state = SimpleNamespace(knowledge_store=store)
+    handler = getattr(handlers, handler_name)
+
+    missing = await handler(
+        _request(
+            "GET",
+            f"/api/knowledge/entities/by-name/{GHOST}/{suffix}",
+            match_info={"name": GHOST},
+            state=state,
+        )
+    )
+    existing = await handler(
+        _request(
+            "GET",
+            f"/api/knowledge/entities/by-name/Real%20Empty%20Entity/{suffix}",
+            match_info={"name": "Real Empty Entity"},
+            state=state,
+        )
+    )
+
+    assert missing.status == 404
+    assert _body(missing) == {"error": "entity not found"}
+    assert existing.status == 200
+    assert _body(existing) == empty_body
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_skills_distinguish_unknown_from_session_without_drafts(monkeypatch):
+    from personalclaw.dashboard.handlers import skills as handlers
+    from personalclaw.skills import ephemeral
+
+    state = _empty_session_state()
+    list_drafts = MagicMock(return_value=[])
+    monkeypatch.setattr(ephemeral, "list_drafts", list_drafts)
+
+    missing = await handlers.api_ephemeral_skills_list(
+        _request(
+            "GET",
+            f"/api/skills/ephemeral/{GHOST}",
+            match_info={"session": GHOST},
+            state=state,
+        )
+    )
+    state.conversation_log.has_session.return_value = True
+    existing = await handlers.api_ephemeral_skills_list(
+        _request(
+            "GET",
+            "/api/skills/ephemeral/real-empty-session",
+            match_info={"session": "real-empty-session"},
+            state=state,
+        )
+    )
+
+    assert missing.status == 404
+    assert _body(missing)["error"]["code"] == "session_not_found"
+    assert existing.status == 200
+    assert _body(existing) == {"drafts": []}
+    list_drafts.assert_called_once_with("real-empty-session")
+
+
+@pytest.mark.asyncio
+async def test_feedback_target_rejects_unknown_kind_but_keeps_unknown_id_hydration(monkeypatch):
+    from personalclaw import feedback as fb
+    from personalclaw.dashboard.handlers import feedback as handlers
+
+    monkeypatch.setattr(handlers, "_enabled", lambda: True)
+    current_verdict = MagicMock(return_value=None)
+    monkeypatch.setattr(fb, "current_verdict", current_verdict)
+
+    bad_kind = await handlers.api_feedback_target(
+        _request(
+            "GET",
+            f"/api/feedback/target/not-a-kind/{GHOST}",
+            match_info={"kind": "not-a-kind", "id": GHOST},
+        )
+    )
+    valid_kind = fb.TARGET_KINDS[0]
+    unknown_id = await handlers.api_feedback_target(
+        _request(
+            "GET",
+            f"/api/feedback/target/{valid_kind}/{GHOST}",
+            match_info={"kind": valid_kind, "id": GHOST},
+        )
+    )
+
+    assert bad_kind.status == 400
+    assert _body(bad_kind)["error"]["code"] == "bad_request"
+    assert unknown_id.status == 200
+    assert _body(unknown_id) == {"verdict": None}
+    current_verdict.assert_called_once_with(valid_kind, GHOST)

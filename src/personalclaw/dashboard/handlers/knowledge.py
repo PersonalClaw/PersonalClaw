@@ -848,7 +848,7 @@ async def get_entity_related(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     ent = store.find_entity(name)
     if not ent:
-        return web.json_response({"related": []})
+        return web.json_response({"error": "entity not found"}, status=404)
     eid = ent["id"]
     out = []
     seen: set = set()
@@ -889,7 +889,7 @@ async def get_entity_items(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     ent = store.find_entity(name)
     if not ent:
-        return web.json_response([])
+        return web.json_response({"error": "entity not found"}, status=404)
     rows = store.db.execute(
         "SELECT i.* FROM items i JOIN mentions m ON i.id = m.item_id "
         "WHERE m.entity_id = ? AND i.status = 'active' AND COALESCE(i.is_archived, 0) = 0 "

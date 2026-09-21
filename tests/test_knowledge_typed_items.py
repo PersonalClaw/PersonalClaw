@@ -1334,11 +1334,12 @@ class TestEntityRelated:
         resp2 = _run(H.get_entity_related(_req(store, "GET", match_info={"name": "FeebasService"})))
         assert json.loads(resp2.body)["related"][0]["outgoing"] is True
 
-    def test_related_empty_for_unknown_entity(self, store):
+    def test_related_unknown_entity_is_not_an_empty_real_entity(self, store):
         from personalclaw.dashboard.handlers import knowledge as H
 
         resp = _run(H.get_entity_related(_req(store, "GET", match_info={"name": "Nope"})))
-        assert json.loads(resp.body)["related"] == []
+        assert resp.status == 404
+        assert json.loads(resp.body) == {"error": "entity not found"}
 
 
 class TestArchivedHiddenFromRetrieval:
@@ -1418,15 +1419,10 @@ class TestArchivedHiddenFromRetrieval:
         ids = {it["id"] for it in items}
         assert a in ids  # linked item included despite text variant
         assert len(ids) == 1  # the unlinked text-only mention is NOT a false positive
-        # Unknown entity → empty, not an error.
-        assert (
-            json.loads(
-                _run(
-                    H.get_entity_items(_req(store, "GET", match_info={"name": "Nonexistent"}))
-                ).body
-            )
-            == []
-        )
+        # Unknown entity is distinct from a real entity with no linked items.
+        missing = _run(H.get_entity_items(_req(store, "GET", match_info={"name": "Nonexistent"})))
+        assert missing.status == 404
+        assert json.loads(missing.body) == {"error": "entity not found"}
 
 
 class TestStaleEmbeddingCount:
