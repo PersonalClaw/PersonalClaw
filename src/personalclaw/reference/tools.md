@@ -2361,13 +2361,14 @@ Answer a workflow that is waiting on a human, or clear a pause. For an approval 
 
 ### `workflow_rewind`
 
-Reset a node AND everything that consumes its output, so they re-run — the in-place fix for 'redo this stage with a better prompt'. Consumers are found through data bindings, not tree position, so a later sibling reading the node's output is reset too. Outputs are archived, not destroyed. If a node in the reset region already fired an external effect, pass redo_effects=true to deliberately fire it again.
+Reset a node AND everything that consumes its output, so they re-run — the in-place fix for 'redo this stage with a better prompt'. Consumers are found through data bindings, not tree position, so a later sibling reading the node's output is reset too. Outputs are archived, not destroyed. If a node in the reset region already completed, inspect the returned preview and resubmit with confirm_cascade=true. If it already fired an external effect, also pass redo_effects=true to deliberately fire it again.
 
 **Response type:** `workflow.mutation.result`
 
 **Safety:** requires approval
 
 **Parameters:**
+- `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
 - `force` (boolean, optional) — Re-run even where inputs are unchanged (skips cache).
 - `node_id` (string, required)
 - `redo_effects` (boolean, optional)
@@ -2384,13 +2385,14 @@ Reset a node AND everything that consumes its output, so they re-run — the in-
 
 ### `workflow_run_from`
 
-Re-run only what comes AFTER a node, keeping that node's output as-is — 'redo the synthesis with the same gathered data'. Cheaper than rewind when the upstream work was expensive and correct.
+Re-run only what comes AFTER a node, keeping that node's output as-is — 'redo the synthesis with the same gathered data'. Cheaper than rewind when the upstream work was expensive and correct. If completed work is in the cascade, inspect the returned preview and resubmit with confirm_cascade=true.
 
 **Response type:** `workflow.mutation.result`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
 - `node_id` (string, required)
 - `run_id` (string, required) — The run id (from workflow_start).
 

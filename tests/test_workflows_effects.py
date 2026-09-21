@@ -16,9 +16,11 @@ double-fires. The load-bearing claims:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from personalclaw.workflows import store
+from personalclaw.workflows import service, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.effects import (
     CallerDedupe,
@@ -32,8 +34,11 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
+from personalclaw.workflows.engine import NodeResult
 from personalclaw.workflows.journal import EFFECT
 from personalclaw.workflows.models import (
+    Failure,
+    FailureClass,
     InstanceState,
     NodeInstance,
     RunStatus,
@@ -98,6 +103,43 @@ def _action_spec(config: dict | None = None) -> dict:
             ],
         },
     }
+
+
+def _stage_spec(config: dict | None = None) -> dict:
+    return {
+        "name": "stage-fx",
+        "root": {
+            "kind": "sequence",
+            "id": "s",
+            "children": [
+                {
+                    "kind": "stage",
+                    "id": "work",
+                    "config": {
+                        "prompt": "use tools",
+                        "capability": "mutating",
+                        **(config or {}),
+                    },
+                }
+            ],
+        },
+    }
+
+
+def _record_committed(run_id: str, *, node_id: str, provider: str = "") -> None:
+    from personalclaw.workflows.journal import Journal
+
+    path = "root.children[0]"
+    Journal(run_id).effect(
+        path,
+        idempotency_key=idempotency_key(run_id, path, 0),
+        effect_status=EffectStatus.COMMITTED.value,
+        epoch=0,
+        node_id=node_id,
+        provider=provider,
+        output_id="prior-1",
+        compensation_ref="",
+    )
 
 
 # ── key + pure helpers ───────────────────────────────────────────────────────
@@ -269,16 +311,115 @@ class TestEffectLifecycle:
         assert len({r.idempotency_key for r in recs}) == 1
 
 
+class TestStageEffectLifecycle:
+    async def test_stage_attempt_is_recorded_before_dispatch(self, monkeypatch) -> None:
+        """controller.py attempt site: a tool-bearing stage inherits ATTEMPTED before work."""
+        spec = _stage_spec()
+        run = _make_run(spec)
+        seen: list[list[EffectStatus]] = []
+
+        async def fake_dispatch(node, ctx, **kwargs):
+            seen.append(
+                [
+                    record.effect_status
+                    for record in effect_history(run.id).get("root.children[0]", [])
+                ]
+            )
+            return NodeResult(state=InstanceState.DONE, output={"id": "stage-1"})
+
+        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert seen == [[EffectStatus.ATTEMPTED]]
+
+    async def test_stage_preflight_blocks_a_prior_committed_effect(self, monkeypatch) -> None:
+        """controller.py preflight site: a prior stage commitment refuses dispatch."""
+        spec = _stage_spec()
+        run = _make_run(spec)
+        _record_committed(run.id, node_id="work")
+        store.write_state(
+            run.id,
+            {"root.children[0]": NodeInstance(path="root.children[0]", epoch=1)},
+        )
+        dispatched: list[str] = []
+
+        async def fake_dispatch(node, ctx, **kwargs):
+            dispatched.append(node.id)
+            return NodeResult(state=InstanceState.DONE)
+
+        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        assert dispatched == []
+        assert store.read_state(run.id)["root.children[0]"].failure.terminal_reason == (
+            "committed_effect"
+        )
+
+    async def test_stage_retry_records_retried_before_the_second_dispatch(
+        self, monkeypatch
+    ) -> None:
+        """controller.py retry site: tool-bearing retries remain visible in the effect ledger."""
+        spec = _stage_spec({"retry": {"max_attempts": 2}})
+        run = _make_run(spec)
+        calls = 0
+
+        async def fake_dispatch(node, ctx, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return NodeResult(
+                    state=InstanceState.FAILED,
+                    failure=Failure(
+                        failure_class=FailureClass.TRANSIENT,
+                        cause_plain="try again",
+                    ),
+                )
+            return NodeResult(state=InstanceState.DONE, output={"id": "stage-2"})
+
+        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        statuses = [record.effect_status for record in effect_history(run.id)["root.children[0]"]]
+        assert statuses == [
+            EffectStatus.ATTEMPTED,
+            EffectStatus.RETRIED,
+            EffectStatus.ATTEMPTED,
+            EffectStatus.COMMITTED,
+        ]
+
+    async def test_stage_out_of_band_completion_records_the_terminal_commit(self) -> None:
+        """controller.py terminal site: a spawned stage commits when reconciliation settles it."""
+
+        class FinishedStage:
+            def spawn(self, **kwargs):
+                return SimpleNamespace(id="subagent-1", error="")
+
+            def get(self, subagent_id):
+                assert subagent_id == "subagent-1"
+                return SimpleNamespace(
+                    done=True,
+                    error="",
+                    reaped=False,
+                    result="tool work complete",
+                )
+
+        spec = _stage_spec()
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(subagents=FinishedStage()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        statuses = [record.effect_status for record in effect_history(run.id)["root.children[0]"]]
+        assert statuses == [EffectStatus.ATTEMPTED, EffectStatus.COMMITTED]
+
+
 class TestRedoBoundary:
     def _completed_with_effect(self, run_id: str, spec: dict) -> None:
         """Simulate a prior epoch-0 completion whose effect committed."""
         from personalclaw.workflows.journal import Journal
 
-        j = Journal(run_id)
-        key = idempotency_key(run_id, "root.children[0]", 0)
-        j.effect(
-            "root.children[0]",
-            idempotency_key=key,
+        path = "root.children[0]"
+        Journal(run_id).effect(
+            path,
+            idempotency_key=idempotency_key(run_id, path, 0),
             effect_status=EffectStatus.COMMITTED.value,
             epoch=0,
             node_id="send",
@@ -393,9 +534,8 @@ class TestRedoBoundary:
         inst = store.read_state(run.id)["root.children[0]"]
         assert inst.failure.terminal_reason == "committed_effect"
 
-    async def test_non_action_nodes_never_consult_the_gate(self) -> None:
-        """Only ACTION dispatches are side-effecting. A transform re-running across
-        epochs is the memoized-replay design working, not a double-fire."""
+    async def test_pure_nodes_never_consult_the_gate(self) -> None:
+        """A transform re-running across epochs is memoized replay, not a double-fire."""
         spec = {
             "name": "pure",
             "root": {
@@ -431,6 +571,88 @@ class TestEffectEventShape:
             assert e["node_id"] == "send"
             assert e["provider"] == "notify"
             assert e["event_id"]  # deterministic id — replays dedupe
+
+
+class TestReentryEffectPreview:
+    def _live_controller(self) -> tuple[WorkflowRun, RunController, object]:
+        spec = {
+            "name": "reentry-fx",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "transform", "id": "seed", "config": {"expr": {"n": 1}}},
+                    {
+                        "kind": "stage",
+                        "id": "work",
+                        "config": {
+                            "prompt": "use {{nodes.seed.output.n}}",
+                            "capability": "mutating",
+                        },
+                    },
+                ],
+            },
+        }
+        run = _make_run(spec, status=RunStatus.RUNNING)
+        store.write_state(
+            run.id,
+            {
+                "root.children[0]": NodeInstance(path="root.children[0]", state=InstanceState.DONE),
+                "root.children[1]": NodeInstance(path="root.children[1]", state=InstanceState.DONE),
+            },
+        )
+        from personalclaw.workflows.journal import Journal
+
+        path = "root.children[1]"
+        Journal(run.id).effect(
+            path,
+            idempotency_key=idempotency_key(run.id, path, 0),
+            effect_status=EffectStatus.COMMITTED.value,
+            epoch=0,
+            node_id="work",
+            provider="",
+            output_id="",
+            compensation_ref="",
+        )
+        controller = RunController(run, spec, services=EngineServices())
+
+        class Supervisor:
+            def controller(self, run_id):
+                return controller if run_id == run.id else None
+
+        return run, controller, Supervisor()
+
+    async def test_rewind_requires_confirmation_and_names_the_committed_stage(self) -> None:
+        """The rewind verb returns its effect preview before queueing the reset."""
+        run, controller, supervisor = self._live_controller()
+        body = service.rewind_run(run.id, "work", supervisor=supervisor)
+        assert body["code"] == "WF_MUT_CONFIRM_REQUIRED"
+        assert body["preview"]["committed_effects"] == ["work"]
+        assert controller._pending_mutations == []
+
+        confirmed = service.rewind_run(
+            run.id,
+            "work",
+            supervisor=supervisor,
+            confirm_cascade=True,
+        )
+        assert confirmed["ok"] and confirmed["queued"]
+
+    async def test_run_from_requires_confirmation_and_names_the_committed_stage(self) -> None:
+        """The run-from verb returns downstream effect commitments before queueing."""
+        run, controller, supervisor = self._live_controller()
+        body = service.run_from(run.id, "seed", supervisor=supervisor)
+        assert body["code"] == "WF_MUT_CONFIRM_REQUIRED"
+        assert body["preview"]["committed_effects"] == ["work"]
+        assert controller._pending_mutations == []
+
+        confirmed = service.run_from(
+            run.id,
+            "seed",
+            supervisor=supervisor,
+            confirm_cascade=True,
+        )
+        assert confirmed["ok"] and confirmed["queued"]
 
 
 # ── caller dedupe ────────────────────────────────────────────────────────────

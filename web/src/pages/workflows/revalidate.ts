@@ -16,6 +16,13 @@ export const revalidateNotice =
   'shipped prompts, so re-validate the template after resuming — the judge may otherwise ' +
   'grade against a rubric this run no longer matches.'
 
+function committedEffectsSentence(preview: WorkflowCascadePreview | null | undefined): string {
+  const committed = preview?.committed_effects ?? []
+  if (committed.length === 0) return ''
+  return ` ${committed.length} step${committed.length === 1 ? '' : 's'} already committed ` +
+    `effects (${committed.join(', ')}); re-running may fire tools again.`
+}
+
 /** A one-line re-validate summary for AFTER an edit lands, tuned to what it cost.
  *
  *  Names the re-run count because the size of the cascade is what tells the user how much of
@@ -28,5 +35,22 @@ export function revalidateSummary(preview: WorkflowCascadePreview | null | undef
     rerun > 0
       ? `Edit applied — ${rerun} step${rerun === 1 ? '' : 's'} will re-run.`
       : 'Edit applied.'
-  return `${head} Re-validate this template’s judge calibration.`
+  return `${head}${committedEffectsSentence(preview)} Re-validate this template’s judge calibration.`
+}
+
+/** The confirmation copy for the two in-place re-entry verbs.
+ *
+ *  Both verbs receive the same computed cascade preview; the verb only changes whether the
+ *  selected node itself is reset. The committed-effect list is named, not reduced to a boolean,
+ *  so the user can identify the steps whose tools may fire again before consenting. */
+export function reentrySummary(
+  verb: 'rewind' | 'run-from',
+  preview: WorkflowCascadePreview | null | undefined,
+): string {
+  const rerun = preview?.rerun?.length ?? 0
+  const lead = verb === 'rewind' ? 'Re-running this node' : 'Running from this node'
+  const impact = rerun > 0
+    ? `${lead} will reset ${rerun} step${rerun === 1 ? '' : 's'}.`
+    : `${lead} will not reset any completed steps.`
+  return `${impact}${committedEffectsSentence(preview)}`
 }

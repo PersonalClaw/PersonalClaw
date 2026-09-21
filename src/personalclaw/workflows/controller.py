@@ -85,7 +85,7 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
-from personalclaw.workflows.engine import NodeResult, dispatch
+from personalclaw.workflows.engine import NodeResult, dispatch, node_commits_effects
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
@@ -1461,13 +1461,15 @@ class RunController:
         if result.preview.needs_confirmation and not confirm:
             body["ok"] = False
             body["needs_confirmation"] = True
+            body["code"] = "WF_MUT_CONFIRM_REQUIRED"
+            body["message"] = (
+                "this batch re-runs completed nodes "
+                f"({', '.join(result.preview.rerun[:5])}); resubmit with confirm_cascade=true"
+            )
             body["issues"] = [
                 {
                     "code": "WF_MUT_CONFIRM_REQUIRED",
-                    "message": (
-                        "this batch re-runs completed nodes "
-                        f"({', '.join(result.preview.rerun[:5])}); resubmit with confirm=true"
-                    ),
+                    "message": body["message"],
                     "node_id": "",
                 }
             ]
@@ -1824,9 +1826,8 @@ class RunController:
             else:
                 inst.state = InstanceState.DONE
                 inst.completed_at = _now()
-                ref, preview = self.journal.store_output(
-                    path, {"result": str(getattr(info, "result", "") or "")}
-                )
+                output = {"result": str(getattr(info, "result", "") or "")}
+                ref, preview = self.journal.store_output(path, output)
                 inst.output_ref = ref
                 if node_id:
                     # NOW the binding namespace gets the subagent's actual output. Until this
@@ -1846,6 +1847,8 @@ class RunController:
                     retries=max(0, inst.attempt - 1),
                     output_ref=ref,
                 )
+                if node is not None:
+                    self._record_terminal_effect(node, path, inst, inst.state, output)
             self._publish(
                 "workflow_node_done",
                 {
@@ -2498,10 +2501,10 @@ class RunController:
             # — and a retry must show the item it originally got, not whatever now sits at that
             # index.
             inst.item_label = _item_label(item.item)
-        if item.node.kind == NodeKind.ACTION:
+        if node_commits_effects(item.node):
             # ATTEMPTED goes down BEFORE dispatch: a crash between here and the outcome
             # must leave evidence the effect MAY have fired (WF2-R1).
-            self._record_effect(item, inst, EffectStatus.ATTEMPTED)
+            self._record_effect(item.node, item.path, inst, EffectStatus.ATTEMPTED)
         self._persist_state()
         self.journal.step_started(item.path, item.node.id, epoch=inst.epoch, lane=item.lane)
         self._publish(
@@ -2530,12 +2533,13 @@ class RunController:
 
     # ── effect ledger (WF2-R1) ──
 
-    def _effect_key(self, item: ReadyNode, inst: NodeInstance) -> str:
-        return idempotency_key(self.run.id, item.path, inst.epoch)
+    def _effect_key(self, path: str, inst: NodeInstance) -> str:
+        return idempotency_key(self.run.id, path, inst.epoch)
 
     def _record_effect(
         self,
-        item: ReadyNode,
+        node: Node,
+        path: str,
         inst: NodeInstance,
         status: EffectStatus,
         *,
@@ -2550,17 +2554,17 @@ class RunController:
         can never match the two and the boundary never clears.
         """
         record = EffectRecord(
-            instance_path=item.path,
-            idempotency_key=key or self._effect_key(item, inst),
+            instance_path=path,
+            idempotency_key=key or self._effect_key(path, inst),
             effect_status=status,
             epoch=inst.epoch,
-            node_id=item.node.id,
-            provider=str((item.node.config or {}).get("provider", "") or ""),
+            node_id=node.id,
+            provider=str((node.config or {}).get("provider", "") or ""),
             output_id=str(fields.get("output_id", "") or ""),
             compensation_ref=str(fields.get("compensation_ref", "") or ""),
         )
         self.journal.effect(
-            item.path,
+            path,
             idempotency_key=record.idempotency_key,
             effect_status=status.value,
             epoch=inst.epoch,
@@ -2570,18 +2574,44 @@ class RunController:
             compensation_ref=record.compensation_ref,
             detail=str(fields.get("detail", "") or ""),
         )
-        self._effects.setdefault(item.path, []).append(record)
+        self._effects.setdefault(path, []).append(record)
+
+    def _record_terminal_effect(
+        self,
+        node: Node,
+        path: str,
+        inst: NodeInstance,
+        state: InstanceState,
+        output: Any,
+    ) -> None:
+        """Record the terminal effect verdict for every effect-committing dispatcher."""
+        if not node_commits_effects(node):
+            return
+        if state in SUCCESS_STATES and state != InstanceState.NO_CHANGE:
+            # COMMITTED captures the teardown ref AT COMMIT TIME: a later spec edit
+            # must not change what tears down an already-provisioned resource.
+            self._record_effect(
+                node,
+                path,
+                inst,
+                EffectStatus.COMMITTED,
+                output_id=output_id_of(output),
+                compensation_ref=str((node.config or {}).get("teardown", "") or ""),
+            )
+        elif state == InstanceState.NO_CHANGE:
+            # The dispatcher reported `skip` — nothing fired, and the ledger says so.
+            self._record_effect(node, path, inst, EffectStatus.SKIPPED)
 
     async def _effect_preflight(self, item: ReadyNode, inst: NodeInstance) -> bool:
-        """The committed-effect boundary, enforced before an action node re-executes.
+        """The committed-effect boundary, enforced before a tool-bearing node re-executes.
 
-        Returns False when the node was refused (a terminal state was written). Only
-        ACTION nodes are side-effecting dispatches; every other kind passes through.
+        Returns False when the node was refused (a terminal state was written). Membership
+        follows the actual dispatcher, so pure dispatches pass through.
         A same-epoch retry passes too — it reuses the same idempotency key, which an
         idempotent receiver dedupes, so it is the retry contract working, not a
         double-fire.
         """
-        if item.node.kind != NodeKind.ACTION:
+        if not node_commits_effects(item.node):
             return True
         committed = committed_effect(self._effects.get(item.path, []))
         if committed is None or committed.epoch == inst.epoch:
@@ -2649,7 +2679,8 @@ class RunController:
                 self._persist_state()
                 return False
             self._record_effect(
-                item,
+                item.node,
+                item.path,
                 inst,
                 EffectStatus.COMPENSATED,
                 key=committed.idempotency_key,
@@ -3163,11 +3194,11 @@ class RunController:
             )
             self._attempts.setdefault(item.path, []).append(record)
             if self._should_retry(item, inst, result):
-                if item.node.kind == NodeKind.ACTION:
+                if node_commits_effects(item.node):
                     # Same epoch, same idempotency key: the receiver can dedupe. The
                     # RETRIED record keeps the ledger honest about how many dispatches
                     # the external system may have seen.
-                    self._record_effect(item, inst, EffectStatus.RETRIED)
+                    self._record_effect(item.node, item.path, inst, EffectStatus.RETRIED)
                 inst.state = InstanceState.PENDING
                 self.journal.write(
                     journal_mod.STEP_ATTEMPT,
@@ -3209,20 +3240,7 @@ class RunController:
                 )
                 return
 
-        if item.node.kind == NodeKind.ACTION:
-            if result.state in SUCCESS_STATES and result.state != InstanceState.NO_CHANGE:
-                # COMMITTED captures the teardown ref AT COMMIT TIME: a later spec edit
-                # must not change what tears down an already-provisioned resource.
-                self._record_effect(
-                    item,
-                    inst,
-                    EffectStatus.COMMITTED,
-                    output_id=output_id_of(result.output),
-                    compensation_ref=str((item.node.config or {}).get("teardown", "") or ""),
-                )
-            elif result.state == InstanceState.NO_CHANGE:
-                # The provider reported `skip` — nothing fired, and the ledger says so.
-                self._record_effect(item, inst, EffectStatus.SKIPPED)
+        self._record_terminal_effect(item.node, item.path, inst, result.state, result.output)
 
         if item.node.kind == NodeKind.SUBWORKFLOW and isinstance(result.output, dict):
             child_id = str(result.output.get("child_run_id", "") or "")

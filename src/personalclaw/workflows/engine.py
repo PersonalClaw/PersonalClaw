@@ -72,6 +72,18 @@ logger = logging.getLogger(__name__)
 #: PROMPT-level only — this is the code check that did not previously exist.
 MAX_WF_DEPTH = 3
 WF_DEPTH_KEY = "__wf_depth"
+_COMMITS_EFFECTS_ATTR = "__personalclaw_commits_effects__"
+
+
+def _commits_effects(dispatcher: Any) -> Any:
+    """Mark a dispatcher whose node may commit effects through tools.
+
+    The committed-effect boundary follows the dispatcher, not a second node-kind
+    allowlist. A future kind routed through one of these dispatchers therefore inherits
+    the fence automatically.
+    """
+    setattr(dispatcher, _COMMITS_EFFECTS_ATTR, True)
+    return dispatcher
 
 
 @dataclass
@@ -554,6 +566,7 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
     return leaf_env(dict(os.environ), lineage)
 
 
+@_commits_effects
 async def dispatch_stage(
     node: Node,
     ctx: BindingContext,
@@ -941,6 +954,7 @@ async def dispatch_subworkflow(
     )
 
 
+@_commits_effects
 async def dispatch_action(
     node: Node,
     ctx: BindingContext,
@@ -2432,6 +2446,25 @@ async def dispatch(
     return apply_publish(node, result, run_id=run_id, cwd=cwd or None)
 
 
+_LEAF_DISPATCHERS = {
+    NodeKind.TRANSFORM: dispatch_transform,
+    NodeKind.INFER: dispatch_infer,
+    NodeKind.VISUALIZE: dispatch_visualize,
+    NodeKind.STAGE: dispatch_stage,
+    NodeKind.BRANCH: dispatch_branch,
+    NodeKind.ACTION: dispatch_action,
+    NodeKind.WAIT: dispatch_wait,
+    NodeKind.GATE: dispatch_gate,
+    NodeKind.SUBWORKFLOW: dispatch_subworkflow,
+}
+
+
+def node_commits_effects(node: Node) -> bool:
+    """Whether the node's actual dispatcher may commit effects through tools."""
+    dispatcher = _LEAF_DISPATCHERS.get(node.kind)
+    return bool(dispatcher and getattr(dispatcher, _COMMITS_EFFECTS_ATTR, False))
+
+
 async def _dispatch_inner(
     node: Node,
     ctx: BindingContext,
@@ -2456,23 +2489,22 @@ async def _dispatch_inner(
     judge_hints: JudgeHints | None = None,
 ) -> NodeResult:
     kind = node.kind
+    dispatcher = _LEAF_DISPATCHERS.get(kind)
     clock = now or time.time()
-    if kind == NodeKind.TRANSFORM:
-        return await dispatch_transform(node, ctx)
-    if kind == NodeKind.INFER:
-        return await dispatch_infer(
+    if dispatcher is dispatch_transform:
+        return await dispatcher(node, ctx)
+    if dispatcher is dispatch_infer:
+        return await dispatcher(
             node, ctx, tiers=tiers, completion=completion, compaction_saves=compaction_saves
         )
-    if kind == NodeKind.VISUALIZE:
-        return await dispatch_visualize(node, ctx, completion=completion)
-    if kind == NodeKind.STAGE:
-        return await dispatch_stage(
-            node, ctx, subagents=subagents, depth=depth, run_id=run_id, cwd=cwd
-        )
-    if kind == NodeKind.BRANCH:
-        return await dispatch_branch(node, ctx)
-    if kind == NodeKind.ACTION:
-        return await dispatch_action(
+    if dispatcher is dispatch_visualize:
+        return await dispatcher(node, ctx, completion=completion)
+    if dispatcher is dispatch_stage:
+        return await dispatcher(node, ctx, subagents=subagents, depth=depth, run_id=run_id, cwd=cwd)
+    if dispatcher is dispatch_branch:
+        return await dispatcher(node, ctx)
+    if dispatcher is dispatch_action:
+        return await dispatcher(
             node,
             ctx,
             get_provider=get_provider,
@@ -2482,10 +2514,10 @@ async def _dispatch_inner(
             instance_path=instance_path,
             cwd=cwd,
         )
-    if kind == NodeKind.WAIT:
-        return await dispatch_wait(node, ctx, now=clock)
-    if kind == NodeKind.GATE:
-        return await dispatch_gate(
+    if dispatcher is dispatch_wait:
+        return await dispatcher(node, ctx, now=clock)
+    if dispatcher is dispatch_gate:
+        return await dispatcher(
             node,
             ctx,
             now=clock,
@@ -2497,8 +2529,8 @@ async def _dispatch_inner(
             compaction_saves=compaction_saves,
             judge_hints=judge_hints,
         )
-    if kind == NodeKind.SUBWORKFLOW:
-        return await dispatch_subworkflow(
+    if dispatcher is dispatch_subworkflow:
+        return await dispatcher(
             node,
             ctx,
             depth=depth,

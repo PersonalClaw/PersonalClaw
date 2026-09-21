@@ -704,6 +704,7 @@ WORKFLOW_REWIND_SCHEMA = ToolSchema(
         FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
         FieldSpec("node_id", str, required=True, max_len=128),
         FieldSpec("redo_effects", bool, default=False),
+        FieldSpec("confirm_cascade", bool, default=False),
         FieldSpec("force", bool, default=False),
     ],
 )
@@ -713,6 +714,7 @@ WORKFLOW_RUN_FROM_SCHEMA = ToolSchema(
     fields=[
         FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
         FieldSpec("node_id", str, required=True, max_len=128),
+        FieldSpec("confirm_cascade", bool, default=False),
     ],
 )
 

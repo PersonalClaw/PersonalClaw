@@ -168,7 +168,9 @@ class TestFullLifecycle:
 
         # ── rewind: the PREVIEW is the contract. It names what will re-run before anything does,
         # which is what makes the operation safe to offer at all.
-        preview = service.rewind_run(run.id, "produce", supervisor=sup, force=True)
+        preview = service.rewind_run(
+            run.id, "produce", supervisor=sup, force=True, confirm_cascade=True
+        )
         assert preview.get("ok"), preview
         rerun = set(preview["preview"]["rerun"]) | set(preview["preview"]["stale"])
         assert "produce" in rerun
@@ -211,7 +213,10 @@ class TestFullLifecycle:
         assert await first.run_to_completion(timeout=30) == RunStatus.COMPLETE
         original = store.read_output(run.id, "root.children[2]")
 
-        service.rewind_run(run.id, "produce", supervisor=sup, force=True)
+        rewound = service.rewind_run(
+            run.id, "produce", supervisor=sup, force=True, confirm_cascade=True
+        )
+        assert rewound.get("ok"), rewound
         sup.forget(run.id)
         second = await sup.launch(store.get(run.id), store.read_spec(run.id))
         assert await second.run_to_completion(timeout=30) == RunStatus.COMPLETE
