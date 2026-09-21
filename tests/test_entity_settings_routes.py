@@ -433,13 +433,22 @@ def _isolate_rules(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rules_get_returns_a_row_per_registered_kind(_isolate_rules):
+async def test_rules_get_returns_a_row_per_configurable_kind(_isolate_rules):
     from personalclaw import notification_kinds as nk
 
     resp = await er.handle_notification_rules_get(MagicMock())
     data = await _json(resp)
-    assert {r["key"] for r in data["rules"]} == {k.key for k in nk.all_kinds()}
+    assert {r["key"] for r in data["rules"]} == {k.key for k in nk.configurable_kinds()}
     assert data["digest"]["schedule"]
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_a_resolution_only_kind(_isolate_rules):
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"system/session": {"mode": "never"}}})
+    )
+    assert resp.status == 400
+    assert "unknown notification kind" in (await _json(resp))["error"]
 
 
 @pytest.mark.asyncio

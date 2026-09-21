@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from personalclaw import notification_kinds
 from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
@@ -24,7 +25,12 @@ from personalclaw.action_providers.base import (
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
 
-_ALLOWED_KINDS = {"info", "success", "warning", "error"}
+_ALLOWED_KINDS = {
+    notification_kinds.INFO,
+    notification_kinds.SUCCESS,
+    notification_kinds.WARNING,
+    notification_kinds.ERROR,
+}
 
 
 class NotifyActionProvider(ActionProvider):

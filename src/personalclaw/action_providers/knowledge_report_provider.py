@@ -43,6 +43,7 @@ import time
 from datetime import datetime
 from typing import Any, Sequence
 
+from personalclaw import notification_kinds
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
 
 # Through the persist provider's own opener, never a locally composed path: its docstring
@@ -313,7 +314,14 @@ class KnowledgeReportActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        persist_body = _persist_body(result)
         rr.record_run(report_id, ok=True, watermark_ts=resolution_ts)
+        _emit_research_finding(
+            report_id=report_id,
+            title=str(getattr(defn, "name", "") or report_id),
+            body=str(persist_cfg.get("summary") or text),
+            knowledge_item_id=str(persist_body.get("item_id") or ""),
+        )
         return ActionResult(
             success=True,
             stdout=json.dumps(
@@ -325,7 +333,7 @@ class KnowledgeReportActionProvider(ActionProvider):
                     "citation_policy": str(getattr(defn, "citation_policy", "")),
                     "model_calls": calls,
                     "watermark_ts": resolution_ts,
-                    "persist": _persist_body(result),
+                    "persist": persist_body,
                 }
             ),
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -645,3 +653,41 @@ def _persist_body(result: ActionResult) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def _emit_research_finding(
+    *,
+    report_id: str,
+    title: str,
+    body: str,
+    knowledge_item_id: str,
+) -> None:
+    """Surface one successfully persisted finding through the durable attention path."""
+    try:
+        from personalclaw.inbox import emit_attention_item
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        try:
+            state = get_dashboard_state()
+        except Exception:  # noqa: BLE001 — headless runs still persist the inbox row
+            state = None
+        refs = {"research_report_id": report_id}
+        if knowledge_item_id:
+            refs["knowledge_item_id"] = knowledge_item_id
+        emit_attention_item(
+            state,
+            source="knowledge",
+            kind=notification_kinds.RESEARCH_FINDING,
+            title=title,
+            body=body,
+            refs=refs,
+            dedup_key=(
+                f"research_finding:{knowledge_item_id}"
+                if knowledge_item_id
+                else f"research_finding:{report_id}"
+            ),
+        )
+    except Exception:  # noqa: BLE001 — the finding is already durable in the knowledge store
+        logger.warning(
+            "knowledge-report %s: could not surface the finding", report_id, exc_info=True
+        )
