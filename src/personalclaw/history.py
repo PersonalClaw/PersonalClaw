@@ -2,7 +2,16 @@
 
 Session files: ~/.personalclaw/sessions/{safe_key}.jsonl
 Each entry tracks provenance (source_thread, source_user) for citation.
-Files auto-rotate at 512KB, keeping last 200 lines.
+Files auto-rotate at 2MB (``_SESSION_MAX_BYTES``), keeping the last 200 lines.
+
+Lines that rotation or compaction DROPS are not gone immediately: they are appended to
+sessions/archive/{safe_key}__{stamp}.jsonl, one file per drop, by ``_archive_lines``.
+That directory is a short recovery window for trimmed message lines — it is NOT storage
+for closed or finished sessions. Nothing in the product closes a session (sessions are
+deleted), no caller archives a whole one, and ``_cleanup_old_archives`` unlinks each file
+``ARCHIVE_RETENTION_DAYS`` (7) days after its mtime. So any surface that lists these files
+owes the reader all three facts: that a row is a slice of one session rather than the
+session, what dropped it (compaction or rotation), and that it expires in 7 days (#464).
 """
 
 import asyncio
@@ -81,7 +90,15 @@ def _archive_dir(base: Path | None = None) -> Path:
 def _archive_lines(
     key: str, lines: list[str], reason: str, base: Path | None = None
 ) -> Path | None:
-    """Append dropped message lines to archive/{key}.{YYYYMMDD-HHMMSS}.jsonl. Returns path or None."""  # noqa: E501
+    """Append dropped message lines to archive/{key}__{YYYYMMDD-HHMMSS}.jsonl.
+
+    The delimiter is ``__``, not ``.`` — a session key can itself contain dots (a channel
+    ``thread_ts``), which is what the collision loop below parses back out; it also appends
+    ``-{n}`` when two drops land in the same second. Returns the new path, or None when
+    there was nothing to drop. The file is not permanent: the call to
+    ``_cleanup_old_archives`` at the end of this function prunes the directory to
+    ``ARCHIVE_RETENTION_DAYS``.
+    """
     if not lines:
         return None
     import itertools
