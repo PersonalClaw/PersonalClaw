@@ -294,6 +294,7 @@ def test_the_week_panel_serves_a_bucket_per_day(store):
     )
     assert body["days"] == 7 and len(body["buckets"]) == 7
     assert "silent_days" in body and "error_days" in body
+    assert body["first_pass_day"] == ""
 
 
 def test_the_window_is_bounded(store):

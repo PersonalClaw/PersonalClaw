@@ -11,10 +11,10 @@ import type { LearningInbox, StagingWeek } from '../../lib/api'
 // while the page's own zero-states ("no capture pass has run", "not measured yet — nothing has
 // run") say the same fact quietly. The header dressed a first-run state as a problem.
 //
-// `has_ever_run` is the backend's UNBOUNDED answer, not a window proxy: an all-silent week is
-// also what a ran-then-died instance looks like, and THAT one must keep the chip. So the gate is
-// strict `=== false` — a stale cached payload without the field defaults to the warning, because
-// hiding a real silent week is the worse failure.
+// `first_pass_day` is the backend's UNBOUNDED floor, not a window proxy: an all-silent week is
+// also what a ran-then-died instance looks like, and THAT one must keep the chip. Empty means no
+// pass ever; a stale cached payload without the field defaults to the warning because hiding a
+// real silent week is the worse failure.
 
 const week = (over: Partial<StagingWeek> = {}): StagingWeek => ({
   days: 7,
@@ -67,7 +67,7 @@ describe('the silent-days chip waits for a first run', () => {
   })
 
   it('renders never-ran as the quiet zero-state, not as an amber warning', async () => {
-    learningStagingWeek.mockResolvedValue(week({ has_ever_run: false }))
+    learningStagingWeek.mockResolvedValue(week({ first_pass_day: '' }))
     render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/no capture pass has run yet/)).toBeTruthy()
@@ -77,15 +77,42 @@ describe('the silent-days chip waits for a first run', () => {
   })
 
   it('keeps the chip for ran-then-died — silent days AFTER a first run are the signal', async () => {
-    learningStagingWeek.mockResolvedValue(week({ has_ever_run: true }))
+    learningStagingWeek.mockResolvedValue(week({ first_pass_day: '2026-08-01' }))
     render(<LearningPage navigate={() => {}} />)
 
     expect(await screen.findByText(/7 silent/)).toBeTruthy()
     expect(screen.queryByText(/no capture pass has run yet/)).toBeNull()
   })
 
+  it('excludes pre-floor days from both the warning chip and warning-state tiles', async () => {
+    learningStagingWeek.mockResolvedValue(week({
+      first_pass_day: '2026-09-02',
+      buckets: [
+        {
+          day: '2026-09-01', passes: 0, by_outcome: {}, produced: 0, errors: 0,
+          staged: 0, cost_usd: 0, proposal_ids: [],
+        },
+        {
+          day: '2026-09-02', passes: 1, by_outcome: { flush_ok: 1 }, produced: 0, errors: 0,
+          staged: 0, cost_usd: 0, proposal_ids: [],
+        },
+        {
+          day: '2026-09-03', passes: 0, by_outcome: {}, produced: 0, errors: 0,
+          staged: 0, cost_usd: 0, proposal_ids: [],
+        },
+      ],
+      silent_days: ['2026-09-01', '2026-09-03'],
+    }))
+    render(<LearningPage navigate={() => {}} />)
+
+    expect(await screen.findByText(/1 silent/)).toBeTruthy()
+    expect(screen.queryByText(/2 silent/)).toBeNull()
+    expect(screen.getByText('out of scope')).toBeTruthy()
+    expect(screen.getByText('silent')).toBeTruthy()
+  })
+
   it('defaults a MISSING field to showing the chip, so a stale payload cannot calm a real gap', async () => {
-    // An older cached response has no `has_ever_run` at all. Suppressing on absence would hide
+    // An older cached response has no `first_pass_day` at all. Suppressing on absence would hide
     // the one warning this panel exists to raise, on exactly the installs most likely to be stale.
     learningStagingWeek.mockResolvedValue(week())
     render(<LearningPage navigate={() => {}} />)
