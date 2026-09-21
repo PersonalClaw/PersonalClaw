@@ -11,6 +11,7 @@ import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
 import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
+import { SchemaFields } from '../../pages/tools/schema'
 import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
 
 /** ONBOARDING-UX S1 T1.2r (OU-2) — the essential-apps step: the flow's first act
@@ -550,10 +551,16 @@ function ConfigureProvider({ app, onConfigured }: { app: string; onConfigured: (
         {t.label} is installed. Fill in its settings, then test the connection for real before moving on.
       </p>
       <div className="flex flex-col gap-2">
-        {Object.entries(props).map(([k, f]) => (
-          <SchemaField key={k} name={k} field={f} value={values[k] ?? ''}
-            onChange={(v) => setValues((m) => ({ ...m, [k]: v }))} />
-        ))}
+        <SchemaFields
+          fields={Object.entries(props)}
+          required={required}
+          values={values}
+          advancedFieldClassName="flex flex-col gap-s"
+          renderField={(k, field) => (
+            <SchemaField name={k} field={field} value={values[k] ?? ''}
+              onChange={(v) => setValues((m) => ({ ...m, [k]: v }))} />
+          )}
+        />
       </div>
       {error && <div className="text-danger text-[0.8125rem]" role="alert">{error}</div>}
       <div>
