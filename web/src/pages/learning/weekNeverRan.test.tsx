@@ -84,7 +84,11 @@ describe('the silent-days chip waits for a first run', () => {
     expect(screen.queryByText(/no capture pass has run yet/)).toBeNull()
   })
 
-  it('excludes pre-floor days from both the warning chip and warning-state tiles', async () => {
+  it('counts the served silent days and still scopes the tiles out below the floor', async () => {
+    // The floor is the SERVER's (`staging.py` emits a day only when `day >= first_pass_day`, and
+    // `test_days_before_the_first_pass_are_not_silent` holds that line), so a pre-floor entry in
+    // `silent_days` is a payload no backend can produce. The chip counts what it is served; the
+    // per-day tiles still derive their own `out of scope` from `buckets` + `first_pass_day`.
     learningStagingWeek.mockResolvedValue(week({
       first_pass_day: '2026-09-02',
       buckets: [
@@ -101,7 +105,7 @@ describe('the silent-days chip waits for a first run', () => {
           staged: 0, cost_usd: 0, proposal_ids: [],
         },
       ],
-      silent_days: ['2026-09-01', '2026-09-03'],
+      silent_days: ['2026-09-03'],
     }))
     render(<LearningPage navigate={() => {}} />)
 
