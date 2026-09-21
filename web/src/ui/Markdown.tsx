@@ -275,6 +275,60 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
 const REMARK: PluggableList = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]
 const REHYPE: PluggableList = [[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
 
+/** ── `inline` mode: the SAME renderer, for a sink that cannot hold a block ──────────────
+ *
+ *  🔴 SIX PROSE SINKS RENDERED MARKDOWN AS LITERAL TEXT (#2515) — app descriptions on the
+ *  Store card and both detail panels, the Tools list row, app-config help, and tool
+ *  parameter descriptions. Every one of them carries the SAME authored field the inspector
+ *  already renders correctly through `<Markdown>` two lines above, so a description reading
+ *  "Sync your **vault** via `rsync`" came out with its asterisks and backticks on screen.
+ *
+ *  Four of those six cannot take the block renderer, and the reasons are structural, not
+ *  cosmetic:
+ *   · `line-clamp-2` clamps the element that CARRIES the text flow (it is `-webkit-box`),
+ *     so a nested `<p>` breaks the clamp outright and the card grows to the prose.
+ *   · `Field`'s hint sink is a `<p>`; a `<div>` inside a `<p>` is invalid markup the
+ *     parser closes early.
+ *   · the Tools row is a `<button>`, so a rendered `<a>` there is `nested-interactive`
+ *     (axe, serious) — links render as styled TEXT here, never anchors.
+ *
+ *  🪤 NOT A SECOND RENDERER. Same `Markdown` entry point, same remark pipeline, same
+ *  component vocabulary — block containers are unwrapped and flattened to running text, so
+ *  a heading or a table in a two-line description degrades to its words instead of
+ *  reflowing the grid. Two deliberate differences:
+ *   · no `rehype-raw` / `rehype-katex`. The block renderer's doc says "source is trusted
+ *     (our own backend)"; THESE sinks carry third-party manifest prose — `app.json`
+ *     descriptions, MCP tool and parameter descriptions — so raw HTML is not passed
+ *     through and LaTeX is not parsed.
+ *   · no colour of its own. Each sink owns its ink (`text-on-surface-low`,
+ *     `text-on-surface-var`, caption), so inline mode inherits rather than forcing
+ *     `text-on-surface` the way the block wrapper does. That is what keeps these six
+ *     visually unchanged apart from the formatting they were missing.
+ */
+const INLINE_UNWRAP = [
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br', 'img', 'pre',
+  'ul', 'ol', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+]
+
+const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
+  // Always the inline pill — `renderCode` resolves a fenced block to a `<div>`/`<pre>`
+  // surface (and a ```mermaid fence to a diagram), which is precisely what must not
+  // appear inside a clamped one-liner.
+  // `px-xs`, not the block renderer's raw `px-1.5 py-0.5`: this chip is new code, so it takes the
+  // tokenised rung and rides the density slider (`design/spacingTokenRamp.test.ts`). It pads tighter
+  // than block mode deliberately — these sinks are one or two clamped lines of running prose, and
+  // there is no vertical padding because a taller chip is what would push a clamped row around.
+  code({ children }: any) { return <code className="rounded-sm bg-surface-high px-xs text-[0.85em] font-mono text-primary-emphasis">{children}</code> },
+  strong({ children }: any) { return <strong style={fvs(600)}>{children}</strong> },
+  em({ children }: any) { return <em className="italic">{children}</em> },
+  del({ children }: any) { return <del className="opacity-70">{children}</del> },
+  // The list wrapper is unwrapped, so the items land directly in the flow — a trailing
+  // space keeps "onetwothree" from happening.
+  li({ children }: any) { return <span>{children}{' '}</span> },
+  // Inert by design: three of the four inline sinks sit inside a click target.
+  a({ children }: any) { return <span className="underline underline-offset-2 decoration-current/40">{children}</span> },
+}
+
 // Bare file paths inside prose (not just inline-code): /a/b.ext, ~/a/b.ext, or
 // workspace-relative a/b.ext with an extension. Conservative to avoid prose.
 const BARE_FILE_RE = /((?:~|\.{0,2}\/)?[\w.\-]+(?:\/[\w.\-]+)+\.\w{1,8})/g
@@ -422,8 +476,12 @@ function MarkdownText({ children, onFileClick, chatSessionKey, citations }: {
   return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
+export const Markdown = memo(function Markdown({ children, className, inline, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
+  /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
+   *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
+   *  click target. See `INLINE_UNWRAP` above for what it costs and why. */
+  inline?: boolean
   /** Chat session key — enables "Regenerate" on a deleted inline image's placeholder
    *  (re-runs at the same slug; server recovers the prompt from this session). */
   chatSessionKey?: string
@@ -440,6 +498,15 @@ export const Markdown = memo(function Markdown({ children, className, onFileClic
   // shape renders as readable text instead of crashing React (#31).
   const text = typeof children === 'string' ? children : stringifyChildren(children)
   if (!text.trim()) return null
+  // An inline sink is a clamp/hint/click-target, never a widget host, so it takes the
+  // flattening pass and no `<div>` and no colour of its own (the sink owns its ink).
+  if (inline) {
+    return (
+      <span className={className}>
+        <ReactMarkdown remarkPlugins={REMARK} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>{text}</ReactMarkdown>
+      </span>
+    )
+  }
   // Split out `<widget>` blocks; render each as a sandboxed iframe, prose as MD.
   const segments = parseWidgetBlocks(text, streaming)
   if (segments.length === 1 && segments[0].type === 'md') {

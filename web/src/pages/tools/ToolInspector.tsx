@@ -59,7 +59,14 @@ function ParamRow({ name, schema, required, depth = 0 }: { name: string; schema:
         {required && <span data-type="caption" className="text-danger">required</span>}
         {schema.enum && <span data-type="caption" className="text-on-surface-low">· {schema.enum.map(String).join(' | ').slice(0, 60)}</span>}
       </div>
-      {schema.description && <p data-type="body-s" className="mt-0.5 text-on-surface-var leading-snug">{schema.description}</p>}
+      {/* `inline`: the sink is a `<p>`, and a `<div>` inside a `<p>` is invalid HTML the parser
+          hoists out — which moves the text out of this row. A parameter description is a
+          sentence anyway; what it needs is its `` `code` `` and emphasis, not paragraphs. */}
+      {schema.description && (
+        <p data-type="body-s" className="mt-0.5 text-on-surface-var leading-snug">
+          <Markdown inline>{schema.description}</Markdown>
+        </p>
+      )}
       {nested.length > 0 && <div className="mt-1.5 flex flex-col gap-1.5">{nested.map(([n, s]) => <ParamRow key={n} name={n} schema={s} required={(schema.required ?? []).includes(n)} depth={depth + 1} />)}</div>}
     </div>
   )
@@ -227,7 +234,11 @@ function RunPanel({ tool }: { tool: ToolItem }) {
               <div data-type="body-s" className="flex items-center gap-1.5 mb-1.5" style={{ color: result.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
                 {result.ok ? <Check size={14} /> : <AlertTriangle size={14} />} {result.ok ? 'Success' : 'Error'}
               </div>
-              <div className="max-h-96 overflow-y-auto">
+              {/* Named, focusable scroll region: measured at 384px tall holding 7051px of output
+                  in issue 2515, which is `scrollable-region-focusable` with a computed name of the
+                  whole result. `role="group"` + an explicit label is what stops the output becoming
+                  the name — same trio as the rest of the family. */}
+              <div tabIndex={0} role="group" aria-label="Tool result" className="max-h-96 overflow-y-auto">
                 {result.ok
                   ? <ToolOutput text={result.output ?? ''} />
                   : <pre data-type="body-s" className="text-danger font-mono whitespace-pre-wrap break-words">{result.error}</pre>}

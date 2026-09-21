@@ -11,6 +11,7 @@ import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { Field, TextArea, TextInput } from '../../ui/forms'
+import { Markdown } from '../../ui/Markdown'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
@@ -576,7 +577,15 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                       <RiskBadge risk={t.risk_level} />
                       {off && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">Disabled</span>}
                     </div>
-                    <p data-type="caption" className="mt-0.5 line-clamp-2 text-on-surface-low leading-snug">{t.description}</p>
+                    {/* `inline`: this row is the inside of a `<button>` AND is `line-clamp`-ed,
+                        so the block renderer is barred twice over — a link in the prose would
+                        nest an interactive element inside the row's click target (axe
+                        `nested-interactive`), and a block child would break the clamp. Inline
+                        mode renders a link as plain underlined text, so the description in the
+                        inspector one click away is the surface that carries the real link. */}
+                    <p data-type="caption" className="mt-0.5 line-clamp-2 text-on-surface-low leading-snug">
+                      <Markdown inline>{t.description}</Markdown>
+                    </p>
                     {props.length > 0 && <div data-type="caption" className="mt-1 text-on-surface-low">{props.length} param{props.length === 1 ? '' : 's'}</div>}
                   </div>
                 </button>

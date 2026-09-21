@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useFocusReturn } from './useFocusReturn'
 import { useResizablePanel } from './useResizablePanel'
 import { createPortal } from 'react-dom'
@@ -110,6 +110,43 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   // Measured before: focusing Close and pressing Escape left `document.activeElement === body`.
   const focusReturnRef = useFocusReturn<HTMLDivElement>()
 
+  // ── ONE mounted body, re-parented between the two chromes (#2515) ────────────────────────
+  //
+  // 🔴 EXPANDING THE PANEL THREW AWAY WHATEVER THE USER HAD TYPED IN IT. The two modes were two
+  // RETURN STATEMENTS — a portaled full-screen overlay and an in-flow dock — each rendering
+  // `{children}` in its own position in the React element tree. Switching between them is a
+  // different fiber type at that position (a `HostPortal` vs a host element), so React does not
+  // reconcile: it unmounts the body and mounts a new one. Every piece of state inside went with
+  // it. On the tool inspector that is the filled-in argument form and the result you just ran
+  // for (`RunPanel`'s `args`/`result`), which is exactly when a person reaches for Expand.
+  //
+  // The fix is to stop MOVING the body in the React tree. `children` is portaled into a host
+  // node created once, from a position in the tree that never changes, so the subtree is mounted
+  // exactly once for the life of the panel. Only the host's DOM PARENT changes: a layout effect
+  // appends it to whichever chrome is on screen. React state survives because the fiber is never
+  // unmounted; live DOM state (an uncontrolled input's value, a media element's playback) survives
+  // because moving a node does not reset its properties.
+  //
+  // 🪤 NOT "lift the state into SidePanel and sync the two trees". A panel's body is arbitrary
+  // caller content — this primitive has 46 consumers and cannot know what state they hold — so
+  // there is nothing here to lift, and two mounted copies of one form would mean two sources of
+  // truth to keep equal. One mount has no synchronisation problem to get wrong.
+  const host = useMemo(() => {
+    const el = document.createElement('div')
+    // `display: contents` makes the host's own box vanish, so the body's layout is EXACTLY what
+    // it was when it was a direct child of the scroll container — an `h-full` child still
+    // measures against the container, not against an interposed wrapper.
+    el.style.display = 'contents'
+    return el
+  }, [])
+  const slotRef = useRef<HTMLDivElement>(null)
+  // Layout effect, not `useEffect`: the node must be in place before the browser paints, or the
+  // body would flash absent for a frame on every expand/collapse.
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    if (slot && host.parentNode !== slot) slot.appendChild(host)
+  }, [host, expanded])
+
   const header = (
     <div className="shrink-0 bg-surface/95 px-l py-m flex items-center justify-between border-b border-outline-variant/40">
       {/* The title is an <h2>, not a span: inside the panel's `role="region"` (named by this element
@@ -137,6 +174,11 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     </div>
   )
 
+  // THE one mounted body. Rendered at index 0 of this component's root fragment in BOTH modes —
+  // same element type, same portal container — so React reconciles it across the mode switch
+  // instead of unmounting it. The chrome beside it (index 1) is what actually changes.
+  const body = createPortal(children, host)
+
   if (expanded) {
     // full-viewport overlay. Portaled to <body> because an animated (transformed)
     // ancestor would otherwise become the containing block for position:fixed and
@@ -149,20 +191,25 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // panel growing rather than a new surface. Reverse on collapse via the exit
     // wipe. Wipe speed/overshoot scale with expressiveness; reduced-motion → no clip.
     const furled = `inset(0px 0px 0px calc(100dvw - ${dockW}px))`
-    return createPortal(
-      // `--z-content` IS 50: spelling migration, byte-identical computed value. A full-screen panel
-      // is the content ceiling by tokens.css's own definition of the rung.
-      <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface"
-        initial={reduce ? { opacity: 0 } : { clipPath: furled }}
-        animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
-        exit={reduce ? { opacity: 0 } : { clipPath: furled }}
-        transition={reduce ? spring.effects : { ...physics.fluid, stiffness: 240 + expr(120, 0.4) }}>
-        {header}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto px-l py-l" style={{ maxWidth: SURFACE_WIDTHS.expandedSidePanel }}>{children}</div>
-        </div>
-      </motion.div>,
-      document.body,
+    return (
+      <>
+        {body}
+        {createPortal(
+          // `--z-content` IS 50: spelling migration, byte-identical computed value. A full-screen panel
+          // is the content ceiling by tokens.css's own definition of the rung.
+          <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface"
+            initial={reduce ? { opacity: 0 } : { clipPath: furled }}
+            animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
+            exit={reduce ? { opacity: 0 } : { clipPath: furled }}
+            transition={reduce ? spring.effects : { ...physics.fluid, stiffness: 240 + expr(120, 0.4) }}>
+            {header}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div ref={slotRef} className="mx-auto px-l py-l" style={{ maxWidth: SURFACE_WIDTHS.expandedSidePanel }} />
+            </div>
+          </motion.div>,
+          document.body,
+        )}
+      </>
     )
   }
 
@@ -177,51 +224,54 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   // bottom → full available height, both inner corners visible on every page.
   const bottomGap = 'var(--spacing-m, 12px)'
   return (
-    // The docked panel is attached to the viewport's RIGHT edge, so it rounds its
-    // INNER (left) corners — the edge facing the content — to read as a floating
-    // panel rather than a full-bleed column. Radius via a token (--radius-xl); the
-    // outer (right) edge stays flush to the browser edge (square).
-    <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
-      style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
-      initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
-      {/* left-edge resize handle — the visible seam springs thicker + brighter on
-          hover (scaled by expr) so it telegraphs "drag to resize" with a little
-          life instead of a bare 1px color swap. It is the WAI-ARIA window-splitter:
-          focusable, arrow-key operable, and it reports its width — the handle sits on
-          the dock's inner (left) edge, so dragging/ArrowLeft grows it (side: 'right'). */}
-      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
-        tabIndex={0} aria-label="Resize panel — arrow keys to resize"
-        aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
-        // 🔑 6px WIDE, ON 46 CONSUMERS. Measured at the reflow tier (320px, WCAG SC 1.4.10): the hit
-        // area is 6×732 and only 6px is reachable, against the 24px floor of SC 2.5.8. `hit-24-x`
-        // centres a 24px band on it without moving a pixel — the outer div is a PURE hit area (no
-        // background; the visible seam is the `motion.span` below at 1px), so nothing here paints.
-        //
-        // 🪤 IT DOES NOT REACH 24px, AND THE REASON IS WORTH KEEPING. This handle sits on the panel's
-        // INNER edge (`left-0`) and two ancestors are `overflow: hidden`, so the band's outward half is
-        // clipped at the panel boundary. Measured: 6px → 15px reachable, and the growth is entirely
-        // rightward (R2→R11, L unchanged at 3). A strict 2.5× improvement, not a pass.
-        //
-        // 🔴 REACHING 24px IS AN OWNER CALL, NOT A BIGGER BAND. Widening the hit area to a full 24px
-        // inward was measured and REJECTED: it swallows clicks from four named controls at the panel's
-        // left edge — `Mark criterion incomplete`, `Mark step incomplete`, `Mark step done`, `Edit` —
-        // which is the stolen-target defect this repo already has on file, made worse. Getting to 24px
-        // needs the panel content indented by ~18px, which changes layout across all 46 consumers.
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group hit-24-x">
-        <motion.span
-          className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
-          initial={false}
-          animate={{ width: 1 }}
-          whileHover={{ width: 1 + expr(2.5, 0.3) }}
-          transition={physics.snappy}
-        />
-      </div>
-      {/* flex column: the header stays PINNED (shrink-0) while only the content
-          region scrolls — the panel title/close never scroll away. */}
-      <div className="flex h-full flex-col" style={{ width: dockW }}>
-        {header}
-        <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">{children}</div>
-      </div>
-    </motion.div>
+    <>
+      {body}
+      {/* The docked panel is attached to the viewport's RIGHT edge, so it rounds its
+          INNER (left) corners — the edge facing the content — to read as a floating
+          panel rather than a full-bleed column. Radius via a token (--radius-xl); the
+          outer (right) edge stays flush to the browser edge (square). */}
+      <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+        style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
+        initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
+        {/* left-edge resize handle — the visible seam springs thicker + brighter on
+            hover (scaled by expr) so it telegraphs "drag to resize" with a little
+            life instead of a bare 1px color swap. It is the WAI-ARIA window-splitter:
+            focusable, arrow-key operable, and it reports its width — the handle sits on
+            the dock's inner (left) edge, so dragging/ArrowLeft grows it (side: 'right'). */}
+        <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+          tabIndex={0} aria-label="Resize panel — arrow keys to resize"
+          aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
+          // 🔑 6px WIDE, ON 46 CONSUMERS. Measured at the reflow tier (320px, WCAG SC 1.4.10): the hit
+          // area is 6×732 and only 6px is reachable, against the 24px floor of SC 2.5.8. `hit-24-x`
+          // centres a 24px band on it without moving a pixel — the outer div is a PURE hit area (no
+          // background; the visible seam is the `motion.span` below at 1px), so nothing here paints.
+          //
+          // 🪤 IT DOES NOT REACH 24px, AND THE REASON IS WORTH KEEPING. This handle sits on the panel's
+          // INNER edge (`left-0`) and two ancestors are `overflow: hidden`, so the band's outward half is
+          // clipped at the panel boundary. Measured: 6px → 15px reachable, and the growth is entirely
+          // rightward (R2→R11, L unchanged at 3). A strict 2.5× improvement, not a pass.
+          //
+          // 🔴 REACHING 24px IS AN OWNER CALL, NOT A BIGGER BAND. Widening the hit area to a full 24px
+          // inward was measured and REJECTED: it swallows clicks from four named controls at the panel's
+          // left edge — `Mark criterion incomplete`, `Mark step incomplete`, `Mark step done`, `Edit` —
+          // which is the stolen-target defect this repo already has on file, made worse. Getting to 24px
+          // needs the panel content indented by ~18px, which changes layout across all 46 consumers.
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group hit-24-x">
+          <motion.span
+            className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
+            initial={false}
+            animate={{ width: 1 }}
+            whileHover={{ width: 1 + expr(2.5, 0.3) }}
+            transition={physics.snappy}
+          />
+        </div>
+        {/* flex column: the header stays PINNED (shrink-0) while only the content
+            region scrolls — the panel title/close never scroll away. */}
+        <div className="flex h-full flex-col" style={{ width: dockW }}>
+          {header}
+          <div ref={slotRef} className="min-h-0 flex-1 overflow-y-auto px-l py-l" />
+        </div>
+      </motion.div>
+    </>
   )
 }

@@ -6,6 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
+  Boxes, Package, Store,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -21,6 +22,8 @@ import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/F
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { Markdown } from '../../ui/Markdown'
+import { MoreRow } from '../../ui/MoreRow'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TextInput, FieldError } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -188,14 +191,16 @@ function SourceDivider({ label, count }: { label: string; count: number }) {
 // 'force-uninstall' (everything goes, data included), and it is the control the
 // force-uninstall dialog has always told users to reach for.
 type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 'force-uninstall'
-type DispatchAppAction = (app: { name: string; enabled: boolean; hasUI: boolean }, action: AppActionKind) => void
+// Carries the DISPLAY NAME as well as the slug: the slug is the API's identifier, the display
+// name is the only one a person recognises, and a dialog title is a sentence for the person.
+type DispatchAppAction = (app: { name: string; displayName: string; enabled: boolean; hasUI: boolean }, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
  *  detail panel call, the `busyName` (app mid-toggle), and the `modals` node. */
 function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [busyName, setBusyName] = useState<string | null>(null)
-  const [configFor, setConfigFor] = useState<string | null>(null)
+  const [configFor, setConfigFor] = useState<{ name: string; displayName: string } | null>(null)
   const [updateFor, setUpdateFor] = useState<string | null>(null)
   const [uninstallFor, setUninstallFor] = useState<string | null>(null)
   const [removeFor, setRemoveFor] = useState<string | null>(null)
@@ -203,7 +208,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
   const dispatch: DispatchAppAction = (app, action) => {
     switch (action) {
       case 'open': nav(`app/${encodeURIComponent(app.name)}`); return
-      case 'configure': setConfigFor(app.name); return
+      case 'configure': setConfigFor({ name: app.name, displayName: app.displayName }); return
       case 'update': setUpdateFor(app.name); return
       case 'uninstall': setRemoveFor(app.name); return
       case 'force-uninstall': setUninstallFor(app.name); return
@@ -220,7 +225,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
     <>
       {updateFor && <UpdateModal name={updateFor} onClose={() => setUpdateFor(null)}
         onUpdated={() => { setUpdateFor(null); reload() }} />}
-      {configFor && <ConfigModal name={configFor} onClose={() => setConfigFor(null)} />}
+      {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
       {removeFor && <RemoveAppModal name={removeFor} onClose={() => setRemoveFor(null)}
         onDone={() => { setRemoveFor(null); reload() }} />}
       {uninstallFor && <UninstallModal name={uninstallFor} onClose={() => setUninstallFor(null)}
@@ -234,7 +239,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, enabled: item.enabled, hasUI: item.hasUI }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -412,13 +417,20 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // out loud: measured against a 500 on `/api/apps*` with a cold sessionStorage, the Library rendered
   // "No apps installed — Browse the Store to add apps" plus a Browse Store CTA, with no error text
   // anywhere and no live region. Letting the rejection through is what makes `error` exist.
-  const { data: apps, error: appsErr, refresh } = useQuery<AppSummary[]>(
+  // `stale` is read, not dropped. Both reads here are `persist: true`, and a persisted entry is
+  // restored with its recorded age — which on a reload is older than the namespace's window — so
+  // the FIRST paint after a reload is a cached one. Measured in a browser (#2515): the Store
+  // painted "All apps 67" and 67 cards with `[data-stale]` = 0, `[aria-busy]` = 0 and no
+  // "updating" copy anywhere, then silently became 68 when the catalog fetch landed 2.8s later.
+  // The reporter saw the same two numbers (57 → 58) and read it as the count being wrong. Both
+  // were true; the screen just never said which one it was showing.
+  const { data: apps, error: appsErr, stale: appsStale, refresh } = useQuery<AppSummary[]>(
     'apps', () => api.apps(), { persist: true },
   )
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
-  const { data: catalog, error: catalogErr, refresh: refreshCatalog } = useQuery(
+  const { data: catalog, error: catalogErr, stale: catalogStale, refresh: refreshCatalog } = useQuery(
     'app-catalog', () => api.appCatalog(), { persist: true },
   )
   const [search, setSearch] = useQueryParam(q, sq, 'q', '', { replace: true })
@@ -629,7 +641,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           keepCornerPadding
           left={
             <div className="flex items-center gap-3 min-w-0">
-              <PageTitle>Apps</PageTitle>
+              {/* `shrink-0`: the row's other item is a `Segmented` that DECLARES a collapse
+                  strategy (below), so when the two compete the strip is the one meant to give
+                  way — one pill naming the active view — and the page's own name is the one
+                  thing on the row that cannot be abbreviated. Left to the default the title is
+                  a shrinkable flex item and the row resolves the squeeze against the heading.
+                  Deliberately NOT in `PageTitle` itself: ~30 destinations render a title beside
+                  header actions where truncating a long name IS the right answer, so a
+                  primitive-wide `shrink-0` would trade this defect for thirty. */}
+              <PageTitle className="shrink-0">Apps</PageTitle>
               {/* 🔴 THE ONLY HEADER-ROW `Segmented` IN THE APP WITH NO COLLAPSE STRATEGY, and it is the
                   widest thing in this row. Measured at 390px: the strip spans 86..276 (**190px**) inside a
                   ~199px slot (the header is 390 wide with 191px of shell-corner reservation), so it
@@ -641,9 +661,52 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                   declares (`LoopComposer`'s Granularity, Mode and Project kind) and which that row's own
                   comment prescribes: "the row can only fit by each wide control having its OWN collapse
                   strategy". Below the fit threshold this becomes one pill naming the active view, opening
-                  the three in a popover — roles and arrow-key behaviour are untouched. */}
-              <Segmented ariaLabel="Native, Library, or Store" collapse="menu" value={view} onChange={setView}
-                options={[{ key: 'native', label: 'Native' }, { key: 'library', label: 'Library' }, { key: 'store', label: 'Store' }]} />
+                  the three in a popover — roles and arrow-key behaviour are untouched.
+
+                  🔑 `collapse="menu"` ALONE IS NOT ENOUGH HERE, and the primitive's own docstring says why:
+                  "labelled, the pill is ~119px, which still overflowed a phone header's ~42px control rail".
+                  Re-measured at 390px with only the collapse strategy added, the folded pill was **84×32 at
+                  113..197** inside a **115px** left slot (44..159) — so it still ran 38px into the action
+                  cluster and still overlapped `Install from URL` by **38×32**. The overlap shrank from 40×32
+                  to 38×32; it did not go away. Its exact width tracks the active option's label, so the
+                  same variant measures **105×32 at 113..218** on `Library` — a wider label is a worse clash,
+                  not a better one.
+
+                  🔑 AND THE LABELLED PILL IS THE WEAKER TAP TARGET, not the stronger one. `iconOnly` looks
+                  like it trades target size for title space, so it was measured rather than argued:
+                  `document.elementFromPoint` at the labelled pill's OWN CENTRE returns `Install from URL`,
+                  and Playwright cannot click the control at all (57 retries, `subtree intercepts pointer
+                  events`). A 105×32 box whose centre belongs to another control is a 0px target. The bare
+                  form measures 32×32 at 113..145 with nothing overlapping it and its centre resolving to
+                  itself, so this RESTORES a reachable target.
+                  So take the primitive's LAST rung too. `iconOnly` on mobile makes the folded pill `size-8`
+                  (**32×32** at 113..145, clear of the action cluster and above the 24px SC 2.5.8 floor — not
+                  a crushed target), which is the first form that fits the **44px** the title leaves.
+                  That needs every option to carry an icon, because `CollapsedSegmented` deliberately falls
+                  back to the labelled pill when the active option has no glyph — the icons are what unlocks
+                  the rung, not decoration. Same shape as `SkillsPage`'s `ModeToggle`, the sibling that
+                  already resolved this exact squeeze.
+                  The icons widen the expanded strip (186 → 249px), so the fit decision was swept across
+                  widths to check that did not trade the phone clash for a laptop one — `need` is the hidden
+                  probe's intrinsic width, `avail` the slot this control actually gets:
+
+                      ≥1180px   need 249  avail 261   full strip, tabs 73×32
+                       1024px   need 249  avail 117   folded pill "Library" 105px
+                        900px   need 249  avail  79   folded pill "Library" 105px
+                       ≤768px   need 108  avail  44   folded pill, bare 32×32   ← iconOnly
+                        320px   need 108  avail -20   folded pill, bare 32×32
+
+                  No band regressed: at 1024/900 the OLD 186px strip already exceeded a 117/79px slot, so
+                  that width used to crush its tabs rather than fold — folding is the improvement there too.
+                  The ≥1180px margin is 12px, and running out of it folds to a named pill, which is the
+                  designed rung rather than a clip. */}
+              <Segmented ariaLabel="Native, Library, or Store" collapse="menu" iconOnly={isMobile}
+                value={view} onChange={setView}
+                options={[
+                  { key: 'native', label: 'Native', icon: Boxes },
+                  { key: 'library', label: 'Library', icon: Package },
+                  { key: 'store', label: 'Store', icon: Store },
+                ]} />
             </div>
           }
           right={<HeaderActions>
@@ -653,12 +716,14 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
         />}
         controls={showLibControls ? (
           <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search installed apps', label: 'Search apps' }}
-            results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}>
+            results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}
+            stale={apps !== undefined && appsStale}>
             <FilterMenu sections={libSections} label="Filter & sort" />
           </ListControls>
         ) : showStoreControls ? (
           <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' }}
-            results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}>
+            results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}
+            stale={catalog !== undefined && catalogStale}>
             <FilterMenu sections={storeSections} label="Filter & sort" />
           </ListControls>
         ) : undefined}
@@ -1165,7 +1230,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, enabled: item.enabled, hasUI: item.hasUI }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1295,9 +1360,13 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
           {item.installed && <span onClick={stop}><AppActionMenu item={item} onAction={onAction} /></span>}
         </div>
 
-        {/* description (clamped to 2 lines) + author */}
+        {/* description (clamped to 2 lines) + author.
+            `inline` Markdown, not the block renderer: `line-clamp` is `-webkit-box`-based, so
+            it clamps the element that CARRIES the flow — a block child would escape the clamp
+            and the card would grow. The author suffix stays OUTSIDE the markdown so a name
+            with an underscore in it is a name, not emphasis. */}
         <p className="line-clamp-2 flex-1 text-on-surface-low" data-type="body-s">
-          {item.description || item.name}{item.author ? ` · by ${item.author}` : ''}
+          <Markdown inline>{item.description || item.name}</Markdown>{item.author ? ` · by ${item.author}` : ''}
         </p>
 
         {/* APE-4: the app's DECLARED quality bar. Renders nothing at all when the app
@@ -1306,10 +1375,14 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
 
         {/* footer: tags + the state-appropriate PRIMARY action */}
         <div className="flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             {(item.tags ?? []).slice(0, 3).map((t) => (
               <span key={t} className="inline-flex h-6 items-center rounded-pill bg-surface-high px-2 text-on-surface-var text-[0.75rem]">{t}</span>
             ))}
+            {/* A silently dropped 4th tag was indistinguishable from an app that has three —
+                the same undisclosed-cap defect `MoreRow` exists to close, so it is the SAME
+                sentence here as everywhere else rather than a card-local `+N` pill. */}
+            <MoreRow total={(item.tags ?? []).length} shown={3} noun="tags" />
           </div>
           {item.installed ? (
             item.hasUI && item.enabled ? (
@@ -1512,7 +1585,10 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
     <>
       <div className="flex flex-col gap-l p-l">
         <div>
-          <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
+          {/* The panel CAN hold blocks, so the description gets the real (block) renderer — an
+              `app.json` description with paragraphs or a bullet list is structured prose, and
+              this is the surface a person reads before deciding to keep the app. */}
+          <div data-type="body-s"><Markdown>{app.description || app.name}</Markdown></div>
           {/* Provenance through the ONE owner (`lib/provenance`) rather than the raw `origin`
               string with a `|| 'local'` fallback — that fallback CLAIMED "local" for an app
               whose origin the record did not carry, which is the same false-provenance defect
@@ -1631,7 +1707,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 
       {updateOpen && <UpdateModal name={app.name} onClose={() => setUpdateOpen(false)}
         onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
-      {configOpen && <ConfigModal name={app.name} onClose={() => setConfigOpen(false)} />}
+      {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
       {confirmRemove && <RemoveAppModal name={app.name}
         onClose={() => setConfirmRemove(false)}
         onDone={() => { setConfirmRemove(false); onClose(); onChanged() }} />}
@@ -1673,7 +1749,9 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         <div className="absolute inset-0 bg-gradient-to-t from-surface/60 to-transparent" />
       </div>
       <div>
-        <div data-type="body-s" className="text-on-surface-low">{item.description || item.name}</div>
+        {/* Same renderer as the installed panel above: the pre-install and post-install
+            descriptions are the same authored field, so they cannot read differently. */}
+        <div data-type="body-s"><Markdown>{item.description || item.name}</Markdown></div>
         <div data-type="label-s" className="mt-1 text-on-surface-low">
           v{item.version || '—'}{item.author ? ` · by ${item.author}` : ''}
         </div>
@@ -1741,11 +1819,17 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
 
 
-function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
+function ConfigModal({ name, displayName, onClose }: {
+  /** The app SLUG — the config API's identifier. Never the title: `weather-forecast` is a
+   *  path segment, and every other surface in this page already says “Weather Forecast”. */
+  name: string
+  displayName: string
+  onClose: () => void
+}) {
   const cfg = useAppConfig(name)
 
   return (
-    <Modal title={`Configure ${name}`} icon={<Settings2 size={18} />} onClose={onClose}>
+    <Modal title={`Configure ${displayName}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
         {cfg.error ? (
           // A failed read used to leave "Loading…" on screen forever, with Save still live over an
