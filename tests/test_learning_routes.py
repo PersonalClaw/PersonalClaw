@@ -288,15 +288,16 @@ def test_rejecting_a_missing_row_is_404(store):
 # ── the capture panel ──
 
 
-def test_the_week_panel_serves_a_bucket_per_day(store):
+def test_the_week_panel_serves_a_bucket_per_day(health_home, store):
     body = _body(
         _run(L.api_learning_staging_week(_req("GET", "/api/learning/staging/week", user="me")))
     )
     assert body["days"] == 7 and len(body["buckets"]) == 7
     assert "silent_days" in body and "error_days" in body
+    assert body["first_pass_day"] == ""
 
 
-def test_the_window_is_bounded(store):
+def test_the_window_is_bounded(health_home, store):
     body = _body(
         _run(
             L.api_learning_staging_week(
@@ -307,7 +308,7 @@ def test_the_window_is_bounded(store):
     assert body["days"] == 31
 
 
-def test_a_bad_days_value_is_400(store):
+def test_a_bad_days_value_is_400(health_home, store):
     resp = _run(
         L.api_learning_staging_week(_req("GET", "/api/learning/staging/week?days=nope", user="me"))
     )

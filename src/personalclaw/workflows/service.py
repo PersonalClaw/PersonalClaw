@@ -2184,6 +2184,7 @@ def _reentry(
     supervisor: Any = None,
     redo_effects: bool = False,
     force: bool = False,
+    confirm_cascade: bool = False,
 ) -> dict[str, Any]:
     # Existence before liveness. A nonexistent run has no controller either, so asking `_live`
     # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
@@ -2205,7 +2206,7 @@ def _reentry(
     return controller.submit_mutation(
         [{"op": op, "node_id": node_id, "redo_effects": redo_effects, "force": force}],
         actor="chat",
-        confirm=True,
+        confirm=confirm_cascade,
     )
 
 

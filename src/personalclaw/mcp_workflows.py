@@ -293,8 +293,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "in-place fix for 'redo this stage with a better prompt'. Consumers are "
                 "found through data bindings, not tree position, so a later sibling reading "
                 "the node's output is reset too. Outputs are archived, not destroyed. If a "
-                "node in the reset region already fired an external effect, pass "
-                "redo_effects=true to deliberately fire it again."
+                "node in the reset region already completed, inspect the returned preview and "
+                "resubmit with confirm_cascade=true. If it already fired an external effect, "
+                "also pass redo_effects=true to deliberately fire it again."
             ),
             "inputSchema": {
                 "type": "object",
@@ -302,6 +303,10 @@ def _list_tools() -> list[dict[str, Any]]:
                     "run_id": run_id,
                     "node_id": {"type": "string"},
                     "redo_effects": {"type": "boolean"},
+                    "confirm_cascade": {
+                        "type": "boolean",
+                        "description": "Accept re-running completed nodes.",
+                    },
                     "force": {
                         "type": "boolean",
                         "description": "Re-run even where inputs are unchanged (skips cache).",
@@ -315,11 +320,19 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Re-run only what comes AFTER a node, keeping that node's output as-is — "
                 "'redo the synthesis with the same gathered data'. Cheaper than rewind when "
-                "the upstream work was expensive and correct."
+                "the upstream work was expensive and correct. If completed work is in the "
+                "cascade, inspect the returned preview and resubmit with confirm_cascade=true."
             ),
             "inputSchema": {
                 "type": "object",
-                "properties": {"run_id": run_id, "node_id": {"type": "string"}},
+                "properties": {
+                    "run_id": run_id,
+                    "node_id": {"type": "string"},
+                    "confirm_cascade": {
+                        "type": "boolean",
+                        "description": "Accept re-running completed nodes.",
+                    },
+                },
                 "required": ["run_id", "node_id"],
             },
         },
@@ -701,12 +714,18 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 supervisor=_supervisor(),
                 redo_effects=bool(args.get("redo_effects")),
                 force=bool(args.get("force")),
+                confirm_cascade=confirm_granted(args, "confirm_cascade"),
             )
         )
 
     if name == "workflow_run_from":
         return _fmt(
-            service.run_from(run_id, str(args.get("node_id", "") or ""), supervisor=_supervisor())
+            service.run_from(
+                run_id,
+                str(args.get("node_id", "") or ""),
+                supervisor=_supervisor(),
+                confirm_cascade=confirm_granted(args, "confirm_cascade"),
+            )
         )
 
     if name == "workflow_fork":

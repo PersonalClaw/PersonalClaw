@@ -299,7 +299,7 @@ def test_rich_ingest_fences_the_transcript():
     from personalclaw.security import is_fenced
     from personalclaw.workflows.bindings import BindingContext, refs_in
     from personalclaw.workflows.bundled_defs import read_template
-    from personalclaw.workflows.engine import resolve_config
+    from personalclaw.workflows.engine_support import resolve_config
     from personalclaw.workflows.models import Node, walk
 
     spec = read_template("rich-ingest")

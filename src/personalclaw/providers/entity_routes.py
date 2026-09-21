@@ -469,7 +469,7 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
     if incoming is not None:
         if not isinstance(incoming, dict):
             return web.json_response({"error": "'rules' must be an object"}, status=400)
-        kinds_by_key = {k.key: k for k in nk.all_kinds()}
+        kinds_by_key = {k.key: k for k in nk.configurable_kinds()}
         for key, raw in incoming.items():
             if key not in kinds_by_key:
                 return web.json_response(

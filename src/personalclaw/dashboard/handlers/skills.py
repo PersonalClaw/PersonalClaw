@@ -706,9 +706,12 @@ async def api_skill_overlay_revert(request: web.Request) -> web.Response:
 async def api_ephemeral_skills_list(request: web.Request) -> web.Response:
     """GET /api/skills/ephemeral/{session} — the session-live drafts awaiting a
     promote/forget decision (drives the end-of-session modal)."""
+    from personalclaw.dashboard.handlers.sessions import _session_exists
     from personalclaw.skills import ephemeral
 
     session = request.match_info.get("session", "")
+    if not _session_exists(request.app["state"], session):
+        return json_error("session_not_found", status=404)
     drafts = [
         {"slug": d.slug, "title": d.title, "body": d.body, "created_at": d.created_at}
         for d in ephemeral.list_drafts(session)

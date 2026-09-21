@@ -892,9 +892,17 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     is the only path that empties ``execution_notes`` — the record of what was actually done on
     each task. Clearing that is unrecoverable and has no undo, so intent has to be stated. It is
     the same bar ``merge_items`` sets in the knowledge handlers for the same reason.
+
+    A task a workflow run still owns (`managed(t)`) is deferred field-wise, not skipped or
+    refused: `ENGINE_OWNED_FIELDS` stays with the run (the same reason `_RESET_PRESERVED` already
+    holds back `done_criterion` and `workflow_binding`), while the user-owned reset — execution
+    notes, blocked reason, and the item-wise plan/criteria flags — still applies. A whole-reset
+    refusal would make one filed-in managed task permanently block the list, and a silent skip
+    would drop the one thing only this route does: emptying that task's `execution_notes`.
     """
     from personalclaw.tasks import registry
     from personalclaw.tasks.models import REPEATABLE_PROJECT, TaskStatus, task_reset_payload
+    from personalclaw.workflows.materialize import ENGINE_OWNED_FIELDS, managed
 
     body = await json_object_body(request)
     if not confirm_granted(body):
@@ -927,10 +935,22 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
             {"error": "all tasks must be complete before the list can be reset"}, status=400
         )
     reset_ids = []
+    partially_reset_ids = []
     for t in tasks:
-        await registry.update_task(t.id, **task_reset_payload(t))
+        payload = task_reset_payload(t)
+        if managed(t):
+            for field in ENGINE_OWNED_FIELDS:
+                payload.pop(field, None)
+            partially_reset_ids.append(t.id)
+        await registry.update_task(t.id, **payload)
         reset_ids.append(t.id)
-    return web.json_response({"ok": True, "reset_task_ids": reset_ids})
+    return web.json_response(
+        {
+            "ok": True,
+            "reset_task_ids": reset_ids,
+            "partially_reset_task_ids": partially_reset_ids,
+        }
+    )
 
 
 async def api_projects_export(request: web.Request) -> web.Response:

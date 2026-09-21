@@ -66,6 +66,61 @@ def test_binding_overrides_resolution():
     assert "PersonalClaw" in puc.resolve_prompt_content("chat")
 
 
+def test_system_prompt_resolution_matches_rendering_declarations():
+    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+    from personalclaw.prompt_providers.registry import (
+        _ensure_default_providers_registered,
+        get_prompt_provider,
+    )
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    _ensure_default_providers_registered()
+    get_prompt_provider("native").create_prompt(
+        PromptTemplate(
+            name="declared-code",
+            content="{{tone}} review for {{subject}}",
+            variables=[
+                PromptVariable(name="tone", default="careful"),
+                PromptVariable(name="subject", required=True),
+            ],
+        )
+    )
+    puc.save_active_prompts({"code": "native:declared-code"})
+
+    # Missing required values fail identically instead of leaking raw template content.
+    assert puc.resolve_prompt_content("code") == render_use_case_prompt("code") is None
+
+    values = {"subject": "the release"}
+    expected = "careful review for the release"
+    assert puc.resolve_prompt_content("code", values) == render_use_case_prompt("code", values)
+    assert puc.resolve_prompt_content("code", values) == expected
+
+
+def test_render_failure_warns_with_use_case_and_reason(caplog):
+    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+    from personalclaw.prompt_providers.registry import (
+        _ensure_default_providers_registered,
+        get_prompt_provider,
+    )
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    _ensure_default_providers_registered()
+    get_prompt_provider("native").create_prompt(
+        PromptTemplate(
+            name="required-code",
+            content="Review {{subject}}",
+            variables=[PromptVariable(name="subject", required=True)],
+        )
+    )
+    puc.save_active_prompts({"code": "native:required-code"})
+
+    with caplog.at_level("WARNING", logger="personalclaw.prompt_providers.runtime"):
+        assert render_use_case_prompt("code") is None
+
+    assert "'code'" in caplog.text
+    assert "missing required variable: subject" in caplog.text
+
+
 def test_unknown_use_case_falls_back_to_chat_prompt():
     # Unknown use-cases fall back to the chat prompt (the ultimate default).
     assert puc.active_prompt_ref("bogus") == f"native:{puc.DEFAULT_PROMPT_NAME}"

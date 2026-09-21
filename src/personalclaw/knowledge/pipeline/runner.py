@@ -5,9 +5,6 @@ DAG (each node output → the extracted-content pool) → run terminal stages ov
 whole bundle (consolidated text → insights → embed) → set ``processing_status``.
 Per-node + per-stage progress is broadcast over per-resource SSE so the detail view
 can show live ingestion transparency.
-
-Pure-python in Task A (text/document graphs); model-backed media/video nodes layer on
-in Task B (#47) and degrade gracefully (skipped when their use-case has no model).
 """
 
 from __future__ import annotations

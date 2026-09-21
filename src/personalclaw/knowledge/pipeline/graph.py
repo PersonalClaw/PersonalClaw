@@ -134,11 +134,3 @@ class PipelineGraph:
                 if indeg[m] == 0:
                     ready.append(m)
         return order
-
-
-def build_graph(cls: type, item_type: str) -> PipelineGraph:
-    """Instantiate + validate a PipelineGraph subclass for *item_type*."""
-    g = cls(item_type=item_type)
-    g.build()  # type: ignore[attr-defined]
-    g.validate()
-    return g

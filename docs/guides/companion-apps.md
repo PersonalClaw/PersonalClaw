@@ -220,7 +220,7 @@ A client stores exactly one thing: a list of endpoints plus a pointer at the act
       "label": "Home laptop",            // what the switcher shows
       "base_url": "http://claw.local:10000",
       "kind": "local",                   // "local" | "remote"
-      "device_session_ref": "<nonce>" }  // which session row, on THAT gateway
+      "device_session_ref": "" }         // reserved; always empty, never handed out
   ]
 }
 ```
@@ -306,7 +306,9 @@ What must **not** happen, in any wrapper:
 
 ### Device sessions are per-gateway and never federate
 
-Each entry's `device_session_ref` names a row in **that gateway's own session store**. There is
+A device session is an **httponly cookie scoped to that gateway's own origin**
+(`pc_token_<port>`, `dashboard/handlers/auth.py:237-245`) — a browser sends it back only to the
+gateway that set it, which is why sessions never federate. There is
 no shared identity across gateways, and no gateway knows the others exist.
 
 The consequence a wrapper must get right: **revoking a device session breaks exactly one
@@ -475,7 +477,8 @@ A desktop or mobile author can work from this list without deciding anything els
 1. **Persist the registry** — `{active, endpoints[]}` in the shell's own storage, in the shape
    above.
 2. **Add an endpoint** by discovery or a typed URL, then pair once for a device session
-   (cookie-borne). Store the returned reference as `device_session_ref`.
+   (cookie-borne). Leave `device_session_ref` empty and do not go looking for it — it is
+   reserved, and no route hands it out.
 3. **Key every shell-side value by endpoint `id`.** No global keys except the registry itself.
 4. **Load `base_url` as an origin.** Never prepend it to an API path; there is nothing in the
    SPA to prepend it to.

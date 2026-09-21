@@ -226,7 +226,7 @@ def _check_models(spec: dict[str, Any], result: PreflightResult, probe: Any) -> 
     `needs_model`. A private capability check could disagree with what the bridge actually
     resolves, and then preflight would greenlight a run the engine cannot execute.
     """
-    from personalclaw.workflows.engine import DEFAULT_MODEL_TIERS
+    from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS
 
     root = _root_of(spec)
     if root is None:

@@ -195,13 +195,29 @@ function LoginSection() {
       .finally(() => setBusy(false))
   }
 
-  const toggleLogin = (next: boolean) => {
+  const toggleLogin = async (next: boolean) => {
+    // Turning this OFF is the relaxing direction: it retires the password sign-in path, and a
+    // user who does not have the token link handy could lock themselves out of this dashboard.
+    if (!next && !(await confirm({
+      title: 'Turn off password sign-in?',
+      body: 'Only your token link will work afterward — make sure you have it saved before turning this off, or you could lock yourself out of this dashboard.',
+      confirmLabel: 'Turn off',
+      danger: true,
+    }))) return
     api.patchConfig('auth.login_enabled', next)
       .then(() => load())
       .catch((e) => notify(`Couldn't change sign-in: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
-  const toggleTotp = (next: boolean) => {
+  const toggleTotp = async (next: boolean) => {
+    // Turning this OFF is the relaxing direction: a username and password alone become
+    // sufficient to sign in — the authenticator code is no longer required.
+    if (!next && !(await confirm({
+      title: 'Turn off the 2FA requirement?',
+      body: 'Signing in with just a username and password will be enough afterward — the authenticator code will no longer be required.',
+      confirmLabel: 'Turn off',
+      danger: true,
+    }))) return
     api.patchConfig('auth.require_totp', next)
       .then(() => load())
       .catch((e) => notify(`Couldn't change the 2FA requirement: ${String((e as Error)?.message || e)}`, 'error'))

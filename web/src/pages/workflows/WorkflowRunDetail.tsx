@@ -5,7 +5,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { SidePanel } from '../../ui/SidePanel'
-import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
+import { ApiError, api, type WorkflowCascadePreview, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
@@ -18,7 +18,7 @@ import { useWorkflowStream } from './useWorkflowStream'
 import { DagView } from '../tasks/DagView'
 import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
-import { revalidateNotice, revalidateSummary } from './revalidate'
+import { reentrySummary, revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
 import { RunToolApprovals } from './RunToolApprovals'
 import { readAttention } from './attentionMeta'
@@ -31,6 +31,13 @@ import { IntrospectPanel } from './IntrospectPanel'
 import { LedgerRailsPanel } from './LedgerRailsPanel'
 import { DeliverablePanel } from './DeliverablePanel'
 import { ReviewTriagePanel } from './ReviewTriagePanel'
+
+function confirmationPreview(error: unknown): WorkflowCascadePreview | null {
+  if (!(error instanceof ApiError) || error.code !== 'confirmation_required') return null
+  const detail = error.detail
+  if (!detail || typeof detail !== 'object' || !('preview' in detail)) return null
+  return (detail as { preview?: WorkflowCascadePreview }).preview ?? null
+}
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -139,16 +146,41 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
   }, [act, runId])
 
   const rewind = useCallback(async (nodeId: string) => {
-    const ok = await confirm({
-      title: `Re-run "${nodeId}"?`,
-      body: 'This node and everything that reads its output will run again. Previous outputs are archived, not lost.',
-      confirmLabel: 'Re-run',
+    await act('Rewind', async () => {
+      try {
+        await api.rewindWorkflowRun(runId, { node_id: nodeId })
+        return
+      } catch (error) {
+        const preview = confirmationPreview(error)
+        if (preview === null) throw error
+        const ok = await confirm({
+          title: `Re-run "${nodeId}"?`,
+          body: `${reentrySummary('rewind', preview)} Previous outputs are archived, not lost.`,
+          confirmLabel: 'Re-run',
+        })
+        if (!ok) return
+        await api.rewindWorkflowRun(runId, { node_id: nodeId, confirm_cascade: true })
+      }
     })
-    if (ok) await act('Rewind', () => api.rewindWorkflowRun(runId, { node_id: nodeId }))
   }, [act, runId])
 
   const runFrom = useCallback(async (nodeId: string) => {
-    await act('Run from', () => api.workflowRunFrom(runId, { node_id: nodeId }))
+    await act('Run from', async () => {
+      try {
+        await api.workflowRunFrom(runId, { node_id: nodeId })
+        return
+      } catch (error) {
+        const preview = confirmationPreview(error)
+        if (preview === null) throw error
+        const ok = await confirm({
+          title: `Run from "${nodeId}"?`,
+          body: reentrySummary('run-from', preview),
+          confirmLabel: 'Run from',
+        })
+        if (!ok) return
+        await api.workflowRunFrom(runId, { node_id: nodeId, confirm_cascade: true })
+      }
+    })
   }, [act, runId])
 
   // Mid-flight edit of a node's prompt (WF2-R10 / criterion 9). The user pauses a running

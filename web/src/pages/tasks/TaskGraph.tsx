@@ -28,18 +28,38 @@ const NODE_W = 210, NODE_H = 58, ROW_GAP = 64, COL_GAP = 28, PAD = 24, RADIUS = 
 export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [containerW, setContainerW] = useState(0)
-  // Server-authoritative dependency analysis (critical path, bottlenecks,
-  // completion %) — computed by /api/tasks/graph; refetched as the task set
-  // changes so the summary + critical-path highlight stay in sync.
+  // Server-authoritative, library-wide dependency analysis (critical path,
+  // bottlenecks, cycles) — computed by /api/tasks/graph; refetched as the task
+  // set changes so the summary + critical-path highlight stay in sync.
   const [analysis, setAnalysis] = useState<DependencyAnalysis | null>(null)
+  const [libraryTasks, setLibraryTasks] = useState<TaskItem[]>([])
   const sig = tasks.map((t) => `${t.id}:${t.status}`).join(',')
   useEffect(() => {
     let alive = true
-    api.taskGraph().then((g) => { if (alive) setAnalysis(g.analysis) }).catch(() => {})
+    api.taskGraph().then((g) => {
+      if (!alive) return
+      setAnalysis(g.analysis)
+      setLibraryTasks(g.tasks)
+    }).catch(() => {})
     return () => { alive = false }
   }, [sig])
+  const drawnIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks])
   const criticalSet = useMemo(() => new Set(analysis?.critical_path ?? []), [analysis])
-  const titleById = useMemo(() => new Map(tasks.map((t) => [t.id, t.title])), [tasks])
+  const criticalInView = useMemo(
+    () => [...criticalSet].filter((id) => drawnIds.has(id)).length,
+    [criticalSet, drawnIds],
+  )
+  const titleById = useMemo(
+    () => new Map([...libraryTasks, ...tasks].map((t) => [t.id, t.title])),
+    [libraryTasks, tasks],
+  )
+  const isWholeLibrary = useMemo(
+    () => libraryTasks.length === tasks.length && libraryTasks.every((t) => drawnIds.has(t.id)),
+    [libraryTasks, tasks.length, drawnIds],
+  )
+  const completionPct = isWholeLibrary
+    ? (analysis?.completion_pct ?? 0)
+    : (tasks.length === 0 ? 0 : tasks.filter((t) => t.status === 'done').length / tasks.length * 100)
   useLayoutEffect(() => {
     if (!ref.current) return
     const el = ref.current
@@ -100,6 +120,11 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
   const svgW = Math.max(NODE_W + PAD * 2, containerW || 0)
 
   const bottlenecks = analysis?.bottleneck_tasks ?? []
+  const bottlenecksInView = bottlenecks.filter((b) => drawnIds.has(b.id)).length
+  const cycles = analysis?.cycles ?? []
+  const cyclesInView = cycles.filter(
+    (cycle) => cycle.length > 0 && cycle.every((id) => drawnIds.has(id)),
+  ).length
 
   return (
     <div ref={ref} className="rounded-xl bg-surface-container/40 p-2">
@@ -109,22 +134,22 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
         <>
         {analysis && (
           <div data-type="caption" className="mb-2 flex flex-wrap items-center gap-x-l gap-y-1 px-2 py-1.5 text-on-surface-low">
-            <span className="inline-flex items-center gap-1.5"><Activity size={13} className="text-ok" /> {Math.round(analysis.completion_pct)}% complete</span>
-            <span className="inline-flex items-center gap-1.5"><Route size={13} className="text-primary" /> Critical path: {criticalSet.size} {criticalSet.size === 1 ? 'task' : 'tasks'}</span>
+            <span className="inline-flex items-center gap-1.5"><Activity size={13} className="text-ok" /> {Math.round(completionPct)}% complete</span>
+            <span className="inline-flex items-center gap-1.5"><Route size={13} className="text-primary" /> Critical path: {criticalSet.size} in library, {criticalInView} in view</span>
             {bottlenecks.length > 0 && (
               <span className="inline-flex items-center gap-1.5" title={bottlenecks.slice(0, 5).map((b) => `${titleById.get(b.id) ?? b.id} (${b.dependents})`).join('\n')}>
-                <GitFork size={13} className="text-warn" /> {bottlenecks.length} {bottlenecks.length === 1 ? 'bottleneck' : 'bottlenecks'}
+                <GitFork size={13} className="text-warn" /> Bottlenecks: {bottlenecks.length} in library, {bottlenecksInView} in view
               </span>
             )}
-            {(analysis.cycles?.length ?? 0) > 0 && (
-              <span className="inline-flex items-center gap-1.5 text-danger"><TriangleAlert size={13} /> {analysis.cycles.length} cycle{analysis.cycles.length === 1 ? '' : 's'} detected</span>
+            {cycles.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-danger"><TriangleAlert size={13} /> {cycles.length} cycle{cycles.length === 1 ? '' : 's'} detected in library, {cyclesInView} in view</span>
             )}
             {/* Undimmed: `on-surface-low` is already the faintest ink, and the `/70` suffix it used
                 to carry took this legend to 3.84:1 in dark and 3.95:1 in light (axe `[serious]`, all
                 three viewport/theme configs). Its siblings above are full-alpha `text-warn` /
                 `text-danger`; this is the only member that was dimmed, and it is real explanatory
                 copy rather than decoration. */}
-            {criticalSet.size > 0 && <span className="text-on-surface-low">— critical-path tasks are ringed below</span>}
+            {criticalInView > 0 && <span className="text-on-surface-low">— critical-path tasks are ringed below</span>}
           </div>
         )}
         <DagView width={svgW} height={height} className="block" onNodeClick={onOpen}

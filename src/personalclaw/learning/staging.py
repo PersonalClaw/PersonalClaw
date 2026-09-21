@@ -621,16 +621,23 @@ class StagingStore:
             staged_rows = cur.execute(
                 "SELECT created_ts FROM staging WHERE created_ts >= ?;", (since,)
             ).fetchall()
-            # UNBOUNDED on purpose, never derived from the window rows above: "every day
-            # this window was silent" is also what a ran-then-died instance looks like,
-            # and that gap is the signal this panel exists to expose. Only "no pass has
-            # EVER run" may read as a calm first-run state.
-            has_ever_run = bool(
-                cur.execute("SELECT EXISTS(SELECT 1 FROM flush_records);").fetchone()[0]
-            )
+            # UNBOUNDED on purpose, never derived from the window rows above: the first pass is
+            # the floor before which capture cannot have stopped. `flush_records` is append-only,
+            # so MIN(created_ts) cannot drift forward and hide a real ran-then-died gap.
+            first_pass_row = cur.execute(
+                "SELECT MIN(created_ts) AS ts FROM flush_records;"
+            ).fetchone()
 
         def _day(ts: float) -> str:
             return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+        # Bucket keys are local calendar dates, so the floor must use the same formatter. Empty
+        # means no pass has ever run and lets the caller render the existing quiet zero-state.
+        first_pass_day = (
+            _day(float(first_pass_row["ts"]))
+            if first_pass_row is not None and first_pass_row["ts"] is not None
+            else ""
+        )
 
         # Pre-seed every day so an empty one renders as a gap rather than vanishing.
         buckets: dict[str, dict[str, Any]] = {}
@@ -676,7 +683,11 @@ class StagingStore:
         ordered = [buckets[k] for k in sorted(buckets)]
         for bucket in ordered:
             bucket["cost_usd"] = round(bucket["cost_usd"], 6)
-        silent = [b["day"] for b in ordered if b["passes"] == 0]
+        silent = [
+            b["day"]
+            for b in ordered
+            if b["passes"] == 0 and first_pass_day and b["day"] >= first_pass_day
+        ]
         return {
             "days": span,
             "buckets": ordered,
@@ -686,9 +697,7 @@ class StagingStore:
             "error_days": [b["day"] for b in ordered if b["errors"]],
             "produced_total": sum(b["produced"] for b in ordered),
             "cost_usd": round(sum(b["cost_usd"] for b in ordered), 6),
-            # False only before the FIRST pass ever — the panel renders that as a zero-state
-            # instead of dressing a week of silent days as a warning.
-            "has_ever_run": has_ever_run,
+            "first_pass_day": first_pass_day,
         }
 
     def prune(self, *, retention_days: int = DEFAULT_RETENTION_DAYS, now: float | None = None):

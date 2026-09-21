@@ -2305,10 +2305,9 @@ export interface StagingWeek {
   days: number; buckets: StagingDay[]
   silent_days: string[]; error_days: string[]
   produced_total: number; cost_usd: number
-  /** False only before the FIRST pass EVER — an unbounded check, not the window's rows, because
-   *  an all-silent window is also what ran-then-died looks like. Optional so a stale cached
-   *  payload without the field defaults to showing the warning chip, never to hiding it. */
-  has_ever_run?: boolean
+  /** Local calendar day of the first pass ever, or "" before any pass has run. Optional so a
+   *  stale cached payload without the field defaults to warnings rather than hiding a real gap. */
+  first_pass_day?: string
 }
 
 // The flywheel observability panel (GET /api/learning/health — LEARN-R14b).
@@ -6632,8 +6631,9 @@ export const api = {
     get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
-  // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
-  // occurrence from the recurrence each trigger already carries — read-only, no store changes.
+  // The week-grid projection (AUTO-A3). `start`/`until` are offset-qualified local datetimes; the
+  // backend computes every occurrence from the recurrence each trigger already carries — read-only,
+  // no store changes.
   triggersWeek: (start?: string, days = 7, until?: string) => {
     const qs = new URLSearchParams()
     if (start) qs.set('start', start)
@@ -6752,7 +6752,7 @@ export const api = {
   createTaskList: (body: Record<string, unknown>) => post<TaskListItem>('/api/task-lists', body),
   updateTaskList: (id: string, body: Record<string, unknown>) => put<TaskListItem>(`/api/task-lists/${encodeURIComponent(id)}`, body),
   deleteTaskList: (id: string) => del(`/api/task-lists/${encodeURIComponent(id)}`),
-  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, { confirm: true }),
+  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[]; partially_reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, { confirm: true }),
 
   // workflows
 
@@ -7874,9 +7874,9 @@ export const api = {
     post<WorkflowTriageResult>(`/api/workflows/runs/${encodeURIComponent(id)}/review/triage`, body),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
-  rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
+  rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean; confirm_cascade?: boolean }) =>
     post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/rewind`, body),
-  workflowRunFrom: (id: string, body: { node_id: string }) =>
+  workflowRunFrom: (id: string, body: { node_id: string; confirm_cascade?: boolean }) =>
     post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/run-from`, body),
   forkWorkflowRun: (id: string, body?: { checkpoint_id?: string; note?: string }) =>
     post<{ child_run_id: string; fork_axis: string; shared_axes: string[]; isolation_notes: string[] }>(

@@ -26,12 +26,13 @@ from personalclaw.inbox import InboxStore, ItemKind, ItemStatus
 
 @pytest.fixture()
 def home(tmp_path, monkeypatch):
-    """Isolate the proposals dir, the inbox store, and the rules store."""
+    """Isolate the proposals, skills, inbox, and rules stores."""
     from personalclaw import notification_rules as nr
     from personalclaw.skills import proposals as pr
 
     (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(pr, "_proposals_dir", lambda: _mkdir(tmp_path / "skill_proposals"))
+    monkeypatch.setattr("personalclaw.skills.loader.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
     monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
     return tmp_path

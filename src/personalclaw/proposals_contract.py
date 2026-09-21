@@ -477,6 +477,7 @@ def register_app_proposal_kinds(app_name: str, manifest: Any) -> list[str]:
                     label=getattr(entry, "label", "") or suffix,
                     attention=True,
                     verifiable=True,
+                    owner="personalclaw.proposals_contract",
                 )
             )
         except ValueError:

@@ -54,7 +54,6 @@ LINK_TYPES = (
     "same_project",
     "references",
     "temporal_proximity",
-    "same_topic",
 )
 
 # An alias shorter than this is not matched. "AI", "ML", "go" as bare words
@@ -149,14 +148,9 @@ class AliasIndex:
     def __init__(self) -> None:
         self._root = _Node()
         self._forms = 0
-        self._max_depth = 0
 
     def __len__(self) -> int:
         return self._forms
-
-    @property
-    def max_phrase_tokens(self) -> int:
-        return self._max_depth
 
     def add(self, entity_id: str, surface: str) -> bool:
         """Register one surface form. Returns whether it was indexable."""
@@ -173,7 +167,6 @@ class AliasIndex:
         if entity_id not in node.terminal:
             node.terminal.append(entity_id)
         self._forms += 1
-        self._max_depth = max(self._max_depth, len(tokens))
         return True
 
     def add_entity(self, entity: Entity) -> int:

@@ -40,6 +40,14 @@ dependencies = [
     "aiohttp>=3.9,<4",
     "websockets>=12,<18",
     "cron-descriptor>=1.4,<3",
+    # 🔴 The `<3` is LOAD-BEARING and is not a stale bound. croniter majors 2 and 6 disagree on
+    # the cron GRAMMAR — `0 9 * * * * *`, `0 9 * * * * 2026`, `0 9 * * * 30 *` and `5-1 * * * *`
+    # all parse differently — so a wide requirement lets a fresh `pip install -e ".[dev]"` resolve
+    # 6.x while CI's `uv sync --locked` resolves 2.0.7, and the same tree then fails locally and
+    # passes in CI. `tests/test_cron_expr_corpus.py` rails this specifier to the lock so the two
+    # install paths cannot diverge; widening it is a grammar migration against the shared
+    # frontend/backend expression corpus, never a version bump. See
+    # `docs/maintainers/local-pytest-determinism.md`, "Installer-dependent cron grammar".
     "croniter>=2.0,<3",
     # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
     # memory app (native-vector-memory), which ships INSIDE core, so its deps are

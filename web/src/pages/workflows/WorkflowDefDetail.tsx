@@ -14,6 +14,7 @@ import {
   schemaProps,
   seedArgs,
   SchemaField,
+  SchemaFields,
 } from '../tools/schema'
 import { PageTitle } from '../../ui/PageTitle'
 import {
@@ -295,16 +296,21 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 {declared.props.length > 0 && (
                   <div className="flex flex-col gap-s">
                     <span data-type="title-m" className="text-on-surface">Inputs</span>
-                    {declared.props.map(([key, schema]) => (
-                      <SchemaField
-                        key={key}
-                        name={key}
-                        schema={schema}
-                        required={declared.required.has(key)}
-                        value={inputs[key]}
-                        onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
-                      />
-                    ))}
+                    <SchemaFields
+                      fields={declared.props}
+                      required={declared.required}
+                      values={inputs}
+                      advancedFieldClassName="flex flex-col gap-s"
+                      renderField={(key, schema, isRequired) => (
+                        <SchemaField
+                          name={key}
+                          schema={schema}
+                          required={isRequired}
+                          value={inputs[key]}
+                          onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
+                        />
+                      )}
+                    />
                   </div>
                 )}
 

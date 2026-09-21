@@ -360,9 +360,28 @@ def test_malformed_digest_schedule_falls_back(home, bad):
 # ── the effective document the settings matrix renders ──────────────────
 
 
-def test_rules_document_has_a_row_for_every_registered_kind(home):
+def test_rules_document_has_a_row_for_every_configurable_kind(home):
     doc = nr.rules_document()
-    assert {r["key"] for r in doc["rules"]} == {k.key for k in nk.all_kinds()}
+    assert {r["key"] for r in doc["rules"]} == {k.key for k in nk.configurable_kinds()}
+
+
+def test_resolution_only_and_retired_rules_are_tolerated_but_not_rendered(home):
+    """Historical rules may outlive their row; reads stay fail-open and the matrix stays honest."""
+    _write_rules(
+        home,
+        {
+            "rules": {
+                "system/session": {"mode": "never"},
+                "loop/stalled": {"mode": "badge"},
+                "hook/fired": {"mode": "digest"},
+            }
+        },
+    )
+    rows = {r["key"]: r for r in nr.rules_document()["rules"]}
+    assert "system/session" not in rows
+    assert "loop/stalled" not in rows
+    assert rows["hook/fired"]["mode"] == "digest"
+    assert nr.resolve_rule("system", "session").mode == "never"
 
 
 def test_rules_document_marks_which_rows_are_configured(home):

@@ -208,11 +208,15 @@ export function replayRegressed(row: LearningRow): boolean {
 }
 
 // ── The staging week panel ──
-/** How a day should render. `silent` is the alarming one: no passes at all means capture did not run,
- *  and an aggregate view cannot see it — which is the whole reason this panel exists. */
-export type DayState = 'silent' | 'error' | 'produced' | 'ok'
+/** How a day should render. `silent` is the alarming one: capture ran before this day and then did
+ *  not run on it. A day before the first pass is out of scope rather than a failure. */
+export type DayState = 'out_of_scope' | 'silent' | 'error' | 'produced' | 'ok'
 
-export function dayState(day: StagingDay): DayState {
+export function dayState(day: StagingDay, firstPassDay?: string): DayState {
+  if (
+    day.passes === 0
+    && (firstPassDay === '' || (firstPassDay !== undefined && day.day < firstPassDay))
+  ) return 'out_of_scope'
   if (day.passes === 0) return 'silent'
   if (day.errors > 0) return 'error'
   if (day.produced > 0) return 'produced'
@@ -220,6 +224,7 @@ export function dayState(day: StagingDay): DayState {
 }
 
 export const DAY_TONE: Record<DayState, string> = {
+  out_of_scope: 'var(--color-outline)',
   silent: 'var(--color-warn)',
   error: 'var(--color-danger)',
   produced: 'var(--color-primary)',
@@ -227,6 +232,7 @@ export const DAY_TONE: Record<DayState, string> = {
 }
 
 export const DAY_HINT: Record<DayState, string> = {
+  out_of_scope: 'This day predates the first capture pass',
   silent: 'No capture pass ran — this is the gap an aggregate view cannot see',
   error: 'A capture pass errored',
   produced: 'Produced proposals',

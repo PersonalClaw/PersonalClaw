@@ -6,7 +6,7 @@ import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { api, hasApiCode, type ToolItem, type ToolInvokeResult } from '../../lib/api'
 import { confirm, promptInput } from '../../ui/dialog'
-import { schemaProps, typeLabel, SchemaField, buildArgs, useArgs, type JsonSchema } from './schema'
+import { schemaProps, typeLabel, SchemaField, SchemaFields, buildArgs, useArgs, type JsonSchema } from './schema'
 import { ToolOutput } from './ToolOutput'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -189,10 +189,15 @@ function RunPanel({ tool }: { tool: ToolItem }) {
         <div className="px-m pb-m flex flex-col gap-m border-t border-outline-variant/30 pt-m">
           {props.length === 0 ? <p data-type="body-s" className="text-on-surface-low">No inputs — runs as-is.</p> : (
             <div className="flex flex-col gap-m">
-              {props.map(([name, s]) => (
-                <SchemaField key={name} name={name} schema={s} required={required.has(name)}
-                  value={args[name]} onChange={(v) => setArgs((a) => ({ ...a, [name]: v }))} />
-              ))}
+              <SchemaFields
+                fields={props}
+                required={required}
+                values={args}
+                renderField={(name, schema, isRequired) => (
+                  <SchemaField name={name} schema={schema} required={isRequired}
+                    value={args[name]} onChange={(v) => setArgs((a) => ({ ...a, [name]: v }))} />
+                )}
+              />
             </div>
           )}
           {formErr && <FieldError>{formErr}</FieldError>}

@@ -375,7 +375,10 @@ describe('the hand-laid bars reach the same idiom', () => {
     ['pages/files/FilesSection.tsx', 'matches', /active=\{showResults\}/],
     // The settings area's hand-laid bars. Each `active` is that panel's own narrowed flag, and each
     // count comes from the array its own body renders.
-    ['pages/settings/ArchivePanel.tsx', 'archived sessions', /active=\{!!needle\}/],
+    // The noun is "trimmed messages", not "archived sessions" (#464): a row is the batch of lines
+    // compaction or rotation dropped OUT of a session, never a session, so announcing a count of
+    // "archived sessions" told a screen-reader user the panel holds N sessions that it does not hold.
+    ['pages/settings/ArchivePanel.tsx', 'trimmed messages', /active=\{!!needle\}/],
     // Two dimensions: the text filter AND the level buttons, whose default is the least
     // restrictive level — comparing to anything else would announce at rest.
     ['pages/settings/DiagnosticsPanel.tsx', 'lines', /active=\{q !== '' \|\| minLevel !== 'DEBUG'\}/],

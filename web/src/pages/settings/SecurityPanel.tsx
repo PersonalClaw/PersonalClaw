@@ -514,7 +514,16 @@ function EgressPolicyEditor() {
           onChange={(hosts) => save({ ...eg, deny_hosts: hosts })} />
         <label className="flex items-start gap-2.5 rounded-lg bg-surface-container px-3 py-2.5 cursor-pointer">
           <input type="checkbox" checked={eg.allow_private} disabled={busy}
-            onChange={(e) => save({ ...eg, allow_private: e.target.checked })}
+            onChange={async (e) => {
+              const next = e.target.checked
+              if (next && !(await confirm({
+                title: 'Allow egress to all private networks?',
+                body: 'The agent’s outbound fetches, scrapes, and webhooks will be able to reach ANY private or LAN address, not just your allow-list above — removing SSRF protection for your whole network. Only do this on a fully trusted network.',
+                confirmLabel: 'Allow private networks',
+                danger: true,
+              }))) return
+              save({ ...eg, allow_private: next })
+            }}
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">
             <span data-type="body-s" className="text-on-surface">Allow all private networks</span>

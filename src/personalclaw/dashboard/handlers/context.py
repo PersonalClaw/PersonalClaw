@@ -40,14 +40,15 @@ def _sel():
     return sel()
 
 
-def _skills_index() -> list[dict]:
-    """The surfaced skills index (key + description), best-effort."""
+def _skills_index(query: str) -> list[dict]:
+    """The query-ranked skills index (key + description), best-effort."""
     try:
         from personalclaw.skills.loader import SkillsLoader
 
         rows = SkillsLoader().list_skills(with_usage=True)
         # Retired/inactive skills don't belong in a context handoff.
-        return [r for r in rows if (r.get("status") or "active") == "active"]
+        active = [r for r in rows if (r.get("status") or "active") == "active"]
+        return cr._rank_skills(query, active)
     except Exception:
         logger.debug("context: skills index unavailable", exc_info=True)
         return []
@@ -84,7 +85,7 @@ def _route_for_project(state, project, query: str) -> cr.RoutedContext:
         query=query,
         memory_svc=_memory_service(state),
         knowledge_retriever=_knowledge_retriever(),
-        skills=_skills_index(),
+        skills=_skills_index(query),
     )
 
 

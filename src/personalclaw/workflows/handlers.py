@@ -1227,7 +1227,10 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
         return web.json_response(
             {"error": {"code": "invalid_request", "message": "'node_id' is required"}}, status=400
         )
-    kwargs: dict[str, Any] = {"supervisor": _supervisor(request)}
+    kwargs: dict[str, Any] = {
+        "supervisor": _supervisor(request),
+        "confirm_cascade": confirm_granted(body, "confirm_cascade"),
+    }
     if fn is service.rewind_run:
         kwargs["redo_effects"] = bool(body.get("redo_effects"))
         kwargs["force"] = bool(body.get("force"))

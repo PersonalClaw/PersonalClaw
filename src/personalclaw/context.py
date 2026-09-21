@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import replace
 from datetime import datetime
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
@@ -486,13 +486,17 @@ def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
     return explicit or "chat"
 
 
-def _resolve_use_case_prompt(use_case: str) -> str:
-    """Resolve the default-agent system prompt bound to ``use_case`` via the
-    prompt provider. Returns "" if it can't resolve (caller falls back to file)."""
+def _resolve_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) -> str:
+    """Resolve the default-agent system prompt through the shared renderer.
+
+    Returns "" if it can't resolve so the caller can fall back to the shipped
+    file. Declaration defaults and required-variable failures are owned by the
+    renderer, not reimplemented here.
+    """
     try:
         from personalclaw.providers.prompt_use_cases import resolve_prompt_content
 
-        return resolve_prompt_content(use_case) or ""
+        return resolve_prompt_content(use_case, values) or ""
     except Exception:
         logger.debug("use-case prompt resolution failed for %r", use_case, exc_info=True)
         return ""
@@ -931,6 +935,13 @@ class ContextBuilder:
         except Exception:
             return "PersonalClaw"
 
+    def _runtime_prompt_values(self, session_key: str) -> dict[str, Any]:
+        """Values supplied whenever a system prompt is rendered."""
+        return {
+            "bot_name": self._bot_name,
+            "widget_block": self._widget_block(session_key),
+        }
+
     def _apply_runtime_vars(self, prompt: str, session_key: str) -> str:
         """Substitute the runtime prompt variables on the unified ``{{name}}``
         format used by the prompts entity everywhere:
@@ -947,10 +958,7 @@ class ContextBuilder:
         from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
         from personalclaw.prompt_providers.engine import render_template
 
-        values = {
-            "bot_name": self._bot_name,
-            "widget_block": self._widget_block(session_key),
-        }
+        values = self._runtime_prompt_values(session_key)
         tpl = PromptTemplate(
             name="_runtime",
             content=prompt,
@@ -1497,7 +1505,9 @@ class ContextBuilder:
                 # derived from the session_key when not set explicitly). Falls back
                 # to the shipped prompt file when the provider can't resolve it.
                 _uc = _prompt_use_case_for(session_key, prompt_use_case)
-                agent_prompt = _resolve_use_case_prompt(_uc)
+                agent_prompt = _resolve_use_case_prompt(
+                    _uc, self._runtime_prompt_values(session_key or "")
+                )
                 if not agent_prompt:
                     try:
                         agent_prompt = _shipped_prompt().read_text(encoding="utf-8")

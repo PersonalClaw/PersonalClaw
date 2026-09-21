@@ -251,7 +251,7 @@ function MutedAgentsField() {
         // One grid, not per-row flex: agent names vary in width, so a button placed after the
         // name landed at a different x on every row and the actions read as scattered rather
         // than as one column you can run down.
-        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-s gap-y-1.5">
+        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-s gap-y-s">
           {muted.map((agent) => {
             const count = data.dismissals?.[agent]?.count
             return (

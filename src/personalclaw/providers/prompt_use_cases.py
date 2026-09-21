@@ -260,40 +260,13 @@ def split_ref(ref: str) -> tuple[str, str] | None:
     return (provider_name, prompt_name)
 
 
-def resolve_prompt_content(use_case: str) -> str | None:
-    """Resolve the bound prompt for ``use_case`` to its rendered content.
+def resolve_prompt_content(use_case: str, values: dict[str, object] | None = None) -> str | None:
+    """Resolve and render the prompt bound to ``use_case``.
 
-    Reads the binding (or the bundled default), fetches the template from its
-    provider, and returns its ``content``. Returns ``None`` when the prompt
-    can't be resolved (no provider, missing template) so the caller can fall
-    back to the shipped file.
+    The system-prompt path deliberately delegates to the same runtime contract
+    used by every other use-case consumer. Template defaults, required-variable
+    failures, snippet includes, and substitutions therefore cannot diverge.
     """
-    try:
-        from personalclaw.prompt_providers.registry import (
-            _ensure_default_providers_registered,
-            get_prompt_provider,
-        )
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-        # Seed first (core + always-on bundled-app prompts) so an app-owned
-        # use-case is registered before its binding is resolved.
-        _ensure_default_providers_registered()
-        ref = active_prompt_ref(use_case)
-        parsed = split_ref(ref)
-        if not parsed:
-            return None
-        provider_name, prompt_name = parsed
-        provider = get_prompt_provider(provider_name)
-        if provider is None:
-            return None
-        template = provider.get_prompt(prompt_name)
-        if template is None:
-            # The bound/own prompt is missing — fall back to the chat prompt so a
-            # use-case is never left with no system prompt.
-            fallback = get_prompt_provider(DEFAULT_PROMPT_PROVIDER)
-            template = fallback.get_prompt(DEFAULT_PROMPT_NAME) if fallback else None
-            if template is None:
-                return None
-        return template.content
-    except Exception:
-        logger.debug("resolve_prompt_content failed for %s", use_case, exc_info=True)
-        return None
+    return render_use_case_prompt(use_case, values)

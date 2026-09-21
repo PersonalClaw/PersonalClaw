@@ -35,6 +35,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **The five Settings switches that relax a security or safety default now confirm before they take effect.**
 - **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
 - **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
 - **66 more spacing values now obey the Density slider (Appearance → Density), in 29 whole files.**
@@ -61,8 +62,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **Workflow `rewind` and `run-from` now stop at the same committed-effect boundary as edits, and tool-bearing stages are inside that boundary.**
+- **Notification settings no longer advertise production-unowned rows.**
+- **Pre-first-pass days no longer render as silent capture failures.**
 - **Projects now expose both sides of their archived lifecycle.**
 - **Creating or editing a skill now rejects an invalid `SKILL.md` before touching disk.**
+- **The Automations week grid now defines both request bounds as explicit instants before comparing or projecting them.**
+- **Current macOS releases now use the sandbox capability they actually provide instead of being rejected by version number.**
 - **`personalclaw agent list` measures its columns instead of hardcoding them, so the table is aligned on a fresh install.**
 - **A credential in a chat title no longer reaches the export download's filename.**
 - **Code-loop runnability now distinguishes a missing command binary from a project that has not been scaffolded yet.**

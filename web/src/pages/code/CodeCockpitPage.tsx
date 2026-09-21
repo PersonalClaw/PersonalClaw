@@ -113,12 +113,22 @@ const WARN_STRIP: React.CSSProperties = {
 // path comes in three forms: absolute under <root>; a parallel task-worker's worktree
 // path (<root>/.pclaw-worktrees/<task_id>/<rel>, deleted post-merge → remap to the
 // merged base <root>/<rel>); or a bare relative path (no-workspace/sequential mode
-// records "greet.py"). Returns {abs, rel} when it resolves to a real file UNDER the
-// root, or null (absolute-but-outside-root, or an unresolvable worktree path). `root`
-// must already be trailing-slash-stripped.
-function resolveTouchedPath(raw: string, root: string): { abs: string; rel: string } | null {
+// records "greet.py"). Returns {abs, rel} when the path resolves UNDER the root, or
+// null (absolute-but-outside-root, or an unresolvable worktree path); this pure string
+// helper does not validate filesystem existence. `root` must already be
+// trailing-slash-stripped.
+export function resolveTouchedPath(raw: string, root: string): { abs: string; rel: string } | null {
   if (typeof raw !== 'string' || !raw || !root) return null
   let p = raw
+  // Workers append human context as "<path> (annotation)" or "<path> — annotation".
+  // Strip it before EVERY path classification so absolute, worktree, and relative
+  // forms all reach the three consumers as the same pure path.
+  for (const separator of [' — ', ' (']) {
+    const annotationAt = p.indexOf(separator)
+    if (annotationAt >= 0) p = p.slice(0, annotationAt)
+  }
+  p = p.trim()
+  if (!p) return null
   const mk = '/.pclaw-worktrees/'
   const i = p.indexOf(mk)
   if (i >= 0) {

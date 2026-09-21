@@ -445,13 +445,12 @@ function WeekPanel({ week }: { week: StagingWeek }) {
     <div className="flex flex-col gap-m">
       <div className="flex flex-wrap items-center gap-s">
         <span data-type="title-m" className="text-on-surface">Capture, last {week.days} days</span>
-        {/* Never-ran is not a warning. Before the FIRST pass ever, "7 silent" would dress the
-            same fact this page's zero-states say quietly ("no capture pass has run"), so the
-            amber chip yields to that idiom. Strict `=== false` because a stale cached payload
-            without the field must keep the warning — ran-then-died is the case the chip is for. */}
-        {week.silent_days.length > 0 && (week.has_ever_run === false ? (
+        {/* Before the FIRST pass ever, silence is a zero-state. A missing floor is a stale payload
+            and fails toward preserving the warning; a known floor excludes earlier days so the
+            chip and tiles cannot contradict each other. */}
+        {week.first_pass_day === '' ? (
           <span data-type="caption" className="text-on-surface-low">no capture pass has run yet</span>
-        ) : (
+        ) : week.silent_days.length > 0 ? (
           <span
             className="inline-flex items-center gap-1.5 rounded-pill px-m h-6 text-[0.75rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}
@@ -459,11 +458,11 @@ function WeekPanel({ week }: { week: StagingWeek }) {
           >
             <AlertTriangle size={12} /> {week.silent_days.length} silent
           </span>
-        ))}
+        ) : null}
       </div>
       <div className="flex flex-wrap gap-s">
         {week.buckets.map((day) => {
-          const state = dayState(day)
+          const state = dayState(day, week.first_pass_day)
           return (
             <div
               key={day.day}
@@ -475,7 +474,7 @@ function WeekPanel({ week }: { week: StagingWeek }) {
                 {day.passes === 0 ? '—' : day.passes}
               </span>
               <span className="text-on-surface-low text-[0.6875rem]">
-                {state === 'silent' ? 'silent' : day.produced > 0 ? `${day.produced} filed` : state === 'error' ? 'error' : 'ok'}
+                {state === 'out_of_scope' ? 'out of scope' : state === 'silent' ? 'silent' : day.produced > 0 ? `${day.produced} filed` : state === 'error' ? 'error' : 'ok'}
               </span>
             </div>
           )

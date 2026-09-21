@@ -440,16 +440,16 @@ def digest_settings() -> dict[str, Any]:
 
 
 def rules_document() -> dict[str, Any]:
-    """The full effective document: every registered kind with its resolved rule.
+    """The full effective document: every configurable kind with its resolved rule.
 
-    This is what the settings matrix renders — the registry is the row list, so a kind
-    with no stored rule still appears (showing its default) rather than being invisible
-    until someone edits it.
+    This is what the settings matrix renders. A kind with a declared production owner appears
+    even with no stored rule (showing its default); a resolution-only kind stays available to
+    old persisted wire values without advertising policy that no current emitter can consult.
     """
     stored = load_rules().get("rules")
     stored = stored if isinstance(stored, dict) else {}
     rows = []
-    for registered in nk.all_kinds():
+    for registered in nk.configurable_kinds():
         rule = _coerce_rule(
             registered.source,
             registered.kind,

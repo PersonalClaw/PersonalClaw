@@ -83,7 +83,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   // "times shown in your timezone" is noise, while one that appears exactly when the host is
   // elsewhere is the warning that makes an off-by-hours grid legible.
   const viewerTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const tzMismatch = Boolean(week?.server_tz && viewerTz && week.server_tz !== viewerTz)
+  const zoneCaptionText = week ? zoneCaption(viewerTz, week.server_tz) : ''
 
   return (
     <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
@@ -98,7 +98,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
                 failure the summary says nothing here and the LoadError below carries the news —
                 a header that keeps projecting above an error would contradict it. */}
             {loadFailed ? '' : week === undefined ? 'Projecting…' : weekSummary(grid)}
-            {tzMismatch && <span> · times in {viewerTz} (server: {week?.server_tz})</span>}
+            {zoneCaptionText && <span> · {zoneCaptionText}</span>}
           </div>
         </div>
         <div className="flex items-center gap-xs">
@@ -259,13 +259,26 @@ function Legend() {
   )
 }
 
-/** A local (not UTC) ISO datetime, which is what the endpoint's `start=` expects.
+/** An offset-qualified browser-local ISO datetime, which is what the endpoint expects.
  *
- *  `toISOString()` would send UTC and shift the week by the viewer's offset — for a user west of
- *  Greenwich the grid would start on the previous day. */
-function localIso(d: Date): string {
+ *  Keep the wall-clock date the grid draws, but name its offset so the gateway process zone cannot
+ *  reinterpret it. Each bound computes its own offset because a drawn week may cross DST. */
+export function localIso(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`
+  const offsetMinutes = -d.getTimezoneOffset()
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-'
+  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60)
+  const offsetRemainder = Math.abs(offsetMinutes) % 60
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:00` +
+    `${offsetSign}${pad(offsetHours)}:${pad(offsetRemainder)}`
+  )
+}
+
+export function zoneCaption(windowZone: string, projectionZone: string): string {
+  if (!windowZone || !projectionZone || windowZone === projectionZone) return ''
+  return `window: ${windowZone} · projection: ${projectionZone}`
 }
 
 function weekLabel(days: Date[]): string {

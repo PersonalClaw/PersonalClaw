@@ -39,11 +39,10 @@ const KINDS: Record<string, KindMeta> = {
   loop_failed: { label: 'Loop failed', icon: XCircle, tone: 'var(--color-danger)' },
   // The bare kind is registered under BOTH loop/failed ("Loop failed") and cron/failed
   // ("Scheduled job failed"), and keyed by bare kind alone this map cannot express both. The loop
-  // wording wins because its sibling bare kinds (complete/stalled/progress) are all loop-domain.
+  // wording wins because its sibling bare kinds (complete/progress) are both loop-domain.
   // Neither pair emits the bare form any more — both have a distinct wire string above — so this
   // row exists for notifications persisted by an older build, and the log is append-only.
   failed: { label: 'Loop failed', icon: XCircle, tone: 'var(--color-danger)' },
-  stalled: { label: 'Loop stalled or blocked', icon: AlertTriangle, tone: 'var(--color-warn)' },
   needs_input: { label: 'Loop needs your input', icon: HelpCircle, tone: 'var(--color-warn)' },
   progress: { label: 'Loop progress', icon: Activity, tone: 'var(--color-info)' },
   proposal: { label: 'Skill proposal', icon: Lightbulb, tone: 'var(--color-primary)' },

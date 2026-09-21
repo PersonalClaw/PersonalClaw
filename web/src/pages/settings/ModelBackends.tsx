@@ -15,6 +15,7 @@ import { TextInput } from '../../ui/forms'
 import { OllamaModelManager } from './OllamaModelManager'
 import { fvs } from '../../design/fontWeight'
 import { reportingWrite } from '../../app/reportingWrite'
+import { SchemaFields } from '../tools/schema'
 
 // Provider types + their config forms are NOT hardcoded here — they come from
 // the installed model apps' manifests via /api/model-provider-types (see
@@ -336,11 +337,18 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
         <TextInput ariaLabel="Instance name" value={name} onChange={setName} placeholder="Instance name (e.g. my-bedrock)" size="md" surface="high" />
       </div>
       <div className="mt-2 flex flex-col gap-2">
-        {Object.entries(props).map(([k, f]) => (
-          <SchemaField key={k} name={k} field={f}
-            value={values[k] ?? String(f.default ?? '')}
-            onChange={(v) => setValues((prev) => ({ ...prev, [k]: v }))} />
-        ))}
+        <SchemaFields
+          key={selected?.type}
+          fields={Object.entries(props)}
+          required={required}
+          values={values}
+          advancedFieldClassName="flex flex-col gap-s"
+          renderField={(k, field) => (
+            <SchemaField name={k} field={field}
+              value={values[k] ?? String(field.default ?? '')}
+              onChange={(v) => setValues((prev) => ({ ...prev, [k]: v }))} />
+          )}
+        />
       </div>
       <div className="mt-3 flex items-center gap-2">
         <Button size="sm" onClick={submit} loading={saving} loadingLabel="Adding…">Add instance</Button>

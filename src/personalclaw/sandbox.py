@@ -357,17 +357,16 @@ def _probe_unshare() -> bool:
 def _probe_sandbox_exec() -> bool:
     """Return True if macOS ``sandbox-exec`` actually works.
 
-    Uses a file-based profile and targets the current Python interpreter to
-    match the third-party binary shape used by real ``sandbox_exec_argv()``
-    invocations.  Probing with an Apple-signed system binary can give false
-    positives when ``sandbox_apply()`` rejects third-party callers.
+    Uses a file-based profile and targets the current Python interpreter so
+    the capability check matches the executable class used by real
+    ``sandbox_exec_argv()`` invocations.
     """
     if sys.platform != "darwin":
         return False
     sb = shutil.which("sandbox-exec")
     if sb is None:
         return False
-    # Probe with file-based profile targeting a representative binary
+    # Probe with a file profile against the same interpreter class real commands use.
     target = sys.executable
     target_arg = ["-c", "pass"]
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_probe_")
