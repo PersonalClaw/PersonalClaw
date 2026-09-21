@@ -1306,6 +1306,9 @@ async def api_memory_entity_backlinks(request: web.Request) -> web.Response:
     svc = _get_service(request.app["state"])
     entity_id = request.match_info.get("entity_id", "")
     loop = asyncio.get_event_loop()
+    entities = await loop.run_in_executor(None, svc.graph_entities)
+    if not any(entity.get("id") == entity_id for entity in entities):
+        return web.json_response({"error": "no such entity"}, status=404)
     links = await loop.run_in_executor(None, lambda: svc.graph_backlinks(entity_id))
     for link in links:
         if link.get("context"):
