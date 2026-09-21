@@ -5945,7 +5945,7 @@ export const api = {
     get<KnowledgeContextResult>(`/api/knowledge/search-for-context?q=${encodeURIComponent(q)}&max_tokens=${maxTokens}`),
 
   // ── Agent advanced config (routing notes, per-agent MCP, lifecycle hooks) ──
-  /** Routing notes ("when to use this agent") — feeds the orchestrator/auto-router. */
+  /** Routing notes ("when to use this agent") — populate the orchestrator's generated delegation roster. */
   agentMetadata: (name: string) => get<{ name: string; content: string }>(`/api/agent-metadata/${encodeURIComponent(name)}`).then((d) => d.content),
   saveAgentMetadata: (name: string, content: string) => put<{ ok: boolean }>(`/api/agent-metadata/${encodeURIComponent(name)}`, { content }),
   /** The MCP servers an agent gets (name + enabled). Omit agent for the default set. */

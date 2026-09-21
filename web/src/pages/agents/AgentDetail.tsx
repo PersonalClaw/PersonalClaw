@@ -128,9 +128,9 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
 }
 
 /** Advanced per-agent config, collapsed by default: routing notes (editable — the
- *  "when to use this agent" hint the auto-router reads), the MCP servers this agent
- *  gets (read-only), and the lifecycle hooks in effect (read-only). Each block
- *  loads its data lazily only when the section is expanded. */
+ *  "when to use this agent" hint included in the orchestrator's generated delegation
+ *  roster), the MCP servers this agent gets (read-only), and the lifecycle hooks in
+ *  effect (read-only). Each block loads its data lazily only when the section is expanded. */
 function AgentAdvanced({ agentName }: { agentName: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -151,7 +151,7 @@ function AgentAdvanced({ agentName }: { agentName: string }) {
   )
 }
 
-/** "When to use this agent" routing notes — feeds the orchestrator/auto-router. */
+/** "When to use this agent" routing notes — populate the orchestrator's generated delegation roster. */
 function RoutingNotesEditor({ agentName }: { agentName: string }) {
   const [content, setContent] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -189,7 +189,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   }
   return (
     <Section label="Routing notes">
-      <p className="mb-1.5 text-on-surface-low text-[0.75rem]">A short "when to use this agent" note the auto-router reads to pick between agents.</p>
+      <p className="mb-1.5 text-on-surface-low text-[0.75rem]">Used by the orchestrator's generated delegation roster. Automatic suggestions use Specialty and Routing hints instead.</p>
       {loadErr ? (
         <div className="flex flex-col items-start gap-2">
           <p role="alert" data-type="caption" className="text-danger">Couldn’t load this note, so it isn’t safe to edit — saving now could overwrite what’s on disk. {loadErr}</p>
