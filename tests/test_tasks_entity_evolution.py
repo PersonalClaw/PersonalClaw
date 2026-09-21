@@ -2,6 +2,8 @@
 plans, three note channels, the exit-criteria complete-gate, and project label
 derivation from the task list."""
 
+import re
+import time
 from unittest.mock import patch
 
 import pytest
@@ -10,11 +12,15 @@ from personalclaw.tasks.models import (
     ExitCriteriaStatus,
     Task,
     TaskStatus,
+    coerce_task_field,
     normalize_action_plan_item,
     normalize_exit_criterion,
     normalize_note,
 )
 from personalclaw.tasks.native import NativeTaskProvider
+
+#: The `created_at` spelling — a note's time must be comparable to its task's.
+_ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 # ── Normalizers ──
 
@@ -70,6 +76,55 @@ class TestNoteNormalize:
     def test_plain_string(self):
         assert normalize_note("hi")["content"] == "hi"
 
+    def test_stamp_dates_an_undated_note(self):
+        """#383: nothing ever supplied a note timestamp, so the detail panel's per-note
+        relative time could never render."""
+        for item in ("bare string", {"content": "c"}, {"content": "c", "timestamp": ""}):
+            assert _ISO_Z.match(normalize_note(item, stamp=True)["timestamp"]), item
+
+    def test_stamp_never_overwrites_an_incoming_timestamp(self):
+        """The create/edit form sends the whole lane back, so a re-send must not re-date."""
+        n = normalize_note({"content": "c", "timestamp": "2026-01-01T00:00:00Z"}, stamp=True)
+        assert n["timestamp"] == "2026-01-01T00:00:00Z"
+        assert (
+            normalize_note({"content": "c", "created_at": "2026-01-02"}, stamp=True)["timestamp"]
+            == "2026-01-02"
+        )
+
+    def test_default_does_not_stamp(self):
+        """`to_dict` normalizes on every read; stamping there would mint a fresh "now" per
+        response and date a legacy note with the moment it was first read."""
+        assert normalize_note({"content": "c"})["timestamp"] == ""
+
+
+class TestNoteCoercionStampsWritesOnly:
+    """`strict` IS the write/read discriminator (`coerce_task_field`), and the stamp rides it."""
+
+    @pytest.mark.parametrize("field_name", ["notes", "research_notes", "execution_notes"])
+    def test_write_stamps_all_three_lanes(self, field_name):
+        out = coerce_task_field(field_name, [{"content": "c"}], strict=True)
+        assert _ISO_Z.match(out[0]["timestamp"])
+
+    @pytest.mark.parametrize("field_name", ["notes", "research_notes", "execution_notes"])
+    def test_read_leaves_a_legacy_note_undated(self, field_name):
+        out = coerce_task_field(field_name, [{"content": "c", "timestamp": ""}], strict=False)
+        assert out[0]["timestamp"] == ""
+
+    def test_note_stamp_format_matches_the_task_clock(self):
+        """Pinned because `_as_note_list`'s contract is that a note's time is comparable to its
+        task's `created_at` and parses in `relTime` identically — two separate module-private
+        `_now_iso` helpers, one format. Clock frozen so this pins the FORMAT, not the second.
+
+        Imported INSIDE the test on purpose: at module scope a missing `models._now_iso` is a
+        collection error that takes the whole file down, which would make a negative control over
+        this file coarse enough to hide which tests actually discriminate.
+        """
+        from personalclaw.tasks.models import _now_iso as models_now_iso
+        from personalclaw.tasks.native import _now_iso as native_now_iso
+
+        with patch("time.gmtime", return_value=time.gmtime(0)):
+            assert models_now_iso() == native_now_iso() == "1970-01-01T00:00:00Z"
+
 
 # ── can_mark_complete gate ──
 
@@ -117,6 +172,42 @@ class TestNativeEvolvedFields:
         assert reload.notes[0]["content"] == "general"
         assert reload.research_notes[0]["content"] == "found something"
         assert reload.execution_notes[0]["content"] == "did it"
+
+    @pytest.mark.asyncio
+    async def test_note_channels_persist_a_timestamp(self, provider):
+        """#383: the create form's three note lanes round-tripped content but never a time, so
+        `TaskDetail`'s per-note `relTime` render was unreachable on every note ever written.
+        """
+        t = await provider.create_task(
+            title="x",
+            notes=["general"],
+            research_notes=[{"content": "found something"}],
+            execution_notes=[{"content": "did it"}],
+        )
+        d = (await provider.get_task(t.id)).to_dict()
+        for lane in ("notes", "research_notes", "execution_notes"):
+            assert _ISO_Z.match(d[lane][0]["timestamp"]), lane
+
+    @pytest.mark.asyncio
+    async def test_a_reread_does_not_re_date_a_note(self, provider):
+        """A read must be idempotent: `to_dict`/`from_dict` normalize on every response, so a
+        stamp that did not ride `strict` would hand two reads of one task different times.
+        """
+        t = await provider.create_task(title="x", notes=[{"content": "c"}])
+        first = (await provider.get_task(t.id)).to_dict()["notes"][0]["timestamp"]
+        with patch("time.gmtime", return_value=time.gmtime(0)):
+            again = (await provider.get_task(t.id)).to_dict()["notes"][0]["timestamp"]
+        assert again == first
+
+    @pytest.mark.asyncio
+    async def test_appending_a_note_dates_only_the_new_one(self, provider):
+        """The edit form sends the whole lane back, existing timestamps included."""
+        t = await provider.create_task(title="x", notes=[{"content": "first"}])
+        kept = (await provider.get_task(t.id)).to_dict()["notes"][0]
+        updated = await provider.update_task(t.id, notes=[kept, {"content": "second"}])
+        notes = updated.to_dict()["notes"]
+        assert notes[0]["timestamp"] == kept["timestamp"]
+        assert _ISO_Z.match(notes[1]["timestamp"])
 
     @pytest.mark.asyncio
     async def test_exit_criteria_stored_statused(self, provider):
