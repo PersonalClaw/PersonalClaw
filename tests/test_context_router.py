@@ -151,14 +151,83 @@ def test_route_context_degrades_when_a_store_raises():
     assert routed.knowledge == []
 
 
-def test_route_context_caps_skills_and_flags_the_cap():
+def test_route_context_skill_cap_does_not_set_knowledge_cap():
     project = SimpleNamespace(id="p", name="P", brief="x", agent_instructions_template="")
     skills = [{"key": f"s{i}", "description": "d"} for i in range(cr.SKILL_LIMIT + 5)]
+    know = MagicMock()
+    know.search.return_value = [{"id": "k1", "title": "Guide", "summary": "s"}]
     routed = cr.route_context(
-        project, query="q", skills=skills, memory_svc=None, knowledge_retriever=None
+        project,
+        query="q",
+        skills=skills,
+        memory_svc=None,
+        knowledge_retriever=know,
     )
+
     assert len(routed.skills) == cr.SKILL_LIMIT
-    assert any("Skills:" in n for n in routed.unloaded)
+    knowledge_note = next(n for n in routed.unloaded if n.startswith("Knowledge:"))
+    skill_note = next(n for n in routed.unloaded if n.startswith("Skills:"))
+    assert "more exist" not in knowledge_note
+    assert "more exist" in skill_note
+    assert routed.skill_capped is True
+    assert routed.to_dict()["skill_capped"] is True
+
+
+def test_route_context_three_queries_produce_three_keyword_rankings_before_cap(monkeypatch):
+    monkeypatch.setattr(cr, "_active_skill_embedder", lambda: None)
+    project = SimpleNamespace(id="p", name="P", brief="", agent_instructions_template="")
+    skills = [
+        {"key": "weather", "description": "Forecasts", "triggers": "weather forecast"},
+        {"key": "writing", "description": "Edits prose", "triggers": "edit essay"},
+        {
+            "key": "deploy",
+            "description": "Ships a service",
+            "triggers": "release deployment",
+        },
+    ]
+
+    orderings = [
+        [
+            skill["key"]
+            for skill in cr.route_context(project, query=query, skills=skills, skill_limit=2).skills
+        ]
+        for query in ("weather forecast", "edit essay", "release deployment")
+    ]
+
+    assert orderings == [
+        ["weather", "writing"],
+        ["writing", "weather"],
+        ["deploy", "weather"],
+    ]
+    assert len({tuple(ordering) for ordering in orderings}) == 3
+
+
+def test_route_context_uses_embedding_when_available_and_degrades_to_keyword(monkeypatch):
+    class _Embedder:
+        def __call__(self, text):
+            lowered = text.lower()
+            if "explode" in lowered:
+                raise RuntimeError("embedding failed")
+            return [
+                1.0 if "charge" in lowered or "invoice" in lowered else 0.0,
+                1.0 if "weather" in lowered else 0.0,
+            ]
+
+    monkeypatch.setattr(cr, "_active_skill_embedder", lambda: _Embedder())
+    project = SimpleNamespace(id="p", name="P", brief="", agent_instructions_template="")
+    skills = [
+        {"key": "weather", "description": "Weather forecasts", "triggers": "weather"},
+        {"key": "broken", "description": "Explode while embedding", "triggers": "deploy service"},
+        {"key": "billing", "description": "Handle invoice questions", "triggers": "invoice help"},
+    ]
+
+    semantic = cr.route_context(
+        project, query="help with this charge", skills=skills, skill_limit=1
+    )
+    assert [skill["key"] for skill in semantic.skills] == ["billing"]
+
+    keyword = cr.route_context(project, query="deploy service", skills=skills, skill_limit=1)
+    assert [skill["key"] for skill in keyword.skills] == ["broken"]
 
 
 # ── apply_block: replace-in-place fence contract ─────────────────────────────
@@ -301,6 +370,20 @@ def test_render_escapes_markers_in_every_interpolated_value():
 
 
 # ── endpoints: GET /api/context + regenerate consent gate ────────────────────
+
+
+def test_route_for_project_threads_query_into_skills_index(monkeypatch):
+    import personalclaw.dashboard.handlers.context as ctx
+
+    seen: list[str] = []
+    monkeypatch.setattr(ctx, "_memory_service", lambda state: None)
+    monkeypatch.setattr(ctx, "_knowledge_retriever", lambda: None)
+    monkeypatch.setattr(ctx, "_skills_index", lambda query: seen.append(query) or [])
+
+    project = SimpleNamespace(id="p", name="P", brief="", agent_instructions_template="")
+    ctx._route_for_project(None, project, "release deployment")
+
+    assert seen == ["release deployment"]
 
 
 def _make_app(state=None) -> web.Application:

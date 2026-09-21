@@ -28,6 +28,8 @@ outside the ``<!-- PCLAW:START -->`` / ``<!-- PCLAW:END -->`` fence.
 from __future__ import annotations
 
 import logging
+import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,6 +94,90 @@ def _truncate(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _active_skill_embedder():
+    """The active sync embedding function, or None when semantic ranking is unavailable."""
+    try:
+        from personalclaw.embedding_providers.registry import get_active_embed_fn
+
+        return get_active_embed_fn()
+    except Exception:
+        logger.debug("context_router: skill embedder unavailable", exc_info=True)
+        return None
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _skill_keyword_score(query_words: set[str], triggers: str) -> tuple[float, bool]:
+    """Best per-trigger overlap, plus whether a matching negative trigger vetoed the row."""
+    best = 0.0
+    for trigger in triggers.split(","):
+        trigger = trigger.strip().lower()
+        if not trigger:
+            continue
+        if trigger.startswith("!"):
+            neg_words = set(re.findall(r"\w+", trigger[1:]))
+            if neg_words and neg_words <= query_words:
+                return 0.0, True
+            continue
+        trigger_words = set(re.findall(r"\w+", trigger))
+        if trigger_words:
+            best = max(best, len(trigger_words & query_words) / len(trigger_words))
+    return best, False
+
+
+def _rank_skills(query: str, skills: list[dict]) -> list[dict]:
+    """Rank every skill by keyword and optional semantic relevance.
+
+    Keyword scoring is always available. Semantic scoring augments it when an
+    embedder is bound, but any embedding failure degrades to keyword-only. Original
+    list order is the deterministic floor and tie-break, so an unscored list retains
+    the loader's ordering instead of being reordered arbitrarily.
+    """
+    query = (query or "").strip()
+    if not query or not skills:
+        return list(skills)
+
+    query_words = set(re.findall(r"\w+", query.lower()))
+    embed_fn = _active_skill_embedder()
+    query_vec = None
+    if embed_fn is not None:
+        try:
+            query_vec = embed_fn(query)
+        except Exception:
+            logger.debug("context_router: skill query embedding failed", exc_info=True)
+
+    scored: list[tuple[float, int, dict]] = []
+    for position, skill in enumerate(skills):
+        triggers = str(skill.get("triggers", "") or "")
+        keyword_score, negated = _skill_keyword_score(query_words, triggers)
+        semantic_score = 0.0
+        if query_vec is not None and not negated:
+            description = str(
+                skill.get("description", "") or skill.get("name", "") or skill.get("key", "")
+            )
+            candidate_text = f"{description}\n{triggers}".strip()
+            if candidate_text:
+                try:
+                    candidate_vec = embed_fn(candidate_text)
+                    if candidate_vec is not None:
+                        semantic_score = _cosine_similarity(query_vec, candidate_vec)
+                except Exception:
+                    logger.debug(
+                        "context_router: skill candidate embedding failed",
+                        exc_info=True,
+                    )
+        score = -1.0 if negated else max(keyword_score, semantic_score)
+        scored.append((score, position, skill))
+
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    return [skill for _score, _position, skill in scored]
+
+
 @dataclass
 class RoutedContext:
     """The assembled, tiered context manifest for one project — the neutral form
@@ -104,6 +190,7 @@ class RoutedContext:
     memories: list[dict] = field(default_factory=list)
     skills: list[dict] = field(default_factory=list)
     knowledge: list[dict] = field(default_factory=list)
+    skill_capped: bool = False
     unloaded: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +221,7 @@ class RoutedContext:
                 }
                 for k in self.knowledge
             ],
+            "skill_capped": self.skill_capped,
             "unloaded": list(self.unloaded),
             "text": self.render(),
         }
@@ -215,7 +303,13 @@ class RoutedContext:
 
 
 def _unloaded_catalog(
-    *, mem_shown: int, mem_capped: bool, know_shown: int, know_capped: bool, skill_shown: int
+    *,
+    mem_shown: int,
+    mem_capped: bool,
+    know_shown: int,
+    know_capped: bool,
+    skill_shown: int,
+    skill_capped: bool,
 ) -> list[str]:
     """One-liner notes of what exists but wasn't loaded here, each with the tool
     that pulls it. Honest about truncation (no silent caps) — a tier that hit its
@@ -234,10 +328,16 @@ def _unloaded_catalog(
         else f"Knowledge: {know_shown} pointer(s) shown{know_more} "
         "`GET /api/knowledge/items?q=…`."
     )
-    notes.append(
-        f"Skills: {skill_shown} indexed here — load any with `skill_invoke(name)`, "
-        "or find one across the whole library with `skill_search(query)`."
-    )
+    if skill_capped:
+        notes.append(
+            f"Skills: {skill_shown} indexed here (more exist — find one across the whole "
+            "library with `skill_search(query)`); load any shown with `skill_invoke(name)`."
+        )
+    else:
+        notes.append(
+            f"Skills: {skill_shown} indexed here — load any with `skill_invoke(name)`, "
+            "or find one across the whole library with `skill_search(query)`."
+        )
     notes.append(
         "Everything else this instance can do (tasks, artifacts, UI docs, more) is in "
         "`GET /api/manifest` — or `ui_search(query)` for the design-system kit."
@@ -256,6 +356,7 @@ def assemble(
     knowledge: list[dict] | None = None,
     mem_capped: bool = False,
     know_capped: bool = False,
+    skill_capped: bool = False,
 ) -> RoutedContext:
     """Pure assembler — build a :class:`RoutedContext` from already-fetched inputs.
 
@@ -281,6 +382,7 @@ def assemble(
         know_shown=len(knowledge),
         know_capped=know_capped,
         skill_shown=len(skills),
+        skill_capped=skill_capped,
     )
 
     return RoutedContext(
@@ -290,6 +392,7 @@ def assemble(
         memories=memories,
         skills=skills,
         knowledge=knowledge,
+        skill_capped=skill_capped,
         unloaded=unloaded,
     )
 
@@ -343,8 +446,8 @@ def route_context(
             logger.debug("context_router: knowledge search failed", exc_info=True)
             knowledge = []
 
-    # ── Skills index (surfaced list; caller passes the pre-fetched index) ──
-    idx = list(skills or [])
+    # ── Skills index (score the pre-fetched index, then apply its declared cap) ──
+    idx = _rank_skills(q, list(skills or []))
     skill_capped = len(idx) > skill_limit
     idx = idx[:skill_limit]
 
@@ -357,7 +460,8 @@ def route_context(
         skills=idx,
         knowledge=knowledge,
         mem_capped=len(memories) >= mem_limit,
-        know_capped=len(knowledge) >= know_limit or skill_capped,
+        know_capped=len(knowledge) >= know_limit,
+        skill_capped=skill_capped,
     )
 
 
