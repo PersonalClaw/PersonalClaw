@@ -2246,12 +2246,23 @@ async def api_triggers_week(request: web.Request) -> web.Response:
     moment in time; asking a calendar app about next Thursday 200 times would be both slow and
     meaningless.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+
+    from personalclaw.schedule import get_local_tz
 
     state: DashboardState = request.app["state"]
+    tz_name, server_zone = get_local_tz()
+
+    def normalized_bound(value: datetime) -> datetime:
+        """Resolve offset-free API values in ``server_tz`` and compare/project in UTC."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=server_zone)
+        return value.astimezone(timezone.utc)
+
     raw_start = (request.query.get("start") or "").strip()
     try:
-        start = datetime.fromisoformat(raw_start) if raw_start else datetime.now()
+        parsed_start = datetime.fromisoformat(raw_start) if raw_start else datetime.now(server_zone)
+        start = normalized_bound(parsed_start)
     except ValueError:
         return web.json_response({"error": "start must be an ISO date"}, status=400)
     try:
@@ -2266,7 +2277,7 @@ async def api_triggers_week(request: web.Request) -> web.Response:
     raw_until = (request.query.get("until") or "").strip()
     if raw_until:
         try:
-            until = datetime.fromisoformat(raw_until)
+            until = normalized_bound(datetime.fromisoformat(raw_until))
         except ValueError:
             return web.json_response({"error": "until must be an ISO date"}, status=400)
         if until <= start or until > start + timedelta(days=31):
@@ -2282,9 +2293,6 @@ async def api_triggers_week(request: web.Request) -> web.Response:
         if cut:
             truncated.append(f"{_SCHEDULE}:{trigger.id}")
 
-    from personalclaw.schedule import get_local_tz
-
-    tz_name, _ = get_local_tz()
     return web.json_response(
         {
             "start": start.isoformat(),
