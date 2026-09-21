@@ -17,13 +17,13 @@ Additional marketplaces (skills.sh, custom registries) register via
 
 import builtins
 import logging
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from personalclaw.record_ids import record_path
+from personalclaw.skills.loader import validate_skill_md as _validate_skill_md
 
 
 def _path_home_pclaw():
@@ -40,7 +40,6 @@ def _path_home_pclaw():
 
 logger = logging.getLogger(__name__)
 
-_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _SKILL_FILENAME = "SKILL.md"
 
 # Standard discovery paths in priority order
@@ -570,31 +569,6 @@ def _parse_description(skill_md: Path) -> str:
     except OSError:
         return ""
     return SkillsLoader._parse_frontmatter_text(text).get("description", "")
-
-
-def _validate_skill_md(contents: str) -> list[str]:
-    """Return validation errors for a SKILL.md string; empty = valid."""
-    errors: list[str] = []
-    if not contents.strip().startswith("---"):
-        errors.append("SKILL.md must start with YAML frontmatter (---)")
-        return errors
-    end = contents.find("\n---", 3)
-    if end == -1:
-        errors.append("SKILL.md frontmatter is not closed with ---")
-        return errors
-    frontmatter = contents[3:end]
-    # Check required name field
-    name_m = re.search(r"^name:\s*(.+)$", frontmatter, re.MULTILINE)
-    if not name_m:
-        errors.append("SKILL.md frontmatter missing required 'name' field")
-    else:
-        name = name_m.group(1).strip().strip("\"'")
-        if not _NAME_RE.match(name):
-            errors.append(f"SKILL.md name must match ^[a-z0-9][a-z0-9-]{{0,62}}$ (got {name!r})")
-    # Check required description field
-    if not re.search(r"^description:\s*.+$", frontmatter, re.MULTILINE):
-        errors.append("SKILL.md frontmatter missing required 'description' field")
-    return errors
 
 
 def install_skill_files(

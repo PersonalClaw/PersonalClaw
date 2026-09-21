@@ -228,10 +228,11 @@ until a port is decided.
 
 **As-built (POSIX).** Three layers, all POSIX:
 
-- **OS path sandbox** — `sandbox.py:596-618` `detect_backend()`: Linux user
-  namespaces (`_probe_unshare`, `:114-150`, bind-mounts empty dirs over credential
-  paths) or macOS Seatbelt (`_probe_sandbox_exec`, `:153-205`), else `"none"` with
-  a warning `:667` ("No OS-level sandbox available — app-level checks only").
+- **OS path sandbox** — `sandbox.py` `detect_backend()`: Linux user namespaces
+  (`_probe_unshare`, bind-mounts empty dirs over credential paths) or macOS Seatbelt.
+  The macOS capability probe runs a file profile against the current Python interpreter;
+  only a failed runtime probe falls back to `"none"` with "No OS-level sandbox available —
+  app-level checks only".
 - **Resource ceilings** — `_spawn_exec_shim.py` delivers `setrlimit` post-exec;
   `resource` is imported guarded (`:54-57`) and `_apply_limits` no-ops if absent
   (`:60-85`). The docstring already states the load-bearing degradation contract:

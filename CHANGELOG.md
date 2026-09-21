@@ -61,6 +61,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **Projects now expose both sides of their archived lifecycle.**
+- **Creating or editing a skill now rejects an invalid `SKILL.md` before touching disk.**
 - **`personalclaw agent list` measures its columns instead of hardcoding them, so the table is aligned on a fresh install.**
 - **A credential in a chat title no longer reaches the export download's filename.**
 - **Code-loop runnability now distinguishes a missing command binary from a project that has not been scaffolded yet.**

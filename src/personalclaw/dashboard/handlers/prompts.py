@@ -10,6 +10,7 @@ from aiohttp import web
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import redact_for_display, restore_masked_spans
+from personalclaw.skills.loader import DIRECT_SKILL_MAX_CONTENT_CHARS, validate_skill_md
 
 from ._shared import _get_skills, _list_marketplace_skills
 
@@ -962,6 +963,20 @@ async def api_prompt_bindings_save(request: web.Request) -> web.Response:
 # ── Skills ──
 
 
+def _skill_write_refusal(name: str, content: str) -> web.Response | None:
+    errors = validate_skill_md(
+        content,
+        expected_name=name,
+        max_chars=DIRECT_SKILL_MAX_CONTENT_CHARS,
+    )
+    if not errors:
+        return None
+    return web.json_response(
+        {"error": f"SKILL.md validation failed: {'; '.join(errors)}"},
+        status=400,
+    )
+
+
 async def api_skill_detail(request: web.Request) -> web.Response:
     """GET/PUT /api/skills/{name} — get or update a skill. (Listing is served by
     handlers/skills.py::api_skills_list; deletion by api_skills_delete.)"""
@@ -981,6 +996,9 @@ async def api_skill_detail(request: web.Request) -> web.Response:
             return web.json_response({"error": "content must be a string"}, status=400)
         if not content:
             return web.json_response({"error": "content is required"}, status=400)
+        refusal = _skill_write_refusal(name, content)
+        if refusal is not None:
+            return refusal
         ok = skills.update_skill(name, content)
         if not ok:
             return web.json_response({"error": "not found"}, status=404)
@@ -1033,6 +1051,9 @@ async def api_skills_create(request: web.Request) -> web.Response:
     safe_name = re.sub(r"/+", "/", safe_name)  # collapse multiple slashes
     if not safe_name:
         return web.json_response({"error": "invalid skill name"}, status=400)
+    refusal = _skill_write_refusal(safe_name, content)
+    if refusal is not None:
+        return refusal
     skills = _get_skills(state)
     ok = skills.create_skill(safe_name, content)
     if not ok:

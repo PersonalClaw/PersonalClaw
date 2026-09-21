@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -577,6 +577,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   const [nameDraft, setNameDraft] = useState('')
   const [pickWs, setPickWs] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
+  const [statusBusy, setStatusBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   // The right-docked SidePanel content: a task list's tasks, or a directory tree for
   // the workspace/context dir. One panel at a time; null = closed. URL-backed via
@@ -617,6 +618,24 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     setErr(null)
     try { await api.updateProject(id, body); invalidateKeys(`projects:detail:${id}`); invalidateKeys('projects:list'); refresh() }
     catch (e) { setErr((e as Error).message || 'Could not update the project') }
+  }
+
+  async function archiveProject() {
+    if (!(await confirm({
+      title: `Archive project "${project?.name ?? ''}"?`,
+      body: 'This project stays in Projects, but is removed from project pickers until you restore it. Nothing is deleted: its work, tasks, context, and workspace files stay in place.',
+      confirmLabel: 'Archive',
+      icon: Archive,
+    }))) return
+    setStatusBusy(true)
+    try { await patch({ status: 'archived' }) }
+    finally { setStatusBusy(false) }
+  }
+
+  async function restoreProject() {
+    setStatusBusy(true)
+    try { await patch({ status: 'active' }) }
+    finally { setStatusBusy(false) }
   }
 
   // Legibility §7 — (re)render the marker-fenced PClaw context block into the project's
@@ -706,10 +725,19 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   )
   const headerActions = (
     <>
+      {project.status === 'archived' ? (
+        <Button variant="tonal" size="xs" onClick={restoreProject} loading={statusBusy} loadingLabel="Restoring…">
+          <ArchiveRestore size={14} /> Restore
+        </Button>
+      ) : (
+        <Button variant="ghost" size="xs" onClick={archiveProject} loading={statusBusy} loadingLabel="Archiving…">
+          <Archive size={14} /> Archive
+        </Button>
+      )}
       <Button variant={active ? 'ghost-accent' : 'ghost'} size="xs" ariaPressed={active}
         onClick={() => { const next = active ? '' : id; setActiveProject(next); setActive(!active) }}
-        title={active ? 'Active project — new work defaults here' : 'Make this the active project'}>
-        <Star size={14} style={active ? { fill: 'var(--color-primary)' } : undefined} /> {active ? 'Active' : 'Set active'}
+        title={active ? 'Default project — new work starts here' : 'Make this the default project'}>
+        <Star size={14} style={active ? { fill: 'var(--color-primary)' } : undefined} /> {active ? 'Default project' : 'Make default'}
       </Button>
       <Popover align="right" width={220} placement="bottom"
         trigger={(open, toggle) => (

@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 SKILLS_DIR_NAME = "skills"
 _MIN_TRIGGER_OVERLAP = 0.7
+DIRECT_SKILL_MAX_CONTENT_CHARS = 50_000
+_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 # ── Auto skill creation ──
 
@@ -434,6 +436,47 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     block scalars and block lists exactly where the first one was carefully fixed.
     """
     return SkillsLoader._parse_frontmatter_text(content)
+
+
+def validate_skill_md(
+    content: str,
+    *,
+    expected_name: str | None = None,
+    max_chars: int | None = None,
+) -> list[str]:
+    """Return format errors for one SKILL.md body; empty means valid.
+
+    The loader owns this check beside its frontmatter parser so marketplace
+    installs and direct dashboard writes cannot drift into separate dialects.
+    ``expected_name`` binds a user-authored body to its directory/API key;
+    ``max_chars`` lets direct writes apply their request-size ceiling while
+    marketplace installs retain their existing uncapped commit-side scan.
+    """
+    errors: list[str] = []
+    if max_chars is not None and len(content) > max_chars:
+        errors.append(f"SKILL.md content exceeds {max_chars} character limit")
+
+    meta = parse_frontmatter(content)
+    if not meta:
+        errors.append("SKILL.md must contain closed YAML frontmatter (---)")
+
+    declared_name = meta.get("name", "").strip()
+    if not declared_name:
+        errors.append("SKILL.md frontmatter missing required 'name' field")
+    elif expected_name is not None:
+        if declared_name != expected_name:
+            errors.append(
+                f"SKILL.md frontmatter name must match skill key {expected_name!r} "
+                f"(got {declared_name!r})"
+            )
+    elif not _SKILL_NAME_PATTERN.fullmatch(declared_name):
+        errors.append(
+            "SKILL.md name must match ^[a-z0-9][a-z0-9-]{0,62}$ " f"(got {declared_name!r})"
+        )
+
+    if not meta.get("description", "").strip():
+        errors.append("SKILL.md frontmatter missing required 'description' field")
+    return errors
 
 
 class SkillsLoader:
