@@ -109,6 +109,9 @@ class Item:
     updated_at: str = ""
     inbound_relations: int = 0
     citations: list[str] = field(default_factory=list)
+    #: Section key → `semantics.chunk_hash` digest, as written by the chunk-embed path. The
+    #: form is named here because a comparison against a differently-computed hash reports
+    #: every section changed forever (see `semantics.changed_sections`).
     chunk_hashes: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -211,6 +214,12 @@ def normalize_for_dedup(text: str) -> str:
 
 
 def fuzzy_hash(text: str) -> str:
+    """The DEDUP hash: two statements that differ only in casing/punctuation are one item.
+
+    Deliberately not a chunk hash. `normalize_for_dedup` throws away exactly the characters a
+    differential refresh must notice, so per-section hashing belongs to
+    `semantics.chunk_hashes` and this stays what `pre_dedup` compares.
+    """
     return hashlib.sha256(normalize_for_dedup(text).encode("utf-8", "replace")).hexdigest()[:16]
 
 
@@ -532,40 +541,6 @@ def _is_stub(item: Item) -> bool:
     if len(body) >= STUB_BODY_CHARS:
         return False
     return not _SUBSTANTIVE_RE.search(body)
-
-
-def changed_sections(stored: dict[str, str], fresh: dict[str, str]) -> list[str]:
-    """Which sections of a re-fetched source actually changed.
-
-    The invariant that matters: BOTH sides must be the same hash form. The studied failure was
-    storing a truncated hash and comparing a full one, which made every section look changed
-    forever — a refresh that always re-synthesizes everything, at full cost, silently.
-
-    A section present in `fresh` but not `stored` counts as changed (it is new); one present in
-    `stored` but not `fresh` does NOT (it was removed, and re-synthesizing a deleted section is
-    meaningless).
-    """
-    out: list[str] = []
-    for key, digest in fresh.items():
-        prior = stored.get(key)
-        if prior is None or not _same_hash_form(prior, digest) or prior != digest:
-            out.append(key)
-    return sorted(out)
-
-
-def _same_hash_form(left: str, right: str) -> bool:
-    """Guard against comparing a truncated hash to a full one.
-
-    Returns False on a length mismatch, which makes `changed_sections` report the section as
-    changed — the safe direction (re-synthesize once) rather than the silent one (treat two
-    incomparable values as equal and never refresh).
-    """
-    return len(left) == len(right)
-
-
-def chunk_hashes(sections: dict[str, str]) -> dict[str, str]:
-    """Per-section hashes in ONE canonical form, so a later comparison can be trusted."""
-    return {str(k): fuzzy_hash(str(v)) for k, v in sections.items()}
 
 
 # ── phantom hubs (§3.4 #3, gap-healing) ──

@@ -1165,33 +1165,68 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
     chunk layer. The old inline swallow left an unembeddable library indistinguishable from a
     working one, with no log line anywhere.
 
+    **A re-ingest embeds only the sections that changed.** The per-section digests of the
+    generation in the ``chunks`` table are stored on the item (``chunk_hashes``) and compared
+    here with ``semantics.changed_sections``; a section whose text is unchanged carries its
+    previous vectors forward through ``store.reusable_chunk_vectors`` instead of being sent to
+    the provider again. Re-embedding a 40k-character report because one paragraph changed is
+    the cost this avoids. The ROW set is still replaced wholesale — that is what keeps the ANN
+    index and a shortened document in step; what differential refresh saves is provider calls,
+    which is where the cost actually is. With no stored digests (a first ingest, or the
+    backfill) every section is new, so that pass is unchanged.
+
     Never raises into the ingest: a chunking/embedding hiccup must not fail an item whose
     whole-item vector already landed. A chunk whose embedding degrades to None is stored
     vector-less (still FTS/keyword reachable) rather than dropped. When the embedder has
     no ``embed`` (a minimal test stub) chunk embedding is skipped, matching the graceful
     no-model path."""
-    from personalclaw.knowledge.chunking import chunk_text
+    from personalclaw.knowledge.chunking import Chunk, chunk_text, section_key, section_texts
+    from personalclaw.knowledge.consolidation import Item
     from personalclaw.knowledge.embed_batch import embed_texts
     from personalclaw.knowledge.embedder import floats_to_bytes
+    from personalclaw.knowledge.semantics import changed_sections, chunk_hashes
 
     embed_one = getattr(embedder, "embed", None)
     if not callable(embed_one):
         return
     try:
         chunks = chunk_text(content)
-        if chunks:
+        fresh_hashes = chunk_hashes(section_texts(chunks))
+        # `Item.from_row` is the declared reader of the stored map — used rather than a second
+        # parse of `file_metadata`, so there is one place that knows where the digests live.
+        stored_hashes = Item.from_row(store.get_item(item_id) or {}).chunk_hashes
+        stale = set(changed_sections(stored_hashes, fresh_hashes))
+        # Gated on there BEING a stored map: without one every section is already stale, and
+        # reading vectors we cannot reuse would be a query for nothing.
+        carried = store.reusable_chunk_vectors(item_id) if stored_hashes else {}
+        pending: list[Chunk] = []
+        for c in chunks:
+            # The section gate decides staleness; the text lookup only supplies the vector for
+            # a section it already called unchanged. An unchanged section re-chunks to
+            # byte-identical texts, so a miss here means there was no reusable vector (never
+            # embedded, or from another model) and the chunk is embedded like any other.
+            prior = None if section_key(c) in stale else carried.get(c.text)
+            if prior is None:
+                pending.append(c)
+            else:
+                c.embedding = prior
+        if pending:
             # `embed_texts` returns exactly one result per text, positionally aligned, so
             # this zip can neither drop a chunk nor attach one chunk's vector to another.
             vectors = embed_texts(
-                [c.text for c in chunks],
+                [c.text for c in pending],
                 embed_many=active_batch_embed_fn(embedder),
                 embed_one=embed_one,
             )
-            for c, vec in zip(chunks, vectors):
+            for c, vec in zip(pending, vectors):
                 c.embedding = floats_to_bytes(vec) if vec else None
         # Outside the `if`: an empty chunk list still has to reach `replace_chunks`, which is
         # what clears a previous generation's rows when a re-chunk yields nothing.
         store.replace_chunks(item_id, chunks)
+        # After the rows, never before: digests that claimed a generation the write then failed
+        # to land would suppress the re-embed that repairs it. An empty map REMOVES the key
+        # (`None`), which is the honest record for a document with no chunks.
+        _merge_file_metadata(store, item_id, {"chunk_hashes": fresh_hashes or None})
     except Exception:
         logger.debug("knowledge chunk-embed failed for %s", item_id, exc_info=True)
 
