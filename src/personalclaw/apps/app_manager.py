@@ -1278,22 +1278,58 @@ def _write_seed_marker(seeded: set[str]) -> None:
     atomic_write(p, json.dumps({"seeded": sorted(seeded)}, indent=2) + "\n")
 
 
-def _resync_native_manifest(name: str, src_manifest: "Path") -> None:
-    """Refresh an already-seeded native app's ``app.json`` from packaged source when
-    it differs. Manifest-only: never touches ``data/`` (user config) or
-    ``installed.json`` (enabled state). No-op if the app dir is missing or the
-    manifest already matches (byte-compare avoids needless writes)."""
-    dest_manifest = app_dir(name) / APP_MANIFEST_FILENAME
-    if not dest_manifest.parent.is_dir():
-        return  # not installed on disk (e.g. seeded marker but dir gone) — leave it
+def _resync_native_bundle(name: str, src_dir: "Path") -> list[str]:
+    """Refresh an already-seeded native app's PACKAGED FILES from the wheel's copy.
+
+    Every file the bundle ships — ``app.json`` and, under the native capability contract
+    (APE-5, ``apps/native_contract.py``), the app's own Python modules and any other
+    packaged asset — is owned by the packaged source, not by the user. User-owned state
+    lives in exactly two places this function never touches: ``data/`` (config, which
+    ``install``/``update`` also preserve) and ``installed.json`` (enabled state, origin,
+    tier). Returns the app-relative paths it rewrote, so a caller can log what moved.
+
+    🔴 THIS USED TO BE MANIFEST-ONLY, and that made a bundled app's CODE unfixable.
+    ``app.json`` alone was enough while every native app was a thin manifest over a core
+    factory — a core fix rode the wheel's own module and only the schema needed copying
+    (bug #24: the create-task schema fix #21 never propagated). APE-5 broke that
+    assumption by letting a bundle own its `provider.py`, and seeding is once-only, so a
+    provider fix shipped in a new wheel reached a FRESH home and no existing one. The two
+    bundles that own code (``personalclaw-ui-docs`` and ``ollama-models``) would each have
+    been permanently frozen at whatever release first seeded them, with no in-band repair:
+    ``POST /api/apps/{name}/update`` is the push path for an ordinary app, and a native app
+    is locked against it.
+
+    Deliberately ADD-OR-OVERWRITE, never delete. A file the wheel stopped shipping is left
+    behind because nothing distinguishes it from something a user or another tool put there,
+    and an orphan module is inert — the loader imports only the module the manifest's
+    ``implementation`` names. Byte-compares before writing so a steady state is churn-free.
+    """
+    dest_dir = app_dir(name)
+    if not dest_dir.is_dir():
+        return []  # not installed on disk (e.g. seeded marker but dir gone) — leave it
+    rewrote: list[str] = []
     try:
-        src_bytes = src_manifest.read_bytes()
-        if dest_manifest.is_file() and dest_manifest.read_bytes() == src_bytes:
-            return  # already current — no churn
-        dest_manifest.write_bytes(src_bytes)
-        logger.info("Re-synced native app manifest %r from packaged source", name)
+        sources = sorted(p for p in src_dir.rglob("*") if p.is_file())
     except OSError:
-        logger.debug("Could not re-sync native manifest %s", name, exc_info=True)
+        logger.debug("Could not read the packaged bundle for %s", name, exc_info=True)
+        return []
+    for src in sources:
+        rel = src.relative_to(src_dir)
+        if "__pycache__" in rel.parts or rel.parts[0] == _APP_DATA_DIRNAME:
+            continue  # build cache, and the user's own config dir
+        dest = dest_dir / rel
+        try:
+            src_bytes = src.read_bytes()
+            if dest.is_file() and dest.read_bytes() == src_bytes:
+                continue  # already current — no churn
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(src_bytes)
+            rewrote.append(str(rel))
+        except OSError:
+            logger.debug("Could not re-sync %s for native app %s", rel, name, exc_info=True)
+    if rewrote:
+        logger.info("Re-synced native app %r from packaged source: %s", name, ", ".join(rewrote))
+    return rewrote
 
 
 def seed_builtin_apps() -> list[str]:
@@ -1331,15 +1367,16 @@ def seed_builtin_apps() -> list[str]:
         if not manifest.native:
             continue
         name = manifest.name
-        # Seed-once for INSTALL, but re-sync the MANIFEST on every boot. A native app
-        # is locked (can't be disabled/uninstalled/edited by the user) and its app.json
-        # (schema/description/capabilities) is packaged-source-owned — user config lives
-        # separately in data/config.json, which we never touch. So a manifest fix in
-        # apps/native/ MUST reach an existing install; the old seed-once-skip stranded
-        # it forever (bug #24: the create-task assignee/due/labels schema fix #21 never
-        # propagated). Re-copy app.json when it differs; leave data/ + installed.json.
+        # Seed-once for INSTALL, but re-sync the PACKAGED FILES on every boot. A native app
+        # is locked (can't be disabled/uninstalled/edited by the user) and everything the
+        # wheel ships for it — app.json's schema/description/capabilities AND, under APE-5,
+        # the bundle's own provider module — is packaged-source-owned. User config lives
+        # separately in data/config.json, which we never touch. So a fix in apps/native/
+        # MUST reach an existing install; the old seed-once-skip stranded it forever (bug
+        # #24: the create-task assignee/due/labels schema fix #21 never propagated), and the
+        # manifest-only resync that replaced it stranded every code fix the same way.
         if name in seeded:
-            _resync_native_manifest(name, manifest_file)
+            _resync_native_bundle(name, entry)
             continue
         seeded.add(name)
         changed = True
@@ -1349,7 +1386,14 @@ def seed_builtin_apps() -> list[str]:
             newly.append(name)
             continue
         try:
-            shutil.copytree(entry, dest)
+            # `__pycache__` is excluded for the same reason `_resync_native_bundle` skips it:
+            # it is bytecode compiled by whoever imported the packaged module (a dev tree's
+            # test run, or an earlier gateway importing it out of site-packages), not a file
+            # the app ships. Copying it seeds one machine's `.pyc` into the home, where a
+            # stale entry sits beside the source it no longer matches. Measured on a fresh
+            # isolated home: the seeded `ollama-models` dir carried a `__pycache__` written
+            # by this checkout's pytest run.
+            shutil.copytree(entry, dest, ignore=shutil.ignore_patterns("__pycache__"))
             (dest / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
             meta = InstalledApp(
                 name=name,

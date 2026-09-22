@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import tokenize
+from pathlib import Path
 
 from personalclaw.resilience import degraded
 
@@ -150,6 +152,30 @@ _CALL_SITE_SURFACES = {
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")
 
 
+def _code_only(path: Path) -> str:
+    """*path*'s source with comments and string literals dropped.
+
+    🪤 A RAW-FILE REGEX COUNTS PROSE. Measured: the bundled `ollama-models` provider
+    documents that its native `format` option is what `one_shot_completion(output_type=…)`
+    passes — four times, all in comments and docstrings, never once as a call — and the raw
+    `re.search` read every one of them as a call site. The census then demanded a degraded
+    contract for a file that has no model-dependent surface at all, and satisfying it would
+    have written a FALSE fact into `_CALL_SITE_SURFACES`: the whole value of that map is that
+    each entry is a real call whose no-model floor someone judged.
+
+    Tokenizing is the fix rather than rewording the prose, because the next file to mention
+    the function in a comment would hit the same wall. Docstrings are STRING tokens and are
+    dropped with the rest — a name inside a string is not a call. An unparseable file falls
+    back to its raw text: a syntax error must not make a real call site invisible.
+    """
+    try:
+        with path.open("rb") as fh:
+            tokens = list(tokenize.tokenize(fh.readline))
+    except (SyntaxError, tokenize.TokenError, OSError):
+        return path.read_text(encoding="utf-8", errors="ignore")
+    return "\n".join(t.string for t in tokens if t.type not in (tokenize.COMMENT, tokenize.STRING))
+
+
 def _files_calling_one_shot() -> set[str]:
     """Repo-relative (posix) paths of every source file that CALLS
     one_shot_completion — excluding llm_helpers.py, which DEFINES it."""
@@ -157,8 +183,7 @@ def _files_calling_one_shot() -> set[str]:
     for path in _SRC.rglob("*.py"):
         if path.name == "llm_helpers.py":
             continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        if _CALL_RE.search(text):
+        if _CALL_RE.search(_code_only(path)):
             hits.add(path.relative_to(_SRC).as_posix())
     return hits
 

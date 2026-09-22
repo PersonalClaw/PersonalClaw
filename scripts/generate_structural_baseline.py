@@ -447,6 +447,38 @@ def regressions_size(baseline: dict[str, Any], current: dict[str, Any]) -> list[
 # ── Ratchet 2: module-boundary / import-direction ────────────────────────────
 
 
+#: Where a BUNDLED APP's own modules live inside the package. A file here ships in the
+#: distribution but is not core: it is a removable app that happens to be shipped, and the
+#: native capability contract (``apps/native_contract.py``) requires it to reach core ONLY
+#: through ``personalclaw.sdk.*``.
+_BUNDLED_APP_PREFIX = "apps/native/"
+
+
+def _is_bundled_app_module(in_src: str) -> bool:
+    """Is *in_src* a bundled app's own module rather than a core module?
+
+    🪤 THE LAYER RULES DO NOT APPLY TO THESE FILES, and applying them inverts the tenet they
+    exist to protect. ``core-must-not-import-its-own-published-facade`` is correct for core:
+    when core imports ``personalclaw.sdk`` the facade becomes load-bearing inside core and can
+    no longer be reshaped for apps. But a bundled app is on the OTHER side of that facade —
+    importing it is mandatory, and importing anything else is what
+    ``tests/test_native_capability_contract.py`` fails on. So for these files the rule scored
+    compliance as a violation.
+
+    It was invisible while ``personalclaw-ui-docs`` was the only bundle that owned code: its
+    single ``personalclaw.sdk.tool`` edge sat in the baseline as a grandfathered member, which
+    reads exactly like real debt someone has not got to yet. The second such bundle
+    (``ollama-models``, three SDK edges) made it a REGRESSION and blocked the ratchet on a
+    file whose imports are exactly what the contract demands.
+
+    Excluding these files from the DIRECTION ratchet loses no coverage, because the contract
+    rail is strictly stronger over the same tree: it forbids every ``personalclaw.*`` import
+    that is not ``personalclaw.sdk.*``, where this rail only counted the SDK ones. They stay
+    in the size and duplication ratchets, which have no layer opinion.
+    """
+    return in_src.startswith(_BUNDLED_APP_PREFIX)
+
+
 @dataclass(frozen=True)
 class DirectionRule:
     """One declared layer-order rule: files in ``lower`` may not import ``upper``.
@@ -461,6 +493,8 @@ class DirectionRule:
     rationale: str
 
     def applies_to(self, in_src: str) -> bool:
+        if _is_bundled_app_module(in_src):
+            return False  # not a core layer at all — see the helper
         top = in_src.split("/")[0] if "/" in in_src else ""
         if top in self.upper:
             return False  # the upper layer may of course import itself

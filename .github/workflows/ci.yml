@@ -189,6 +189,10 @@ jobs:
           run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness
           run_tool "flake8" uv run flake8 src/personalclaw tests harness
           run_tool "mypy" uv run mypy src/personalclaw harness
+          # The bundled-app tree is excluded from the pass above and checked one bundle per
+          # mypy run here — see scripts/lint_bundled_apps.py for why (two bundles ship a
+          # module named `provider.py`, which aborts a single combined run).
+          run_tool "mypy (bundled apps)" uv run python scripts/lint_bundled_apps.py
           if [ "$status" -ne 0 ]; then
             {
               echo "violations<<LINTEOF"

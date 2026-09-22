@@ -314,6 +314,26 @@ personalclaw = [
     # a hard error, so every review template would fail to load rather than degrade.
     "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
+    # A bundled app's OWN provider code (the APE-5 native capability contract). MEASURED
+    # 2026-09-21 on a clean `rm -rf build dist && python -m build --wheel`: setuptools 84
+    # already carries `apps/native/*/*.py` into the wheel with no glob declared, while a
+    # `.txt`/`.yaml` beside it is dropped — so the inclusion is real but it rests entirely
+    # on setuptools' implicit handling of Python sources under the package tree.
+    # `build-system.requires` is an unbounded `setuptools>=64`, so that implicit behaviour
+    # is not ours to rely on: without this line a future setuptools could stop shipping
+    # `ollama-models`' and `personalclaw-ui-docs`' providers, and the failure would be a
+    # bundled app whose manifest names a module that isn't there — an error row in the
+    # Store on every install, discoverable only from a real `pip install`.
+    "apps/native/*/*.py",
+    # A bundled app's own LICENSE and README. MEASURED on the same clean build: non-`.py`
+    # files beside `app.json` are DROPPED, so without these two lines `ollama-models` shipped
+    # in the wheel with no licence statement at all — its `app.json` declares no licence
+    # field, so that file is the app's only terms, and `seed_builtin_apps` copies the whole
+    # bundle dir into the user's home. An app the platform installs on every first boot
+    # should carry its grant. `docs/architecture/licence-identity.txt` records the judgment
+    # behind keeping it rather than treating it as a duplicate of the root LICENSE.
+    "apps/native/*/LICENSE",
+    "apps/native/*/README.md",
     # The ONE token-lint rule (APE-4), shared by web/src/design/tokenLintRule.ts and
     # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim
     # from an installed wheel with no core checkout on disk, so a wheel without this
@@ -360,6 +380,16 @@ check_untyped_defs = true
 show_error_codes = true
 pretty = true
 ignore_missing_imports = true
+# The bundled-app tree is checked ONE BUNDLE PER RUN by scripts/lint_bundled_apps.py, not
+# here. mypy maps every file to a module name, and a bundled app's dir is not a package
+# (hyphenated name, no __init__.py), so `apps/native/<name>/provider.py` maps to the
+# top-level module `provider`. The SECOND bundle that ships one therefore aborts the entire
+# run with "Duplicate module named 'provider'" before checking anything — and the native
+# capability contract EXPECTS that collision (providers/loader.py namespaces bundle modules
+# in sys.modules for exactly this reason). Excluding them here is not dropping the gate:
+# the script runs mypy per bundle from `make lint` and from CI's lint step, and carries a
+# vacuity floor so a run that checked nothing fails instead of passing.
+exclude = ['^src/personalclaw/apps/native/']
 
 [tool.pytest.ini_options]
 xfail_strict = true
