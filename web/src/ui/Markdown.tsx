@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { createContext, memo, useContext, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { physics } from '../design/motion'
 import { fvs } from '../design/fontWeight'
@@ -218,14 +218,31 @@ function looksLikeFile(s: string): boolean {
   return t.length <= 200 && !t.includes(' ') && FILE_PATH_RE.test(t)
 }
 
-function renderCode({ className, children }: any) {
+/** Does this `code` element sit inside a `<pre>`? That is the GROUND TRUTH for
+ *  block-vs-inline, and the only signal that gets the single-line cases right:
+ *  `mdast-util-to-hast` wraps every block code node — fenced with a language,
+ *  fenced without one, and 4-space indented — in a `<pre>`, and never wraps an
+ *  inline code span (whose value cannot contain a newline at all, since
+ *  CommonMark folds line endings inside a span to spaces). Measured for all five
+ *  shapes in `fencedCodeIsBlock.test.tsx`. Provided by the `pre` override below;
+ *  read by both `code` call sites (COMPONENTS and componentsWith). */
+const InPre = createContext(false)
+
+function renderCode({ className, children, inPre }: any) {
   const m = /language-(\w+)/.exec(className || '')
   const str = String(children).replace(/\n$/, '')
-  // Block vs inline: react-markdown only tags fenced code with a `language-*`
-  // class when a language is given — a fenced block with NO language has no
-  // className and would otherwise be mistaken for inline code. Treat anything
-  // with a className OR a newline (i.e. a real multi-line fence) as a block.
-  const isBlock = !!className || str.includes('\n')
+  // Block vs inline. `inPre` decides it; the other two are independent fallbacks
+  // for a raw-HTML `<code>` that rehype-raw hands us with no `<pre>` around it.
+  //
+  // 🔴 #2515: this used to be `!!className || str.includes('\n')` alone. A fence with
+  // NO language has no className, and react-markdown's trailing newline is stripped
+  // one line above — so a SINGLE-LINE no-language fence failed both tests and rendered
+  // as an inline chip. Measured in a real browser: one 217-char unbreakable token in
+  // such a fence became a 1424px `<code>` with `white-space: normal` and
+  // `overflow-x: visible` inside a 338px region, so it could neither wrap nor scroll,
+  // and it dragged every unrelated line in that result onto a 1424px canvas. The same
+  // bytes plus one newline were already a contained, scrollable `<pre>`.
+  const isBlock = inPre || !!className || str.includes('\n')
   if (!isBlock) return <code className="rounded-sm bg-surface-high px-1.5 py-0.5 text-[0.85em] font-mono text-primary-emphasis">{children}</code>
   const lang = m?.[1]
   if (lang === 'mermaid') return <MermaidBlock code={str} />
@@ -234,8 +251,10 @@ function renderCode({ className, children }: any) {
 }
 
 const COMPONENTS: Record<string, React.ComponentType<any>> = {
-  code: renderCode,
-  pre({ children }: any) { return <>{children}</> },
+  code(props: any) { return renderCode({ ...props, inPre: useContext(InPre) }) },
+  // Still an unwrapper — the block renderers below bring their own `<pre>`. It only
+  // marks the subtree, so the `code` child can tell a fence from an inline span.
+  pre({ children }: any) { return <InPre.Provider value={true}>{children}</InPre.Provider> },
   table({ children }: any) { return <div className="my-3 overflow-x-auto"><table data-type="body-s" className="w-full border-collapse">{children}</table></div> },
   th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
@@ -438,6 +457,10 @@ function componentsWith(
   return {
     ...base,
     code({ className, children }: any) {
+      // Read unconditionally (Rules of Hooks) — the file-path branch below returns early.
+      // This is the SECOND `renderCode` call site; a fix that only threads the signal into
+      // COMPONENTS would leave chat, the highest-traffic consumer, on the old predicate.
+      const inPre = useContext(InPre)
       const str = String(children).replace(/\n$/, '')
       if (onFileClick && !className && looksLikeFile(str)) {
         return (
@@ -447,7 +470,7 @@ function componentsWith(
           </button>
         )
       }
-      return renderCode({ className, children })
+      return renderCode({ className, children, inPre })
     },
     p({ children }: any) { return <p data-type="body-m" className="my-1.5 leading-relaxed">{L(children)}</p> },
     li({ children }: any) { return <li data-type="body-m" className="leading-relaxed">{L(children)}</li> },
