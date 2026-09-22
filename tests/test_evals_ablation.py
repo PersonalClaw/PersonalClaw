@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.evals import ablation
+from personalclaw.evals import ablation, benchmark_binding
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals.matrix import (
     FAILED,
@@ -421,6 +421,25 @@ def test_aggregate_by_never_borrows_the_other_arms_mean():
 # ── the registry + cadence ────────────────────────────────────────────────────
 
 
+def _bind_a_model(home: Path, **config) -> None:
+    """Give the home ONE resolvable ``Provider:model`` (#2680).
+
+    ``run_ablation`` now refuses to score when nothing resolves, because an unbound run
+    measured the offline ``scripted`` replay: identical bytes on both arms, hence
+    ``on - off == 0`` → ``remove``, which is the verdict that FILES A RETIREMENT PROPOSAL.
+    So every test below that asserts a VERDICT needs a bound model for exactly the reason it
+    needs a fake matrix — the subject is the arm axis, not the refusal, which
+    ``test_an_unbound_ablation_refuses_to_score_and_files_nothing`` owns instead.
+
+    ``**config`` merges extra top-level keys in, so a test that also needs its own
+    ``config.json`` content does not have to choose between the two.
+    """
+    payload: dict = {"providers": [{"name": "Acme"}]}
+    payload.update(config)
+    (home / "config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    (home / "active_models.json").write_text(json.dumps({"chat": ["Acme:m1"]}), encoding="utf-8")
+
+
 def _write_registry(home: Path, rows: list[dict]) -> None:
     root = home / "evals"
     root.mkdir(parents=True, exist_ok=True)
@@ -469,6 +488,7 @@ def test_due_is_true_before_a_first_run_and_respects_the_cadence(eval_home):
 
 
 def test_run_ablation_builds_the_arm_axis_and_writes_a_report(eval_home):
+    _bind_a_model(eval_home)
     seen: list = []
     report = ablation.run_ablation(
         _component(),
@@ -495,6 +515,41 @@ def test_run_ablation_builds_the_arm_axis_and_writes_a_report(eval_home):
     assert on_disk is not None and on_disk.verdict == ablation.KEEP
 
 
+def test_an_unbound_ablation_refuses_to_score_and_files_nothing(eval_home):
+    """#2680 — no model ⇒ ``INCONCLUSIVE`` on disk, not ``REMOVE`` from a replayed tie.
+
+    Both arms run in spawned children with no ambient credentials, so an unbound ablation
+    compared the offline ``scripted`` replay against itself: byte-identical output, ``on - off
+    == 0.0``, and ``classify`` turning that into ``REMOVE`` — the verdict that files a
+    retirement proposal. The component was recommended for deletion on the strength of a
+    comparison that never ran.
+
+    A report is still WRITTEN rather than skipped, and that is deliberate: the monthly cadence
+    advances on reports, so a silent early return would make an unbound home look like a home
+    with nothing to ablate. The artifact says INCONCLUSIVE and why.
+    """
+
+    # Deliberately no `_bind_a_model(eval_home)` — that omission IS the condition under test.
+    def _must_not_run(spec, *, matrix_id, **kwargs):  # pragma: no cover - asserted absent
+        raise AssertionError("an unbound ablation must not spawn arms it cannot score")
+
+    report = ablation.run_ablation(_component(), trials=1, now=NOW, run_matrix=_must_not_run)
+
+    assert report.verdict == ablation.INCONCLUSIVE
+    assert report.verdict != ablation.REMOVE, "the wrong conclusion this refusal exists to stop"
+    assert report.delta is None
+    assert report.arms == {}
+    assert "no model resolved" in report.reason
+    assert benchmark_binding.CONFIG_FIELD in report.reason
+    assert report.provider["source"] == benchmark_binding.SOURCE_UNRESOLVED
+    # Persisted, so the cadence sees a run happened and a reader sees why it measured nothing.
+    on_disk = ablation.read_report(report.matrix_id)
+    assert on_disk is not None
+    assert on_disk.verdict == ablation.INCONCLUSIVE
+    assert on_disk.provider == report.provider
+    assert on_disk.reason == report.reason
+
+
 def test_a_cheap_arm_appears_only_when_a_cheap_form_is_declared(eval_home):
     assert _component().arms() == [overlay_lib.ARM_ON, overlay_lib.ARM_OFF]
     assert _tiered_component().arms() == [
@@ -502,6 +557,7 @@ def test_a_cheap_arm_appears_only_when_a_cheap_form_is_declared(eval_home):
         overlay_lib.ARM_OFF,
         overlay_lib.ARM_CHEAP,
     ]
+    _bind_a_model(eval_home)
     seen: list = []
     report = ablation.run_ablation(
         _tiered_component(),
@@ -522,10 +578,10 @@ def test_a_cheap_arm_appears_only_when_a_cheap_form_is_declared(eval_home):
 
 
 def test_run_ablation_refuses_a_report_when_the_matrix_leaks_a_mutation(eval_home):
-    (eval_home / "config.json").write_text('{"a": 1}\n', encoding="utf-8")
+    _bind_a_model(eval_home, a=1)
 
     def _leak():
-        (eval_home / "config.json").write_text('{"a": 2}\n', encoding="utf-8")
+        _bind_a_model(eval_home, a=2)
 
     with pytest.raises(ablation.LiveStateMutatedError):
         ablation.run_ablation(
@@ -544,6 +600,8 @@ def test_run_ablation_refuses_a_report_when_the_matrix_leaks_a_mutation(eval_hom
 
 def test_a_no_delta_report_attaches_as_ablation_grade_evidence(eval_home):
     from personalclaw.learning import proposals
+
+    _bind_a_model(eval_home)
 
     report = ablation.run_ablation(
         _component(),
@@ -585,6 +643,7 @@ def test_the_ablation_grade_reaches_the_row_a_reviewer_decides_on(eval_home):
     """
     from personalclaw.learning import inbox, proposals
 
+    _bind_a_model(eval_home)
     report = ablation.run_ablation(
         _component(),
         trials=3,
@@ -623,6 +682,8 @@ def test_the_ablation_grade_reaches_the_row_a_reviewer_decides_on(eval_home):
 def test_a_keep_report_files_nothing(eval_home):
     from personalclaw.learning import proposals
 
+    _bind_a_model(eval_home)
+
     report = ablation.run_ablation(
         _component(),
         trials=1,
@@ -637,6 +698,8 @@ def test_a_keep_report_files_nothing(eval_home):
 
 def test_an_inconclusive_report_files_nothing(eval_home):
     from personalclaw.learning import proposals
+
+    _bind_a_model(eval_home)
 
     report = ablation.run_ablation(
         _component(),
@@ -655,6 +718,7 @@ def test_an_inconclusive_report_files_nothing(eval_home):
 def test_run_cadence_measures_one_component_files_it_and_advances(eval_home):
     from personalclaw.learning import proposals
 
+    _bind_a_model(eval_home)
     _write_registry(
         eval_home,
         [_component(component_id="a").to_dict(), _component(component_id="b").to_dict()],
@@ -693,6 +757,7 @@ def test_run_cadence_with_an_empty_registry_does_not_consume_a_slot(eval_home):
 def test_a_second_concurrent_cadence_refuses_rather_than_doubling_up(eval_home):
     """``last_run_ts`` is stamped AFTER the run (a failed run must stay due), so without the
     lock a matrix that outlived a maintenance tick would be started twice."""
+    _bind_a_model(eval_home)
     _write_registry(eval_home, [_component(component_id="a").to_dict()])
     starts: list[str] = []
 

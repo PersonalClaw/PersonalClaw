@@ -235,15 +235,24 @@ describe('a config panel does not present fabricated values as saved state', () 
     // Measured both sides: `origin/main` is ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 ·
     // AgentDefaultsPanel 1 · settingsWidgets 27 = 33 (so the floor was finally accurate), and this
     // branch is the same four files unchanged with settingsWidgets at 3 = 9. The hub's 24 became 3:
-    // 21 tiles now report the failure through `BentoCard`'s `failed` prop, and the three that remain
-    // are each a read the surface makes no CLAIM about (`usePacksInstalled`'s shared-key mirror,
-    // `useAgentDefaults`' decorating name read, `useToolsSavings`' optional meter).
+    // 21 tiles now report the failure through `BentoCard`'s `failed` prop, and the three that remained
+    // THEN were each a read the surface makes no CLAIM about (`usePacksInstalled`'s shared-key mirror,
+    // `useAgentDefaults`' decorating name read, `useToolsSavings`' optional meter) — the first of which
+    // has since gone, see below.
+    //
+    // ── 🔻 9 → 7 (#532) ──────────────────────────────────────────────────────────────────────────
+    //
+    // The installed-pack ledger, on BOTH sides of the shared `settings:packs:installed` key, in one
+    // commit. That pairing is the point rather than an implementation detail: the hub's mirror was
+    // budgeted as deliberate *because* it was byte-identical to the panel's read, so de-swallowing
+    // either alone would have left the other's error branch unreachable behind a primed cache entry.
+    // Two entries move together or neither can move.
     const PER_FILE: Record<string, number> = {
       ChatPanel: 1,
       DurabilityPanel: 2,
-      PacksPanel: 2,
+      PacksPanel: 1,
       AgentDefaultsPanel: 1,
-      settingsWidgets: 3,
+      settingsWidgets: 2,
     }
     const measured = Object.fromEntries(files.map((f) => [
       f, (codeOf(`pages/settings/${f}.tsx`).match(/\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\}|\(\{\}|'')/g) ?? []).length,

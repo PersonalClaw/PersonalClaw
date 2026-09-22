@@ -188,8 +188,30 @@ personalclaw gateway
 | **Bootstrap** | `curl -fsSL https://personalclaw.dev/install \| sh` | the fastest start |
 | pipx | `pipx install personalclaw` | isolated Python tools |
 | pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
-| **Docker Compose** | see below | self-hosters · Windows |
+| **Docker** | see below | one container, no checkout, no `.env` |
+| **Docker Compose** | see below | self-hosters · Windows · TLS proxy |
 | Git checkout | [CONTRIBUTING](CONTRIBUTING.md#development-setup) | contributors / development |
+
+### Docker
+
+One container, nothing to check out and no `.env` — the gateway image bundles the
+dashboard:
+
+```bash
+docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+```
+
+Then print the dashboard URL (it carries a one-time token — the default auth mode):
+
+```bash
+docker exec personalclaw personalclaw token
+```
+
+State lives in the named volume `personalclaw_home`, so it survives
+`docker rm`/`docker run`. `-p 127.0.0.1:…` keeps the port on the host's loopback;
+`PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets that published port reach the gateway
+*inside* the container (its own default is loopback, which a container cannot publish).
+Swap `:latest` for a release tag to pin one.
 
 ### Docker Compose
 

@@ -981,6 +981,30 @@ def redact_for_display(text: str) -> str:
     return masked
 
 
+def redact_field(text: str) -> str:
+    """Both redaction passes over one EXPORTED field: exfiltration URLs then credentials.
+
+    Applied to EVERY role, unlike the dashboard write path, which deliberately exempts
+    ``user`` and ``system`` (``chat_persistence.py``) — so this is the only redaction those
+    roles ever get before text leaves the machine, and defense in depth for the rest.
+
+    One implementation across every surface that emits a transcript: conversation export and
+    share (``dashboard/session_export``, ``dashboard/session_share``) and the room transcript
+    write path (``rooms/store``). It lives here rather than in ``dashboard/`` because
+    ``rooms/`` is domain code and may not import the HTTP surface — an upward edge the
+    structural import-direction ratchet refuses.
+
+    Distinct from :func:`redact_for_display` in pass ORDER, which is load-bearing:
+    ``redact_credentials`` is not idempotent over an already-masked line, so the two
+    compositions are not interchangeable and neither can be expressed as the other.
+    """
+    if not text:
+        return ""
+    safe, _ = redact_exfiltration_urls(str(text))
+    safe, _ = redact_credentials(safe)
+    return safe
+
+
 def _mask_pairs(masked: str, stored: str) -> list[tuple[str, str]] | None:
     """Pair each mask in `masked` with the text it replaced in `stored`.
 

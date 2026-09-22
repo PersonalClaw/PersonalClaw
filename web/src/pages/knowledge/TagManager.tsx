@@ -4,7 +4,7 @@ import { api, ApiError, type KnowledgeTag } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirmDelete, confirmDestructive, promptInput } from '../../ui/dialog'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { fvs } from '../../design/fontWeight'
 
@@ -25,13 +25,19 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
   const [busy, setBusy] = useState<number | null>(null)
   const [note, setNote] = useState('')
 
+  // #532: the tree read used to resolve its rejection into `[]`, and the empty branch then said
+  // "No tags yet — tag a saved item and it appears here", pitching a first step to a user whose
+  // taxonomy was merely unreachable. Load failure and an empty taxonomy are different answers.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+
   useEffect(() => {
     let alive = true
     api.knowledgeTagTree()
       .then((t) => { if (alive) setTags(t) })
-      .catch(() => { if (alive) setTags([]) })
+      .catch((e) => { if (alive) setLoadErr(e) })
     return () => { alive = false }
-  }, [])
+  }, [reloadKey])
 
   /** Apply a mutation, then adopt the server's tree as the new truth. */
   const run = async (
@@ -80,6 +86,11 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
     return out
   }, [tags])
 
+  // Error BEFORE the skeleton: a rejection leaves `tags` at `null`, which the loading test also
+  // matches, so the order is what makes this branch reachable at all.
+  if (loadErr !== null) {
+    return <LoadError what="tags" error={loadErr} onRetry={() => { setLoadErr(null); setReloadKey((k) => k + 1) }} />
+  }
   if (tags === null) return <ListSkeleton what="tags" />
   if (!tags.length) {
     return (

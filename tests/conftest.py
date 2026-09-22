@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 
+import native_omp_guard
 import pycache_guard
 import pytest
 import real_home_guard
@@ -88,6 +89,26 @@ def _ensure_event_loop():
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+@pytest.fixture(autouse=True)
+def _forbid_second_openmp_runtime(request):
+    """Torch-free-core rail (#3324): fail the test that makes ``torch`` resident.
+
+    Two libomp.dylib copies in one process abort it the next time faiss enters a
+    parallel region — i.e. the next episodic-write dedup `search` — which xdist
+    then reports as `worker 'gwN' crashed` against whatever unrelated test held
+    the worker. Blaming the *transition* absent→resident is what names the real
+    culprit; a presence check would red every later test in the poisoned worker
+    instead. Rationale, the measured mask that hides the abort, and why this is a
+    rail rather than a one-line import fix: tests/native_omp_guard.py. Proof that
+    it fires: tests/test_native_omp_guard.py.
+    """
+    before = native_omp_guard.resident(sys.modules)
+    yield
+    new = tuple(m for m in native_omp_guard.resident(sys.modules) if m not in before)
+    if new:
+        pytest.fail(native_omp_guard.explain(new, request.node.nodeid), pytrace=False)
 
 
 @pytest.fixture(autouse=True)
@@ -839,6 +860,13 @@ def pytest_sessionstart(session):
     """Arm the rail. Controller only — xdist workers share the one real home, so a
     per-worker arm/report would multiply one leak into N identical reports."""
     global _real_home_since_ns
+    # Torch-free-core rail, the one case no per-test transition can attribute: a
+    # hazard module already resident before the first test, imported by a plugin or
+    # by conftest itself. Checked in EVERY process — each xdist worker carries its
+    # own sys.modules, and it is a worker that aborts.
+    pre_resident = native_omp_guard.resident(sys.modules)
+    if pre_resident:
+        raise RuntimeError(native_omp_guard.explain(pre_resident, "session start"))
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return
     _real_home_since_ns = time.time_ns()

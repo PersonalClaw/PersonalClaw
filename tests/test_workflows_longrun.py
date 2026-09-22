@@ -724,16 +724,19 @@ def test_until_cancelled_is_in_the_loop_mode_enum():
 
 
 def test_a_node_below_an_iteration_marker_keeps_its_spec_path():
-    """`_base_path` truncated at the last marker, so `…body@0.children[0]` resolved to the body
+    """`spec_path` truncated at the last marker, so `…body@0.children[0]` resolved to the body
     SEQUENCE. Live effect: a `wait` nested in a loop body was read as a gate by
     `_wake_due_nodes`, and every cycle failed with "gate timed out with no answer" — for a
-    template containing no gate at all."""
-    from personalclaw.workflows.controller import _base_path
+    template containing no gate at all.
 
-    assert _base_path("root.children[0].body@0.children[0]") == "root.children[0].body.children[0]"
-    assert _base_path("root.body#3.children[1]") == "root.body.children[1]"
-    assert _base_path("root.body@2") == "root.body"
-    assert _base_path("root") == "root"
+    Lives in `workflows.models` beside `walk`, which produces the spec paths it translates to; it
+    was `controller._base_path` until #3371 needed the same notion on the run surfaces."""
+    from personalclaw.workflows.models import spec_path
+
+    assert spec_path("root.children[0].body@0.children[0]") == "root.children[0].body.children[0]"
+    assert spec_path("root.body#3.children[1]") == "root.body.children[1]"
+    assert spec_path("root.body@2") == "root.body"
+    assert spec_path("root") == "root"
 
 
 def test_a_container_bodied_loop_finds_its_parent():

@@ -40,6 +40,7 @@ import json
 import logging
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -988,6 +989,82 @@ def _dir_entry_count(path: Path) -> int:
         return 0
 
 
+# A LIVE app's ``data/`` can be changing underneath the one copy that stands between the
+# user and losing it. ``shutil.copytree`` enumerates a directory with ``os.scandir`` and
+# copies each entry afterwards, so anything that disappears inside that window makes it
+# raise ``shutil.Error`` — and both callers below read any ``OSError`` as "fail closed,
+# remove nothing". The user then sees a refusal they did not cause and cannot act on.
+#
+# MEASURED, not hypothesised (#3324). The notes fixture's app tool commits into a git repo
+# under ``data/``, and ``git commit`` ends by spawning ``git maintenance run --auto --quiet
+# --detach``. That child is DETACHED, so it outlives the ``git commit`` the app waited for,
+# and it holds ``.git/objects/maintenance.lock`` — created and removed inside our walk.
+# Confirmed on git 2.54.0 by polling for the file, and it is the exact path main's `Full`
+# run 35764976454 failed two macOS legs on. Nothing about it is test-only: any app whose
+# ``data/`` holds a git checkout, an SQLite WAL or its own lockfile has the same exposure.
+#
+# WAIT FOR THE TREE TO SETTLE, and deliberately NOT "skip whatever vanished". A vanished
+# entry is usually a lock file we would rightly ignore, but it is also what a git repack
+# looks like from outside: loose objects are RENAMED into a new packfile, so a walk that
+# misses them both ways round yields a ``.git`` whose objects are simply gone. Skipping
+# would trade a loud refusal for a silently corrupt copy of the user's work, which is the
+# one outcome this ladder exists to prevent. So the copy is retried whole, and if the tree
+# never settles the caller still fails closed on the original error.
+_LIVE_COPY_ATTEMPTS = 4
+_LIVE_COPY_SETTLE_SECS = 0.25  # doubles per attempt: 0.25 → 0.5 → 1.0
+
+
+def _only_vanished_sources(exc: shutil.Error) -> bool:
+    """True when EVERY entry ``copytree`` failed on is no longer at its source path.
+
+    Structural, never a string match on the message. ``shutil.Error`` flattens each
+    per-entry cause to ``str``, so the errno is gone by the time we see it — but "is it
+    there now" is a question the filesystem answers directly. ENOSPC, EACCES and EIO all
+    leave the source in place, so they answer False and fail closed immediately, which is
+    what keeps the errno diagnosis the callers log worth reading.
+    """
+    entries = exc.args[0] if exc.args else None
+    if not isinstance(entries, list) or not entries:
+        return False
+    for entry in entries:
+        if not isinstance(entry, tuple) or len(entry) != 3:
+            return False
+        src = Path(entry[0])
+        # ``is_symlink`` as well as ``exists``: a dangling symlink is still an entry that
+        # is present and failed for its own reason, not one that vanished.
+        if src.exists() or src.is_symlink():
+            return False
+    return True
+
+
+def _copy_live_tree(src: Path, dst: Path) -> None:
+    """``shutil.copytree``, retried while the source tree is still settling.
+
+    Re-raises the last error once the attempts run out, so every caller's fail-closed
+    branch stays exactly as loud as it was.
+    """
+    for attempt in range(_LIVE_COPY_ATTEMPTS):
+        try:
+            shutil.copytree(src, dst)
+            return
+        except shutil.Error as exc:
+            if attempt == _LIVE_COPY_ATTEMPTS - 1 or not _only_vanished_sources(exc):
+                raise
+            logger.info(
+                "copying app data %s -> %s raced a concurrent writer (%s); the tree is "
+                "still settling, retrying (attempt %d of %d)",
+                src,
+                dst,
+                exc,
+                attempt + 2,
+                _LIVE_COPY_ATTEMPTS,
+            )
+            # The failed attempt left a PARTIAL tree behind; the retry must start clean or
+            # `copytree` would refuse the existing destination.
+            shutil.rmtree(dst, ignore_errors=True)
+            time.sleep(_LIVE_COPY_SETTLE_SECS * (2**attempt))
+
+
 def _data_fact(key: str, path: Path | None) -> str:
     """``key=absent`` | ``key=empty`` | ``key=N`` — three DISTINCT facts, never merged.
 
@@ -1160,7 +1237,10 @@ def update(
             new_data = staged / _APP_DATA_DIRNAME
             if new_data.exists():
                 shutil.rmtree(new_data, ignore_errors=True)
-            shutil.copytree(old_data, new_data)
+            # Same exposure as the keep-data rung, and worse consequences: this copy runs
+            # against a LIVE app's data/ while it is still installed, and the swap below
+            # makes this copy the surviving one (#3324).
+            _copy_live_tree(old_data, new_data)
         # Preserve installed.json (gateway-written metadata, not part of the app
         # source) so the swapped-in tree keeps its install record + enabled state.
         old_meta_file = live / INSTALLED_META_FILENAME
@@ -1938,7 +2018,9 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     # `live_data` is still on disk — never on one a previous call left as a last copy.
     try:
         if had_data:
-            shutil.copytree(live_data, staged)
+            # `_copy_live_tree`, not a bare `copytree`: `live_data` belongs to an app that
+            # is still installed and may still be writing (#3324).
+            _copy_live_tree(live_data, staged)
     except OSError as exc:
         shutil.rmtree(staged, ignore_errors=True)
         # LOUD, not audit-only. This was the ladder's ONE invisible failure: it returned

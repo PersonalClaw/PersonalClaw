@@ -626,7 +626,24 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
     }
   }
 
-  // Create a WebContentsView positioned below the tab bar
+  // Create a WebContentsView positioned below the tab bar.
+  //
+  // NO `sandbox: false` here, deliberately — Electron's renderer sandbox stays ON, at its
+  // default. It was off for exactly one line: `preload.js` used to
+  // `require("./capabilities")`, and a sandboxed preload's polyfilled `require` resolves
+  // `electron` plus three builtins and nothing else, so the preload threw on its second
+  // line and `window.pclawDesktop` was never defined — absent rather than broken, which is
+  // why nothing ever logged. #3348 inlined those two constants instead, so the bridge loads
+  // with the sandbox intact.
+  //
+  // This is the view that loads the dashboard, i.e. the one that renders agent- and
+  // app-authored HTML and script, so it is the LAST one that should give up an OS boundary:
+  // the iframe `sandbox` attribute the widget frames use is a web-platform boundary, and
+  // Chromium does not promise a null-origin blob frame its own renderer process.
+  // `connectDialog.js` still pairs its preload with `sandbox: false` because
+  // `connectPreload.js` does need a relative require; `capabilities.test.js` asserts that
+  // pairing as a property (a preload needing Node ⇒ the flag) rather than as a spelling, so
+  // neither half can drift silently.
   const view = new WebContentsView({
     webPreferences: {
       ...(attachBridge ? { preload: path.join(__dirname, "preload.js") } : {}),

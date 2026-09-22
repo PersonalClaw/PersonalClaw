@@ -371,7 +371,15 @@ class OpenAIProvider(ModelProvider):
             )
 
         if input_tokens > 0:
-            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW)
+            # ``override=`` and deliberately NOT ``local=``: this is a MEASURED
+            # percentage, and the local short-circuit is a conservative FLOOR for the
+            # char estimate (LOCAL_SERVED_CONTEXT_WINDOW), not a served-window claim.
+            # Substituting it here would divide a real 26682-token prompt by 4096 and
+            # display 651% — fabricating in the opposite direction from the bug in
+            # #2364. The per-binding declaration is the only thing that is truth for
+            # both paths, so only it reaches the gauge; with no declaration this stays
+            # byte-identical to the table lookup it has always done.
+            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
             self._last_context_pct = (input_tokens / ctx) * 100
 
         if assistant_text:
@@ -560,7 +568,10 @@ class OpenAIProvider(ModelProvider):
 
         context_pct: float | None = None
         if input_tokens > 0:
-            ctx = _model_window(model or self._model, _DEFAULT_CONTEXT_WINDOW)
+            # ``override=`` only — see the note at the streaming gauge above.
+            ctx = _model_window(
+                model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
+            )
             context_pct = (input_tokens / ctx) * 100
 
         yield LLMEvent(

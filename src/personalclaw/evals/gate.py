@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from personalclaw.evals import pinning, provenance
+from personalclaw.evals import benchmark_binding, pinning, provenance
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 from personalclaw.evals.overlay import OverlayRefusedError, throwaway_home
@@ -134,6 +134,10 @@ UNGATED_EMPTY_SUBSET = (
 UNGATED_NO_PIN = (
     "a gate run could not be pinned to a model, and an unpinned score is not evidence "
     "(missing: {missing})"
+)
+UNGATED_NO_PROVIDER = (
+    "no model resolved for the gate to score against, and a score nothing answered is not "
+    "evidence — {detail}"
 )
 UNGATED_KIND = (
     "a {kind} proposal does not yet declare a candidate artifact the gate can stage, so there "
@@ -456,6 +460,13 @@ class GateReport:
     pin: dict[str, Any] = field(default_factory=dict)
     spend: dict[str, Any] = field(default_factory=dict)
     bound: dict[str, Any] = field(default_factory=dict)
+    #: WHICH model answered, and by which path — ``declared`` / ``default_chain`` /
+    #: ``unresolved`` (:mod:`personalclaw.evals.benchmark_binding`). Recorded on BOTH the
+    #: gated and the refusal paths: "the gate scored against nothing" and "the gate scored
+    #: against the model you picked" must be distinguishable in the persisted artifact, not
+    #: only in a log line, and a run that fell back to the default chain must be
+    #: distinguishable from one that was bound directly.
+    provider: dict[str, Any] = field(default_factory=dict)
 
     @property
     def delta(self) -> float | None:
@@ -490,6 +501,7 @@ class GateReport:
             "pin": dict(self.pin),
             "spend": dict(self.spend),
             "bound": dict(self.bound),
+            "provider": dict(self.provider),
             "delta": self.delta,
             "regressed": self.regressed,
         }
@@ -716,6 +728,31 @@ def run_gate(
             subset=chosen.to_dict(),
         )
 
+    # #2680 — the cells run in spawned children with a throwaway home and NO ambient
+    # credentials, so a gate that declares no `provider_binding` scores both arms against the
+    # offline `scripted` replay: byte-identical output for the same scenario regardless of what
+    # the arm staged, hence a delta of 0.0 nobody measured. Resolve a real model, or refuse.
+    #
+    # Deliberately AFTER `pin.is_complete()`: an unpinnable home has a more specific unmet
+    # precondition to report, and reporting the vaguer one first would lose it.
+    bench = benchmark_binding.resolve_benchmark_binding()
+    # Tested on the VALUE rather than through `bench.is_bound` (which is this same check) because
+    # the gate is the one caller that reaches INTO the binding — a property cannot narrow
+    # `CellProviderBinding | None` for the reader or for mypy, and the two lines below would then
+    # be guarded by an invariant nothing states.
+    binding = bench.binding
+    if binding is None:
+        return ungated(
+            UNGATED_NO_PROVIDER.format(detail=bench.detail),
+            run_id=run_id,
+            subset=chosen.to_dict(),
+            provider=bench.to_dict(),
+        )
+    # The gate computes its OWN pin (`compute_pin_for_subject` above), separately from the one
+    # `run_matrix` computes per cell — so the cell-model part has to be stamped on here too, or
+    # the persisted gate artifact reports `cell_model_fp: no_model` for a run that was bound.
+    pin = pin.with_cell_models({binding.use_case: binding.model_ref()})
+
     if meter is None:
         from personalclaw.guardrails.budgets import get_meter
 
@@ -737,6 +774,7 @@ def run_gate(
         ran_at=moment.isoformat(),
         subset=chosen.to_dict(),
         pin=pin.to_dict(),
+        provider=bench.to_dict(),
     )
     spend: dict[str, Any] = {
         "observed": False,
@@ -769,7 +807,12 @@ def run_gate(
                 scorer="assertion",
             )
             try:
-                result = run_matrix(spec, matrix_id=matrix_id, artifact_arm=arm)
+                result = run_matrix(
+                    spec,
+                    matrix_id=matrix_id,
+                    artifact_arm=arm,
+                    provider_binding=binding,
+                )
             except Exception:
                 # One unrunnable scenario is one unmeasured cell, not a failed gate: the
                 # remaining scenarios still carry signal, and a gate that aborts on the first
@@ -965,6 +1008,7 @@ __all__ = [
     "UNGATED_NOT_RUN",
     "UNGATED_NO_BUDGET",
     "UNGATED_NO_PIN",
+    "UNGATED_NO_PROVIDER",
     "apply_in_child",
     "arms_for_proposal",
     "cell_spend",

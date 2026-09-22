@@ -3,6 +3,7 @@ import { Check, Eye, Loader2, Sparkle } from 'lucide-react'
 import { fvs } from '../design/fontWeight'
 import { Modal } from './Modal'
 import { Markdown } from './Markdown'
+import { InlineLoadError } from './ListScaffold'
 import { api, type SkillItem } from '../lib/api'
 import { accentChip } from '../design/accent'
 
@@ -55,13 +56,19 @@ export function CapabilityPeekModal({ peek, onClose }: {
 }) {
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(peek.kind === 'skill')
+  // #532: an unreadable skill body used to become `''`, which fell through to the description —
+  // or, for a skill with none, to "No content available." The user opened this modal to STUDY a
+  // capability before committing it, so a failed read that reads as "there is nothing to study"
+  // is the one answer that cannot be allowed here.
+  const [err, setErr] = useState<unknown>(null)
   useEffect(() => {
     if (peek.kind !== 'skill' || !peek.skill) return
     let alive = true
     setLoading(true)
+    setErr(null)
     api.skillContent(peek.skill.key)
       .then((c) => { if (alive) setContent(c) })
-      .catch(() => { if (alive) setContent('') })
+      .catch((e) => { if (alive) setErr(e) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [peek])
@@ -74,6 +81,9 @@ export function CapabilityPeekModal({ peek, onClose }: {
         {peek.kind === 'skill' ? (
           loading ? (
             <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low py-4"><Loader2 size={14} className="animate-spin" /> Loading skill…</div>
+          ) : err !== null ? (
+            /* Before the content test, which a rejection also fails (#532). */
+            <InlineLoadError what="this skill" error={err} />
           ) : content ? (
             <Markdown>{content}</Markdown>
           ) : (

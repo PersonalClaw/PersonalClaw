@@ -161,6 +161,21 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "browse_grant_not_pending": "No browse grant is waiting on that id.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
+    # ── agent rooms (handlers/rooms.py, rooms/store.py) ──
+    "rooms_disabled": "Agent Rooms is disabled. Enable rooms.enabled to use it.",
+    "room_not_found": "No room with that id.",
+    "room_archived": "That room is archived and no longer accepts changes.",
+    "room_title_required": "A room needs a title.",
+    "room_id_exhausted": "Could not derive a free room id from that title.",
+    "room_state_unreadable": "The rooms index could not be read.",
+    "room_member_name_required": "A member needs an agent-binding name.",
+    "room_member_name_invalid": "That agent-binding name is not a plain name.",
+    "room_member_unknown_agent": "No agent binding by that name is configured.",
+    "room_member_exists": "That agent is already a member of this room.",
+    "room_member_not_found": "That agent is not a member of this room.",
+    "room_member_limit": "This room already holds the configured maximum number of members.",
+    "room_invalid_listen_policy": "A listen policy must be all, mention, or silent.",
+    "room_export_format_invalid": "A room export format must be md or json.",
     # ── push subscriptions (handlers/push.py) ──
     "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
     "push_not_subscribed": "That device has no push subscription.",

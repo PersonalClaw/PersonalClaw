@@ -46,6 +46,7 @@ def register_acp_cli_entry(
     extension: str | None = None,
     login_command: list[str] | None = None,
     requires_executable: dict[str, str] | None = None,
+    self_sandboxing: bool = False,
 ) -> ProviderEntry | None:
     """Register (idempotently) an ``acp_agent`` entry named ``acp:<cli>``.
 
@@ -92,6 +93,29 @@ def register_acp_cli_entry(
         delegates to what is vendor knowledge, so it lives ONLY in the bundle;
         the probe just honours the declaration. Runtimes whose binary *is* the
         engine (a self-contained ACP CLI) declare nothing.
+    self_sandboxing:
+        Optional declaration that this runtime applies its OWN OS-level sandbox to
+        the child it spawns, so the host's path sandbox cannot nest around it. Set
+        it and the entry carries ``sandbox_mode="off"``; leave it and the host wrap
+        applies as usual.
+
+        Same fact/policy split as ``requires_executable``: *whether a given CLI
+        sandboxes itself* is vendor knowledge and lives ONLY in the bundle, while
+        *what to do about it* stays here. A bundle therefore never picks a sandbox
+        level — it states a property of its binary and the core derives the mode.
+
+        This is not a theoretical knob. The host's generated seatbelt profile refuses
+        a nested ``sandbox_apply`` (measured: ``Operation not permitted``; nesting is
+        not refused *per se* — a bare ``(allow default)`` profile nests fine, it is
+        the profile's ``deny`` rules that forbid it). So wrapping such a CLI in
+        ``sandbox-exec`` kills it during startup: kiro-cli exits 1 having written
+        nothing to stdout, and the host sees only an ``ACP stdout EOF`` handshake
+        failure whose real cause ("sandbox initialization failed: Operation not
+        permitted") is on the child's stderr.
+        Turning the host wrap off for such a runtime does not leave it unconfined:
+        the CLI's own sandbox still applies, and so do the host's PreToolUse deny
+        gate and four-tier approval, which are where ACP tool authority actually
+        lives.
 
     A CLI's own agent-config directory is deliberately NOT a parameter here.
     ACP-AGENT-PARITY §2.1 measured all three shipped CLIs honouring the
@@ -149,6 +173,9 @@ def register_acp_cli_entry(
         options["login_command"] = list(login_command)
     if requires_executable:
         options["requires_executable"] = dict(requires_executable)
+    if self_sandboxing:
+        # Bundle states the fact (this CLI sandboxes itself); core picks the policy.
+        options["sandbox_mode"] = "off"
 
     entry = ProviderEntry(
         name=name,

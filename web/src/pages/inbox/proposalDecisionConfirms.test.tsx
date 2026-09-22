@@ -176,3 +176,75 @@ describe('inbox proposal decision confirms itself (issue 283)', () => {
     expect(screen.getByRole('button', { name: /install skill/i })).toBeTruthy()
   })
 })
+
+// ── Issue 532 row 18: the READ path had the same discrimination to make, and did not make it ──────
+//
+// 🪤 THIS PAIR IS THE ONLY RAIL ROW 18 HAS. The tree-wide swallow census
+// (`ui/loadErrorState.test.tsx` §B) never saw this site: its form was `.catch(() => setGone(true))`,
+// a setter call with a BOOLEAN argument, and the census counts empty/fabricated values (`[]`, `null`,
+// `{}`, `''`) — `true` is none of those, and `InboxDetail.tsx` is not in that budget at all. So the
+// six budgeted files could all be fixed, every decrement ratcheted, the suite green, and this row
+// still broken. A count cannot rail a site it does not count.
+//
+// The defect: the load effect caught EVERYTHING and rendered "This proposal was already answered."
+// A 500, a timeout, or an offline gateway all reached that sentence — a decision the user is still
+// being asked to make, reported as already made. `act()` has discriminated on status for the WRITE
+// path since #283 (the two tests directly above); these two are the same discrimination, thirty
+// lines up, and they fail in opposite directions if either half regresses.
+describe('the proposal LOAD path discriminates a 404 from a failure (issue 532)', () => {
+  beforeEach(() => {
+    acceptSkillProposal.mockReset()
+    rejectSkillProposal.mockReset()
+    skillProposalDetail.mockReset()
+  })
+
+  it('a 404 on the read still reads as ALREADY ANSWERED — that much was right', () => {
+    // The positive control, and it is not a formality: the cheapest wrong way to fix the row is to
+    // delete the branch, which turns a correct sentence into a generic failure. A 404 on this read
+    // genuinely does mean the proposal was consumed elsewhere (the Skills page, another tab).
+    skillProposalDetail.mockRejectedValue(new ApiError(`no proposal '${PID}'`, 404))
+    render(<InboxDetail item={proposalItem()} onChanged={() => {}} navigate={() => {}} />)
+
+    return waitFor(() => expect(screen.getByText(/already answered/i)).toBeTruthy())
+  })
+
+  it('a 500 on the read does NOT claim the proposal was answered', async () => {
+    skillProposalDetail.mockRejectedValue(new ApiError('overlay read failed', 500))
+    render(<InboxDetail item={proposalItem()} onChanged={() => {}} navigate={() => {}} />)
+
+    // The failure is stated, with the server's own sentence (`loadErrorMessage` prefers an authored
+    // message over its own generic one).
+    await waitFor(() => expect(screen.getByText(/overlay read failed/)).toBeTruthy())
+    // The claim that must not appear. This is the assertion the whole row is about.
+    expect(screen.queryByText(/already answered/i)).toBeNull()
+    // …and not the other failure mode either: with the catch-all gone, `detail` stays null, so a
+    // surface that only dropped the swallow would sit on "Loading the proposal…" forever — the same
+    // silence in a different costume. Both halves were needed, which is why both are pinned.
+    expect(screen.queryByText(/loading the proposal/i)).toBeNull()
+  })
+
+  it('a non-ApiError rejection is a failure too, not an answer', async () => {
+    // The vacuity check on the discrimination: a bare `Error` has no `status`, so a gate written as
+    // `e.status !== 404` rather than `e instanceof ApiError && e.status === 404` would send an
+    // offline gateway (`TypeError: Failed to fetch`) back down the "already answered" branch.
+    skillProposalDetail.mockRejectedValue(new Error('Failed to fetch'))
+    render(<InboxDetail item={proposalItem()} onChanged={() => {}} navigate={() => {}} />)
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+    expect(screen.queryByText(/already answered/i)).toBeNull()
+  })
+
+  it('offers a RETRY, because the decision is still pending and still reachable', async () => {
+    // A failed read is not a terminal state here: the proposal exists and the user's answer is still
+    // wanted. First call fails, the retry succeeds, and the review body arrives.
+    skillProposalDetail
+      .mockRejectedValueOnce(new ApiError('overlay read failed', 500))
+      .mockResolvedValue(detail())
+    render(<InboxDetail item={proposalItem()} onChanged={() => {}} navigate={() => {}} />)
+
+    await userEvent.click(await waitFor(() => screen.getByRole('button', { name: /retry/i })))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /install skill/i })).toBeTruthy())
+    expect(skillProposalDetail).toHaveBeenCalledTimes(2)
+  })
+})

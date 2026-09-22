@@ -249,12 +249,19 @@ export function SchemaField({ field, name, value, onChange }: {
     )
   }
   const sensitive = !!meta.sensitive
+  // A numeric setting renders as a number input honouring the manifest's bounds, the same
+  // treatment ProviderConfigForm's renderer already gives it — otherwise `context_window`
+  // and `timeout_secs` accept "8k" here and coerce to "undeclared" with nothing said. Kept
+  // as `type="number"` over a stepper for the same reason that renderer gives: a stepper's
+  // numeric value cannot express "unset", and blank is meaningful for both of these fields.
+  const numeric = field.type === 'integer' || field.type === 'number'
   return (
     <label className="flex flex-col gap-1">
       <span data-type="caption" className="text-on-surface-low">{label}</span>
       <div className="relative">
-        <input aria-label={label} type={sensitive && !show ? 'password' : 'text'} value={value}
-          onChange={(e) => onChange(e.target.value)} placeholder={meta.help || label}
+        <input aria-label={label} type={sensitive && !show ? 'password' : numeric ? 'number' : 'text'} value={value}
+          min={numeric ? field.minimum : undefined} max={numeric ? field.maximum : undefined}
+          onChange={(e) => onChange(e.target.value)} placeholder={meta.placeholder || meta.help || label}
           data-type="body-s" className={inputCls + (sensitive ? ' pr-10' : '')} />
         {sensitive && (
           <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
@@ -365,6 +372,11 @@ function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDon
   const [region, setRegion] = useState('')
   const [profile, setProfile] = useState('')
   const [model, setModel] = useState(provider.model ?? '')
+  // The served context window, editable only for a non-AWS (endpoint-based) binding —
+  // it describes what a LOCAL runtime actually serves, which is the one thing the model
+  // table cannot know. A managed cloud endpoint has no such knob, so the AWS arm omits
+  // it rather than offering a field that could only ever misreport the window.
+  const [contextWindow, setContextWindow] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -375,8 +387,12 @@ function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDon
     if (isAws) {
       if (region.trim()) options.region = region.trim()
       if (profile.trim()) options.profile = profile.trim()
-    } else if (endpoint.trim()) {
-      options.endpoint = endpoint.trim()
+    } else {
+      if (endpoint.trim()) options.endpoint = endpoint.trim()
+      // PATCH MERGES options, so an untouched field must stay out of the body entirely —
+      // sending '' here would persist an empty string and, because the coercion reads
+      // that as UNDECLARED, silently wipe a window the operator had set.
+      if (contextWindow.trim()) options.context_window = contextWindow.trim()
     }
     if (Object.keys(options).length) body.options = options
     if (model.trim() !== (provider.model ?? '')) body.model = model.trim()
@@ -393,7 +409,11 @@ function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDon
           <TextInput ariaLabel="AWS profile" value={profile} onChange={setProfile} placeholder="AWS profile (leave empty to keep current)" size="md" surface="high" />
         </>
       ) : (
-        <TextInput ariaLabel="Endpoint" value={endpoint} onChange={setEndpoint} placeholder="Endpoint (leave empty to keep current)" size="md" surface="high" />
+        <>
+          <TextInput ariaLabel="Endpoint" value={endpoint} onChange={setEndpoint} placeholder="Endpoint (leave empty to keep current)" size="md" surface="high" />
+          <TextInput ariaLabel="Served context window" type="number" min={1} value={contextWindow} onChange={setContextWindow}
+            placeholder="Served context window in tokens (leave empty to auto-detect)" size="md" surface="high" />
+        </>
       )}
       <TextInput ariaLabel="Default model" value={model} onChange={setModel} placeholder="Default model (optional)" size="md" surface="high" />
       <div className="flex items-center gap-2">

@@ -24,7 +24,8 @@ type Edge = { source: string; target: string }
 type Thinning = { edges_total?: number | null; edges_kept?: number | null }
 
 function draw(nodes: Node[], edges: Edge[], thinning?: Thinning) {
-  globalThis.fetch = vi.fn(async () => ({ json: async () => ({ nodes, edges, ...(thinning ? { thinning } : {}) }) })) as never
+  // `ok: true` — the component checks it (#532), and a double without it models no real response.
+  globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ nodes, edges, ...(thinning ? { thinning } : {}) }) })) as never
   return render(<KnowledgeGraph />)
 }
 const nodesOf = (n: number): Node[] =>

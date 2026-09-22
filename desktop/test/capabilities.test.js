@@ -11,6 +11,11 @@ const {
   makeCapabilities,
   registerCapabilityIpc,
 } = require("../capabilities");
+const {
+  preloadOf,
+  unsandboxableRequires,
+  webPreferenceBlocks,
+} = require("./helpers/sandboxedPreload");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -351,6 +356,69 @@ describe("contextIsolation stays on", () => {
     const windows = (src.match(/webPreferences:/g) || []).length;
     const isolation = (src.match(/contextIsolation:/g) || []).length;
     assert.strictEqual(isolation, windows, "a webPreferences block without contextIsolation");
+  });
+
+  // The three rails above were all green while the shipped bridge was DEAD: they check what
+  // the preload is allowed to see, never whether the preload can load at all. A sandboxed
+  // preload's `require` resolves `electron` plus three builtins, so a relative path throws and
+  // the whole preload is skipped SILENTLY — the bridge is absent rather than broken, which is
+  // why nothing ever logged.
+  //
+  // The first cut of this rail asserted `sandbox: false` on every preload-bearing block. That
+  // pinned one SPELLING of a correct pairing, and in doing so forbade the secure fix: inline
+  // the preload's constants and the same bridge loads with the process sandbox intact (#3348).
+  // So the assertion is the PROPERTY, in both directions, read off the preload the block
+  // actually names:
+  //
+  //   a preload that needs Node        ⇒ the block MUST spend `sandbox: false`, or no bridge
+  //   a preload that does not          ⇒ the block MUST NOT, or an OS boundary is paid for
+  //                                      nothing on the view that renders untrusted content
+  //
+  // `test/bridgeLoads.test.js` then drives the same pairing through a real renderer, which is
+  // what makes this one a cross-check rather than the only witness.
+  it("pairs each preload with the sandbox flag its own requires demand — and no more", () => {
+    let needNode = 0;
+    let sandboxSafe = 0;
+    for (const file of ["main.js", "connectDialog.js"]) {
+      const text = fs.readFileSync(path.join(ROOT, file), "utf8");
+      const blocks = webPreferenceBlocks(text);
+      assert.strictEqual(
+        blocks.length,
+        (text.match(/webPreferences:\s*\{/g) || []).length,
+        `could not read every webPreferences block in ${file}`,
+      );
+      const bridged = blocks.filter((block) => /\bpreload:/.test(block));
+      assert.ok(bridged.length >= 1, `${file} opens no preload-bearing window`);
+      for (const block of bridged) {
+        const preload = preloadOf(block);
+        assert.ok(preload, `${file} attaches a preload this rail cannot resolve: ${block}`);
+        const src = fs.readFileSync(path.join(ROOT, preload), "utf8");
+        const blocked = unsandboxableRequires(src);
+        const flagged = /\bsandbox:\s*false\b/.test(block);
+        if (blocked.length) {
+          needNode += 1;
+          assert.ok(
+            flagged,
+            `${file} attaches ${preload}, which requires ${blocked.join(", ")} — a sandboxed ` +
+              "preload cannot resolve that, so at Electron's default it throws and its bridge " +
+              "is absent from the renderer. Either inline what it needs or set sandbox: false.",
+          );
+        } else {
+          sandboxSafe += 1;
+          assert.ok(
+            !flagged,
+            `${file} attaches ${preload} with sandbox: false, but ${preload} requires nothing ` +
+              "the sandbox withholds. That spends the Chromium process sandbox for free — and " +
+              "this is the view that renders agent- and app-authored HTML.",
+          );
+        }
+      }
+    }
+    // Vacuity floor. The rail has two branches and both must be live, or a future edit could
+    // satisfy it by accident: `preload.js` is the sandbox-safe one, `connectPreload.js` still
+    // needs its sibling.
+    assert.ok(sandboxSafe >= 1, "no sandbox-safe preload found — the second branch is dead");
+    assert.ok(needNode >= 1, "no Node-needing preload found — the first branch is dead");
   });
 });
 

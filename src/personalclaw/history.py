@@ -179,6 +179,19 @@ def _safe_key(key: str) -> str:
     return re.sub(r"[^\w\-.]", "_", key)
 
 
+def speaker_of(msg: dict) -> str:
+    """The per-message author, or ``""`` for the human and for every pre-``speaker`` line.
+
+    The tolerant half of :meth:`ConversationLog.append`'s ``speaker`` argument. Every
+    message line written before AGENT-ROOMS, and every line a non-room caller writes,
+    carries no ``speaker`` key at all — so the absent field must read as the human
+    rather than as a fault. Defined here, beside the writer, so the two ends of the
+    field cannot drift apart.
+    """
+    value = msg.get("speaker", "")
+    return value if isinstance(value, str) else ""
+
+
 class ConversationLog:
     """Append-only JSONL conversation store with provenance and rotation."""
 
@@ -210,6 +223,7 @@ class ConversationLog:
         source_user: str | None = None,
         agent: str | None = None,
         tab_id: str | None = None,
+        speaker: str = "",
     ) -> None:
         """Append a message with optional provenance to the session log.
 
@@ -218,6 +232,15 @@ class ConversationLog:
         recorded in that metadata so the session can be resumed under the
         correct agent later.  (Has no effect if the file already exists;
         use :meth:`update_metadata` to change the agent after creation.)
+
+        *speaker* names the PER-MESSAGE author and is the one field a shared
+        transcript needs that a per-participant session does not (AGENT-ROOMS C1).
+        It is distinct from *agent*, which lands in the file's metadata line on
+        creation only and therefore cannot vary line to line, and from
+        *source_user*, which means a human participant on a channel. Written only
+        when non-empty, so every existing session file and every non-room caller
+        produces byte-identical lines; read back through :func:`speaker_of`, which
+        answers ``""`` for the absent field.
         """
         path = self._path(key)
         if not path.exists():
@@ -244,6 +267,8 @@ class ConversationLog:
             msg["source_thread"] = source_thread
         if source_user:
             msg["source_user"] = source_user
+        if speaker:
+            msg["speaker"] = speaker
 
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(msg) + "\n")

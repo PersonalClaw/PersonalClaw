@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.evals import benchmark_binding
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import store
 from personalclaw.evals.matrix import MatrixSpec, aggregate_by
@@ -368,6 +369,14 @@ class AblationReport:
     #: its own proof of non-mutation, so "did this run touch my config" is answerable from
     #: the artifact rather than from trust.
     live_state: dict[str, str] = field(default_factory=dict)
+    #: WHICH model the arms scored against, and by which path (#2680 —
+    #: :mod:`personalclaw.evals.benchmark_binding`). Unconditional, including on the
+    #: :data:`INCONCLUSIVE` refusal: a keep/remove verdict is a claim about a component, and
+    #: it is only readable if the artifact says what answered — and whether the run was bound
+    #: directly (``declared``) or fell back to the use case's chain (``default_chain``).
+    provider: dict = field(default_factory=dict)
+    #: Why nothing was measured, when nothing was. Empty on a run that scored.
+    reason: str = ""
 
     def arm_mean(self, arm: str) -> float | None:
         agg = self.arms.get(arm) or {}
@@ -538,8 +547,34 @@ def run_ablation(
     matrix_id = _matrix_id(component.component_id, moment)
     spec = build_spec(component, trials=trials, budget_usd=budget_usd)
 
+    # #2680 — the arms run in spawned children with no ambient credentials, so an unbound
+    # ablation scored on-vs-off against the offline `scripted` replay: identical bytes either
+    # way, hence `on - off == 0.0` → `remove`, which is the verdict that FILES A RETIREMENT
+    # PROPOSAL. Refusing to score is therefore not merely tidier here, it is what stops a
+    # component being retired on a delta nothing measured.
+    bench = benchmark_binding.resolve_benchmark_binding()
+    if not bench.is_bound:
+        refused = AblationReport(
+            component_id=component.component_id,
+            kind=component.kind,
+            target=component.target,
+            subject=component.subject,
+            verdict=INCONCLUSIVE,
+            epsilon=float(epsilon),
+            matrix_id=matrix_id,
+            trials=max(1, int(trials)),
+            created_at=moment.isoformat(),
+            provider=bench.to_dict(),
+            reason=(
+                "no model resolved for the benchmark to score against, so neither arm ran — "
+                f"{bench.detail}"
+            ),
+        )
+        write_report(refused)
+        return refused
+
     with live_state_unchanged(component.live_refs) as watched:
-        result = run_matrix(spec, matrix_id=matrix_id)
+        result = run_matrix(spec, matrix_id=matrix_id, provider_binding=bench.binding)
 
     arms = aggregate_by(list(result.cells), overlay_lib.ARM_AXIS)
     on = (arms.get(overlay_lib.ARM_ON) or {}).get("mean_score")
@@ -560,6 +595,8 @@ def run_ablation(
         trials=max(1, int(trials)),
         created_at=moment.isoformat(),
         live_state=dict(watched),
+        provider=bench.to_dict(),
+        reason=("" if verdict != INCONCLUSIVE else "an arm produced no scored cell"),
     )
     write_report(report)
     return report

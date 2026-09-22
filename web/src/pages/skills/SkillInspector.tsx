@@ -6,6 +6,7 @@ import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
+import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE, provenanceMeta } from './skillMeta'
@@ -58,6 +59,19 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
             session taught, so it carries the sentence and not just the word the row shows. */}
         {prov && <span data-type="label-s" className={`inline-flex items-center gap-1.5 ${prov.tone}`} title={prov.title}><GraduationCap size={13} /> {prov.label}</span>}
         {skill.always && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}><Zap size={13} /> always loaded</span>}
+        {/* A synthesized skill IS an AI judgment — the extractor decided this procedure was
+            worth keeping — so it earns thumbs, and they are the only way the synthesizer can
+            ever be attributed: 👎s here are what let `skills.surfacing` stop surfacing a
+            persistently-wrong auto skill (issue 1783). The inspector, not the list row: the row is
+            one big click target that opens this panel, so buttons inside it fight the row.
+            Rendered only when the server stamped `feedback_producer`, which it does for
+            `auto` provenance alone — a taught skill is the user's own call. */}
+        {skill.feedback_producer && (
+          <FeedbackThumbs targetKind="synthesized_skill" targetId={skill.key}
+            producer={skill.feedback_producer}
+            snapshot={{ description: (skill.description ?? '').slice(0, 200) }}
+            className="ml-auto" />
+        )}
       </div>
 
       <p className="text-on-surface text-[0.9375rem] leading-relaxed">{skill.description}</p>

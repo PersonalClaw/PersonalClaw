@@ -1,0 +1,91 @@
+# The rail over the single-container `docker run` one-liner in README.md — DIST-15.
+#
+# The clause is "on a machine with only Docker and no PersonalClaw files, ONE command copied
+# verbatim from README.md reaches a USABLE dashboard", and it explicitly rejects a
+# healthz-only assertion: the gateway image used to answer `/api/healthz` 200 while serving
+# no dashboard at all, because `setup.py`'s `BuildWithWeb` grafts `web/dist` into the
+# installed package only when `web/dist` is in the build tree and nothing in
+# `Dockerfile.backend` ever built it. `tools/docker_single_container_smoke.py` owns the
+# assertion (and its negative control); this file only decides WHICH image it runs against.
+#
+# 🪤 IT BUILDS THE IMAGE, IT DOES NOT PULL `:latest`. Two reasons, and the first is the
+# important one:
+#
+#   1. A published tag is a PAST commit. Pulling `:latest` would answer "did the last release
+#      bundle the SPA", never "does the change in this PR keep bundling it" — so a PR that
+#      deleted the web stage would be green here until the next release, which is the
+#      regression this rail exists to catch.
+#   2. `ghcr-anonymous-pull.yml` already owns the published-artifact question (both packages
+#      anonymously pullable, credential-free, daily). Duplicating a pull here would add a
+#      second, weaker copy of that rail rather than a new assertion.
+#
+# The smoke tool takes `--image`, so pointing it at `ghcr.io/personalclaw/personalclaw-gateway:latest`
+# from a `workflow_dispatch` is a one-flag change if the published image ever needs checking
+# directly — but that assertion cannot be green before the first release built from this
+# commit, so it is deliberately not wired as a standing gate.
+name: Docker single-container dashboard
+
+on:
+  pull_request:
+    paths:
+      - deploy/docker/Dockerfile.backend
+      - .dockerignore
+      - setup.py
+      - MANIFEST.in
+      - README.md
+      - web/**
+      - package.json
+      - package-lock.json
+      - tools/docker_single_container_smoke.py
+      - .github/workflows/docker-single-container.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/docker/Dockerfile.backend
+      - .dockerignore
+      - setup.py
+      - MANIFEST.in
+      - README.md
+      - web/**
+      - package.json
+      - package-lock.json
+      - tools/docker_single_container_smoke.py
+      - .github/workflows/docker-single-container.yml
+  workflow_dispatch:
+
+# Same branch-keyed dedupe as ci.yml — see the two traps documented in its `concurrency`
+# block for why this is keyed on the branch rather than on `github.ref` or the head SHA.
+concurrency:
+  group: docker-single-container-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  single-container:
+    runs-on: ubuntu-latest
+    # The image build is the long pole: a CPU-only torch install, the bundled ACP adapter
+    # CLIs, and now a Node stage for the SPA. Bounded well above its measured cost rather
+    # than tightly — #3326 was the cost of setting a bound BELOW a job's own runtime.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build the gateway image (amd64, runtime target)
+        # `--target runtime` skips the in-image `test` stage (stage 3): this job's question is
+        # whether the shipped image serves a dashboard, and ci.yml already runs the suite.
+        run: |
+          docker build \
+            --file deploy/docker/Dockerfile.backend \
+            --target runtime \
+            --tag personalclaw-gateway:dist15-ci \
+            .
+
+      - name: Assert the README one-liner reaches a usable dashboard
+        # Run from a scratch directory, per the clause. The tool makes its own temp cwd so the
+        # checkout cannot satisfy the command by accident, and rewrites only the image ref,
+        # the container name and the volume name.
+        run: python3 tools/docker_single_container_smoke.py --image personalclaw-gateway:dist15-ci

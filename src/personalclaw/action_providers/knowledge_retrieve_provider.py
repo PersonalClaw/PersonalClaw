@@ -73,6 +73,9 @@ class KnowledgeRetrieveActionProvider(ActionProvider):
             "filters": {"kind": "fact", "tags": ["perf"]},
             "task_text": "…"                 # optional; matched against read_when triggers
         }
+
+    ``filters.tags`` requires EVERY listed name (case-insensitive); a single string is
+    accepted as a one-name list. See :func:`_apply_filters`.
     """
 
     @property
@@ -116,7 +119,7 @@ class KnowledgeRetrieveActionProvider(ActionProvider):
             return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
 
         hits, strategy = _search(store, query, top_k=top_k, mode=str(cfg.get("mode", "semantic")))
-        hits = _apply_filters(_enrich(store, hits), filters, strategy=strategy)
+        hits = _apply_filters(store, _enrich(store, hits), filters, strategy=strategy)
         items = [
             _shape_hit(store, hit, query=query, detail=detail, rank=index)
             for index, hit in enumerate(hits[:top_k])
@@ -324,15 +327,50 @@ def _enrich(store, hits: list[dict]) -> list[dict]:
     return out
 
 
-def _apply_filters(hits: list[dict], filters: dict[str, Any], *, strategy: str) -> list[dict]:
-    """Filter by kind, and apply the relevance cliff ONLY where scores are similarities.
+def _requested_tags(filters: dict[str, Any]) -> set[str]:
+    """The ``filters.tags`` names to require, casefolded. ``{}`` when none are asked for.
+
+    Accepts a list of names or a single name (``"tags": "perf"``), because both shapes
+    read naturally in a template binding. Any other shape asks for nothing — the same
+    posture as a non-dict ``filters``. Blanks and non-strings are dropped, mirroring
+    :func:`knowledge.store._clean_tag_names`, the one funnel every tag WRITE goes
+    through: a name that cannot be stored cannot be required.
+    """
+    raw = filters.get("tags")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return set()
+    return {e.strip().casefold() for e in raw if isinstance(e, str) and e.strip()}
+
+
+def _apply_filters(
+    store, hits: list[dict], filters: dict[str, Any], *, strategy: str
+) -> list[dict]:
+    """Filter by kind and tags, and apply the relevance cliff ONLY where scores are
+    similarities.
 
     Applied after search rather than in SQL, so a filtered-out hit still counted toward the
     ranking that produced it.
+
+    ``tags`` is a CONJUNCTION — a hit survives only when it carries every requested name —
+    because a filter narrows, exactly as ``kind`` does; the union is what an unfiltered
+    query already returns. Matching is case-insensitive: tag names are stored with the
+    user's spelling preserved (``_clean_tag_names`` only strips), so a case-sensitive
+    compare would silently drop ``Perf`` for a request for ``perf``. The join is one
+    batched query for the whole hit page, and only when tags were actually requested.
     """
     kind = str(filters.get("kind", "") or "").strip().lower()
     if kind:
         hits = [h for h in hits if str(h.get("kind", "") or "").lower() == kind]
+    wanted = _requested_tags(filters)
+    if wanted:
+        by_item = store._tags_for_items([str(h.get("id", "") or "") for h in hits])
+        hits = [
+            h
+            for h in hits
+            if wanted <= {t.casefold() for t in by_item.get(str(h.get("id", "") or ""), []) if t}
+        ]
     if strategy == "hybrid":
         # RRF scores are ~1/(60+rank); a similarity cliff here would reject everything.
         return hits

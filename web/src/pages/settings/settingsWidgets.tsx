@@ -12,7 +12,7 @@ import { notify } from '../../app/appSdk'
 // `.catch(() => null as MemoryStats | null)`. A substitute has to be typed; a rejection does not.
 // So the import list shrinking by fourteen names is not tidying, it is the measure of how much of
 // this file existed to describe data the server never sent.
-import { api, type SavedAgent, type InstalledPackRec } from '../../lib/api'
+import { api, type SavedAgent } from '../../lib/api'
 // One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
 // through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
 // the number this tile shows is the DEFAULT those rows fall back to. A second formatter here would
@@ -275,12 +275,15 @@ const useWorkflowsCfg = () => useQuery('settings:workflows', () =>
   api.personalclawConfig().then((c) => (c.workflows ?? {}) as Record<string, unknown>), { persist: true })
 const useLoopsCfg = () => useQuery('settings:loops', () =>
   api.personalclawConfig().then((c) => (c.loops ?? {}) as Record<string, unknown>), { persist: true })
-// The installed ledger, byte-identical to `PacksPanel`'s read — including its `.catch`, which is
-// what makes the key safe to share. Keeping the swallow means a failed ledger read shows `0` here
-// exactly as the panel shows "No packs installed yet"; de-swallowing it is the panel's fix to make,
-// not something to do from the hub in half.
+// The installed ledger, byte-identical to `PacksPanel`'s read — which is what makes the key safe to
+// share, and why this fetcher moved in the SAME commit the panel's did (#532). The note here used to
+// say the swallow was the panel's fix to make, "not something to do from the hub in half"; that was
+// the right reading of the constraint and this is the other half of it. A divergent fetcher primes
+// `settings:packs:installed` with a different substitute, so leaving `.catch(() => [])` here would
+// have made the panel's new error branch unreachable on every hub→panel journey — the panel would
+// paint "No packs installed yet" off the hub's cached `[]` while its own read was never attempted.
 const usePacksInstalled = () => useQuery('settings:packs:installed', () =>
-  api.packsInstalled().catch(() => [] as InstalledPackRec[]), { persist: true })
+  api.packsInstalled(), { persist: true })
 // The LIVE advertiser, not the flag that requests it — `CompanionPanel`'s own key and fetcher. The
 // two legitimately disagree (a loopback-only gateway advertises nothing by design), and a tile that
 // showed only `discovery_enabled` would render that disagreement as success. This read is why the
@@ -534,8 +537,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // "evals" the config key uses: a user searching for either word must find this.
     useSearchText() {
       const { data: e } = useEvals()
-      const on = e ? `${e.enabled ? 'on enabled' : 'off disabled'} k ${e.study_default_k} budget ${e.default_budget_usd} agreement ${e.judge_agreement_floor} ablation every ${e.ablation_cadence_days} days` : ''
-      return `evals evaluations eval substrate study studies a/b ab test template judge benchmark retrieval benchmark ablation bake-off budget agreement floor ${on}`
+      // The benchmark ref is included as its SAVED VALUE, not just as the words "benchmark model":
+      // a user who bound `LocalOllama:gemma4:12b` and later wonders where that name is configured
+      // will search for the provider, and this tile is the only place that answers.
+      const on = e ? `${e.enabled ? 'on enabled' : 'off disabled'} k ${e.study_default_k} budget ${e.default_budget_usd} agreement ${e.judge_agreement_floor} ablation every ${e.ablation_cadence_days} days ${e.benchmark_model_ref || 'default chat model fallback'}` : ''
+      return `evals evaluations eval substrate study studies a/b ab test template judge benchmark retrieval benchmark ablation bake-off budget agreement floor benchmark model provider binding gate ${on}`
     },
     render(query, go) {
       const { data: e, error: evalErr, refresh, stale: eStale, status: eStatus } = useEvals()
@@ -773,16 +779,17 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
     render(query, go) {
       const { data: p, status: pStatus, error: packsErr, refresh: pRefresh, stale: pStale } = usePacksCfg()
-      // The installed-ledger read KEEPS its fallback (it is byte-identical to `PacksPanel`'s, which
-      // is the contract for a shared key), so it can only be `undefined` while loading — never
-      // failed. The tile's failure therefore comes from the CONFIG read alone, which is the one that
-      // backs the card's claim.
-      const { data: installed } = usePacksInstalled()
+      // TWO reads, and EITHER of them failing is a failure of this card (#532). The ledger read no
+      // longer swallows, so `undefined` is now loading OR failed, and `installed?.length ?? 0` would
+      // print a hard `0` beside "installed packs" — a COUNT, which is precisely the thing a failed
+      // read does not have. The big number is the card's whole claim, so it is gated on both.
+      const { data: installed, status: iStatus, error: installedErr, refresh: iRefresh } = usePacksInstalled()
       const n = installed?.length ?? 0
       return (
         <BentoCard icon={Package} title="Packs" query={query} onClick={() => go('packs')}
           loading={p === undefined || installed === undefined} stale={pStale}
-          failed={pStatus === 'error'} error={packsErr} onRetry={pRefresh}>
+          failed={pStatus === 'error' || iStatus === 'error'} error={packsErr ?? installedErr}
+          onRetry={() => { pRefresh(); iRefresh() }}>
           {p && installed && <>
             <BigStat value={n} caption={n === 1 ? 'installed pack' : 'installed packs'} />
             <div data-type="caption" className="mt-1.5 text-on-surface-low">

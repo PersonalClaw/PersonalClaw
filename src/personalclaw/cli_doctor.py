@@ -1,5 +1,6 @@
 """CLI doctor subcommand — verify PersonalClaw setup and diagnose issues."""
 
+import importlib.util
 import json
 import os
 import shutil
@@ -804,12 +805,26 @@ def _doctor() -> None:
     # environment created before the dep landed may not have it until
     # `pip install -e .[stt]` is re-run. Catching that here avoids a blank mic
     # click at runtime.
+    #
+    # PRESENCE ONLY — never `import faster_whisper` here (#3324). That import pulls
+    # torch, whose bundled libomp.dylib is a SECOND copy of the OpenMP runtime; a
+    # process holding both it and faiss's copy aborts (SIGABRT, `OMP: Error #15`) the
+    # next time faiss enters a parallel region, which is the `search` every episodic
+    # write does to dedup. This line was the suite's only torch-residency site, so it
+    # aborted whichever xdist worker later ran a faiss-searching test — reported as
+    # `worker 'gwN' crashed` against an unrelated test name. `find_spec` answers the
+    # question this probe actually asks, "is the dep installed in this env", without
+    # executing the package. The trade-off is deliberate: a package that is installed
+    # but broken now reads as present here, and surfaces at first use instead. The
+    # invariant is enforced by tests/native_omp_guard.py.
     if stt_active and stt_resolved is not None:
         try:
-            import faster_whisper  # noqa: F401
-
-            print("  faster_whisper: ✅ importable")
-        except ImportError:
+            found = importlib.util.find_spec("faster_whisper") is not None
+        except (ImportError, ValueError):
+            found = False
+        if found:
+            print("  faster_whisper: ✅ installed")
+        else:
             print("  faster_whisper: ❌ missing")
             print("               Fix: pip install faster-whisper")
             issues.append("faster_whisper missing")

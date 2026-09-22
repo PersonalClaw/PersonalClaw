@@ -25,7 +25,11 @@ A census that matched nothing would satisfy both claims vacuously, so its own fl
 asserted (``test_the_census_is_not_vacuous``) and its firing is proven BY EXECUTION on
 planted bypasses every run (``test_the_census_reds_on_a_planted_bypass``,
 ``test_the_census_reds_on_a_planted_bypass_behind_a_local_alias``) — including one hidden
-behind a local variable, which is the only form any real site actually takes.
+behind a local variable, which is the only form any real site actually takes, and two more
+for the one construct that can hide a site from the census without deleting it: a
+module-private helper the path is passed INTO
+(``test_a_declared_helper_is_seen_at_its_call_site``,
+``test_a_declared_helpers_path_parameter_is_really_tracked``).
 """
 
 from __future__ import annotations
@@ -65,11 +69,33 @@ DESTRUCTIVE_CALLS = {
     "os.remove": {0},
     "os.unlink": {0},
 }
+#: Module-private helpers that receive one of the two copy paths as a PARAMETER, and in
+#: which argument position. Declared, never inferred, because a helper is exactly how a
+#: reviewed site stops being derivable: the census keys on ``(enclosing function, callee,
+#: argument position)`` and tracks taint only WITHIN a function, so a path that arrives as a
+#: parameter is untainted and every primitive the helper runs on it goes unseen (#3324 moved
+#: ``uninstall_keep_data``'s ``copytree`` into ``_copy_live_tree`` and the census went from
+#: six sites to five with nothing added — a still-present copy reading as a deleted one).
+#:
+#: Each entry buys TWO things, and both are needed to replace what the inlined call gave us:
+#:
+#: * the CALL is a destroy/overwrite of that argument, so a caller that hands the helper a
+#:   different path — or the same paths in the other order — reds at the call site;
+#: * inside the helper that parameter name is a taint source, so the primitives it actually
+#:   runs (``copytree`` onto it, ``rmtree`` of a partial attempt) are enumerated like any
+#:   other site, rather than being trusted because they are one call deeper.
+#:
+#: ``_copy_live_tree`` takes a copy path as its DESTINATION only; its source is always the
+#: live app tree (``live_data`` / ``old_data``), which is not one of the two paths.
+PATH_TAKING_HELPERS = {"_copy_live_tree": {1: "dst"}}
+
+DESTRUCTIVE_CALLS.update({fn: set(params) for fn, params in PATH_TAKING_HELPERS.items()})
+
 #: Methods that destroy or overwrite their RECEIVER.
 DESTRUCTIVE_METHODS = frozenset({"rename", "replace", "unlink", "rmdir"})
 
 #: The functions allowed to hold one of these decisions at all.
-OWNERS = frozenset({"_discard_preserved_data", "install", "uninstall_keep_data"})
+OWNERS = frozenset({"_discard_preserved_data", "install", "uninstall_keep_data", "_copy_live_tree"})
 
 #: The reviewed census. ``(function, callee, roles) -> how many times``.
 #:
@@ -80,8 +106,19 @@ OWNERS = frozenset({"_discard_preserved_data", "install", "uninstall_keep_data"}
 #: * ``install`` / ``rmtree(parked)`` — GC after the restore is past rollback. Safe because
 #:   the copy has just been reproduced inside the app tree; a FAILED restore returns
 #:   ``None`` instead, so this never runs on a copy that was not consumed.
-#: * ``uninstall_keep_data`` / ``copytree(live_data, staged)`` — mints the stage. The only
-#:   writer of that path in the codebase.
+#: * ``uninstall_keep_data`` / ``_copy_live_tree(live_data, staged)`` — mints the stage. The
+#:   only writer of that path in the codebase. It delegates to ``_copy_live_tree`` rather
+#:   than calling ``copytree`` inline because a LIVE app's ``data/`` can change under the
+#:   walk (#3324); the two entries below are that helper's own primitives, so the delegation
+#:   and what it delegates to are BOTH reviewed and neither is trusted by being one call
+#:   deeper. This entry is what reds if the arguments are ever swapped.
+#: * ``_copy_live_tree`` / ``copytree(src, dst)`` — the copy itself. Writes only the
+#:   destination it was handed; the source is the live tree and is read-only here.
+#: * ``_copy_live_tree`` / ``rmtree(dst)`` — clears a PARTIAL destination between retries.
+#:   Safe because it acts on a tree this same call created moments earlier and abandoned,
+#:   never on a last copy: the only path in is a ``copytree`` that raised, and the caller's
+#:   ``live_data`` is still on disk throughout. On the final attempt it re-raises instead,
+#:   so the caller's fail-closed branch is unchanged.
 #: * ``uninstall_keep_data`` / ``rmtree(staged)`` ×2 — the two fail-closed cleanups
 #:   (preserve failed; ``force_uninstall`` refused). Both act on a stage THIS call created
 #:   while ``live_data`` is still on disk, which is only true because the rung refuses when
@@ -93,7 +130,9 @@ EXPECTED = Counter(
     {
         ("_discard_preserved_data", "shutil.rmtree", ("arg0",)): 1,
         ("install", "shutil.rmtree", ("arg0",)): 1,
-        ("uninstall_keep_data", "shutil.copytree", ("arg1",)): 1,
+        ("uninstall_keep_data", "_copy_live_tree", ("arg1",)): 1,
+        ("_copy_live_tree", "shutil.copytree", ("arg1",)): 1,
+        ("_copy_live_tree", "shutil.rmtree", ("arg0",)): 1,
         ("uninstall_keep_data", "shutil.rmtree", ("arg0",)): 2,
         ("uninstall_keep_data", ".rename", ("recv",)): 1,
     }
@@ -119,8 +158,10 @@ def census(source: str) -> list[tuple[tuple[str, str, tuple[str, ...]], str, int
             continue
         # Intra-function taint: names bound to an expression naming a taint source, then
         # transitively to those names. Bounded and order-dependent on purpose — it models
-        # "the local variable holding this path", which is all any site here does.
-        tainted: set[str] = set()
+        # "the local variable holding this path", which is all any site here does. Seeded
+        # with a declared helper's path PARAMETERS, the one case where the path does not
+        # arrive through an assignment at all.
+        tainted: set[str] = set(PATH_TAKING_HELPERS.get(fn.name, {}).values())
         for node in ast.walk(fn):
             value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
             if value is None:
@@ -189,12 +230,19 @@ def test_the_census_is_not_vacuous():
 
     ``EXPECTED`` is not the floor — it is derived from the same parse, so an ``EXPECTED``
     edited down to ``{}`` alongside a broken parser would still be "equal". These bounds
-    are absolute: at least the five known real sites, and at least three of them resolved
-    through the ALIAS path, because every real one is a local variable and a tracker that
-    only matched literal ``_preserved_data_dir(...)`` in an argument would score zero.
+    are absolute: at least the eight known real sites, and at least three of them resolved
+    through the ALIAS path, because every real one is a local variable (or a declared
+    helper's path parameter) and a tracker that only matched literal
+    ``_preserved_data_dir(...)`` in an argument would score zero.
+
+    The floor is a RATCHET, so it moves only upward and only with a reviewed site behind
+    each step: it was six until #3324 moved the stage's ``copytree`` into
+    ``_copy_live_tree``, and it is eight because that helper's delegation plus its two own
+    primitives are now all enumerated. Lowering it to match a census that stopped matching
+    something is how this rail dies green.
     """
     sites = census(SRC.read_text(encoding="utf-8"))
-    assert len(sites) >= 6, f"the census found only {len(sites)} sites; it has gone blind"
+    assert len(sites) >= 8, f"the census found only {len(sites)} sites; it has gone blind"
     aliased = [s for s in sites if s[1] == "alias"]
     assert len(aliased) >= 3, (
         f"only {len(aliased)} sites resolved through the alias tracker; a literal-only "
@@ -206,9 +254,15 @@ def test_the_census_is_not_vacuous():
     )
 
 
-def _plant(source: str, statement: str) -> str:
-    """Insert *statement* as the first line of ``enable`` — not an owner."""
-    marker = 'def enable(name: str, *, caller: str = "app_manager") -> bool:'
+#: The planting site for a bypass: a real function that is NOT an owner, so a plant reds the
+#: owner claim as well as the census one.
+ENABLE_MARKER = 'def enable(name: str, *, caller: str = "app_manager") -> bool:'
+#: The planting site for proving a declared helper's path parameter is really tracked.
+HELPER_MARKER = "def _copy_live_tree(src: Path, dst: Path) -> None:"
+
+
+def _plant(source: str, statement: str, marker: str = ENABLE_MARKER) -> str:
+    """Insert *statement* as the first line of *marker*'s body (default ``enable``)."""
     assert marker in source, "the planting site moved; pick another non-owner function"
     head, _, tail = source.partition(marker)
     body_start = tail.index("\n") + 1
@@ -240,6 +294,42 @@ def test_the_census_reds_on_a_planted_bypass(statement, label):
     hows = {how for key, how, _line in planted if key[0] == "enable"}
     assert hows == {label}, f"the bypass was found, but by the wrong route: {hows}"
     assert "enable" not in OWNERS  # so the owner claim reds too
+
+
+def test_a_declared_helper_is_seen_at_its_call_site():
+    """The first half of a ``PATH_TAKING_HELPERS`` entry, proven by execution.
+
+    A helper that overwrites the path it is handed has to red at the CALL, or swapping its
+    arguments — handing the live tree where the copy belongs — would be invisible: the
+    helper's own body is keyed on parameter names and looks identical either way.
+    """
+    planted = census(
+        _plant(SRC.read_text(encoding="utf-8"), "_copy_live_tree(name, _preserved_data_dir(name))")
+    )
+    new = Counter(key for key, _how, _line in planted) - EXPECTED
+    assert new == Counter(
+        {("enable", "_copy_live_tree", ("arg1",)): 1}
+    ), f"a declared path-taking helper was invisible at its call site: {new}"
+    assert "enable" not in OWNERS  # so the owner claim reds too
+
+
+def test_a_declared_helpers_path_parameter_is_really_tracked():
+    """The second half, proven by execution: a new destroy INSIDE the helper is seen.
+
+    This is the hole #3324 opened — the census tracks taint within a function, so a path
+    arriving as a parameter is untainted and every primitive run on it is unseen. Seeding
+    the declared parameter closes it, and this plant is what proves the seeding is live
+    rather than the entry merely being spelled in a dict.
+    """
+    planted = census(
+        _plant(SRC.read_text(encoding="utf-8"), "shutil.rmtree(dst)", marker=HELPER_MARKER)
+    )
+    new = Counter(key for key, _how, _line in planted) - EXPECTED
+    assert new == Counter(
+        {("_copy_live_tree", "shutil.rmtree", ("arg0",)): 1}
+    ), f"a destroy of the copy path inside a declared helper was invisible: {new}"
+    hows = {how for key, how, _line in planted if key[0] == "_copy_live_tree"}
+    assert hows == {"alias"}, f"the helper's sites were found, but by the wrong route: {hows}"
 
 
 def test_no_other_module_reaches_the_data_copy_paths():

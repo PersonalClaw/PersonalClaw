@@ -1522,6 +1522,77 @@ async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# ── Preference facets (C15) ──────────────────────────────────────────────────
+# The override half of the facet feature. The flags persisted and every scoring branch read
+# them, but no route could set one, so the documented pinned/forgotten behaviour was
+# unreachable from anywhere a user can get to (#1783). Shaped like the slot editor above and
+# for the same reason: both are the human correcting learned state.
+
+
+async def api_memory_facets(request: web.Request) -> web.Response:
+    """GET /api/memory/facets — every preference facet WITH its key, state and decay.
+
+    Not the identity report's facet section: that one drops the key and hides forgotten
+    facets, so nothing there can be addressed. Facet text is user prose, so it goes through
+    the same redaction every other memory field on this surface does.
+    """
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    facets = await loop.run_in_executor(None, svc.facets)
+    for facet in facets:
+        facet["text"] = _redact_memory_field(facet.get("text"))
+    return web.json_response({"facets": facets})
+
+
+async def api_memory_facet_pin(request: web.Request) -> web.Response:
+    """POST /api/memory/facets/{key}/pin — hold a facet at full stability, or release it.
+
+    ``{"pinned": false}`` unpins, which is why this is one route and not a pin/unpin pair:
+    pinning says "keep trusting this" and has no reason to be a one-way door.
+    """
+    svc = _get_service(request.app["state"])
+    key = request.match_info.get("key", "")
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    if not key:
+        return web.json_response({"error": "facet key is required"}, status=400)
+    pinned = bool(body.get("pinned", True))
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(None, lambda: svc.facet_pin(key, pinned))
+    if not ok:
+        return web.json_response({"error": "no such facet"}, status=404)
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_facet_pin", outcome="success"
+    )
+    return web.json_response({"ok": True, "pinned": pinned})
+
+
+async def api_memory_facet_forget(request: web.Request) -> web.Response:
+    """POST /api/memory/facets/{key}/forget — retire a facet. FINAL.
+
+    A forget route rather than a DELETE, exactly like the slot line retire above: the row
+    survives so the memory event log keeps the history. It takes no body because there is
+    nothing to choose — the flag cannot be lifted (``decayed_stability`` reads ``forgotten``
+    before ``pinned``, and ``reinforce`` never clears it), so re-observing the preference
+    cannot resurrect it. That finality is the point, and it is what obliges the caller to
+    confirm first.
+    """
+    svc = _get_service(request.app["state"])
+    key = request.match_info.get("key", "")
+    if not key:
+        return web.json_response({"error": "facet key is required"}, status=400)
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(None, lambda: svc.facet_forget(key))
+    if not ok:
+        return web.json_response({"error": "no such facet"}, status=404)
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_facet_forget", outcome="success"
+    )
+    return web.json_response({"ok": True})
+
+
 async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
     """POST /api/memory/graph/rebuild — seed entities, then link every record.
 

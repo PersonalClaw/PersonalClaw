@@ -6,6 +6,7 @@ import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
 import { readableErrText } from '../lib/errText'
+import { ApiError } from '../lib/api'
 import { PageTitle } from './PageTitle'
 import { Surface } from './Surface'
 
@@ -108,6 +109,63 @@ export function EmptyState({ icon: Icon, title, hint, action }: {
         <Button onClick={action.onClick}>{action.icon && <action.icon size={16} />} {action.label}</Button>
       )}
     </div>
+  )
+}
+
+/** The reason a read failed, as ONE sentence that is never empty.
+ *
+ *  `LoadError` above is the right answer for a list page, and the wrong one for the surfaces
+ *  where the #532 swallow class actually concentrated: a command palette, a mention menu, a path
+ *  bar, a settings row. Those have nowhere to put a centred 32px alert block, and measured across
+ *  the tree that is what they did about it — resolve the rejection into `[]` and let the empty
+ *  state speak for the server. So the message logic is a function here, usable by any surface
+ *  whatever its shape, and `InlineLoadError` below is the one-line rendering of it.
+ *
+ *  Modelled on `projects/ProjectsSection.tsx`'s `dirErrorMessage`, which has discriminated on
+ *  `ApiError.status` since 2026-09 and is the in-repo precedent #532 asked every site to copy.
+ *  The order matters and is not the one that reads as obvious:
+ *
+ *    1. a message the BACKEND AUTHORED wins outright — that is what `errEnvelope` exists to
+ *       preserve, and "no model resolves for chat" beats any sentence written here;
+ *    2. otherwise the STATUS discriminates, because 404 and 403 are different facts and a
+ *       surface that renders one sentence for both has thrown the distinction away;
+ *    3. otherwise a generic sentence naming `what`.
+ *
+ *  🪤 IT NEVER RETURNS `''`. `readableErrText` deliberately does, so a caller with its own
+ *  written fallback can supply one — and a caller that forgets renders an empty line, which is
+ *  this issue's whole defect wearing a different hat. Every branch here ends in a sentence.
+ */
+export function loadErrorMessage(error: unknown, what: string): string {
+  const authored = readableErrText(error)
+  if (authored) return authored
+  const status = error instanceof ApiError ? error.status : 0
+  if (status === 404) return `Couldn't load ${what} — it no longer exists.`
+  if (status === 401 || status === 403) return `Couldn't load ${what} — you don't have access.`
+  return `Couldn't load ${what}.`
+}
+
+/** One-line load failure for a surface too small to host `LoadError` — palette, menu, bar, row.
+ *
+ *  `role="alert"` for the same reason `LoadError` has one: a load failure is unrequested bad news
+ *  that changes what the surface means. The empty states these sit beside deliberately have no
+ *  live region, and that difference is the point — it is what makes "we could not load this" and
+ *  "you have none" distinguishable to a screen reader as well as on screen. */
+export function InlineLoadError({ what, error, onRetry }: {
+  /** A lowercase bare noun, same convention as `LoadError`: "your prompts", "run history". */
+  what: string
+  error?: unknown
+  onRetry?: () => void
+}) {
+  return (
+    <p role="alert" data-type="body-m" className="flex items-center gap-1.5 py-xs text-on-surface-low">
+      <AlertTriangle size={14} className="shrink-0 text-danger opacity-70" aria-hidden />
+      <span>{loadErrorMessage(error, what)}</span>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="shrink-0 underline hover:text-on-surface">
+          Retry
+        </button>
+      )}
+    </p>
   )
 }
 

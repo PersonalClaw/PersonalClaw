@@ -1,0 +1,52 @@
+# The scheduled, credential-free rail over anonymous GHCR pull — DIST-14 clause 2.
+#
+# `release.yml` publishes `personalclaw-gateway` and `personalclaw-web`, and its own smoke
+# pull is CREDENTIALED — which is exactly why a fully green board never noticed that both
+# packages are private and every public `docker pull` fails. `deploy/compose/compose.yaml`
+# pulls them by default, so a private package breaks the documented two-command install
+# before any other question arises.
+#
+# This workflow is the standing observer for that, and the two details below are the whole
+# reason it is a workflow rather than a line in `release.yml`.
+name: GHCR anonymous pull
+
+on:
+  schedule:
+    # Daily, deliberately off the hour and off 07:00 UTC where full.yml and
+    # headless-run-smoke.yml already sit. A day is the detection window for a package
+    # visibility change; the job itself is four HTTP requests.
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+# No credentials, anywhere in this file. `permissions: {}` at the top AND on the job:
+# without it Actions hands the job a default GITHUB_TOKEN that CAN pull a private package,
+# and the assertion silently becomes "a credentialed pull works" — which was already true
+# and already useless. The job level is the one that binds (a job may widen the top-level
+# default), so the duplication is deliberate rather than tidy.
+permissions: {}
+
+jobs:
+  anonymous-pull:
+    runs-on: ubuntu-latest
+    # Four HTTP requests plus a checkout; the run measures well under a minute. Bounded
+    # with wide headroom on purpose: #3318/#3320 established that every job here carries a
+    # bound, and #3326 was the cost of setting one BELOW a job's own measured runtime.
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The expected image tag is derived from the repo's release tags by
+          # `scripts/release_tags.py`, so the tags must be present — a shallow checkout
+          # would leave the tag half of the assertion passing on an empty expectation.
+          # The tool refuses (exit 2) rather than skipping if they are missing.
+          fetch-depth: 0
+          # Drop the git credential helper once the checkout is done: nothing after this
+          # step may hold anything that could authenticate to github.com.
+          persist-credentials: false
+      - name: Assert both GHCR packages are anonymously pullable
+        # No `env:` block. Mapping any token in here — even `github.token` — would put a
+        # credential in scope and the tool exits 2 rather than reporting a green it cannot
+        # justify. Exit 1 = our packages regressed; exit 2 = the run could not measure
+        # (a control failed), which is a different finding and says so in its annotation.
+        run: python3 tools/ghcr_anonymous_pull.py

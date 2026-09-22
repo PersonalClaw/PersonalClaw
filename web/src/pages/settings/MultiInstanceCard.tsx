@@ -5,6 +5,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { InlineLoadError } from '../../ui/ListScaffold'
 import { Toggle } from './settingsUI'
 import { SchemaField, schemaDefaults } from './ProviderConfigForm'
 import { TextInput } from '../../ui/forms'
@@ -30,9 +31,18 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
     () => api.providerSchema(ext.name).catch(() => ({ properties: {} } as ProviderSchema)),
     { persist: true },
   )
-  const { data: instances, refresh: refreshInstances } = useQuery(
+  // 🔴 THE INSTANCE LIST IS NOT THE SCHEMA READ, and that is why only one of this file's two
+  // fallbacks is deliberate (#532). The schema's `{ properties: {} }` renders NOTHING — every
+  // caller turns it into `props.length === 0` → no form — so it claims nothing. This read backs
+  // a SENTENCE: `[]` printed "No instances yet. Add one to start using this provider." over a
+  // provider with five configured MCP servers, and the header chip said "0 instances" beside it.
+  // An unreadable list is not an empty list, and only one of those two may be said out loud.
+  //
+  // The `Promise.resolve([])` on the disabled branch is not a swallow — a disabled provider has no
+  // instances to fetch and nothing rejected.
+  const { data: instances, error: instancesErr, refresh: refreshInstances } = useQuery(
     `settings:provider-instances:${ext.name}:${ext.enabled ? 'on' : 'off'}`,
-    () => ext.enabled ? api.providerInstances(ext.name).catch(() => [] as ProviderInstance[]) : Promise.resolve([] as ProviderInstance[]),
+    () => ext.enabled ? api.providerInstances(ext.name) : Promise.resolve([] as ProviderInstance[]),
     { persist: true },
   )
   const reloadInstances = () => { invalidateKeys(`settings:provider-instances:${ext.name}`, true); refreshInstances() }
@@ -53,7 +63,9 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
             <span data-type="title-m" className="truncate text-on-surface" style={fvs(500)}>{ext.displayName || ext.name}</span>
             {ext.version && <span data-type="caption" className="text-on-surface-low">v{ext.version}</span>}
             <span data-type="caption" className="rounded-pill px-1.5 py-0.5" style={accentChip}>multi-instance</span>
-            {ext.enabled && <span data-type="caption" className="text-on-surface-low">{count} {count === 1 ? 'instance' : 'instances'}</span>}
+            {/* Gated on `instances`, not just on `enabled`: "0 instances" is a count, and a count
+                is the one thing a failed read does not have. */}
+            {ext.enabled && instances && <span data-type="caption" className="text-on-surface-low">{count} {count === 1 ? 'instance' : 'instances'}</span>}
           </div>
           {ext.description && <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{ext.description}</p>}
         </div>
@@ -63,7 +75,12 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
 
       {ext.enabled && (
         <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/30 pt-3">
-          {instances === undefined ? (
+          {instancesErr && !instances ? (
+            // One line, not a centred alert block: this sits inside a provider card in a stack of
+            // them, which is the shape `InlineLoadError` exists for. Add-instance stays offered
+            // below — a failed list read is no reason to withhold the action that still works.
+            <InlineLoadError what="this provider's instances" error={instancesErr} onRetry={reloadInstances} />
+          ) : instances === undefined ? (
             <div data-type="caption" className="py-1 text-on-surface-low"><Loader2 size={12} className="inline animate-spin" /> Loading instances…</div>
           ) : instances.length === 0 && !adding ? (
             <p data-type="body-s" className="text-on-surface-low">No instances yet. Add one to start using this provider.</p>

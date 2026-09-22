@@ -6,7 +6,7 @@ import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } fro
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
-import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // The editable packs.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -28,8 +28,18 @@ export function PacksPanel() {
     api.personalclawConfig().then((c) => (c.packs ?? {}) as PacksCfg),
     { persist: true },
   )
-  const { data: installed, refresh: refreshInstalled } = useQuery('settings:packs:installed', () =>
-    api.packsInstalled().catch(() => [] as InstalledPackRec[]),
+  // 🔴 TWO false claims came out of this one fallback (#532). `[]` made "Installed packs" read "No
+  // packs installed yet — install one from the pack store below", and it emptied the store's `have`
+  // set, so every pack the user already had offered **Install** again. The second is the worse
+  // half: it is not a silence, it is an invitation to redo work that is already done.
+  //
+  // 🔑 AND ITS TWIN MOVED IN THIS COMMIT. `settingsWidgets.tsx`'s `usePacksInstalled` reads the
+  // SAME key, and its own comment recorded the contract: a divergent fetcher primes
+  // `settings:packs:installed` with a different substitute and makes THIS panel's error branch
+  // unreachable on the hub→panel journey ("de-swallowing it is the panel's fix to make"). This is
+  // that fix, so both fetchers are de-swallowed together — one key, one answer.
+  const { data: installed, error: installedErr, refresh: refreshInstalled } = useQuery('settings:packs:installed', () =>
+    api.packsInstalled(),
     { persist: true },
   )
 
@@ -81,10 +91,12 @@ export function PacksPanel() {
 
       <ProposalsSection onInstalled={onInstalled} />
 
-      <PackStoreSection installed={installed ?? []} onInstalled={onInstalled} />
+      {/* `installed` travels UNDEFAULTED to both surfaces, with its rejection beside it. `?? []` here
+          would re-fabricate the empty ledger one layer down and put back both false claims. */}
+      <PackStoreSection installed={installed} installedErr={installedErr} onRetryInstalled={onInstalled} onInstalled={onInstalled} />
 
       <Section title="Installed packs" hint="Each imported pack, its skipped-connector markers, a re-runnable setup interview when it ships one, and an update that never overwrites a component you have edited.">
-        <InstalledPacks packs={installed ?? []} />
+        <InstalledPacks packs={installed} error={installedErr} onRetry={onInstalled} />
       </Section>
     </div>
   )
@@ -235,8 +247,11 @@ export function ProposalCard({ proposal, busy, onInstall, onReject }: {
 
 /** The packs shipped in this build. Installing one runs the full import pipeline — every
  *  component scanned, triggers landing disabled, the roster staged until a human deploys it. */
-export function PackStoreSection({ installed, onInstalled }: {
-  installed: InstalledPackRec[]
+export function PackStoreSection({ installed, installedErr, onRetryInstalled, onInstalled }: {
+  /** The parent's installed ledger. `undefined` means UNKNOWN (loading or failed) — not empty. */
+  installed: InstalledPackRec[] | undefined
+  installedErr?: unknown
+  onRetryInstalled: () => void
   onInstalled: () => void
 }) {
   const [busy, setBusy] = useState('')
@@ -245,7 +260,11 @@ export function PackStoreSection({ installed, onInstalled }: {
     { persist: true },
   )
   // The installed set is the PARENT's read, passed down — not a second copy of the same query.
-  const have = new Set(installed.map((p) => p.name))
+  // `null` when the ledger is unknown, which is the state the `[]` fallback used to erase: an
+  // unreadable ledger became "you have nothing", and every row offered Install for a pack the
+  // user already had. Install is not a no-op — it re-runs the whole §3 import over components
+  // the user may have edited — so the honest row here withholds the button and says why.
+  const have = installed ? new Set(installed.map((p) => p.name)) : null
 
   const install = (name: string, label: string) => {
     setBusy(name)
@@ -259,13 +278,21 @@ export function PackStoreSection({ installed, onInstalled }: {
   return (
     <Section title="Pack store" hint="The packs shipped in this build. Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it.">
       {error ? <LoadError what="pack catalog" error={error} onRetry={refresh} /> : null}
+      {/* The catalog and the ledger fail independently, so each says so for itself: the store can
+          still list what this build ships while being unable to say which of it you already have. */}
+      {installedErr && !installed
+        ? <InlineLoadError what="your installed packs" error={installedErr} onRetry={onRetryInstalled} />
+        : null}
       <div className="flex flex-col gap-2">
         {(bundled ?? []).map((p) => (
           <RowGroup key={p.name}>
             <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
-              {have.has(p.name)
-                ? <span data-type="caption" className="text-on-surface-low">Installed</span>
-                : <Button variant="primary" size="sm" loading={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
+              {have === null
+                ? <Button variant="primary" size="sm" disabled
+                  disabledReason="Can't tell whether this is already installed — your installed-pack list didn't load. Retry it above.">Install</Button>
+                : have.has(p.name)
+                  ? <span data-type="caption" className="text-on-surface-low">Installed</span>
+                  : <Button variant="primary" size="sm" loading={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
             </Row>
           </RowGroup>
         ))}
@@ -275,7 +302,16 @@ export function PackStoreSection({ installed, onInstalled }: {
 }
 
 // ── installed packs + finish-setup chip ──────────────────────────────────────
-function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
+function InstalledPacks({ packs, error, onRetry }: {
+  packs: InstalledPackRec[] | undefined
+  error?: unknown
+  onRetry: () => void
+}) {
+  // Error first, then loading, then empty — `packs` is undefined for the first two, so an empty
+  // check ahead of them is how "install one from the pack store below" got printed at a user whose
+  // eight installed packs were sitting on disk, unreadable.
+  if (!packs && error) return <LoadError what="installed packs" error={error} onRetry={onRetry} />
+  if (!packs) return <ListSkeleton rows={2} what="installed packs" />
   if (packs.length === 0) {
     // Teach what fills it, like this panel's siblings do. The affordance is named, not hinted at:
     // the "Pack store" Section is on this same page, so the sentence is a route the reader can

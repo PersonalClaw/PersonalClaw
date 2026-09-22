@@ -73,6 +73,7 @@ from personalclaw.config.safety import (
     BudgetConfig,
     EgressConfig,
     GuardrailsConfig,
+    LoopBreakerConfig,
     SandboxConfig,
     SecurityConfig,
 )
@@ -663,6 +664,18 @@ class SessionConfig:
             "Archived chats leave the active list but stay fully searchable and can "
             "be restored at any time — nothing is deleted. 0 turns auto-archive off. "
             "Pin a chat with 'never archive' to exempt it.",
+        ),
+    )
+    context_engine: str = field(
+        default="default",
+        metadata=_meta(
+            "Context Engine",
+            "Which engine assembles each turn's context (agent prompt + memory + "
+            "skills + history). 'default' is the built-in assembly and is the only "
+            "engine shipped today; the name is read once at gateway start against the "
+            "registry in `context_engine.py`, so an unknown name logs and falls back "
+            "to 'default' rather than breaking chat. Lives here beside "
+            "Auto-Compact Threshold because an engine may take compaction over.",
         ),
     )
 
@@ -2494,6 +2507,28 @@ class ResolvedBindings:
 
 
 @dataclass
+class RoomsConfig:
+    """Agent Rooms — a shared transcript several bound agents deliberate in."""
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta("Enabled", "Enable Agent Rooms. Off refuses every room route."),
+    )
+    # The default cap a room inherits when its own round_budget is 0. A room is a
+    # multi-agent loop, so an unbounded one spends tokens until the human notices;
+    # the budget is the floor under that, and 6 rounds is enough for a real
+    # exchange while staying cheap to abandon.
+    round_budget: int = field(
+        default=6,
+        metadata=_meta("Round Budget", "Default agent rounds a room may run before pausing."),
+    )
+    max_members: int = field(
+        default=8,
+        metadata=_meta("Max Members", "Most agents one room may hold."),
+    )
+
+
+@dataclass
 class InboxConfig:
     """Inbox — reads your messages, drafts replies, presents for approval."""
 
@@ -3155,6 +3190,10 @@ class AppConfig:
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
     )
+    rooms: RoomsConfig = field(
+        default_factory=RoomsConfig,
+        metadata=_meta("Rooms", "Shared transcripts several bound agents deliberate in."),
+    )
     tools: ToolsConfig = field(
         default_factory=ToolsConfig,
         metadata=_meta("Tools", "Tool-output handling — user-teachable projection rules."),
@@ -3385,6 +3424,9 @@ class AppConfig:
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
+        rooms_data = data.get("rooms", {})
+        if not isinstance(rooms_data, dict):
+            rooms_data = {}
         tools_data = data.get("tools", {})
         if not isinstance(tools_data, dict):
             tools_data = {}
@@ -3491,6 +3533,9 @@ class AppConfig:
         breaker_data = guardrails_data.get("breaker", {})
         if not isinstance(breaker_data, dict):
             breaker_data = {}
+        loop_breaker_data = guardrails_data.get("loop_breaker", {})
+        if not isinstance(loop_breaker_data, dict):
+            loop_breaker_data = {}
         autonomy_data = guardrails_data.get("autonomy", {})
         if not isinstance(autonomy_data, dict):
             autonomy_data = {}
@@ -3631,6 +3676,10 @@ class AppConfig:
                 pool_agent=str(session_data.get("pool_agent", "")),
                 pool_ttl_secs=int(session_data.get("pool_ttl_secs", 1800)),
                 auto_archive_days=_safe_int(session_data.get("auto_archive_days"), 30),
+                # No validation here on purpose: the registry is the only thing that knows
+                # which names exist, and it is populated by app bundles that load after
+                # config. `install_engine` resolves it at gateway start and falls back.
+                context_engine=str(session_data.get("context_engine", "default") or "default"),
             ),
             loops=LoopsConfig(
                 max_cycles_hard_cap=loops_data.get("max_cycles_hard_cap", 100),
@@ -3932,6 +3981,7 @@ class AppConfig:
                 ablation_cadence_days=_safe_int(evals_data.get("ablation_cadence_days"), 30),
                 bakeoff_capture_enabled=bool(evals_data.get("bakeoff_capture_enabled", False)),
                 default_budget_usd=float(evals_data.get("default_budget_usd", 0.0) or 0.0),
+                benchmark_model_ref=str(evals_data.get("benchmark_model_ref", "") or "").strip(),
             ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),
@@ -3950,6 +4000,14 @@ class AppConfig:
                 engagement_half_life_days=float(
                     inbox_data.get("engagement_half_life_days", 0.0) or 0.0
                 ),
+            ),
+            rooms=RoomsConfig(
+                enabled=bool(rooms_data.get("enabled", False)),
+                # Clamped, not merely parsed: a 0 here would mean "inherit" to
+                # every room whose own budget is 0 and resolve to an unbounded
+                # loop, so the inheritable default can never itself be 0.
+                round_budget=max(1, _safe_int(rooms_data.get("round_budget"), 6)),
+                max_members=max(1, _safe_int(rooms_data.get("max_members"), 8)),
             ),
             tools=ToolsConfig(
                 projection_rules=[
@@ -4304,6 +4362,15 @@ class AppConfig:
                     failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
                     recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
                 ),
+                # Floored at 1, not 0: the breaker compares `total_failures >
+                # circuit_threshold`, so 0 would abort a run on its first failed tool
+                # call. `_safe_int` so a typo falls back to the shipped 30 rather than
+                # raising out of `load()`.
+                loop_breaker=LoopBreakerConfig(
+                    circuit_threshold=max(
+                        1, _safe_int(loop_breaker_data.get("circuit_threshold", 30), 30)
+                    ),
+                ),
                 # §5 rung-ladder thresholds. `_safe_int` + a floor on each, so a typo
                 # cannot produce a bar of zero approvals (which would offer a promotion
                 # to a type with no track record at all).
@@ -4441,6 +4508,7 @@ class AppConfig:
             "default_agent": self.default_agent,
             "memory_stores": {name: asdict(ms_cfg) for name, ms_cfg in self.memory_stores.items()},
             "inbox": asdict(self.inbox),
+            "rooms": asdict(self.rooms),
             "tools": asdict(self.tools),
             "feedback": asdict(self.feedback),
             "external_access": asdict(self.external_access),

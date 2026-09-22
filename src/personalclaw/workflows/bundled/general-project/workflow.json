@@ -95,7 +95,14 @@
       "streak": 2,
       "progress_field": "meaningful_progress",
       "max_iterations": 6,
-      "timeout_stall_secs": 900
+      "timeout_stall_secs": 900,
+      "supervisor": {
+        "convergence": {
+          "signal": "verify_command",
+          "command_key": "verify_command",
+          "done_check_optional": true
+        }
+      }
     },
     "body": {
       "kind": "sequence",

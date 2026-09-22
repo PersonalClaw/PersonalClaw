@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Play, Sparkles, RotateCcw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { Loading } from '../../ui/ListScaffold'
+import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
 import { HeaderActions } from '../../ui/HeaderActions'
@@ -103,6 +103,15 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const [maturity, setMaturity] = useState<WorkflowMaturity | null>(null)
   const [diffOps, setDiffOps] = useState<WorkflowVersionOp[] | null>(null)
   const [ledger, setLedger] = useState<WorkflowLedgerRow[] | null>(null)
+  // #532 / #2940: the ledger read used to `.catch(() => setLedger([]))`, and the tab's empty branch
+  // then rendered "This template has no recorded runs yet." — a claim about the server's records
+  // made out of the fact that we could not reach them. `null` already means "not loaded", so the
+  // rejection needs its own slot rather than a substitute value.
+  const [ledgerErr, setLedgerErr] = useState<unknown>(null)
+  // #532: the SECOND false-empty in this file, and the one the issue's line citation did not reach.
+  // `versions` starts `[]` and cannot distinguish "no versions" from "we could not read them", so a
+  // failed `workflowVersions` rendered "No version history yet." for a template with a dozen.
+  const [versionsErr, setVersionsErr] = useState<unknown>(null)
   const [refining, setRefining] = useState(false)
   // Named for the census's in-flight vocabulary (`disabledReasonCensus`'s BUSY list): the
   // switch is only ever unavailable while its OWN write is in flight, which is the one class
@@ -110,6 +119,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const [publishSaving, setPublishSaving] = useState(false)
 
   const loadVersions = useCallback(() => {
+    setVersionsErr(null)
     api.workflowVersions(name)
       .then((v) => {
         setVersions(v.versions)
@@ -124,7 +134,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
           setDiffOps(null)
         }
       })
-      .catch(() => { setVersions([]); setPinned(null); setMaturity(null) })
+      .catch((e) => { setVersionsErr(e); setVersions([]); setPinned(null); setMaturity(null) })
   }, [name])
 
   useEffect(() => {
@@ -146,11 +156,13 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   }, [name, loadVersions])
 
   // The Run Ledger tab is a per-run history read; load it lazily the first time it is opened.
+  // `ledgerErr` gates the retry as well as the render: without it the effect would re-fire on every
+  // re-render while `ledger` stayed null, hammering a failing endpoint.
   useEffect(() => {
-    if (tab === 'ledger' && ledger === null) {
-      api.workflowLedger(name).then((l) => setLedger(l.runs)).catch(() => setLedger([]))
+    if (tab === 'ledger' && ledger === null && ledgerErr === null) {
+      api.workflowLedger(name).then((l) => setLedger(l.runs)).catch(setLedgerErr)
     }
-  }, [tab, ledger, name])
+  }, [tab, ledger, ledgerErr, name])
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
   // The declared inputs as the JSON Schema the shared renderer speaks. One schema drives all
@@ -391,7 +403,16 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
               <div className="flex flex-col gap-l">
                 <div className="flex flex-col gap-xs">
                   <span data-type="title-m" className="text-on-surface">Versions</span>
-                  {versions.length === 0 ? (
+                  {/* Issue 532 — error BEFORE empty: a rejection leaves `versions` at `[]`, so the
+                      empty test below is also true on failure and would win if it came first.
+                      Spelled out rather than hash-prefixed because `tokenLint`'s comment skip is
+                      line-based over `//` / `*` / `/*` and a JSX `{/*` opener matches none of them,
+                      so a three-digit issue number written with a hash reads as a hex colour on ANY
+                      line of a JSX comment. The file's other two citations sit on `//` lines, which
+                      the skip does cover, so they keep the hash form. */}
+                  {versionsErr !== null ? (
+                    <InlineLoadError what="version history" error={versionsErr} onRetry={loadVersions} />
+                  ) : versions.length === 0 ? (
                     <p data-type="caption" className="text-on-surface-low">No version history yet.</p>
                   ) : (
                     [...versions].reverse().map((v) => (
@@ -433,7 +454,9 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
             {tab === 'ledger' && (
               <div className="flex flex-col gap-xs">
                 <span data-type="title-m" className="text-on-surface">Run Ledger</span>
-                {ledger === null ? (
+                {ledgerErr !== null ? (
+                  <LoadError what="run ledger" error={ledgerErr} onRetry={() => setLedgerErr(null)} />
+                ) : ledger === null ? (
                   <Loading what="the run ledger" />
                 ) : ledger.length === 0 ? (
                   <p data-type="caption" className="text-on-surface-low">This template has no recorded runs yet.</p>

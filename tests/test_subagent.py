@@ -1208,30 +1208,38 @@ class TestOnDoneTimeout:
         A cap read from the module global only binds for the lifetime of a ``patch()``
         block, so any delivery await reached outside that window silently ran against
         the 1200s production default and parked there until pytest-timeout killed the
-        whole CI shard. Here the global is set ABOVE the stand-in hang: if production
-        still read it, the cap would never fire, the stand-in would return normally and
-        no failure would be surfaced — so a revert fails this in ~2s rather than 120s.
+        whole CI shard.
+
+        #3380: this used to prove provenance by racing a wall clock (``elapsed <
+        2.0``), which a busy xdist shard can trip on its own scheduling noise even
+        when the cap correctly came from the manager. Instead, assert directly on the
+        observable the cap produces: ``_flush_delivery`` stamps the exact timeout
+        value it awaited into the ``subagent_injection_failed`` failure reason
+        (``f"batch delivery timed out after {int(self._on_done_timeout)}s"``). The
+        global is patched to a distinct, easily-recognized value (600.0) that is
+        never truncated to the manager's cap by coincidence, so the reason string
+        alone tells us which one the code actually waited on.
         """
         from personalclaw.subagent import SubagentInfo
 
-        events: list[str] = []
+        captured_extra: dict = {}
 
         async def hanging_on_done(batch: list[SubagentInfo]) -> None:
             await asyncio.sleep(_HANG_SECS)
 
-        async def track_event(etype: str, info: object, extra: dict) -> None:
-            events.append(etype)
+        async def capture_event(etype: str, info: object, extra: dict) -> None:
+            if etype == "subagent_injection_failed":
+                captured_extra.update(extra)
 
         manager = SubagentManager(
             sessions=_mock_sessions(),
             ctx_builder=_mock_ctx_builder(),
             on_done=hanging_on_done,
-            on_event=track_event,
+            on_event=capture_event,
             is_yolo=lambda: True,
             on_done_timeout=0.05,
         )
 
-        started = time.monotonic()
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
@@ -1242,13 +1250,11 @@ class TestOnDoneTimeout:
             await manager._tasks[info.id]
             await manager.flush_deliveries()
             await asyncio.sleep(0.05)
-        elapsed = time.monotonic() - started
 
-        # The manager's own 0.05s cap fired ...
-        assert "subagent_injection_failed" in events
-        # ... and it fired on 0.05s, not on the global's 600s: the delivery finished
-        # well inside the bounded stand-in hang.
-        assert elapsed < _HANG_SECS, f"delivery cap did not come from the manager ({elapsed:.2f}s)"
+        # The manager's own cap (0.05s, truncated to whole seconds) fired ...
+        assert captured_extra.get("error") == "batch delivery timed out after 0s"
+        # ... and never the module global's value.
+        assert "600" not in captured_extra.get("error", "")
 
 
 class TestTimeoutContext:

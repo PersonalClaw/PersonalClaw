@@ -9,6 +9,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A loop kind can now be started as a workflow run: `general` is the first.**
+- **Agent Rooms: a shared transcript several bound agents deliberate in.**
+- **The tool-loop breaker's abort ceiling is now tunable: `guardrails.loop_breaker.circuit_threshold`.**
 - **A fresh install now ships a working model provider: `ollama-models` is bundled.**
 - **`StructuredOutput` is exported from `personalclaw.sdk.model`.**
 - **A skill now says HOW it came to exist, not only which tier it lives in.**
@@ -64,6 +67,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **`personalclaw doctor` no longer loads `torch` to answer a yes/no question, which is what aborted macOS verification runs inside `faiss`.**
+- **The desktop app's dashboard window runs inside the Chromium process sandbox again, and a test can now see whether its bridge actually loaded.**
+- **Uninstalling an app while keeping its data, or updating an app, no longer refuses because the app's own background process touched a file.**
+- **Citing an issue number inside a block comment no longer fails token-lint as a "raw color hex."**
+- **A stray `/*` in code no longer blanks out the lines under it and takes a raw colour hex with it.**
+- **A chat on a local model now reports a real context percentage and compacts before it overflows, instead of reading a confident 0% forever.**
+- **The paired evals now score against a model that actually resolved, and refuse to score when none does.**
 - **A watched page that builds itself with JavaScript now reports content instead of nothing, forever.**
 - **Re-ingesting a document now re-embeds only the sections that changed.**
 - **A bundled app's CODE now reaches an already-installed home, not just its `app.json`.**

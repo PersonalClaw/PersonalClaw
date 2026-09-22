@@ -6,6 +6,7 @@ import { Button } from '../../ui/Button'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
+import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
@@ -277,21 +278,35 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
   const [detail, setDetail] = useState<SkillProposalDetail | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  const [loadErr, setLoadErr] = useState<unknown>(null)
   const [gone, setGone] = useState(false)
   // What the decision DID, once it has been made. The accept response's `{name, version}` used to
   // be discarded, so a successful install said nothing at all — see `act()`.
   const [done, setDone] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let alive = true
-    setErr(''); setGone(false); setDetail(null); setDone('')
+    setErr(''); setLoadErr(null); setGone(false); setDetail(null); setDone('')
     api.skillProposalDetail(pid)
       .then((d) => { if (alive) setDetail(d) })
-      // A 404 means it was already answered elsewhere (the skills page, or another tab).
-      // That is not an error to shout about — it's a stale row, so say so plainly.
-      .catch(() => { if (alive) setGone(true) })
+      // 🔴 THIS CAUGHT EVERYTHING AND CALLED IT "already answered" (#532). A 404 does mean the
+      // proposal was answered elsewhere (the skills page, another tab) and saying so plainly is
+      // right — but a 500, a timeout or an offline gateway landed in the same branch, and the
+      // panel then told the user their decision had been made when nothing of the sort had
+      // happened. The proposal is still pending and still needs them; the most confident possible
+      // way to say the opposite of what happened.
+      //
+      // `act()` below has discriminated on exactly this for the WRITE path since #283 ("a 500 is a
+      // real failure and the proposal is still pending"). The read path is the same distinction,
+      // thirty lines up, and now makes it the same way.
+      .catch((e) => {
+        if (!alive) return
+        if (e instanceof ApiError && e.status === 404) { setGone(true); return }
+        setLoadErr(e)
+      })
     return () => { alive = false }
-  }, [pid])
+  }, [pid, reloadKey])
 
   // ── A DECISION HAS TO SAY WHAT IT DID (#283) ───────────────────────────────────────────────
   //
@@ -354,7 +369,13 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
   }
   return (
     <Section label={detail?.kind === 'refine' ? 'Refine a skill' : 'New skill'}>
-      {detail === null ? (
+      {loadErr ? (
+        // The other half of the discrimination above. With the catch-all gone a failed read leaves
+        // `detail` null, and "Loading the proposal…" would be a spinner that never resolves — the
+        // same silence in a different costume. The proposal is still PENDING, so this states the
+        // read failed and offers the retry that can still reach a decision.
+        <InlineLoadError what="this proposal" error={loadErr} onRetry={() => setReloadKey((k) => k + 1)} />
+      ) : detail === null ? (
         <p data-type="body-s" className="text-on-surface-low">Loading the proposal…</p>
       ) : (
         <div className="flex flex-col gap-m">

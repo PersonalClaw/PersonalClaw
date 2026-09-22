@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, ToggleRow, NumberRow, RowGroup } from './settingsUI'
+import { PanelHeader, Section, ToggleRow, NumberRow, TextRow, RowGroup } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 
-/** The five runtime-editable `evals.*` fields — the FIFTH point of the config
+/** The six runtime-editable `evals.*` fields — the FIFTH point of the config
  *  round-trip contract, which was the only one missing.
  *
  *  Measured before this: `evals.*` had a dataclass + `_meta`, a `load()`, a `to_dict()` and five
@@ -19,8 +19,9 @@ import { TextLink } from '../../ui/TextLink'
  *  🔑 EVERY LABEL AND HINT BELOW IS THE FIELD'S OWN `_meta`, VERBATIM. `EvalsConfig` in
  *  `config/learning.py` already carries the sentence the owner wrote for each knob, so inventing a
  *  second wording here would mean two answers to "what does this do" — and the one the CLI prints
- *  (`personalclaw config get --describe`) would not be the one the UI shows. `evalsCopy.test.ts`
- *  reads `loader.py` and fails if any string here drifts from it. The one addition is the cost
+ *  (`personalclaw config get --describe`) would not be the one the UI shows. `evalsRoundTrip.test.tsx`
+ *  reads the allowlist and fails if a key here is not editable, or an editable key has no control.
+ *  The one addition is the cost
  *  sentence on the switch, marked below, because `_meta` describes the FIELD and this row has to
  *  describe the *decision* — see `COST_OF_TURNING_IT_ON`.
  *
@@ -28,7 +29,7 @@ import { TextLink } from '../../ui/TextLink'
  *  privacy-sensitive input-capture flag deliberately kept OUT of `_EDITABLE_CONFIG` (the
  *  `inbound.mcp.allow_remote` precedent), so a control for it would PATCH a path the backend
  *  refuses — a switch that flips, 400s, and rolls back. Surfacing exactly what the allowlist
- *  permits is what makes this panel honest; `evalsRoundTrip.test.ts` pins both directions.
+ *  permits is what makes this panel honest; `evalsRoundTrip.test.tsx` pins both directions.
  *
  *  Ranges are the allowlist's own `min`/`max`. A stepper that let you pick a value the PATCH
  *  refuses is the same defect as a control for a non-allowlisted key, one layer down. */
@@ -64,7 +65,7 @@ export function EvalsPanel() {
   useEffect(() => { if (data) setCfg(data) }, [data])
 
   // Error BEFORE the skeleton: `data` is undefined for loading and for failure alike, so a
-  // fallback here would render all five controls at their defaults — indistinguishable from
+  // fallback here would render all six controls at their defaults — indistinguishable from
   // "this is what you saved", on rows that PATCH the moment you touch them.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={3} what="settings" />
@@ -102,6 +103,24 @@ export function EvalsPanel() {
               + 'the retrieval/judge benchmarks. Off by default; nothing runs until you invoke a '
               + 'study or benchmark. Results are files under ~/.personalclaw/evals/, never a '
               + `background service. ${COST_OF_TURNING_IT_ON}`} />
+        </RowGroup>
+      </Section>
+
+      {/* 🪤 This row is the reason the three paired evals can score at all, so it sits ABOVE the
+          tuning knobs: `study_default_k` and `judge_agreement_floor` describe a measurement, and
+          this one decides whether a measurement happens. An eval arm is spawned as its own process
+          with a throwaway home and a name-allowlisted environment — it inherits no credentials by
+          design — so a model it was never handed is a model it cannot call. Before this field
+          existed the gate, the ablation and the skills bench each ran with no binding and came back
+          with a delta of zero from two replayed arms, which reads exactly like "the change did not
+          help". Empty is still a valid answer: the run walks your default chat chain and records
+          which position answered. What it will no longer do is score without one. */}
+      <Section title="The model the evals score against"
+        hint="Paired evals call a model directly, and they are the one place that will not borrow the one your chats use without being told to. Leave it empty to fall back to your default chat model.">
+        <RowGroup>
+          <TextRow label="Benchmark model" cfg={cfg} field="benchmark_model_ref" patch={patch} mono
+            placeholder="Provider:model"
+            hint="The Provider:model the paired evals score against — the loop-2 gate, the ablation report and the skills bench. Empty falls back to your default chat model; when neither resolves, a run REFUSES to score instead of reporting a zero it never measured. It is named here rather than inherited because an eval cell is spawned with no ambient credentials, so the model it uses has to be expressed for the run's pin to record what actually answered." />
         </RowGroup>
       </Section>
 

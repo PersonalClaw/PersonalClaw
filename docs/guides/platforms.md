@@ -61,6 +61,36 @@ print([w for w in re.findall(r'([\w.\-]+\.whl)', blk) if "aarch64" in w or "arm6
 PY
 ```
 
+### macOS arm64: `faiss-cpu` and `torch` ship two OpenMP runtimes
+
+Both macOS wheels bundle their own copy of LLVM's OpenMP runtime
+(`faiss/.dylibs/libomp.dylib`, `torch/lib/libomp.dylib`). Loading both packages is
+harmless; *initializing* the second runtime is not, and `faiss` initializes its copy
+the first time it enters a parallel region — its `search`, not its `add`. A process
+holding both therefore dies with `OMP: Error #15` and `SIGABRT` on the next episodic
+dedup search rather than at import, which is why the symptom never points at the
+cause (#3324).
+
+Consequences for how you run it on macOS:
+
+- **Core stays torch-free on purpose.** Nothing in `personalclaw` imports `torch`,
+  `faster_whisper` or `sentence_transformers`; the `sentence-transformers` and
+  `faster-whisper` **apps** own those dependencies. That is an enforced invariant, not
+  a convention — `tests/native_omp_guard.py` fails the test that makes `torch`
+  resident.
+- **Installing `sentence-transformers` does not abort, for a reason you should not
+  rely on.** It imports `sklearn`, whose `__init__` runs
+  `os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "True")` — the workaround LLVM
+  documents as unsafe and able to produce silently wrong results. The pairing is
+  suppressed there, not absent.
+- **An in-process STT model app is the live hazard.** `faster_whisper` brings `torch`
+  without `sklearn`, so nothing sets that flag; with `faiss` also present, the
+  gateway aborts on the next episodic write. Prefer a remote STT provider on macOS
+  until that provider runs out-of-process.
+
+`KMP_DUPLICATE_LIB_OK=TRUE` is not a supported configuration here: it turns a crash
+into undefined behaviour underneath your memory store.
+
 ### RAM floor on Pi-class boards
 
 The embedding stack, not the gateway, is what strains small boards. The gateway

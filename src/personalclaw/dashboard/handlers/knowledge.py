@@ -2171,8 +2171,21 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
             status=422,
         )
     _sel_log("intent.generate_skill", intent_id=intent_id, skill=name)
+    # Feedback-Signal producer meta (#1783), the same identity `GET /api/skills` stamps on
+    # this skill from here on: the synthesizer is the producer, keyed by the skill it just
+    # wrote. Returned with the 201 so a caller that renders the fresh skill can attribute a
+    # verdict without a second round trip — the single source of the pair is
+    # `handlers.skills._synthesis_producer`, which this defers to rather than re-spelling.
+    from personalclaw.dashboard.handlers.skills import _synthesis_producer
+    from personalclaw.skills.loader import AUTO_SKILL_SOURCE_VALUE
+
     return web.json_response(
-        {"skill": name, "description": parts.get("description", "")}, status=201
+        {
+            "skill": name,
+            "description": parts.get("description", ""),
+            "feedback_producer": _synthesis_producer(name, AUTO_SKILL_SOURCE_VALUE),
+        },
+        status=201,
     )
 
 

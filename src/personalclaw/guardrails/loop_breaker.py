@@ -16,8 +16,9 @@ so the thresholds and the *wording* of every notice are defined once:
 
 * **failure path** — :meth:`LoopBreaker.record` counts consecutive failures per
   ``(tool, params)`` key. :data:`WARN_THRESHOLD` warns, :data:`BLOCK_THRESHOLD`
-  refuses further identical calls, and :data:`CIRCUIT_THRESHOLD` total failures
-  in one run abort it.
+  refuses further identical calls, and :attr:`LoopBreaker.circuit_threshold` total
+  failures in one run abort it — the one rung an operator can retune, through
+  ``guardrails.loop_breaker.circuit_threshold`` (default :data:`CIRCUIT_THRESHOLD`).
 * **structural path** — :meth:`LoopBreaker.record_structural` catches
   stuck-but-*successful* repetition (the same ``(tool, params, result_digest)``
   triple N× in a row, or an A↔B ping-pong) that the failure path cannot see
@@ -46,7 +47,12 @@ WARN_THRESHOLD = 3
 #: ≥ this many → refuse further identical calls this run (native: pre-execution;
 #: ACP: a user-visible notice, since the host cannot un-run the CLI's call).
 BLOCK_THRESHOLD = 5
-#: > this many total failures in one run → abort the whole run.
+#: > this many total failures in one run → abort the whole run. The DEFAULT only:
+#: :func:`configured_circuit_threshold` reads ``guardrails.loop_breaker.circuit_threshold``
+#: and falls back here. A bare constant made this rung unreachable in practice — proving it
+#: took >30 genuine tool failures in one run and there was no way to ask for a lower bar —
+#: so the ceiling is the one rung of the three that is operator-tunable. WARN and BLOCK stay
+#: constants: they are advisory rungs whose wording quotes the number, and neither ends a run.
 CIRCUIT_THRESHOLD = 30
 
 # ── Structural (no-progress) detection ──────────────────────────────────────
@@ -321,6 +327,22 @@ def circuit_message(total_failures: int) -> str:
     )
 
 
+def configured_circuit_threshold() -> int:
+    """``guardrails.loop_breaker.circuit_threshold``, or :data:`CIRCUIT_THRESHOLD`.
+
+    Best-effort and never raises: the circuit rung is an ABORT, so a config read that
+    fails must leave the shipped ceiling standing rather than take the breaker out of
+    service. Imported inside the function because this module is the one both runtimes
+    depend on and it deliberately owns no import of the config tree at module scope.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return max(1, int(AppConfig.load().guardrails.loop_breaker.circuit_threshold))
+    except Exception:
+        return CIRCUIT_THRESHOLD
+
+
 class LoopBreaker:
     """Per-run progress tracker with graduated verdicts.
 
@@ -336,7 +358,7 @@ class LoopBreaker:
       Warn-only: the consumer injects an observation; it does not block.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, circuit_threshold: int | None = None) -> None:
         self._counts: dict[str, int] = {}
         self.total_failures = 0
         # Recent structural signatures (most-recent last), bounded to the window.
@@ -344,12 +366,22 @@ class LoopBreaker:
         # Reasons already reported this run, so we warn once per distinct loop and
         # don't re-inject the same observation every subsequent identical call.
         self._struct_reported: set[str] = set()
+        # An explicit ceiling PINS this breaker's circuit rung and survives `reset()`;
+        # None means "ask the config". Kept apart from the resolved value below because
+        # reset() re-resolves the config one but must not discard the caller's.
+        self._circuit_pin = None if circuit_threshold is None else max(1, int(circuit_threshold))
+        # Resolved lazily, on the first circuit check that could actually trip — see
+        # `circuit_tripped`. `None` = not read yet, which is NOT the same as 30.
+        self._circuit_resolved: int | None = self._circuit_pin
 
     def reset(self) -> None:
         self._counts.clear()
         self.total_failures = 0
         self._recent.clear()
         self._struct_reported.clear()
+        # Re-arm the config read so a ceiling edited mid-session binds on the next run
+        # instead of on the next restart. A pinned ceiling is left alone.
+        self._circuit_resolved = self._circuit_pin
 
     def reset_structural(self) -> None:
         """Re-arm structural detection (after a compaction) without touching the
@@ -369,9 +401,26 @@ class LoopBreaker:
     def count(self, key: str) -> int:
         return self._counts.get(key, 0)
 
+    @property
+    def circuit_threshold(self) -> int:
+        """This breaker's abort ceiling — the pin, else the configured value.
+
+        Resolved once and cached, because the native runtime asks on EVERY tool result
+        and an uncached ``AppConfig.load()`` per tool call would be a JSON parse per
+        call. `reset()` clears the cache, so the effective cadence is one read per run.
+        """
+        if self._circuit_resolved is None:
+            self._circuit_resolved = configured_circuit_threshold()
+        return self._circuit_resolved
+
     def circuit_tripped(self) -> bool:
-        """True once this run's total failures exceed :data:`CIRCUIT_THRESHOLD`."""
-        return self.total_failures > CIRCUIT_THRESHOLD
+        """True once this run's total failures exceed :attr:`circuit_threshold`."""
+        # A clean run answers without touching the config at all: the ceiling is floored
+        # at 1 and the comparison is strict, so zero failures can never trip whatever the
+        # threshold is. That keeps the per-tool-result call on the happy path free.
+        if not self.total_failures:
+            return False
+        return self.total_failures > self.circuit_threshold
 
     def record_structural(self, sig: str) -> str:
         """Record a ``(tool, params, result_digest)`` signature; return a reason

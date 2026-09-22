@@ -207,6 +207,24 @@ dev = [
     "personalclaw[models]",
     "personalclaw[mcp]",
     "personalclaw[bedrock]",
+    # The `openai` SDK is a TEST-ENVIRONMENT dependency, not a core one. Two suites are
+    # `pytest.importorskip("openai")`-gated and were therefore SILENTLY UNVERIFIED in CI
+    # (`uv sync --locked --extra dev` never installed it): test_openai_sdk_drive.py —
+    # whose own docstring says the skip leaves "Success Criteria 2 UNVERIFIED here" — and
+    # test_evals_cell_provider.py's protocol-client test. Worse, an eval CELL cannot run
+    # without it at all: evals/cell_provider.py::_register_cell_type binds every cell
+    # through llm/branded_specs.py::build_protocol_provider, whose non-`anthropic` branch
+    # constructs OpenAIProvider, so the SDK is a hard runtime requirement of the evals
+    # subsystem — and evals/runner.py maps the child's non-zero exit to VERIFIER_ABSENT,
+    # which turns the MissingSDKError into an empty scored set rather than an error.
+    # Measured 2026-09-22 in a `uv sync --locked --extra dev` env: the two gated suites go
+    # 0-run -> 35 passed, and #2680's paired-eval gate test goes FAILED -> passed, with
+    # the SDK presence as the only variable. This does NOT weaken the provider-boundary
+    # tenet (line ~106): openai/anthropic stay out of CORE, the lazy adapter imports and
+    # their MissingSDKError remedy are unchanged, and `pip install personalclaw` stays
+    # lean. The extra whose exclusion from dev/test IS deliberate says so explicitly
+    # ([keychain], above); this one never did.
+    "personalclaw[openai]",
     # Formatter/linter majors are pinned to the SAME major CI resolves from uv.lock,
     # because CI runs `uv sync --locked` while the documented dev install is
     # `pip install -e ".[dev]"` — which ignores the lock and resolves freely. An
@@ -340,6 +358,14 @@ personalclaw = [
     # line makes `load_token_lint_rules()` raise rather than pass everything — loud,
     # not silently permissive, which is the direction this change cares about.
     "apps/token_lint_rules.json",
+    # …and the BEHAVIOURAL pin beside it (#3337). The four patterns are data, so parity is
+    # byte-equality; deciding which text on a line is CODE is a LEXER, which cannot be
+    # shared as data, so it exists twice (`stripComments` / `strip_comments`) and its
+    # behaviour is pinned by a shared case file instead. It ships with the rule it pins so
+    # the apps-repo CI can check its wheel's lint the same way the host does — a wheel
+    # carrying the patterns but not the cases could drift the comment semantics silently,
+    # which is the half of the gate an app author actually trips.
+    "apps/token_lint_comment_cases.json",
     # The shipped BYO-runner catalog. Settings → Agents
     # renders one row per definition, so a wheel without this line ships an EMPTY runner
     # catalog: no Claude Code / Codex / Gemini CLI / Kiro rows, no adapter verification to

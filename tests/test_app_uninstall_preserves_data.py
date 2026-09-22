@@ -1153,3 +1153,197 @@ def test_the_keep_data_rung_never_refuses_an_installed_app_in_silence(
             "the success path logs at WARNING+, so the diagnosis lines above carry no "
             "information: every keep-data uninstall now reads as a failure"
         )
+
+
+# ── a live data/ that changes UNDER the copy (#3324) ───────────────────────────
+
+
+def _racing_copytree(lock: Path, *, forever: bool, calls: list[int]):
+    """A real ``copytree`` whose ``copy_function`` makes *lock* vanish mid-walk.
+
+    The instrumentation is one file's disappearance; everything else — the ``scandir``,
+    the per-entry ``OSError`` capture, the ``shutil.Error`` aggregation — is the real
+    machinery, so what these tests exercise is the production failure and not a
+    hand-built exception that merely resembles it.
+
+    Faithful to what was measured: ``git commit`` ends by spawning ``git maintenance run
+    --auto --quiet --detach``, that DETACHED child outlives the commit the app waited
+    for, and it holds ``.git/objects/maintenance.lock`` — listed by our walk, gone by the
+    time the walk copies it. ``_content_files`` above documents the same writer from the
+    other side, where it corrupts a file census.
+    """
+    real_copytree = app_manager.shutil.copytree
+    real_copy2 = app_manager.shutil.copy2
+
+    def _copy(fsrc, fdst, *ca, **ck):
+        if Path(fsrc) == lock:
+            Path(fsrc).unlink(missing_ok=True)  # the detached child finishing
+        return real_copy2(fsrc, fdst, *ca, **ck)
+
+    # `copytree` RECURSES through itself once per subdirectory, passing `copy_function`
+    # positionally. So the wrapper mirrors the real signature (a `**kwargs` passthrough
+    # re-supplies an argument the recursion already gave positionally), and `copy_function
+    # is None` is what tells a top-level call from a recursive one — without it, `calls`
+    # would count directories instead of attempts.
+    def _copytree(src, dst, symlinks=False, ignore=None, copy_function=None, *rest, **k):
+        if copy_function is None:
+            calls.append(1)
+            if forever:
+                # A NEW lock before every walk: the tree never settles, so retries run out.
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                lock.write_text("", encoding="utf-8")
+        return real_copytree(src, dst, symlinks, ignore, _copy, *rest, **k)
+
+    return _copytree
+
+
+def test_a_lock_file_that_vanishes_mid_copy_does_not_refuse_the_keep_data_uninstall(
+    tmp_path, monkeypatch
+):
+    """The measured red: a transient file under ``.git`` failed the WHOLE uninstall.
+
+    Main's ``Full`` run 35764976454 failed two macOS legs here — ``assert False is True``,
+    with ``shutil.Error`` on ``.git/objects/maintenance.lock`` as the cause. Nothing about
+    it is test-only: any app whose ``data/`` holds a git checkout, an SQLite WAL or its own
+    lockfile refuses the same way, for a reason the user did not cause and cannot act on.
+    """
+    name = "notes-fixture"
+    src = _bundle(tmp_path)
+    assert app_manager.install(src, confirm=True).ok
+    _write_note(name, "one", "body")
+    lock = _notebook(name) / _GIT_DIRNAME / "objects" / "maintenance.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("", encoding="utf-8")
+
+    calls: list[int] = []
+    with monkeypatch.context() as m:
+        m.setattr(
+            app_manager.shutil, "copytree", _racing_copytree(lock, forever=False, calls=calls)
+        )
+        assert app_manager.uninstall_keep_data(name) is True, (
+            "a lock file that vanished inside the walk refused the whole keep-data "
+            "uninstall — the user's app stays installed over a file that was never theirs"
+        )
+    assert len(calls) == 2, f"the copy was not retried once and only once: {len(calls)} attempts"
+
+    # PRESERVED, not merely "returned True": the notes and the git history are the point.
+    parked = app_manager._preserved_data_dir(name)
+    assert _notes_at(parked / "notebook") == {"one": "body\n"}, "the retry lost the notes"
+    assert _git_log_at(parked / "notebook") == ["note: one"], "the retry lost the git history"
+    assert not (
+        parked / "notebook" / _GIT_DIRNAME / "objects" / "maintenance.lock"
+    ).exists(), "the vanished lock was resurrected into the parked copy"
+
+
+def test_a_copy_failure_whose_source_is_still_there_still_fails_closed(tmp_path, monkeypatch):
+    """The GUARD on the fix. Retrying a settling tree must not soften a real fault.
+
+    Paired with the test above deliberately: a ``_copy_live_tree`` that retried every
+    ``shutil.Error`` would satisfy that one while quietly turning ENOSPC, EACCES and EIO
+    into "we tried four times and gave up" — same refusal, four times the latency, and a
+    predicate that no longer means anything. So this asserts the discrimination itself:
+    the source is still on disk, therefore the tree did not settle under us, therefore it
+    fails closed on the FIRST attempt with nothing removed.
+    """
+    name = "notes-fixture"
+    src = _bundle(tmp_path)
+    assert app_manager.install(src, confirm=True).ok
+    _write_note(name, "one", "body")
+
+    real_copytree = app_manager.shutil.copytree
+    real_copy2 = app_manager.shutil.copy2
+    calls: list[int] = []
+    victim = _notebook(name) / "one.md"
+
+    def _copy(fsrc, fdst, *ca, **ck):
+        if Path(fsrc) == victim:
+            raise OSError(errno.EACCES, "permission denied")
+        return real_copy2(fsrc, fdst, *ca, **ck)
+
+    def _copytree(srcp, dstp, symlinks=False, ignore=None, copy_function=None, *rest, **k):
+        if copy_function is None:  # top-level call, not `copytree`'s own recursion
+            calls.append(1)
+        return real_copytree(srcp, dstp, symlinks, ignore, _copy, *rest, **k)
+
+    with monkeypatch.context() as m:
+        m.setattr(app_manager.shutil, "copytree", _copytree)
+        assert app_manager.uninstall_keep_data(name) is False
+    assert len(calls) == 1, (
+        "a fault whose source is STILL on disk was retried — the settle predicate is "
+        f"matching every shutil.Error, not just a vanished source ({len(calls)} attempts)"
+    )
+    # Nothing removed: this rung's whole promise on a failed copy.
+    assert _notes(name) == {"one": "body\n"}, "the app's live data/ was touched by a refusal"
+    assert app_manager._read_installed(name) is not None, "the app was removed over a failed copy"
+
+
+def test_a_tree_that_never_settles_fails_closed_and_names_the_file(tmp_path, monkeypatch, caplog):
+    """Retries are BOUNDED, and running out is the old loud refusal, not a swallow.
+
+    "Add a retry" is only an honest fix if exhausting it is indistinguishable from never
+    having retried: same ``False``, same ``logger.error`` naming the paths, same audit.
+    """
+    name = "notes-fixture"
+    src = _bundle(tmp_path)
+    assert app_manager.install(src, confirm=True).ok
+    _write_note(name, "one", "body")
+    lock = _notebook(name) / _GIT_DIRNAME / "objects" / "maintenance.lock"
+
+    calls: list[int] = []
+    slept: list[float] = []
+    with monkeypatch.context() as m:
+        m.setattr(app_manager.shutil, "copytree", _racing_copytree(lock, forever=True, calls=calls))
+        m.setattr(app_manager.time, "sleep", slept.append)  # the backoff, not its wall clock
+        with caplog.at_level(logging.WARNING, logger=_APP_MANAGER_LOGGER):
+            caplog.clear()
+            assert app_manager.uninstall_keep_data(name) is False
+
+    assert (
+        len(calls) == app_manager._LIVE_COPY_ATTEMPTS
+    ), f"the copy did not run exactly {app_manager._LIVE_COPY_ATTEMPTS} attempts: {len(calls)}"
+    assert slept == [0.25, 0.5, 1.0], f"the backoff did not double between attempts: {slept}"
+    said = _loud_records(caplog)
+    assert said and any(
+        "maintenance.lock" in msg for msg in said
+    ), f"exhausting the retries hid the fault instead of naming the file: {said}"
+    assert _notes(name) == {"one": "body\n"}, "the app's live data/ was touched by a refusal"
+    assert app_manager._read_installed(name) is not None
+
+
+def test_an_update_preserves_a_live_data_tree_that_is_changing(tmp_path, monkeypatch):
+    """The SIBLING call site, and the one with worse consequences.
+
+    ``update`` copies a live app's ``data/`` into the staged tree and then SWAPS, so that
+    copy becomes the surviving one. A ``shutil.Error`` there aborted the update over a
+    transient lock; the same settle-and-retry covers it, and the notes have to come out the
+    other side of the swap.
+    """
+    name = "notes-fixture"
+    src = _bundle(tmp_path)
+    assert app_manager.install(src, confirm=True).ok
+    _write_note(name, "one", "body")
+    lock = _notebook(name) / _GIT_DIRNAME / "objects" / "maintenance.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("", encoding="utf-8")
+
+    newer = _bundle(tmp_path / "v2", name=name)
+    (newer / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "1.1.0",
+                "displayName": "Notes Fixture",
+                "description": "A git-backed notebook fixture",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[int] = []
+    with monkeypatch.context() as m:
+        m.setattr(
+            app_manager.shutil, "copytree", _racing_copytree(lock, forever=False, calls=calls)
+        )
+        result = app_manager.update(newer, name=name, confirm=True)
+    assert result.ok, f"a vanished lock file aborted the update: {result.error}"
+    assert _notes(name) == {"one": "body\n"}, "the update lost the user's notes"
+    assert _git_log_at(_notebook(name)) == ["note: one"], "the update lost the git history"

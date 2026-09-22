@@ -72,7 +72,17 @@ from personalclaw.media_catalogs import (  # noqa: F401
     MediaModel,
     register_media_catalog,
 )
-from personalclaw.model_windows import model_context_window  # noqa: F401
+
+# ``declared_context_window`` rides alongside ``model_context_window`` because a provider
+# app that serves a LOCAL runtime has to answer both halves of the same question: what did
+# this binding DECLARE as its served window (the operator's ``context_window`` option), and
+# what should it fall back to when nothing was declared. An app popping the option itself and
+# hand-rolling the coercion would drift from core's rule about what counts as a declaration
+# (``True`` is not a window; ``0`` means undeclared), so the coercion is promoted, not copied.
+from personalclaw.model_windows import (  # noqa: F401
+    declared_context_window,
+    model_context_window,
+)
 
 # Media-capability config scanners — the app-owned extension point a model app
 # calls at import to contribute per-capability adapters (image/video/stt/embedding)
@@ -116,6 +126,7 @@ __all__ = [
     "KIND_OUTSIDE",
     "make_think_splitter",
     "model_context_window",
+    "declared_context_window",
     "OpenAIProvider",
     "AnthropicProvider",
     # Catalog / management / connectivity axis (Settings → Models discovery).

@@ -29,7 +29,11 @@ describe('the graph empty state tells the truth about why it is empty', () => {
   const original = globalThis.fetch
 
   beforeEach(() => {
-    globalThis.fetch = vi.fn(async () => ({ json: async () => ({ nodes: [], edges: [] }) })) as never
+    // `ok: true` matters MORE here than anywhere: this file's whole subject is what the empty state
+    // is allowed to claim, and #532 is the discovery that a FAILED read used to reach it. The double
+    // must therefore be an unambiguous 200 — a genuinely empty graph — or the file would be asserting
+    // the empty copy against the very failure the component now refuses to render it for.
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ nodes: [], edges: [] }) })) as never
   })
   afterEach(() => { globalThis.fetch = original })
 
@@ -62,7 +66,12 @@ describe('the graph empty state tells the truth about why it is empty', () => {
 
   it('goes through the EmptyState primitive, not a hand-rolled centered div', () => {
     const src = SRC('KnowledgeGraph.tsx')
-    expect(src).toMatch(/import \{ EmptyState \}/)
+    // Matched inside the named-import list rather than against a brace-exact `{ EmptyState }`, which
+    // was only ever true while EmptyState was the file's SOLE import from ListScaffold — #532 added
+    // `LoadError` beside it and the exact form went red on a file that had not stopped going through
+    // the primitive. The module path is now pinned too, so this is a tighter claim than it replaces:
+    // a hand-rolled local `EmptyState` would no longer satisfy it.
+    expect(src).toMatch(/import \{[^}]*\bEmptyState\b[^}]*\} from '\.\.\/\.\.\/ui\/ListScaffold'/)
     expect(src, 'the hand-rolled empty div is gone').not.toMatch(/place-items-center text-on-surface-low text-\[0\.8125rem\]/)
   })
 })

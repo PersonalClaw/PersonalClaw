@@ -132,6 +132,10 @@ PARENT_READ_EXCLUDE = {
         "provider registry and then the exact instance are both resolved; this is child detail"
     ),
     "/api/providers/{name}/schema": "provider registry resolves the extension before schema",
+    "/api/rooms/{room_id}/export": (
+        "rooms.store.require_room resolves the room before any transcript read, so a ghost "
+        "room is room_not_found rather than an empty export (asserted in test_rooms_api.py)"
+    ),
     "/api/sessions/{id}/agents/{agent_id}": (
         "read_result requires the exact session/agent result; this is child detail"
     ),
@@ -266,9 +270,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 82
+    assert len(nonterminal) == 83
     assert len(deep_terminal) == 16
-    assert len(selected) == 98
+    assert len(selected) == 99
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

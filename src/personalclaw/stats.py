@@ -162,7 +162,7 @@ def cache_hit_pct(
     cached tokens, so they must be added back to recover the turn's whole prompt.
     Evidence:
 
-    * ``llm/anthropic.py:539-541`` (and its twin at ``:725-727``) assigns
+    * ``llm/anthropic.py:539-541`` (and its twin at ``:730-732``) assigns
       ``input_tokens`` verbatim from ``usage.input_tokens``, while the cache counts
       come from the SDK's separate ``cache_creation_input_tokens`` /
       ``cache_read_input_tokens`` fields via ``_read_cache_usage``
@@ -181,7 +181,7 @@ def cache_hit_pct(
 
     Returns ``None`` when the denominator is 0: no prompt tokens is NO MEASUREMENT,
     not ``0%``. Same honesty rule as ``context_pct`` on the turn-complete line — see
-    ``dashboard/chat_runner.py:650-651``, whose ``if context_pct is not None`` guard
+    ``dashboard/chat_runner.py:656-657``, whose ``if context_pct is not None`` guard
     exists because a defaulted ``0`` printed ``context 0%`` for providers that
     reported nothing, a number the backend never supplied. A measured 0 (prompt
     tokens present, none of them cached) is a real answer and returns ``0.0``.

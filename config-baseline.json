@@ -491,6 +491,12 @@
     "type": "bool"
   },
   {
+    "default": "",
+    "path": "evals.benchmark_model_ref",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 0.0,
     "path": "evals.default_budget_usd",
     "sensitive": false,
@@ -709,6 +715,12 @@
   {
     "default": 0,
     "path": "guardrails.budgets.max_tokens_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 30,
+    "path": "guardrails.loop_breaker.circuit_threshold",
     "sensitive": false,
     "type": "int"
   },
@@ -1385,6 +1397,24 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "rooms.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 8,
+    "path": "rooms.max_members",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 6,
+    "path": "rooms.round_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 0.1,
     "path": "routing.cloud_quality_margin",
     "sensitive": false,
@@ -1521,6 +1551,12 @@
     "path": "session.autocompact_pct",
     "sensitive": false,
     "type": "float"
+  },
+  {
+    "default": "default",
+    "path": "session.context_engine",
+    "sensitive": false,
+    "type": "str"
   },
   {
     "default": "",

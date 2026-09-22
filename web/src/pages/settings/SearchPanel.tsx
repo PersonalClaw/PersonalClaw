@@ -3,7 +3,7 @@ import { Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } fr
 import { api, type SearchProviderInfo, type ToolItem } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { DisclosureCard } from '../../ui/DisclosureCard'
 import { TextLink } from '../../ui/TextLink'
 
@@ -47,9 +47,14 @@ const NOTE_SHELL = 'mb-3 rounded-lg border border-dashed border-outline-variant/
  *  PUT /api/search/active/{use_case}. Single-select — configure providers (endpoint /
  *  API key) over in Providers. */
 export function SearchPanel() {
-  const { data, refresh } = useQuery('settings:search', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:search', async () => {
     const [providers, active, tools] = await Promise.all([
-      api.searchProviders().catch(() => [] as SearchProviderInfo[]),
+      // 🔴 NO FALLBACK, and this is the read that may not have one (#532). It backs a positive
+      // claim about the server's state — "No search providers configured. Install a search
+      // provider app from the Store" — so a 500 on /api/search/providers told a user with three
+      // registered providers to go install their first one, and pointed them at the Store to do
+      // it. The rejection has to reach the hook for the panel to be able to say otherwise.
+      api.searchProviders(),
       api.searchActive().catch(() => ({} as Record<string, string[]>)),
       // `null`, NOT `[]`, on failure: "no tools came back" and "the tool list says there is
       // no web_search" are different claims, and only the second one may accuse the user of a
@@ -70,7 +75,14 @@ export function SearchPanel() {
 
   const reloadActive = () => { invalidateKeys('settings:search'); refresh() }
 
-  if (!providers) return <ListSkeleton rows={4} />
+  // Error BEFORE the skeleton, or it is unreachable — `providers` is undefined for the loading AND
+  // the failed case, so the skeleton would run forever on a 500. Same one-line shape `PacksPanel`
+  // ships for the same reason. The skeleton borrows the same noun (`ui/loadingNounPairing`): the
+  // failure and the wait describe one fetch, so they say one word — and the two lines stay adjacent,
+  // because that rail reads a gate's two branches as a PAIR and anything wedged between them reads
+  // as a different fetch.
+  if (!providers && loadErr) return <LoadError what="search providers" error={loadErr} onRetry={refresh} />
+  if (!providers) return <ListSkeleton rows={4} what="search providers" />
 
   return (
     <div>

@@ -47,6 +47,12 @@ TARGET_KINDS = (
     "routing_suggestion",
     "proposal_content",
     "app_judgment",
+    # A synthesized (`auto/*`) skill, judged as a whole. Its producer identity is
+    # ("skill_synthesis", <skill key>) — the ONE identity :data:`ENFORCED_SUPPRESSION_KINDS`
+    # claims a real withholding for. Without a target kind the synthesizer could never be
+    # recorded against, so `suppressed_producers()` never contained that pair and
+    # `skills.surfacing`'s gate was unreachable by construction (#1783).
+    "synthesized_skill",
 )
 PRODUCER_KINDS = (
     "prompt",

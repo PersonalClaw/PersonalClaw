@@ -589,6 +589,18 @@ def _agent_values() -> set[str]:
     return {"", *AppConfig.load().agents}
 
 
+def _context_engine_values() -> set[str]:
+    """Allowed ``session.context_engine`` values — whatever is REGISTERED right now.
+
+    A ``values_fn`` rather than a static enum because the registry is open: an app bundle
+    registers its engine at startup, and a hardcoded list here would refuse the only name
+    that bundle made valid. Today this resolves to ``{"default"}`` alone.
+    """
+    from personalclaw.context_engine import available_engines
+
+    return set(available_engines())
+
+
 def _bot_name_sanitizer(value: str) -> str:
     """The loader's bot_name sanitizer (single source of truth)."""
     from personalclaw.config.loader import _sanitize_bot_name
@@ -678,6 +690,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.budgets.max_dollars_per_day": {"type": "float", "min": 0.0, "max": 100_000.0},
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
+    # The TOOL-loop breaker's abort ceiling — a different breaker
+    # from the two rows above, which fail a model PROVIDER fast. `min: 1` mirrors
+    # `load()`'s floor: at 0 the `>` comparison aborts a run on its first failed call.
+    "guardrails.loop_breaker.circuit_threshold": {"type": "int", "min": 1, "max": 1000},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
     # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
     # subset: the master switch plus the tuning numbers a user reaches for after watching
@@ -764,6 +780,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
     "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
     "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
+    # #2680 — the `Provider:model` the paired evals (gate/ablation/skills-bench) score
+    # against. Free-text on purpose: WHETHER the ref resolves is a question only the home
+    # can answer (`providers[]` + the model's own availability), and it answers with a
+    # reason the run records — an unresolvable ref makes a run REFUSE to score, which is
+    # strictly more legible than this boundary guessing at a pool. `.strip()` mirrors
+    # load(), so the file matches what runtime reads. Carries no secret: the ref names a
+    # `providers[]` entry, and the cell's key still arrives by env-var NAME (cell_provider).
+    "evals.benchmark_model_ref": {"type": "str", "max_len": 128, "sanitize": lambda v: v.strip()},
     # The runtime-editable triage subset.
     # `auto_execute_enabled` IS here on purpose: it is the plan's one-click revoke, so
     # a user who dislikes what the digest did must be able to switch acting off from
@@ -929,6 +953,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # 0 = off; the ceiling is generous on purpose (a year) since "archive rarely"
     # is a legitimate preference and archiving is non-destructive.
     "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
+    # #1783 — the installer's write path. Validated against the LIVE registry, so a name
+    # only becomes settable once something has registered it. Takes effect at the next
+    # gateway start (`_context_engine_startup`): swapping the assembly engine under
+    # running sessions would change the prompt shape mid-conversation.
+    "session.context_engine": {"type": "str", "values_fn": _context_engine_values},
     # The release-tracking config block. All six are
     # runtime-editable from Settings > Updates. `channel`/`auto` are closed enums
     # so an out-of-range value is REFUSED at the boundary (a mistyped channel should be
@@ -987,6 +1016,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # Runtime-editable because all three are knobs the human reaches for
+    # while a room is running: killing the feature, or capping a deliberation that is
+    # spending more than it is worth. The budget floor is 1, not 0 — a room reads 0 as
+    # "inherit this default", so a 0 default would resolve to an unbounded loop.
+    "rooms.enabled": {"type": "bool"},
+    "rooms.round_budget": {"type": "int", "min": 1, "max": 100},
+    "rooms.max_members": {"type": "int", "min": 1, "max": 32},
     # Runtime-editable: these are the knobs a user reaches for
     # WHILE something is going wrong — capping concurrency because a fan-out is starving
     # the box, or shortening a stall timeout because a node is wedged. Requiring a

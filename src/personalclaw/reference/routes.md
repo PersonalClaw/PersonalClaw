@@ -482,6 +482,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/memory/episodic/{id}` — tombstone an episodic memory.
 - `GET /api/memory/events` — paginated audit trail.
 - `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
+- `GET /api/memory/facets` — every preference facet WITH its key, state and decay.
+- `POST /api/memory/facets/{key}/forget` — retire a facet. FINAL.
+- `POST /api/memory/facets/{key}/pin` — hold a facet at full stability, or release it.
 - `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
 - `GET /api/memory/graph/entities` — the entity topology (§7.2).
 - `GET /api/memory/graph/export` — the entity graph as ONE self-contained HTML file (§7.2).
@@ -643,6 +646,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
+- `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
+- `POST /api/rooms` — {title} — create a room.
+- `GET /api/rooms/{room_id}` — one room, its members, and its transcript.
+- `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
+- `GET /api/rooms/{room_id}/export` — the transcript, redacted.
+- `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?}.
+- `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.
+- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks into the room.
 - `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

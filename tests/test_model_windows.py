@@ -131,7 +131,7 @@ class TestDeclaredWindowOverride:
         assert model_context_window("gpt-4o", override=999) == 999
         assert model_context_window(None, override=999) == 999
 
-    @pytest.mark.parametrize("undeclared", [None, 0, -1, True, False, "4096", "", object()])
+    @pytest.mark.parametrize("undeclared", [None, 0, -1, True, False, "", "auto", object()])
     def test_undeclared_values_resolve_normally(self, undeclared):
         # ``0``/``None`` mean "not declared", not "a window of zero" — a zero would reach
         # a caller's ``chars / window`` and divide by it. ``True`` is not a window either.
@@ -146,3 +146,18 @@ class TestDeclaredWindowOverride:
     )
     def test_declared_context_window_is_one_reader(self, raw, expected):
         assert declared_context_window(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["4096", " 4096 ", "32768"])
+    def test_a_numeric_string_is_a_declaration(self, raw):
+        """A numeric STRING declares, because that is the only thing the write path
+        stores. This assertion was inverted — ``"4096"`` sat in the undeclared list
+        above — which made the override a knob with no reader on its one user-facing
+        path: Settings' forms build ``options`` as ``Record<string, string>`` and
+        ``.trim()`` every value, and the handler persists the body verbatim, so the
+        int this reader demanded could never arrive from the UI. The sibling
+        ``timeout_secs`` option shipped with the identical inversion and its fix
+        records the measured symptom (a 900s timeout firing at ~60s).
+        """
+        assert declared_context_window(raw) == int(raw)
+        assert model_context_window("llama3.1:8b", override=raw) == int(raw)
+        assert model_context_window("llama3.1:8b", local=True, override=raw) == int(raw)

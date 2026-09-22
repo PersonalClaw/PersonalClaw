@@ -55,6 +55,13 @@ describe('a refused speech setting rolls back and says so', () => {
         // panel comes back blank — which reads as "the toggle broke".
         voiceProfiles: () => Promise.resolve({ profiles: [], bindings: {} }),
         voiceResolve: () => Promise.resolve({ surface: '', resolved: true, level: 'built-in' }),
+        // Same reason as the two above, for `VocabularySection`. These were unstubbed and invisible
+        // while its reads each ended in `.catch(() => ({ terms: [], total: 0 }))` — the swallow #532
+        // removed absorbed "api.lexiconTerms is not a function" as neatly as it absorbed a 500. A
+        // double that omits a read the mounted tree makes is not stubbing the api, it is relying on
+        // the production code to hide the gap.
+        lexiconTerms: () => Promise.resolve({ terms: [], total: 0 }),
+        lexiconCorrections: () => Promise.resolve({ corrections: [] }),
       },
     }))
     const { VoicePanel } = await import('./VoicePanel')

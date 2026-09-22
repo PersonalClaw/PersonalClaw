@@ -232,6 +232,12 @@ def _maybe_after_turn_review(
     # style nudge ("keep it concise") does no tool work and isn't a correction, so
     # gating it there silently dropped the common case. Run it first, unconditionally.
     facet_learned = atr.capture_preference_facet(svc, user_message)
+    # Glossary capture rides the same pre-gate position for the same reason: "by CR I mean a
+    # code review" does no tool work and is not a correction, so behind the `worthwhile`
+    # threshold it would never fire. No chip — the captured term is visible where the user can
+    # edit or delete it (Settings → Memory → Slots → Glossary), and a chip that linked
+    # anywhere else would be the wrong surface.
+    atr.capture_glossary_term(svc, user_message)
     if facet_learned and getattr(cfg, "surface_chip", True):
         _flabel, _ = redact_credentials(redact_exfiltration_urls(facet_learned[:200])[0])
         # `origin`: all three learned-chip captures below share
@@ -1656,6 +1662,38 @@ def _report_ungated_tool_call(
     return abort
 
 
+async def _abort_acp_turn(client: object, why: str) -> None:
+    """Cancel the ACP CLI's in-flight turn — the ONE seam that actually stops it.
+
+    ``client`` here is the pooled provider (an ``AcpAgentProvider``), not the inner
+    ``AcpClient``. Those two spell cancellation differently: the provider implements
+    the project-wide ``AgentProvider.cancel(*, wait_ack_timeout)`` seam that
+    ``SessionManager.cancel_current`` (a user-pressed Stop) drives, while
+    ``cancel_session`` exists ONLY on the inner ``AcpClient``. Both ACP abort sites
+    used to reach for ``cancel_session`` on the provider, so ``getattr`` returned
+    ``None``, the call was skipped, and nothing logged the miss: the host announced
+    the abort to the user and wrote a SEL row saying ``aborted_turn: true`` while the
+    CLI ran every remaining tool call and finished the turn normally. Measured on a
+    live ``acp:claude-code`` session — the breaker tripped at the configured ceiling,
+    rendered its message, and the turn still completed with 6 tool calls.
+
+    A provider exposing no cancel at all is logged rather than passed over, because a
+    silently-skipped abort is exactly the failure this function replaces.
+    """
+    _cancel = getattr(client, "cancel", None)
+    if not callable(_cancel):
+        logger.warning(
+            "ACP abort (%s) could not cancel the turn: provider %s exposes no cancel() seam",
+            why,
+            type(client).__name__,
+        )
+        return
+    try:
+        await _cancel(wait_ack_timeout=0.0)
+    except Exception:
+        logger.warning("ACP cancel after %s failed", why, exc_info=True)
+
+
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -1818,7 +1856,7 @@ async def run_chat(
     # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
     # six consecutive ACP failures producing no warn, block or trip at all).
     # …and it lives on the SESSION, not here. `LoopBreaker` calls its own
-    # ceiling "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`); a fresh instance
+    # ceiling "this RUN's total failures" (default 30, `guardrails.loop_breaker`); a fresh instance
     # per turn reset the count every turn, so an unattended loop repeating a failing
     # tool for twenty turns never reached thirty and the circuit rung was unreachable
     # by construction — proved at the code level in the prior tick and recorded as the
@@ -2995,6 +3033,28 @@ async def run_chat(
                             "tool_call_id": event.tool_call_id,
                             "purpose": _purpose,
                             "input": _input_preview,
+                            # The DECLARED tool kind, persisted (`AAP-8` §2.5 gap 7,
+                            # second half). `_kind` was computed above and broadcast on
+                            # the live `tool_call` WS frame, but never written here — so
+                            # the kind read absent on every persisted ACP tool row while
+                            # the live socket carried it, which is the `tool_kind: null`
+                            # of `acp-parity.md`'s re-drive sitting in the SAME row as a
+                            # populated `input`: the two are computed a few lines apart
+                            # and only one of them was written.
+                            # The consequence is on screen after a reload, not during
+                            # the turn: `iconForTool` resolves an ACP card's icon from
+                            # the declared kind (`toolRenderers/native.tsx` `_BY_KIND`)
+                            # and falls back to a keyword regex over the CLI's prose
+                            # title when it is absent — which is how an honestly-titled
+                            # provider ends up worse off than a mislabelled one.
+                            # Spelled `kind`, matching the live WS key the frontend
+                            # already reads, so the two representations of one fact
+                            # cannot drift. Omitted when empty: the native runtime
+                            # declares no kind, and a persisted `""` would claim it
+                            # declared an empty one. `"unknown"` IS kept — that is the
+                            # decoder's own placeholder for "this frame declared none"
+                            # and absence must stay representable.
+                            **({"kind": _kind} if _kind else {}),
                         }
                         if event.tool_call_id
                         else None
@@ -3237,14 +3297,7 @@ async def run_chat(
                         request_id=event.tool_call_id,
                     )
                     if _abort:
-                        try:
-                            _cancel = getattr(client, "cancel_session", None)
-                            if _cancel is not None:
-                                await _cancel()
-                        except Exception:
-                            logger.warning(
-                                "ACP cancel after ungated tool call failed", exc_info=True
-                            )
+                        await _abort_acp_turn(client, "ungated tool call")
                 # ── Loop breaker for the ACP turn (§2.3 gap 5) ──────────────────
                 # The native runtime counts failures inside its own dispatch loop and
                 # can refuse the NEXT identical call before it runs. Out here the CLI
@@ -3317,14 +3370,7 @@ async def run_chat(
                             # close, persistence) runs exactly as it does for a
                             # user-pressed Stop. Breaking here would abandon the
                             # generator mid-turn and skip all of it.
-                            try:
-                                _cancel = getattr(client, "cancel_session", None)
-                                if _cancel is not None:
-                                    await _cancel()
-                            except Exception:
-                                logger.warning(
-                                    "ACP cancel after breaker trip failed", exc_info=True
-                                )
+                            await _abort_acp_turn(client, "breaker trip")
                     else:
                         # Structural (no-progress / ping-pong) detection over
                         # SUCCESSFUL calls — nothing failed, so the failure path is
