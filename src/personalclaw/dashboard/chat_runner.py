@@ -232,6 +232,12 @@ def _maybe_after_turn_review(
     # style nudge ("keep it concise") does no tool work and isn't a correction, so
     # gating it there silently dropped the common case. Run it first, unconditionally.
     facet_learned = atr.capture_preference_facet(svc, user_message)
+    # Glossary capture rides the same pre-gate position for the same reason: "by CR I mean a
+    # code review" does no tool work and is not a correction, so behind the `worthwhile`
+    # threshold it would never fire. No chip — the captured term is visible where the user can
+    # edit or delete it (Settings → Memory → Slots → Glossary), and a chip that linked
+    # anywhere else would be the wrong surface.
+    atr.capture_glossary_term(svc, user_message)
     if facet_learned and getattr(cfg, "surface_chip", True):
         _flabel, _ = redact_credentials(redact_exfiltration_urls(facet_learned[:200])[0])
         # `origin` (LEARNING-VISIBILITY T2.2): all three learned-chip captures below share

@@ -301,12 +301,172 @@ def capture_preference_facet(service, user_message: str) -> str | None:
         return None
 
 
+#: Tokens that cannot be a glossary TERM's head. Closed-class words plus the discourse
+#: fillers that make a definitional frame read as ordinary prose ("that means we should
+#: ship", "this refers to the other one"). Deliberately a separate list from
+#: `preference_facets._NON_ACTION_HEADS`, which vetoes verb-phrase heads: the two answer
+#: different questions and collapsing them would make each wrong for the other's job.
+_NON_TERM_HEADS = frozenset("""
+    it its this that these those they them their he him his she her hers we us our ours
+    you your yours i me my mine one ones thing things something anything nothing
+    which what who whom whose where when why how
+    and but or nor so then also just only the a an any some all both each every
+    is are was were be been being am do does did doing done have has had having
+    will would shall should can could may might must
+    """.split())
+
+#: Interrogative / auxiliary heads that make a clause a QUESTION about a term rather than a
+#: definition of it ("what does CR mean?", "does CR mean code review?"). A question must never
+#: teach the glossary, because the answer is not in the user's message.
+_QUESTION_HEADS = frozenset("""
+    what which who whom whose where when why how
+    is are was were do does did can could may might shall should will would
+    """.split())
+
+#: An article may LEAD a term without condemning it — "the run ledger means …" defines a term;
+#: the token ceiling in :func:`_clean_term`, not the article, is what keeps a whole clause out
+#: ("the thing I said yesterday about the build" is eight tokens). It is STRIPPED rather than
+#: merely tolerated because it is not part of the term's identity: "by the run ledger I mean …"
+#: and "run ledger means …" define the same term, and `reinforce` keys on the rendered line, so
+#: keeping the article would file one definition as two entries.
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.I)
+
+#: Heads that make a DEFINITION a consequence rather than a meaning. "the build means we
+#: should wait" and "the run ledger means the append-only event store" are grammatically
+#: identical, and this is the signal that separates them: a definition is a noun phrase, a
+#: consequence opens with a pronoun or a modal. Deliberately excludes articles, which open
+#: the most common definition shape of all ("a code review").
+_NON_DEFINITION_HEADS = frozenset("""
+    i we you they he she it that this there
+    will would shall should can could may might must do does did
+    """.split())
+
+#: One clause plus the punctuation that ended it, so a trailing `?` is still observable.
+_CLAUSE_RE = re.compile(r"[^.!?;\n]+[.!?;\n]?")
+
+#: `by <term> I mean <definition>` — searched anywhere in a clause, because "by … I mean" is
+#: itself a strong anchor that does not need clause-initial position.
+_GLOSSARY_BY_RE = re.compile(r"\bby\s+(?P<term>.{1,60}?)\s+i\s+mean\s+(?P<definition>.+)$", re.I)
+
+#: `<term> stands for|means|refers to <definition>` — anchored at the clause start, because a
+#: bare "means" mid-sentence is far more often ordinary prose than a definition. One optional
+#: comma-delimited discourse prefix is allowed to precede the term ("FYI, SEL stands for …"),
+#: because the clause splitter deliberately does not break on commas — a definition may contain
+#: one ("the append-only store, one row per event") — and without this the prefix would be
+#: swallowed INTO the term, yielding "FYI, SEL". The term itself is comma-free: a term is a noun
+#: phrase, so a comma inside one means the anchor landed in the wrong place.
+_GLOSSARY_IS_RE = re.compile(
+    r"^(?:[^,]{0,40},\s*)?(?P<term>[^,]{1,60}?)"
+    r"\s+(?:stands\s+for|means|refers\s+to)\s+(?P<definition>.+)$",
+    re.I,
+)
+
+#: Cap on one rendered glossary line. The `glossary` slot's own cap is 600 chars for the whole
+#: slot, so a single line must stay well inside it or the first definition fills the register.
+_GLOSSARY_LINE_CAP = 120
+
+_TERM_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’\-_/.]*")
+
+
+def _clean_term(raw: str) -> str:
+    """A candidate glossary term, or "" when it cannot be one.
+
+    Strips the quoting a user naturally puts around a term being defined, then requires 1-4
+    tokens whose head is not closed-class. The token ceiling is what separates a term from a
+    clause: "CR" and "the run ledger" are terms, "the thing I said yesterday about the build"
+    is prose that happens to contain "means".
+    """
+    term = raw.strip().strip("\"'`“”‘’*").strip()
+    tokens = _TERM_TOKEN_RE.findall(term)
+    if not (1 <= len(tokens) <= 4):
+        return ""
+    if len(tokens) > 1:
+        stripped = _LEADING_ARTICLE_RE.sub("", term, count=1)
+        if stripped != term:
+            term, tokens = stripped, _TERM_TOKEN_RE.findall(stripped)
+    if len(term) < 2 or not tokens:
+        return ""
+    if tokens[0].casefold() in _NON_TERM_HEADS:
+        return ""
+    return term
+
+
+def detect_glossary_definition(user_message: str) -> tuple[str, str] | None:
+    """A ``(term, definition)`` the user explicitly DEFINED, or None. No LLM call.
+
+    The `glossary` slot is workspace-scoped project vocabulary — "terms that mean something
+    specific here" — and it is the one built-in slot with no producer: a user could only ever
+    fill it by hand. This is the cheap heuristic that lets the after-turn pass offer one, in
+    the same shape as :func:`preference_facets.detect_facet_candidate` (regex, conservative,
+    no new model call).
+
+    Precision over recall, deliberately, for the same reason the veto rule is strict: a slot
+    is injected on EVERY turn, so a false positive costs every future turn until the user
+    deletes it. Three explicit definitional frames are recognized, each requiring a term that
+    is 1-4 tokens with a non-closed-class head and a definition of at least two tokens:
+
+    * ``by <term> I mean <definition>``
+    * ``<term> stands for <definition>``   (clause-initial)
+    * ``<term> means|refers to <definition>``   (clause-initial)
+
+    A clause that is a QUESTION is never a definition — "what does CR mean?" asks for the
+    answer rather than supplying it, and "CR means what?" supplies an interrogative. Both are
+    rejected, from opposite sides.
+    """
+    for clause_raw in _CLAUSE_RE.findall(user_message or ""):
+        interrogative = clause_raw.rstrip().endswith("?")
+        clause = clause_raw.strip().rstrip(".!?;").strip()
+        if not clause:
+            continue
+        head = (_TERM_TOKEN_RE.findall(clause) or [""])[0].casefold()
+        if head in _QUESTION_HEADS:
+            continue  # a question ABOUT a term, not a definition of one
+        match = _GLOSSARY_BY_RE.search(clause) or _GLOSSARY_IS_RE.match(clause)
+        if match is None:
+            continue
+        term = _clean_term(match.group("term"))
+        if not term:
+            continue
+        definition = match.group("definition").strip().strip("\"'`“”‘’*").strip()
+        def_tokens = _TERM_TOKEN_RE.findall(definition)
+        if len(def_tokens) < 2:
+            continue  # a bare word is a restatement, not a definition
+        if def_tokens[0].casefold() in _NON_DEFINITION_HEADS:
+            continue  # a consequence ("… means we should wait"), not a meaning
+        if interrogative and def_tokens[-1].casefold() in _QUESTION_HEADS:
+            continue  # "CR means what?" — the definition is the question
+        return term, definition[:_GLOSSARY_LINE_CAP]
+    return None
+
+
+def capture_glossary_term(service, user_message: str) -> str | None:
+    """No-LLM glossary capture: offer an explicitly-defined term to the `glossary` slot.
+
+    The reflection half of the slots feature, wired to the one slot that has no other
+    producer. Returns the line written (for a caller that surfaces it), or None — including
+    when the line was refused, because every refusal path in
+    :func:`capture_slot_lines` is one the user already decided (a human tombstone) or one
+    that needs the user's decision (an over-cap trim proposal), and neither is something to
+    report as learned.
+    """
+    found = detect_glossary_definition(user_message or "")
+    if not found:
+        return None
+    term, definition = found
+    line = f"{term} — {definition}"[:_GLOSSARY_LINE_CAP]
+    # reinforce=True: a term the user re-explains is the same entry with more evidence, not a
+    # second line. Without a trim handler an over-cap glossary logs the proposal and declines
+    # the write — the after-turn pass has no user in front of it to answer one.
+    return line if capture_slot_lines(service, "glossary", [line], reinforce=True) else None
+
+
 def capture_slot_lines(
     service,
     slot: str,
     lines,
     *,
     reinforce: bool = True,
+    source: str = "after_turn_review",
     on_trim_needed=None,
 ) -> int:
     """Append reflection output into a memory slot. Append-only (MGAV-8). Returns lines written.
@@ -328,6 +488,12 @@ def capture_slot_lines(
 
     *reinforce* bumps an existing line's `reinforcements` count instead of duplicating it, which
     is how repeated observation accumulates evidence without growing the slot.
+
+    *source* stamps the memory event. It defaults to this module rather than to
+    ``memory_slots.append``'s own ``user_explicit`` default, because everything written through
+    here is the ASSISTANT reflecting — recording it as the user's own words would misattribute
+    it in the WAL and in every reader that treats a user-set entry as more durable than an
+    inferred one.
     """
     if service is None or not getattr(service, "has_vector", False):
         return 0
@@ -343,7 +509,7 @@ def capture_slot_lines(
             continue
         before = len(memory_slots.live_lines(memory_slots.load(vs, slot)))
         try:
-            after = memory_slots.append(vs, slot, candidate, reinforce=reinforce)
+            after = memory_slots.append(vs, slot, candidate, source=source, reinforce=reinforce)
         except memory_slots.SlotCapExceeded as exc:
             if on_trim_needed is not None:
                 on_trim_needed(exc.proposal)
@@ -377,17 +543,19 @@ def run_after_turn_review(
     LLM skill-ladder review layers on later; this lands the timely memory win
     + the guardrail that protects the whole learning loop.
 
-    Also runs the no-LLM preference-facet detector (C15) on EVERY reviewed turn (not
-    just corrections) — a style nudge / veto becomes a typed decaying facet that the
-    ambient USER PROFILE block renders.
+    Also runs the two no-LLM detectors on EVERY reviewed turn (not just corrections):
+    the preference-facet detector (C15) — a style nudge / veto becomes a typed decaying
+    facet that the ambient USER PROFILE block renders — and the glossary detector, which
+    offers an explicitly-defined project term to the workspace-scoped `glossary` slot.
     """
-    # Preference facets: cheap heuristic, runs regardless of the correction gate (a
-    # style nudge like "keep it shorter" isn't a correction-signal but IS a facet).
-    # The dashboard hot path captures facets BEFORE this expensive-review gate (so a
-    # toolless conversational hint isn't dropped) and passes capture_facets=False to
-    # avoid a double-upsert; direct/test callers keep the default.
+    # Cheap no-LLM captures: both run regardless of the correction gate (a style nudge like
+    # "keep it shorter", or "by CR I mean a code review", is not a correction-signal but IS
+    # worth keeping). The dashboard hot path runs both BEFORE this expensive-review gate (so
+    # a toolless conversational hint isn't dropped) and passes capture_facets=False to avoid
+    # a double-write; direct/test callers keep the default.
     if capture_facets:
         capture_preference_facet(service, user_message)
+        capture_glossary_term(service, user_message)
     if service is None or not service.has_vector or not correction:
         return None
     correction_text = (user_message or "").strip()

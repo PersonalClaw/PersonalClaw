@@ -45,7 +45,7 @@ export function FeedbackPanel() {
         hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
         {rows.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
-            No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop findings. Verdicts collect here per judgment source.
+            No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills. Verdicts collect here per judgment source.
           </div>
         ) : (
           <div className="flex flex-col gap-1">

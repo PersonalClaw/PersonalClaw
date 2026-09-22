@@ -1529,6 +1529,12 @@
     "type": "float"
   },
   {
+    "default": "default",
+    "path": "session.context_engine",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": "",
     "path": "session.pool_agent",
     "sensitive": false,

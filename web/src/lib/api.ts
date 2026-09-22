@@ -1983,7 +1983,11 @@ export interface PromptSyntaxConstruct { category: string; label: string; snippe
 export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptSyntaxConstruct[] }
 // `provenance` is HOW the skill came to exist and is orthogonal to `source`, which is the
 // tier it lives in (#576). Optional, and `''` for a hand-authored skill — the common case.
-export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
+/** `feedback_producer` is present only on a SYNTHESIZED (`provenance: 'auto'`) skill — the
+ *  ('skill_synthesis', key) identity the inspector's thumbs attribute to. Absent on taught and
+ *  hand-authored skills: a verdict there would retire the extractor over a skill the user chose
+ *  themselves. Read it, never derive it — the server decides which skills carry one. */
+export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string; feedback_producer?: FeedbackProducer }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
@@ -3931,6 +3935,25 @@ export interface MemorySlot {
   lines: MemorySlotLine[]
 }
 export interface MemorySlotsResponse { slots: MemorySlot[]; block_limit: number }
+/** A learned preference facet, WITH its key — the identity report's facet rows drop it, so
+ *  this is the only shape that can be addressed by a pin or a forget.
+ *
+ *  `stability` is the DECAYED value the profile block actually trusts; `stored_stability` is
+ *  the score on disk, so a reader can see the decay rather than infer it. `forgotten` rows are
+ *  still listed (flagged) because the list is the only place a retirement is visible at all —
+ *  forgetting is final, so it is never undone from here. */
+export interface MemoryFacet {
+  key: string
+  cls: string
+  text: string
+  cue: string
+  stability: number
+  stored_stability: number
+  state: string
+  updated_at: string
+  pinned: boolean
+  forgotten: boolean
+}
 /** An append's outcome. `ok: false` with a `proposal` is the cap rejection — nothing was
  *  written, and `proposal.drop_candidates` is what would have to go for it to fit. */
 export interface MemorySlotAppendResult {
@@ -4056,6 +4079,7 @@ export interface ProjectionRule {
 export type FeedbackTargetKind =
   | 'inbox_classification' | 'inbox_draft' | 'inbox_digest'
   | 'loop_finding' | 'routing_suggestion' | 'proposal_content' | 'app_judgment'
+  | 'synthesized_skill'
 export interface FeedbackProducer { producer_kind: string; producer_id: string }
 export interface FeedbackRecordBody {
   target_kind: FeedbackTargetKind
@@ -5915,6 +5939,15 @@ export const api = {
   // tombstone is not a delete anyway (the line stays, marked, so it is never re-derived).
   memorySlotRetireLine: (name: string, text: string) =>
     post<{ ok: boolean }>(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, { text }),
+  // C15 — the facet overrides. `memoryFacets` is the ONLY read that carries a facet's key:
+  // the identity report's facet section drops it (that document is propose-don't-write) and
+  // also hides forgotten facets, so nothing there can be pinned or reviewed.
+  memoryFacets: () => get<{ facets: MemoryFacet[] }>('/api/memory/facets').then((d) => d.facets),
+  memoryFacetPin: (key: string, pinned: boolean) =>
+    post<{ ok: boolean; pinned: boolean }>(`/api/memory/facets/${encodeURIComponent(key)}/pin`, { pinned }),
+  // No body: forgetting is final, so there is nothing to choose. See `MemoryFacet.forgotten`.
+  memoryFacetForget: (key: string) =>
+    post<{ ok: boolean }>(`/api/memory/facets/${encodeURIComponent(key)}/forget`),
   memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
   memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),

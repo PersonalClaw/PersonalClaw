@@ -665,6 +665,18 @@ class SessionConfig:
             "Pin a chat with 'never archive' to exempt it.",
         ),
     )
+    context_engine: str = field(
+        default="default",
+        metadata=_meta(
+            "Context Engine",
+            "Which engine assembles each turn's context (agent prompt + memory + "
+            "skills + history). 'default' is the built-in assembly and is the only "
+            "engine shipped today; the name is read once at gateway start against the "
+            "registry in `context_engine.py`, so an unknown name logs and falls back "
+            "to 'default' rather than breaking chat. Lives here beside "
+            "Auto-Compact Threshold because an engine may take compaction over.",
+        ),
+    )
 
 
 @dataclass
@@ -3631,6 +3643,10 @@ class AppConfig:
                 pool_agent=str(session_data.get("pool_agent", "")),
                 pool_ttl_secs=int(session_data.get("pool_ttl_secs", 1800)),
                 auto_archive_days=_safe_int(session_data.get("auto_archive_days"), 30),
+                # No validation here on purpose: the registry is the only thing that knows
+                # which names exist, and it is populated by app bundles that load after
+                # config. `install_engine` resolves it at gateway start and falls back.
+                context_engine=str(session_data.get("context_engine", "default") or "default"),
             ),
             loops=LoopsConfig(
                 max_cycles_hard_cap=loops_data.get("max_cycles_hard_cap", 100),

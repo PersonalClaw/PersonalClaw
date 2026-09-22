@@ -785,6 +785,93 @@ class MemoryService:
             return False
         return memory_slots.tombstone(vs, name, text, actor="human", source="user_explicit")
 
+    # ── Preference facets (C15) — the pinned/forgotten overrides the user owns ──
+    # The flags persist and every scoring branch reads them; until #1783 nothing outside
+    # the tests could SET one, so the documented override was unreachable. These three are
+    # the service half of that writer, sitting beside the slot editor above because both
+    # are "the human correcting learned state", and both must travel through MemoryService
+    # so the WAL covers a hand-made change exactly as it covers an inferred one.
+
+    def facets(self) -> list[dict]:
+        """Every stored facet with its KEY, state and decayed stability.
+
+        The key is the whole point and is why this is not the identity report's facet
+        section: :func:`learning_report._gather_facets` drops it (that document is
+        contractually propose-don't-write) and also hides forgotten facets, so a pin could
+        not be addressed from it. A forgotten facet IS listed here, flagged — not because it
+        can be brought back (see :meth:`facet_forget`: it cannot) but because this is the
+        only surface where a retirement is visible at all. Hiding them would leave the user
+        unable to tell a facet they retired from one the detector never found.
+
+        ``stability`` is the DECAYED value the surfacing path actually trusts, not the
+        stored score — showing the stored one would tell the user a facet is strong while
+        the profile block has already dropped it. The raw score rides along as
+        ``stored_stability`` so a reader can see the decay rather than infer it.
+        """
+        from personalclaw.preference_facets import (
+            decayed_stability,
+            facet_state,
+            load_facets,
+        )
+
+        vs = self._vs
+        if vs is None:
+            return []
+        out: list[dict] = []
+        for key, facet in load_facets(vs):
+            out.append(
+                {
+                    "key": key,
+                    "cls": str(facet.cls or ""),
+                    "text": facet.text,
+                    "cue": str(facet.cue or ""),
+                    "stability": round(float(decayed_stability(facet)), 3),
+                    "stored_stability": round(float(facet.stability), 3),
+                    "state": facet_state(facet),
+                    "updated_at": str(facet.updated_at or ""),
+                    "pinned": bool(facet.pinned),
+                    "forgotten": bool(facet.forgotten),
+                }
+            )
+        # Strongest first, so the facets shaping the profile block right now lead the list.
+        out.sort(key=lambda f: (-f["stability"], f["key"]))
+        return out
+
+    def facet_pin(self, key: str, pinned: bool = True) -> bool:
+        """Pin (or unpin) a facet — pinned holds stability at 1.0, exempt from decay.
+
+        Reversible on purpose, hence the flag rather than a pin-only route: pinning is the
+        user saying "keep trusting this", and there is no reason that should be a one-way
+        door the way a tombstone is.
+        """
+        from personalclaw.preference_facets import pin_facet
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return pin_facet(vs, key, pinned)
+
+    def facet_forget(self, key: str) -> bool:
+        """Forget a facet — stability reads 0.0 and it leaves the profile block. FINAL.
+
+        A flag, not a delete: the row survives so the memory event log keeps the history.
+        But the decision is **irreversible through this API, and that is the design** —
+        :func:`preference_facets.decayed_stability` tests ``forgotten`` BEFORE ``pinned``,
+        so pinning does not bring one back, and :func:`preference_facets.reinforce` never
+        clears the flag, so re-observing the same preference cannot resurrect it either.
+        That is the facet analogue of MGAV-8's human tombstone: a preference the user
+        retired must not come back because the detector saw it again.
+
+        Callers that expose this need a destructive confirm, for the same reason the slot
+        editor's retire does. See `web/src/pages/settings/MemoryPanel.tsx`.
+        """
+        from personalclaw.preference_facets import forget_facet
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return forget_facet(vs, key)
+
     def resolve_entities(self, text: str) -> list[dict]:
         """Entities NAMED in ``text``, resolved deterministically through the alias index (§2.1).
 
