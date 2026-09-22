@@ -7,6 +7,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Table, THead, Th, Td } from '../../ui/Table'
 import { Meter } from '../../ui/Meter'
 import { PanelHeader, Section } from './settingsUI'
+import { InlineLoadError, ListSkeleton } from '../../ui/ListScaffold'
 import { BigStat, KVList } from './bento'
 
 /** Account-level cost/token usage (COST-AND-TOKEN-OBSERVABILITY S2c).
@@ -88,14 +89,23 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
     () => api.usageTotals({ since }).then((d) => d.totals).catch(() => null),
     { persist: false },
   )
-  const { data: byModel } = useQuery(
+  // 🔴 BOTH ROLLUPS SWALLOWED THEIR REJECTION AND THE TABLES ANSWERED FOR THE LEDGER (#532). `[]`
+  // fell straight through `UsageTable`'s `rows.length === 0` branch, so a 500 on
+  // /api/usage/rollup printed "No model usage recorded this period." and "No usage recorded this
+  // period." on a spend page — the one surface whose entire job is to say what was spent. Worse
+  // than a blank: the headline tiles above read from a DIFFERENT endpoint, so a user could see
+  // $11.35 and 412 turns over two tables both swearing nothing had run.
+  //
+  // The two rollups are separate reads of the same ledger and fail independently, so each table
+  // carries its own error rather than one banner speaking for both.
+  const { data: byModel, error: byModelErr, refresh: refreshByModel } = useQuery(
     `settings:usage-rollup:model:${period}`,
-    () => api.usageRollup({ group_by: 'model', since }).then((d) => d.rows).catch(() => []),
+    () => api.usageRollup({ group_by: 'model', since }).then((d) => d.rows),
     { persist: false },
   )
-  const { data: bySource } = useQuery(
+  const { data: bySource, error: bySourceErr, refresh: refreshBySource } = useQuery(
     `settings:usage-rollup:source:${period}`,
-    () => api.usageRollup({ group_by: 'source', since }).then((d) => d.rows).catch(() => []),
+    () => api.usageRollup({ group_by: 'source', since }).then((d) => d.rows),
     { persist: false },
   )
   // The configured daily $ cap (read-only; SpendMeter owns enforcement). 0 = unlimited.
@@ -136,6 +146,10 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
     sys.input_tokens > 0 || sys.output_tokens > 0 || sys.total_turns > 0
     || sys.sessions_created > 0 || sys.subagents_spawned > 0 || cacheLive > 0
   )
+  // Left on `?? []` deliberately: with the rollup unread this marker simply does not render, which
+  // is an ABSENCE (no claim about pricing) rather than a fabricated one. The `Partial` banner only
+  // ever adds a caveat, so withholding it withholds nothing the user could act on — and the table
+  // that DID fail says so on its own line below.
   const unpricedModels = (byModel ?? []).filter((r) => !r.priced)
   const dayCap = Number(cfg?.max_dollars_per_day ?? 0) || 0
 
@@ -189,12 +203,14 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
         </Section>
       )}
 
+      {/* `rows` travels undefaulted — `?? []` here would put the swallow back one layer down, where
+          it reads as the empty state again. */}
       <Section title="By model" hint="Which models this period's cost went to.">
-        <UsageTable rows={byModel ?? []} keyField="model" empty="No model usage recorded this period." />
+        <UsageTable rows={byModel} error={byModelErr} onRetry={refreshByModel} keyField="model" empty="No model usage recorded this period." />
       </Section>
 
       <Section title="By source" hint="Which subsystem spent — chat, subagents, loops, automations.">
-        <UsageTable rows={bySource ?? []} keyField="source" empty="No usage recorded this period." />
+        <UsageTable rows={bySource} error={bySourceErr} onRetry={refreshBySource} keyField="source" empty="No usage recorded this period." />
       </Section>
 
       <Section title="Cache savings">
@@ -249,11 +265,20 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   )
 }
 
-function UsageTable({ rows, keyField, empty }: {
-  rows: Array<UsageAgg & Record<string, string>>
+function UsageTable({ rows, keyField, empty, error, onRetry }: {
+  /** `undefined` is UNKNOWN — loading or failed. Never defaulted to `[]` by a caller. */
+  rows: Array<UsageAgg & Record<string, string>> | undefined
   keyField: 'model' | 'source'
   empty: string
+  error?: unknown
+  onRetry?: () => void
 }) {
+  // Error, then loading, then empty — in that order, because `rows === undefined` satisfies the
+  // first two and `empty` is a CLAIM about the ledger, not a placeholder. One line rather than a
+  // centred block: this is a section inside a page that has five more of them, and the tiles above
+  // still hold real numbers worth reading.
+  if (!rows && error) return <InlineLoadError what={`usage by ${keyField}`} error={error} onRetry={onRetry} />
+  if (!rows) return <ListSkeleton rows={3} what={`usage by ${keyField}`} />
   const total = rows.reduce((s, r) => s + (r.cost_usd || 0), 0)
   if (rows.length === 0) {
     return <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">{empty}</div>
