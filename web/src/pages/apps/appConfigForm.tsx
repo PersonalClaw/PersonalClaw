@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Field, Select, TextArea } from '../../ui/forms'
+import { Markdown } from '../../ui/Markdown'
 import { api } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import {
@@ -33,6 +34,13 @@ export function parseJsonField(text: string, expected: 'array' | 'object'):
   return { value: parsed }
 }
 
+/** An app's `meta.help` is markdown its AUTHOR wrote — the same string the Store card and the
+ *  detail panel render — so it reaches the field hint through the one renderer rather than as
+ *  literal asterisks and backticks. `inline`, because the hint sink is a `<p>`. */
+function helpHint(help?: string) {
+  return help ? <Markdown inline>{help}</Markdown> : undefined
+}
+
 /** JSON editor for a structured (array/object) config field. The backend validates
  *  the persisted type, so a plain text input (which stringifies an object to the
  *  literal "[object Object]") would both misrender AND be rejected on save. This
@@ -47,7 +55,10 @@ function JsonField({ label, help, expected, value, onChange }: {
 }) {
   const [text, setText] = useState(() => serializeJsonField(value, expected))
   const [error, setError] = useState<string | null>(null)
-  const hint = error ? `${help ? help + ' — ' : ''}⚠ ${error}` : help
+  // The error keeps its own literal text (ours, not the app's) beside the rendered help.
+  const hint = error
+    ? <>{help ? <>{helpHint(help)}{' — '}</> : null}⚠ {error}</>
+    : helpHint(help)
   return (
     <Field label={label} hint={hint}>
       <TextArea
@@ -129,7 +140,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         }
         if (Array.isArray(p.enum) && p.enum.length) {
           return (
-            <Field key={key} label={label} hint={meta.help}>
+            <Field key={key} label={label} hint={helpHint(meta.help)}>
               <Select name={fieldId} value={String(v ?? '')} onChange={(nv) => set(key, nv)}
                 required={isRequired}
                 options={p.enum.map((o) => ({ value: String(o), label: String(o) }))} />
@@ -138,7 +149,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         }
         if (p.type === 'boolean') {
           return (
-            <Field key={key} label={label} hint={meta.help}>
+            <Field key={key} label={label} hint={helpHint(meta.help)}>
               <button type="button" id={fieldId} name={fieldId} onClick={() => set(key, !v)}
                 className={`h-6 w-11 rounded-pill transition-colors ${v ? 'bg-primary' : 'bg-surface-highest'}`}
                 aria-pressed={!!v} aria-label={label} aria-required={isRequired || undefined}>
@@ -155,7 +166,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         }
         const isNum = p.type === 'integer' || p.type === 'number'
         return (
-          <Field key={key} label={label} hint={meta.help}>
+          <Field key={key} label={label} hint={helpHint(meta.help)}>
             <input
               id={fieldId} name={fieldId}
               aria-required={isRequired || undefined}

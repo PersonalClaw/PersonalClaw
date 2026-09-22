@@ -95,7 +95,19 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   for (const r of rows) for (const k of Object.keys(r)) if (!cols.includes(k)) cols.push(k)
   const shown = cols.slice(0, 8)
   return (
-    <div className="overflow-x-auto rounded-md border border-outline-variant/30">
+    // 🔑 THE HEIGHT CAP IS WHAT MAKES THE SIDEWAYS SCROLLBAR REACHABLE, and it is the half that was
+    // missing. `overflow-x-auto` alone put the affordance at the bottom of THIS box — and this box is
+    // as tall as the result. Measured in a browser on `#/tools` (#2515), `workflow_list_defs` docked
+    // in the side panel: clientWidth 324 vs scrollWidth 505 (**181px hidden**) inside a box **7007px
+    // tall**, so its bottom edge — where the horizontal scrollbar lives — sat at y=7801, **6645px
+    // below** the visible window and off a 900px viewport. `offsetHeight − clientHeight` was 2 (the
+    // borders), i.e. overlay scrollbars only: nothing on screen said the row was cut. Capping the
+    // scrollport at the same `max-h-96` its two callers already cap at (ToolInspector's result box,
+    // chat's RawBlock) puts both scrollbars back inside one visible 384px box.
+    // The trio is this repo's canonical form for a scroll region — see design/scrollRegionNamed.test.tsx,
+    // whose derived census scans `<pre>` only and therefore never saw this `div`.
+    <div tabIndex={0} role="group" aria-label="Result table"
+      className="max-h-96 overflow-auto rounded-md border border-outline-variant/30">
       <table data-type="caption" className="w-full border-collapse">
         <thead>
           <tr>{shown.map((c) => <th key={c} className="border-b border-outline-variant/40 bg-surface-high px-2 py-1.5 text-left font-mono text-on-surface-var" style={fvs(500)}>{c}</th>)}</tr>
