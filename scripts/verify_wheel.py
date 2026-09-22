@@ -11,7 +11,9 @@ It asserts, against a real wheel and a scratch venv with NO Node present:
   4. ``GET /api/healthz`` → 200 JSON (auth-exempt liveness);
   5. ``GET /`` → 200 HTML (the SPA shell, served from the packaged assets), and
   6. every bundled app/extension the wheel ships actually ENABLED — see
-     :func:`extension_failures` for why assertion 6 exists (#2758).
+     :func:`extension_failures` for why assertion 6 exists (#2758), and
+  7. the bundled default chat model, if one is signed off, carries a permitted licence and
+     fits its declared size budget — see :func:`_assert_bundled_model_admitted` (OU-14).
 
 Exit 0 = contract met. Run locally after ``npm run build && python -m build``,
 and in ``release.yml`` (replacing the shallow namelist check).
@@ -119,6 +121,45 @@ def _build_wheel() -> None:
             shutil.rmtree(stale, ignore_errors=True)
     _log("building wheel (python -m build --wheel)…")
     subprocess.run([sys.executable, "-m", "build", "--wheel"], check=True)
+
+
+def _load_bundled_model_rail():
+    """Import ``personalclaw.bundled_model`` from the SOURCE tree, by path.
+
+    By path and not by ``import personalclaw.bundled_model`` because this script runs on a bare
+    runner before anything is installed — that is the whole reason it is stdlib-only. The module
+    it loads is stdlib-only too, and it is the SAME module the tests exercise, so the release
+    gate and ``tests/test_bundled_model_gate.py`` cannot drift into two dialects of the rule.
+    """
+    root = Path(__file__).resolve().parents[1]
+    src = root / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    import importlib
+
+    return root, importlib.import_module("personalclaw.bundled_model")
+
+
+def _assert_bundled_model_admitted(wheel: Path) -> None:
+    """Assertion 7 (OU-14): the bundled default chat model's licence and size budget.
+
+    Three things can red here — an over-budget weight, a weight with a licence that is not on
+    the permitted allowlist, and a weight nothing signed off — and one thing is deliberately
+    NOT a red: no bundle at all, which is the state today. That state prints its own loud line
+    rather than an ``OK``, because a gate whose green means "nobody measured" is not a gate, and
+    OU-14's own escalation found three of its four clauses could go green with no model bundled.
+    """
+    root, rail = _load_bundled_model_rail()
+    try:
+        declaration = rail.repo_declaration(root)
+    except rail.BundleDeclarationError as exc:
+        _fail(f"the bundled-model sign-off record is unreadable: {exc}")
+    result = rail.gate_wheel(wheel, declaration)
+    _log(f"bundled model: {result.summary}")
+    for refusal in result.refusals:
+        _log(f"bundled model REFUSAL: {refusal}")
+    if not result.ok:
+        _fail(f"bundled-model gate refused this wheel ({len(result.refusals)} refusal(s))")
 
 
 def _assert_spa_in_wheel(wheel: Path) -> None:
@@ -374,6 +415,7 @@ def main() -> int:
     wheel = _find_wheel(args.wheel)
     _log(f"verifying {wheel}")
     _assert_spa_in_wheel(wheel)
+    _assert_bundled_model_admitted(wheel)
     _assert_no_node()
 
     scratch = Path(tempfile.mkdtemp(prefix="pc_verify_wheel_"))
@@ -392,7 +434,8 @@ def main() -> int:
 
     _log(
         "PASS: wheel contract met (SPA packaged, installs Node-free, "
-        "gateway serves / + /api/healthz, every bundled app enabled)."
+        "gateway serves / + /api/healthz, every bundled app enabled, bundled-model gate "
+        "not refused — read its own line above for whether it measured anything)."
     )
     return 0
 
