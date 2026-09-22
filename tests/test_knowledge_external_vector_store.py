@@ -24,6 +24,7 @@ import re
 import struct
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -587,3 +588,336 @@ def test_the_record_and_hit_types_are_frozen():
     for obj in (r, h):
         with pytest.raises(Exception):  # noqa: B017, PT011 - FrozenInstanceError
             obj.item_id = "other"  # type: ignore[misc]
+
+
+# ── #3139: the FOURTH chunk-vector write site, and the corpus-level routes ────────────
+#
+# Measured on `origin/main` @ `70209797e` before this section existed: three of the four
+# routes that mutate a chunk vector mirrored (`store.py:2684`, `:2718`, `:3193`) and
+# `reembed_stale_chunks` did not. It is the one route that rewrites vectors under UNCHANGED
+# chunk ids, so nothing downstream could notice: the external store kept the PREVIOUS model's
+# vectors under ids whose local rows had just been re-stamped with the new fingerprint, and
+# RET-4's freshness join reads the LOCAL row — so it certified those stale vectors as
+# comparable. Confident wrong recall with a citation attached, not degraded recall.
+#
+# The suite above was 25/25 GREEN across that defect, because every one of its write-through
+# tests goes through `replace_chunks`.
+
+#: Two different models at the SAME dimension, mirroring RET-4's own constants — a dimension
+#: guard cannot tell them apart, which is the only reason this defect is reachable.
+_MODEL_A = ("all-minilm-l6-v2", "native")
+_MODEL_B = ("bge-small-en", "native")
+
+
+def _bind_embedding_model(monkeypatch, spec: tuple[str, str] | None) -> None:
+    """Bind the active embedding selection every fingerprint read resolves through."""
+    provider_model = None if spec is None else (spec[1], spec[0])
+    monkeypatch.setattr(
+        "personalclaw.embedding_providers.registry._active_embedding_spec",
+        lambda: provider_model,
+    )
+
+
+class _ModelEmbedder:
+    """A bound embedding provider that always answers with one model's vector."""
+
+    def __init__(self, vector) -> None:
+        self._vector = list(vector)
+
+    def embed(self, text):
+        return list(self._vector)
+
+    def embed_for_item(self, title, summary, content=None):
+        return list(self._vector)
+
+    def is_available(self):
+        return True
+
+
+def test_a_reembed_mirrors_the_new_vectors_to_the_external_store(store, monkeypatch):
+    """The clause-1 route. Re-embed under model B; the external store holds B's vectors.
+
+    Asserted on the VECTORS, not on a call count: an implementation that re-upserts the rows
+    it already had would satisfy "upsert was called" and still serve model A's numbers.
+    """
+    _bind_embedding_model(monkeypatch, _MODEL_A)
+    ext = FakeExternalStore()
+    _bind(ext)
+    iid = _add_doc(store, "Swapped", "passage", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    (chunk_id,) = list(ext.rows)
+    assert ext.rows[chunk_id].vector == [1.0, 0.0, 0.0, 0.0], "model A's vector is indexed"
+
+    _bind_embedding_model(monkeypatch, _MODEL_B)
+    result = store.reembed_stale_chunks(_ModelEmbedder([0.0, 1.0, 0.0, 0.0]))
+
+    assert result["reembedded"] == 1 and result["stale_remaining"] == 0
+    assert set(ext.rows) == {chunk_id}, "the chunk id is preserved — an UPDATE, not a re-chunk"
+    assert ext.rows[chunk_id].vector == [
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+    ], "the external store serves model B's vector, not the one it was first given"
+    assert ext.rows[chunk_id].item_id == iid
+
+
+def test_the_reembed_mirror_emits_no_failure_warning(store, monkeypatch, caplog):
+    """The negative control, and the reason the arity guard exists.
+
+    `_external_replace_item` wraps its whole body in a blanket ``except Exception`` logged at
+    WARNING, so the FIRST fix anyone reaches for — call the helper with the two columns
+    ``sync_item`` already had — writes nothing, raises inside the swallow, logs one line
+    nobody reads, and leaves a call site that reads as correct. A mirror that "works" while
+    emitting this warning is the same defect with a mirror-shaped alibi.
+    """
+    _bind_embedding_model(monkeypatch, _MODEL_A)
+    ext = FakeExternalStore()
+    _bind(ext)
+    _add_doc(store, "Quiet", "passage", vectors=[(1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0)])
+
+    _bind_embedding_model(monkeypatch, _MODEL_B)
+    with caplog.at_level("WARNING"):
+        store.reembed_stale_chunks(_ModelEmbedder([0.0, 1.0, 0.0, 0.0]))
+
+    offenders = [
+        r.getMessage() for r in caplog.records if "external vector store" in r.getMessage()
+    ]
+    assert not offenders, f"the mirror swallowed a failure: {offenders}"
+    assert all(r.vector == [0.0, 1.0, 0.0, 0.0] for r in ext.rows.values())
+
+
+def test_the_reembed_mirror_moves_the_ranking_not_only_the_stored_bytes(store, monkeypatch):
+    """The vectors moved AND the answer moved.
+
+    Two documents, orthogonal chunk vectors, and only one of them re-embedded — so a query
+    aimed at model B's direction must return the re-embedded item. Without this, "the bytes in
+    the store changed" is a claim about a write nobody reads.
+    """
+    _bind_embedding_model(monkeypatch, _MODEL_A)
+    ext = FakeExternalStore()
+    _bind(ext)
+    stale = _add_doc(store, "Zzqqxx alpha", "alpha", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    other = _add_doc(store, "Zzqqxx beta", "beta", vectors=[(0.0, 0.0, 1.0, 0.0)])
+
+    ranked_before = [h.item_id for h in ext.query([0.0, 1.0, 0.0, 0.0], k=5) if h.similarity > 0.5]
+    assert not ranked_before, "nothing points at model B's direction yet"
+
+    # Only `stale`'s chunk is re-embedded: `other`'s row is re-stamped out of scope by
+    # embedding it under B too, so limit the pass to the one item by re-stamping `other`
+    # to the NEW fingerprint first.
+    store.db.execute(
+        "UPDATE chunks SET embedding_model_id = ?, embedding_provider = ? WHERE item_id = ?",
+        (_MODEL_B[0], _MODEL_B[1], other),
+    )
+    store.db.commit()
+
+    _bind_embedding_model(monkeypatch, _MODEL_B)
+    store.reembed_stale_chunks(_ModelEmbedder([0.0, 1.0, 0.0, 0.0]))
+
+    ranked_after = [h.item_id for h in ext.query([0.0, 1.0, 0.0, 0.0], k=5) if h.similarity > 0.5]
+    assert ranked_after == [stale], f"the external ranking did not move: {ranked_after}"
+
+
+def test_a_row_narrower_than_the_helper_reads_raises_instead_of_swallowing(store):
+    """A wrong ROW SHAPE is a programming error and must not use the operational swallow.
+
+    Swallowed, it is indistinguishable from success — nothing is written, one WARNING is
+    logged, and every call site still reads as correct. That is precisely how the fourth write
+    site stayed invisible, so the guard sits OUTSIDE the ``try``.
+    """
+    from personalclaw.knowledge.store import _EXTERNAL_ROW_ARITY, _external_replace_item
+
+    ext = FakeExternalStore()
+    _bind(ext)
+    iid = _add_doc(store, "Guarded", "passage", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    rows = store.db.execute("SELECT id, embedding FROM chunks WHERE item_id = ?", (iid,)).fetchall()
+
+    with pytest.raises(ValueError, match=str(_EXTERNAL_ROW_ARITY)):
+        _external_replace_item(iid, rows)
+
+
+# ── #3139: binding a backend over a corpus that already exists ────────────────────────
+
+
+def test_binding_over_a_populated_corpus_backfills_it(store):
+    """The write-through only fires on the next write, so without this the store a user just
+    bound is EMPTY — and an empty store is REACHABLE, so the fail-soft WARNING never fires and
+    the chunk arm simply answers nothing."""
+    first = _add_doc(store, "Before", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    second = _add_doc(store, "Also before", "two", vectors=[(0.0, 1.0, 0.0, 0.0)])
+
+    ext = FakeExternalStore()
+    _bind(ext)
+    assert not ext.rows, "nothing was mirrored while nothing was bound"
+
+    result = store.reindex_external_vector_store()
+
+    assert result["bound"] is True and result["skipped"] is False
+    assert result["items"] == 2 and result["chunks"] == 2
+    assert {r.item_id for r in ext.rows.values()} == {first, second}
+    assert sorted(r.vector for r in ext.rows.values()) == [
+        [0.0, 1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+    ]
+
+
+def test_the_backfill_is_idempotent_and_skips_a_store_already_in_sync(store):
+    """Registration happens on every gateway boot for an enabled app, so an unconditional
+    corpus re-upsert would be a full re-index per start. The backend's own ``describe().count``
+    is the cheap check — and a second run must not duplicate or drop anything either way."""
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0)])
+    ext = FakeExternalStore()
+    _bind(ext)
+    store.reindex_external_vector_store()
+    indexed = {cid: r.vector for cid, r in ext.rows.items()}
+    ext.calls.clear()
+
+    again = store.reindex_external_vector_store()
+
+    assert again["skipped"] is True and again["chunks"] == 0
+    assert not ext.calls, "an in-sync store is not touched at all"
+    assert {cid: r.vector for cid, r in ext.rows.items()} == indexed
+    forced = store.reindex_external_vector_store(force=True)
+    assert forced["skipped"] is False and forced["chunks"] == 2
+    assert {cid: r.vector for cid, r in ext.rows.items()} == indexed, "force is idempotent too"
+
+
+def test_the_backfill_walks_when_the_backend_cannot_report_a_count(store):
+    """ "Cannot tell" must not read as "in sync" — a backend with no count is always walked."""
+
+    class _Countless(FakeExternalStore):
+        def describe(self):
+            return VectorStoreInfo(
+                backend="fake", collection="test", dimension=_DIM, count=None, reachable=True
+            )
+
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    ext = _Countless()
+    _bind(ext)
+    assert store.reindex_external_vector_store()["chunks"] == 1
+    assert store.reindex_external_vector_store()["skipped"] is False
+
+
+def test_the_backfill_is_a_no_op_when_nothing_is_bound(store):
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    result = store.reindex_external_vector_store()
+    assert result == {
+        "bound": False,
+        "skipped": False,
+        "items": 0,
+        "chunks": 0,
+        "local_chunks": 1,
+        "external_count": None,
+    }
+
+
+def test_the_activation_path_backfills_the_corpus(store, monkeypatch):
+    """The user-reachable route: enabling the app IS the binding, so the handler that registers
+    the provider is the only place a backfill can hang off."""
+    from personalclaw.providers.registry import VectorStoreTypeHandler
+
+    iid = _add_doc(store, "Already here", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    ext = FakeExternalStore()
+
+    VectorStoreTypeHandler().register(
+        SimpleNamespace(name="fake-external"),  # type: ignore[arg-type]
+        ext,
+    )
+
+    assert vs_registry.active_provider() is ext, "registration still binds"
+    assert {r.item_id for r in ext.rows.values()} == {iid}, "and the existing corpus is indexed"
+
+
+def test_a_failing_backfill_never_fails_the_enable(store, monkeypatch, caplog):
+    """``_enable_one`` turns any exception out of ``register`` into "this app failed to
+    enable". A store that cannot be filled yet is still bound and still searchable once
+    reachable, so the backfill is guarded and reports at WARNING."""
+    from personalclaw.providers.registry import VectorStoreTypeHandler
+
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    ext = FakeExternalStore(fail=True)
+
+    ext_spec = SimpleNamespace(name="fake-external")
+    with caplog.at_level("WARNING"):
+        VectorStoreTypeHandler().register(ext_spec, ext)  # type: ignore[arg-type]
+
+    assert vs_registry.active_provider() is ext, "the app enabled anyway"
+    assert "backfill failed" in caplog.text or "external vector store" in caplog.text
+
+
+# ── #3139: describe() reaches a user ─────────────────────────────────────────────────
+
+
+def test_the_doctor_reports_the_bound_stores_own_description(store, monkeypatch, capsys):
+    """``describe()`` was an abstractmethod every app implemented and core called NOWHERE, so
+    "is my store actually being used, and does it hold my vectors?" had no answer anywhere."""
+    from personalclaw.cli_doctor import _doctor_external_vector_store
+
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    ext = FakeExternalStore()
+    _bind(ext)
+    store.reindex_external_vector_store()
+
+    issues = _doctor_external_vector_store()
+
+    out = capsys.readouterr().out
+    assert issues == []
+    assert "fake-external" in out and "fake/test" in out and "1 vector" in out
+
+
+def test_the_doctor_is_silent_when_no_backend_is_bound(capsys):
+    """The bundled local index is the default; a row about an unused feature is noise on
+    every install."""
+    from personalclaw.cli_doctor import _doctor_external_vector_store
+
+    assert _doctor_external_vector_store() == []
+    assert capsys.readouterr().out == ""
+
+
+def test_the_doctor_fails_on_an_unreachable_store(store, monkeypatch, capsys):
+    """Unreachable is actionable and must move doctor's exit status: while it is down the chunk
+    arm returns NOTHING and deliberately does not fall back to the local index."""
+    from personalclaw.cli_doctor import _doctor_external_vector_store
+
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    _bind(FakeExternalStore(fail=True))
+
+    issues = _doctor_external_vector_store()
+
+    assert issues == ["vector store fake-external unreachable"]
+    assert "unreachable" in capsys.readouterr().out
+
+
+def test_the_doctor_names_the_empty_but_reachable_store(store, monkeypatch, capsys):
+    """The silent case the backfill exists for — healthy, reachable, and holding nothing while
+    the library is full."""
+    from personalclaw.cli_doctor import _doctor_external_vector_store
+
+    _add_doc(store, "Doc", "one", vectors=[(1.0, 0.0, 0.0, 0.0)])
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    ext = FakeExternalStore()
+    ext.rows.clear()
+    _bind(ext)
+
+    issues = _doctor_external_vector_store()
+
+    assert issues == ["vector store fake-external empty"]
+    assert "Empty while 1 local chunk(s)" in capsys.readouterr().out
+
+
+def test_the_doctor_row_is_reachable_from_the_command_a_user_types(store):
+    """A helper nobody calls is the defect this clause exists to close — ``describe()`` was
+    already implemented by every app and reachable from nothing. So the wiring is asserted,
+    not just the helper: ``personalclaw doctor`` must call it, and must fold its result into
+    the ``issues`` list that drives the exit status."""
+    import inspect
+
+    from personalclaw.cli_doctor import _doctor
+
+    src = inspect.getsource(_doctor)
+    assert (
+        "issues.extend(_doctor_external_vector_store())" in src
+    ), "the doctor does not consult the bound external vector store"
