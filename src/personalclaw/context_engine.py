@@ -27,6 +27,7 @@ Design constraints (matching PClaw's posture):
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -43,6 +44,11 @@ if TYPE_CHECKING:
     from personalclaw.skills.allocation import SkillDecision
 
 logger = logging.getLogger(__name__)
+
+#: The built-in engine's name, and what every failure path falls back to. Named rather
+#: than repeated as a literal because it is now a CONFIG VALUE (``session.context_engine``)
+#: as well as an attribute, and the two must not be able to drift apart.
+DEFAULT_ENGINE_NAME = "default"
 
 
 @dataclass
@@ -105,7 +111,7 @@ class DefaultContextEngine:
     False``) — the native structured-compaction engine flips this.
     """
 
-    name = "default"
+    name = DEFAULT_ENGINE_NAME
     owns_compaction = False
 
     def ingest(self, session_key: str, role: str, content: str) -> None:
@@ -441,6 +447,71 @@ def set_engine(engine: ContextEngine | None) -> None:
         engine.name,
         getattr(engine, "owns_compaction", False),
     )
+
+
+# ── The installer (#1783) ────────────────────────────────────────────────────
+# `set_engine` had exactly one non-test caller — its own quarantine path above,
+# `set_engine(None)` — so no engine other than `DefaultContextEngine` could ever become
+# active and the whole swappable seam was unreachable. A registry plus one resolve-at-
+# startup call is the missing half: a name in config picks the engine, and everything
+# above (the contract check, the quarantine, the headroom join) already worked.
+#
+# Factories, not instances: an engine that is registered but not selected must not be
+# constructed, so a future engine that opens a store or loads a model costs nothing
+# unless the operator asked for it.
+
+_REGISTRY: dict[str, Callable[[], ContextEngine]] = {}
+
+
+def register_engine(name: str, factory: Callable[[], ContextEngine]) -> None:
+    """Make ``name`` selectable by :func:`install_engine`. Last registration wins."""
+    if not name:
+        raise ValueError("a context engine needs a name")
+    _REGISTRY[name] = factory
+
+
+def available_engines() -> list[str]:
+    """Every selectable engine name, sorted — what a selector may legally hold."""
+    return sorted(_REGISTRY)
+
+
+def install_engine(name: str) -> str:
+    """Resolve ``name`` and make it active; return the name actually installed.
+
+    Fails CLOSED to the default in all three failure modes — an unknown name, a factory
+    that raises, and an instance that does not satisfy the contract (that last one is
+    :func:`set_engine`'s existing check, which is why this does not repeat it). A typo in
+    ``config.json`` must degrade to today's behaviour, never to a dark chat.
+
+    The return value is the honest answer, not the request: a caller that logs it reports
+    the engine that is running rather than the one that was asked for.
+    """
+    wanted = (name or "").strip() or DEFAULT_ENGINE_NAME
+    factory = _REGISTRY.get(wanted)
+    if factory is None:
+        logger.error(
+            "Unknown context engine %r (have: %s) — staying on %r",
+            wanted,
+            ", ".join(available_engines()) or "none",
+            DEFAULT_ENGINE_NAME,
+        )
+        set_engine(None)
+        return DEFAULT_ENGINE_NAME
+    try:
+        engine = factory()
+    except Exception:
+        logger.exception(
+            "Context engine %r failed to build — staying on %r", wanted, DEFAULT_ENGINE_NAME
+        )
+        set_engine(None)
+        return DEFAULT_ENGINE_NAME
+    set_engine(engine)
+    # `set_engine` fails closed on a contract violation, so the active engine is the
+    # truth even when it is not the one we just built.
+    return getattr(get_engine(), "name", DEFAULT_ENGINE_NAME)
+
+
+register_engine(DEFAULT_ENGINE_NAME, lambda: _DEFAULT)
 
 
 def assemble_context(

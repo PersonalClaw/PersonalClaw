@@ -59,9 +59,9 @@ describe('the feedback-thumbs promise', () => {
       return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
     })
 
-  it('names four surfaces, and all four render the control', () => {
+  it('names five surfaces, and all five render the control', () => {
     expect(web('pages/settings/FeedbackPanel.tsx')).toContain(
-      '👍/👎 appear on inbox classifications, drafted replies, digests, and loop findings',
+      '👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills',
     )
     const kinds = new Set<string>()
     for (const abs of walk(SRC)) {
@@ -70,7 +70,7 @@ describe('the feedback-thumbs promise', () => {
       }
     }
     // One per clause of the sentence. A clause without a control is a promise with nothing behind it.
-    for (const k of ['inbox_classification', 'inbox_draft', 'inbox_digest', 'loop_finding']) {
+    for (const k of ['inbox_classification', 'inbox_draft', 'inbox_digest', 'loop_finding', 'synthesized_skill']) {
       expect([...kinds], `the hint promises ${k}`).toContain(k)
     }
   })
@@ -210,8 +210,8 @@ describe('the census: every empty-state promise is accounted for', () => {
     const VERIFIED = [
       'pages/dashboard/widgets/Suggestions.tsx',      // built from activity — checked
       'pages/settings/DurabilityPanel.tsx',           // nightly job on by default — checked
-      'pages/settings/FeedbackPanel.tsx',             // four thumbs surfaces — checked
-      'pages/settings/MemoryPanel.tsx',               // digests cadence + memory-event log — checked
+      'pages/settings/FeedbackPanel.tsx',             // five thumbs surfaces — #1783 made synthesized_skill the fifth
+      'pages/settings/MemoryPanel.tsx',               // digests cadence + memory-event log + #1783's learned preferences (the after-turn review captures them) — checked
       'pages/loops/DesignCockpitPage.tsx',            // loop writes kind:react tagged to the loop — checked
       'pages/dashboard/widgets/DesktopLiveView.tsx',  // DCU-7: the mirror fills from computer_use/render.py snapshots recorded on every dispatch (observe hooks in service.py) — checked
       'pages/settings/RoutingPanel.tsx',              // was FALSE → copy now names the measured axes (#1631)

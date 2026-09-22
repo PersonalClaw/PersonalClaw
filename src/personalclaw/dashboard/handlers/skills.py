@@ -158,6 +158,32 @@ def _parse_provenance(skill_md: Path) -> str:
     return value if value in (AUTO_SKILL_SOURCE_VALUE, TAUGHT_SKILL_SOURCE_VALUE) else ""
 
 
+def _synthesis_producer(key: str, provenance: str) -> dict[str, str] | None:
+    """Feedback-Signal producer meta for a SYNTHESIZED skill, or None (#1783).
+
+    ``skills.surfacing.surface_skills`` withholds a matched skill whose identity
+    ``("skill_synthesis", <key>)`` is in :func:`feedback.suppressed_producers` — the one
+    membership in :data:`feedback.ENFORCED_SUPPRESSION_KINDS` that has a real surfacing
+    gate behind it. Nothing ever stamped that identity onto a surface a user could thumb,
+    so the pair could never enter the withholding set and a persistently-wrong synthesized
+    skill kept surfacing forever. This is the missing writer's provenance half; the
+    ``synthesized_skill`` thumbs in the skill inspector are the verdict half.
+
+    ``auto`` ONLY, deliberately. ``taught`` shares the machinery but not the attribution:
+    the user reviewed that draft and promoted it themselves, so a 👎 on it is a verdict on
+    their own curation, not on the synthesizer — folding the two together would retire the
+    extractor over skills it never chose. ``key`` is the loader-relative name
+    (``auto/<slug>``), which is exactly what ``surface_skills`` matches on; the agent-local
+    tier below is keyed ``<agent>/<name>`` for the listing, so it does NOT get a stamp —
+    that string is not the identity the gate sees.
+    """
+    from personalclaw.skills.loader import AUTO_SKILL_SOURCE_VALUE
+
+    if provenance != AUTO_SKILL_SOURCE_VALUE:
+        return None
+    return {"producer_kind": "skill_synthesis", "producer_id": key}
+
+
 async def api_skills_list(request: web.Request) -> web.Response:
     """GET /api/skills — list locally installed skills from all discovery paths.
 
@@ -168,7 +194,12 @@ async def api_skills_list(request: web.Request) -> web.Response:
 
     Each also carries ``provenance`` — ``auto`` (extracted), ``taught`` (promoted from a
     session draft), or ``""`` (hand-authored) — read from the file's own frontmatter and
-    kept separate from the directory-derived ``source``; see ``_parse_provenance``."""
+    kept separate from the directory-derived ``source``; see ``_parse_provenance``.
+
+    An ``auto`` skill additionally carries ``feedback_producer`` (see
+    :func:`_synthesis_producer`) so the inspector's ``synthesized_skill`` thumbs attribute a
+    verdict to the synthesizer with no lookup — the identity Feedback-Signal's one enforced
+    suppression gate keys on."""
     from personalclaw.agent import _all_skill_paths
     from personalclaw.skills.loader import iter_skill_files
     from personalclaw.skills.marketplace import _parse_description, verify_skill_integrity
@@ -204,19 +235,22 @@ async def api_skills_list(request: web.Request) -> web.Response:
             seen.add(name)
             rep = verify_skill_integrity(entry)
             integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
-            skills.append(
-                {
-                    "key": name,
-                    "name": name,
-                    "description": _parse_description(skill_md),
-                    "always": _parse_always(skill_md),
-                    "path": str(skill_md),
-                    "source": "bundled" if is_bundled else "local",
-                    "provenance": _parse_provenance(skill_md),
-                    "type": "bundled" if is_bundled else "installed",
-                    "integrity": integrity,
-                }
-            )
+            provenance = _parse_provenance(skill_md)
+            row: dict[str, Any] = {
+                "key": name,
+                "name": name,
+                "description": _parse_description(skill_md),
+                "always": _parse_always(skill_md),
+                "path": str(skill_md),
+                "source": "bundled" if is_bundled else "local",
+                "provenance": provenance,
+                "type": "bundled" if is_bundled else "installed",
+                "integrity": integrity,
+            }
+            producer = _synthesis_producer(name, provenance)
+            if producer is not None:
+                row["feedback_producer"] = producer
+            skills.append(row)
     # Annotate which agents load each skill (PersonalClaw Agent entity).
     by_agent = _loaded_by_agents([s["key"] for s in skills])
     for s in skills:

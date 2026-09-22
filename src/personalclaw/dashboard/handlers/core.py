@@ -589,6 +589,18 @@ def _agent_values() -> set[str]:
     return {"", *AppConfig.load().agents}
 
 
+def _context_engine_values() -> set[str]:
+    """Allowed ``session.context_engine`` values — whatever is REGISTERED right now.
+
+    A ``values_fn`` rather than a static enum because the registry is open: an app bundle
+    registers its engine at startup, and a hardcoded list here would refuse the only name
+    that bundle made valid. Today this resolves to ``{"default"}`` alone.
+    """
+    from personalclaw.context_engine import available_engines
+
+    return set(available_engines())
+
+
 def _bot_name_sanitizer(value: str) -> str:
     """The loader's bot_name sanitizer (single source of truth)."""
     from personalclaw.config.loader import _sanitize_bot_name
@@ -929,6 +941,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # 0 = off; the ceiling is generous on purpose (a year) since "archive rarely"
     # is a legitimate preference and archiving is non-destructive.
     "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
+    # #1783 — the installer's write path. Validated against the LIVE registry, so a name
+    # only becomes settable once something has registered it. Takes effect at the next
+    # gateway start (`_context_engine_startup`): swapping the assembly engine under
+    # running sessions would change the prompt shape mid-conversation.
+    "session.context_engine": {"type": "str", "values_fn": _context_engine_values},
     # RELEASE-UPDATE-MECHANISM RUM-1 — the release-tracking config block. All six are
     # runtime-editable from Settings > Updates (RUM-10). `channel`/`auto` are closed enums
     # so an out-of-range value is REFUSED at the boundary (a mistyped channel should be

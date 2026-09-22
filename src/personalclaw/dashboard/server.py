@@ -958,6 +958,11 @@ async def start_dashboard(
     app.router.add_post(
         "/api/memory/slots/{name}/lines/retire", handlers.api_memory_slot_line_retire
     )
+    # C15 — the facet overrides. `{key:.+}` because a facet key is dot-separated
+    # (`pref.facet.style.<md5>`) and the default segment match would stop at the first dot.
+    app.router.add_get("/api/memory/facets", handlers.api_memory_facets)
+    app.router.add_post("/api/memory/facets/{key:.+}/pin", handlers.api_memory_facet_pin)
+    app.router.add_post("/api/memory/facets/{key:.+}/forget", handlers.api_memory_facet_forget)
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.
@@ -1808,6 +1813,35 @@ async def start_dashboard(
             logger.exception("Failed to seed default app sources")
 
     app.on_startup.append(_app_sources_seed_startup)
+
+    async def _context_engine_startup(app_: web.Application) -> None:
+        """Install the configured context engine (#1783) — the installer the seam lacked.
+
+        ``set_engine`` had no production caller other than its own quarantine path, so
+        ``DefaultContextEngine`` was the only engine that could ever be active and the
+        whole swappable seam was unreachable. This reads ``session.context_engine`` ONCE,
+        here, and resolves it against the registry.
+
+        Registered AFTER the provider/source hooks above so anything they register is in
+        the registry before a name is resolved, and before ``_warm_acp_pool_startup`` —
+        the pool pre-spawns sessions, and those must not assemble their first turn on an
+        engine that is about to be swapped.
+
+        ``install_engine`` fails closed to the default on an unknown name, a factory that
+        raises, or an instance that misses a hook, so this cannot darken chat; the
+        try/except only covers an unreadable config. It logs the engine actually
+        installed, never the one requested."""
+        try:
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.context_engine import DEFAULT_ENGINE_NAME, install_engine
+
+            active = install_engine(AppConfig.load().session.context_engine)
+            if active != DEFAULT_ENGINE_NAME:
+                logger.info("Context engine: %s", active)
+        except Exception:
+            logger.exception("Failed to install the configured context engine")
+
+    app.on_startup.append(_context_engine_startup)
 
     async def _model_providers_startup(app_: web.Application) -> None:
         """Register config model-managers as local providers; retry the legacy migration.

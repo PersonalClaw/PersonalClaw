@@ -15,10 +15,11 @@ import {
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
+  type MemoryFacet,
   type RecallRanking,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
-import { confirm, confirmDelete } from '../../ui/dialog'
+import { confirm, confirmDelete, confirmDestructive } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, LoadError, EmptyState } from '../../ui/ListScaffold'
@@ -1807,6 +1808,124 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
   )
 }
 
+// ── Learned preferences (C15 facets) ─────────────────────────────────────────
+// The user-facing half of the pinned/forgotten overrides. The flags persisted and every
+// scoring branch read them, but nothing outside the tests could SET one, so the documented
+// override was unreachable (#1783). It sits directly under "Injection & behavior" because
+// these rows are what those knobs govern: the profile block the toggles above inject is
+// assembled from exactly this list, strongest first.
+//
+// Deliberately NOT in the Studio: `pref.facet.*` rows already appear there under Facts as
+// raw JSON with md5 keys, and a second list would be the two-browsers-over-one-collection
+// drift this panel keeps producing. What the Studio cannot show is the DECAYED score or the
+// two flags — which is the whole reason this exists.
+
+const FACET_CLASS_LABEL: Record<string, string> = {
+  style: 'style', identity: 'identity', tooling: 'tooling',
+  goal: 'goal', channel: 'channel', veto: 'veto',
+}
+
+function LearnedPreferencesSection() {
+  const { data, loading, error, refresh } = useQuery('settings:memory-facets', () => api.memoryFacets())
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+
+  // 🔑 `busy` IS PER-ROW AND SO ARE THE CONTROLS. An earlier shape gated every row on
+  // `disabled={!!busy}`, which dims and announces `aria-disabled` — "you cannot do this" — about
+  // rows that are simply waiting for a *different* row's write. Each control now carries `loading`
+  // for its OWN key (the primitives refuse the re-click through their `off` guard), and the clear
+  // is key-scoped so a second row finishing first cannot stop the first row's spinner early.
+  const pin = async (f: MemoryFacet) => {
+    setBusy(f.key); setMsg('')
+    try {
+      await api.memoryFacetPin(f.key, !f.pinned)
+      setMsg(f.pinned ? 'Unpinned — it decays again from now on.' : 'Pinned — held at full strength, exempt from decay.')
+      refresh()
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not change that pin.') }
+    setBusy((b) => (b === f.key ? '' : b))
+  }
+  // `confirmDestructive`, not `confirmDelete`: the verb is not delete and the row survives,
+  // so the prompt has to state what is actually irreversible rather than lean on the word.
+  const forget = async (f: MemoryFacet) => {
+    const ok = await confirmDestructive(
+      'Forget this preference?',
+      <>
+        <p>“{f.text}” drops out of the profile block immediately and its strength reads 0.</p>
+        <p className="mt-s">
+          This cannot be undone — not by pinning it, and not by the assistant observing the same
+          preference again. The row stays in the memory log, marked forgotten, so it is never
+          re-learned.
+        </p>
+      </>,
+      { confirmLabel: 'Forget' },
+    )
+    if (!ok) return
+    setBusy(f.key); setMsg('')
+    try { await api.memoryFacetForget(f.key); setMsg('Forgotten — it no longer reaches the model.'); refresh() }
+    catch (e) { setMsg(e instanceof Error ? e.message : 'Could not forget that preference.') }
+    setBusy((b) => (b === f.key ? '' : b))
+  }
+
+  // Both branches of ONE gate, kept adjacent on purpose: the skeleton borrows its noun from the
+  // `LoadError` beside it, and `loadingNounPairing` reds if the pair drifts more than 3 lines apart
+  // (a distant match is probably a different fetch, so copying its noun would be a lie).
+  if (loading) return <Section title="Learned preferences"><ListSkeleton rows={3} what="learned preferences" /></Section>
+  if (error) return <Section title="Learned preferences"><LoadError what="learned preferences" error={error} onRetry={refresh} /></Section>
+  const facets = data ?? []
+  const live = facets.filter((f) => !f.forgotten)
+  const forgotten = facets.filter((f) => f.forgotten)
+
+  return (
+    <Section title="Learned preferences"
+      hint="What the assistant has inferred about how you like to work, and how strongly it currently believes each one. Pin the ones it must keep; forget the ones it got wrong.">
+      {live.length === 0 ? (
+        <p data-type="body-s" className="text-on-surface-low">
+          Nothing inferred yet. Say how you want something done — “keep answers short”, “always use
+          pytest, not unittest” — and it shows up here once it has been observed.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {live.map((f) => (
+            <div key={f.key} className="flex items-start gap-2 rounded-lg bg-surface-high px-2.5 py-1.5">
+              <div className="min-w-0 flex-1">
+                <p data-type="caption" className="text-on-surface">{f.text}</p>
+                <p data-type="caption" className="text-on-surface-low">
+                  {FACET_CLASS_LABEL[f.cls] ?? (f.cls || 'preference')} · {f.state}
+                  {' · '}
+                  <span className="tabular-nums">{f.stability.toFixed(2)}</span>
+                  {f.pinned
+                    ? ' — pinned, so it does not decay'
+                    : f.stored_stability - f.stability >= 0.01
+                      ? ` (decayed from ${f.stored_stability.toFixed(2)})`
+                      : ''}
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => pin(f)} loading={busy === f.key}
+                className="shrink-0">
+                {f.pinned ? 'Unpin' : 'Pin'}
+              </Button>
+              <SquareIconButton icon={X} iconSize={12} label={`Forget "${f.text.slice(0, 40)}"`}
+                onClick={() => forget(f)} loading={busy === f.key} className="shrink-0" />
+            </div>
+          ))}
+        </div>
+      )}
+      {msg && <p data-type="caption" className="mt-s text-ok">{msg}</p>}
+      {forgotten.length > 0 && (
+        <details data-type="caption" className="mt-s">
+          <summary className="cursor-pointer text-on-surface-low">{forgotten.length} forgotten</summary>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {forgotten.map((f) => <li key={f.key} className="text-on-surface-low line-through">{f.text}</li>)}
+          </ul>
+          <p className="mt-xs text-on-surface-low">
+            Listed so a retirement stays visible — these are final and cannot be brought back.
+          </p>
+        </details>
+      )}
+    </Section>
+  )
+}
+
 // ── Settings (retention + consolidate) ───────────────────────────────────────
 function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | undefined; onConsolidated: () => void }) {
   const { data } = useQuery(
@@ -1910,6 +2029,10 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         </Row>
         <div className="mt-2"><SavedToast show={saved} /></div>
       </Section>
+
+      {/* Directly under the injection knobs: the profile block those toggles inject is
+          assembled from these rows, so the override belongs next to what it overrides. */}
+      <LearnedPreferencesSection />
 
       <Section title="Consolidation" hint="Force an immediate consolidation pass instead of waiting for idle rollup.">
         <div className="flex items-center gap-3">

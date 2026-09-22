@@ -482,6 +482,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/memory/episodic/{id}` — tombstone an episodic memory.
 - `GET /api/memory/events` — paginated audit trail.
 - `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
+- `GET /api/memory/facets` — every preference facet WITH its key, state and decay.
+- `POST /api/memory/facets/{key}/forget` — retire a facet. FINAL.
+- `POST /api/memory/facets/{key}/pin` — hold a facet at full stability, or release it.
 - `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
 - `GET /api/memory/graph/entities` — the entity topology (§7.2).
 - `GET /api/memory/graph/export` — the entity graph as ONE self-contained HTML file (§7.2).
