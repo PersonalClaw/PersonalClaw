@@ -216,10 +216,70 @@ after the column was filled, not mis-measured:
 |---|---|
 | `personalclaw-core` surface over protocol `mcpServers` | **STILL CONFIRMED, all three.** `personalclaw mcp-core` ran as a descendant of *this* gateway on every turn. On claude-code the adapter's own argv carries the whole prong verbatim — `--mcp-config {"mcpServers":{"personalclaw-core":{…,"env":{"PERSONALCLAW_SESSION_KEY":"dashboard:aapx3-claude-code"}}}}` — so the channel is read off the wire, **by process ancestry and argv, never a model's self-report** (`O76`/`O121`/`C90`/`K100` reproduced at adapters 14 and 11 minors past the column). The *falsification* arm (`O77`/`O124`, zero the array → tools vanish) was **not** re-driven: there is no as-a-user surface that zeroes it |
 | **Context-% accounting** | 🔑 **NO LONGER DIVERGED — the fabricated zero is gone, all three.** The durable session map reports `context_pct: **null**`, not `0.0`, and **no persisted activity line anywhere in the home contains a `context N%` fragment**. Vacuity floor, because an absent surface would read the same: the `null` sits *inside a populated* telemetry block (`duration_ms: 5727`, `events: 18`, `tool_calls: 1`) on the same row. Code agrees it is deliberate (`chat_runner.py:629` "`context_pct=None` OMITS the context fragment entirely"; `chat_session_map.py:381`). **The row below is stale and says so** |
-| **Structured tool-input rendering** | 🔑 **HALF FLIPPED, all three — `input` is populated.** Every `tool` row carries `meta.input` holding the full raw tool-input JSON (kiro: `{"command":"printf …","working_dir":"…"}`) plus a `meta.purpose`. The row below's "the frontend receives `input: null`" no longer reproduces. **What is still absent is the other half:** `tool_kind` is `null` on every row and there are **zero** diff keys, so the `kind` and the diff chip remain unsupplied |
+| **Structured tool-input rendering** | 🔑 **HALF FLIPPED, all three — `input` is populated.** Every `tool` row carries `meta.input` holding the full raw tool-input JSON (kiro: `{"command":"printf …","working_dir":"…"}`) plus a `meta.purpose`. The row below's "the frontend receives `input: null`" no longer reproduces. **What is still absent is the other half:** `tool_kind` is `null` on every row and there are **zero** diff keys, so the `kind` and the diff chip remain unsupplied — **`tool_kind` is now FIXED, see the correction below; the "zero diff keys" half of this observation is VACUOUS and does not support its conclusion** |
 | Typed tool-result meta | **STILL ABSENT, all three, and honestly so.** `content_type`, `raw_ref`, `truncated`, `original_length` and `recovery_hints` appear on **no** tool row's meta — not fabricated, just not there (`O6`/`C5`/`K5` unchanged) |
 | Model spend not metered by the host | **Reproduced as a positive.** The telemetry block reads `priced: false`, `cost_usd: 0.0`, `input_tokens: 0`, `model: ""` — the honest shape for a call the host never made |
 | Adapter resolution | **Independently reproduced:** both adapters ran from `~/.local/share/mise/installs/node/24.18.0/bin/`, i.e. the **global** install, on a home whose own prefix was never consulted. Two lanes now measured this separately |
+
+#### Correction to the "Structured tool-input rendering" row above (2026-09-22, `AAP-8` clause 2)
+
+That row bundles two claims. One is now fixed; the other **does not follow from what was
+measured**, and separating them changed the shape of the work.
+
+**1. `tool_kind: null` — FIXED, and it was never a supply problem.** The kind *was* on the
+wire, *was* decoded, and *was* broadcast. `translate.py` read `update["kind"]` onto
+`AcpEvent.tool_kind`; `chat_runner` redacted it into `_kind` and put it on the live
+`tool_call` WS frame. The `session.append("tool", …, meta={…})` **six lines below that
+broadcast** wrote `tool_call_id`/`purpose`/`input` and nothing else — so the value was
+emitted and then dropped one statement before persistence. `meta.input` reading populated
+while `tool_kind` read `null` in the same row is exactly the signature of that: the two
+are computed a few lines apart and only one was written. Fixed by persisting `meta.kind`
+(same spelling as the live WS key, so the two representations of one fact cannot drift)
+plus the reader that had no field to receive it — `HistMsg.meta` declared no `kind` and
+`hydrateTurns` never set `ToolSegment.toolKind`, so the backend key alone would have been
+a value nothing reads. **User-visible consequence, now closed:** `iconForTool` resolves an
+ACP card's icon by native name → declared kind (`_BY_KIND`) → keyword regex over the CLI's
+*prose title*. Live the second rung worked; after a reload every ACP card fell to the
+regex — the rung that grades the honest provider worst, which is `G34` seen from the other
+side. Rails: `tests/test_acp_tool_kind_persist.py`,
+`web/src/pages/chat/toolKindRehydrates.test.ts`.
+
+**2. "zero diff keys" — VACUOUS as evidence, and the premise it was read as is wrong.**
+The turn that produced it ran **one shell command** (`printf`) and edited no file, so zero
+diff keys is the *expected* reading and says nothing about whether the chip fires. It was
+then read as "the chip is wired for codex's wire shape only, so it holds on 1 of 3
+providers by construction". **Measured against the installed adapter — `@agentclient`
+`protocol/claude-agent-acp@0.74.0`, the exact build this re-drive ran, read out of
+`dist/tools.js` — claude sends the `diff` content block too**, so `translate.py`'s
+existing branch already covers it:
+
+| claude tool | what the adapter puts on the wire | `dist/tools.js` |
+|---|---|---|
+| `Write` | `{type:"diff", path: file_path, oldText: **null**, newText: content}`, `kind:"edit"` | the `case "Write"` block |
+| `Edit` | `{type:"diff", path: file_path, oldText: old_string ⏐⏐ null, newText: new_string ?? ""}`, `kind:"edit"` | the `case "Edit"` block |
+| completion | one diff block **per hunk** of the SDK's `structuredPatch`; plus a whole-file `{oldText: originalFile, newText: content}` fallback when the patch is empty | `toolUpdateFromDiffToolResponse` |
+
+Pinned in `tests/test_acp_tool_card_fidelity.py::TestTheDiffBlockIsNotACodexOnlyShape`, so
+the day claude stops sending diff blocks that fails loudly instead of quietly reverting
+the chip to one provider.
+
+**What IS still open on this row, restated honestly — two items, neither one "supply a
+missing shape":**
+
+- **Claude's completion frame emits one diff block per hunk, and the host takes only the
+  first.** Both loops in `translate.py` `break` on the first `type == "diff"` block, so a
+  three-hunk edit renders a chip whose `before`/`after` are hunk #1 — one third of the
+  change, presented as the change. Left unpatched deliberately: every honest repair turns
+  on whether `_declared_file_change`'s stated premise ("the diff block carries the file's
+  whole `oldText`/`newText`") is being kept or abandoned, and that is the same premise the
+  `strReplace` withholding rests on. It is a scope call, not a one-line fix.
+- **kiro's shape is NOT established.** The row cites `K12` "kiro sends a unified diff" and
+  no capture of the frame survives. It could not be re-measured here: this rig binds no ACP
+  provider, kiro-cli is an authenticated third-party CLI (an owner act), and a `strings`
+  probe of `kiro-cli` 2.22.1/2.23.0 is a **broken instrument for this question, not a
+  finding** — `session/update` and `toolCallId` both read zero on a binary the doc proves
+  spoke ACP, so the lane has no positive control. Until one frame is captured, any "kiro
+  fix" would be pinning a guessed shape.
 
 **What that second pass did NOT measure, and why — each with the one act that would unblock it:**
 
@@ -269,7 +329,7 @@ it is ours.
 | Axis | Capability | Why it does not work | Watch — what must change, where | Measured against |
 |---|---|---|---|---|
 | Tools | Typed tool-result meta (`content_type`, `raw_ref`, `truncated`, `original_length`, `recovery_hints`) | The protocol's result frames carry none of these fields. The host leaves them empty rather than fabricating values — every ACP `tool_result` reads `content_type: ""`, `raw_ref: ""`, `truncated: false`, `original_length: null`, `recovery_hints: []` (`O6`, `C5`, `K5`) | **ACP protocol** — result metadata would have to exist on the wire. Empty is the honest shape until it does | adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1` |
-| Tools | Structured tool-input rendering and file-change diff chips | Not a protocol limit — the raw material is already on the wire and the host drops it. claude sends `kind: "read"｜"edit"｜"execute"` plus a `rawInput` JSON (`O6`); codex sends a real `{type: "diff", oldText, newText, path}` object (`C5`, `G22`); kiro sends a unified diff (`K12`). ~~The frontend receives `input: null` and zero diff keys~~ — **HALF OF THIS IS STALE (re-driven 2026-09-19, all three): `meta.input` is now POPULATED** with the full raw tool-input JSON, alongside a `meta.purpose`. Still absent: `tool_kind` is `null` on every row, and zero diff keys | **Host seam** (`G9`, `G22`; atom `AAP-8`) — now **partly discharged**: the `input` half landed, the `kind` + diff-chip half has not. Nothing upstream | row: adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1`; re-drive: adapter `0.74.0` / `1.12.0`, `kiro-cli 2.22.1` |
+| Tools | Structured tool-input rendering and file-change diff chips | Not a protocol limit — the raw material is already on the wire and the host drops it. claude sends `kind: "read"｜"edit"｜"execute"` plus a `rawInput` JSON (`O6`); codex sends a real `{type: "diff", oldText, newText, path}` object (`C5`, `G22`); kiro sends a unified diff (`K12`). ~~The frontend receives `input: null` and zero diff keys~~ — **HALF OF THIS IS STALE (re-driven 2026-09-19, all three): `meta.input` is now POPULATED** with the full raw tool-input JSON, alongside a `meta.purpose`. ~~Still absent: `tool_kind` is `null` on every row, and zero diff keys~~ — **BOTH of those are superseded (2026-09-22): `tool_kind` is FIXED, and "zero diff keys" was measured on a turn that edited no file, so it never supported the "codex wire shape only" reading. claude sends the `diff` block too.** See the correction block under the 2026-09-19 second-pass table for the adapter-source measurement and for the two items that ARE still open (claude's per-hunk blocks are truncated to the first; kiro's shape has never been captured) | **Host seam** (`G9`, `G22`; atom `AAP-8`) — the `input` half and the `kind` half have both landed. What is left is not a missing provider shape: it is one truncation bug and one unmeasured provider. Nothing upstream | row: adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1`; re-drive: adapter `0.74.0` / `1.12.0`, `kiro-cli 2.22.1`; correction: adapter `0.74.0` source, read statically |
 | Session mechanics | Slash commands and `/compact` | None of the three implements `_vendor.dev/commands/execute`; all three answered `-32601 "Method not found"` — byte-identical across two adapters and a native CLI (`O23`, `C8`, `K11`), which made it host-side rather than one adapter's gap. **The turn no longer fails** (fixed 2026-08-21): the host sends the request only to an agent that advertised the capability, and otherwise answers the input as an ordinary prompt with an inline notice saying the command was not run natively. What is still absent is the command actually EXECUTING — a `/compact` gets a plain answer, not compaction | **Host half DONE** (`G4`; atom `AAP-9`) — gated + degrades to text. What remains is upstream: an adapter would have to implement `commands/execute`, or advertise the capability, for a command to run | adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1` |
 | Session mechanics | Context-% accounting | ~~Worse than absent: a `context_usage` frame is emitted on **every** turn with `pct: 0.0`, and the turn line prints `context 0%`~~ (`O7`, `C4`, `K4`) — **THIS ROW IS STALE. Re-driven 2026-09-19 on all three: the fabricated zero is GONE.** The session map reports `context_pct: **null**` and no persisted activity line carries a `context N%` fragment. The `null` sits inside a *populated* telemetry block, so it is an omission and not an absent surface. What remains absent is the *number itself* — no adapter reports token stats, so there is nothing to show | ~~host seam must omit the chip instead of printing zero~~ — **the host half of `G8` is DONE** (`chat_runner.py:629`, `chat_session_map.py:381`, `test_context_pct_honesty.py`). Only the upstream half is left: **adapters** would have to report token stats | row: adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1`; re-drive: adapter `0.74.0` / `1.12.0`, `kiro-cli 2.22.1` |
 | Learning / memory | Procedural-outcome capture (the tool-outcome drain) | Zero rows after multi-tool ACP turns on all three (`O12` — 6 tool calls, nothing; `C14`; `K17` — the only rows came from a **0-tool** correction turn, and the self-model row it wrote asserts `tools: []`). The drain reads an accumulator the native runtime keeps in its own loop; the ACP provider exposes no equivalent | **Host seam** (`G7`; atom `AAP-8`) — accumulate off the neutral tool-call/tool-result stream | adapter `0.60.0` / `1.1.4`, `kiro-cli 2.18.1` |

@@ -269,6 +269,110 @@ class TestDeclaredFileChangeBecomesAChip:
         assert len(session._file_changes[0]["after"]) < _MAX_FILE_SNAPSHOT + 100
 
 
+# ── which providers the chip actually covers — MEASURED, not inferred ─────────
+
+
+class TestTheDiffBlockIsNotACodexOnlyShape:
+    """The `diff` content block is **claude's shape too**, so the chip is not the
+    codex-only path the parity matrix's wording implies.
+
+    Measured statically from the installed adapter — `@agentclientprotocol/`
+    `claude-agent-acp@0.74.0`, the exact build the 2026-09-19 re-drive ran, read out of
+    `dist/tools.js` rather than guessed:
+
+    * ``Write`` → ``{type:"diff", path: file_path, oldText: null, newText: content}``
+      with ``kind: "edit"``. Whole-file by construction, and ``oldText: null`` is the
+      adapter's *creation* spelling.
+    * ``Edit``  → ``{type:"diff", path: file_path, oldText: old_string || null,
+      newText: new_string ?? ""}``, also ``kind: "edit"``.
+    * the completion frame re-declares the edit whole-file from the SDK's
+      ``originalFile``/``content`` when it has them.
+
+    So `translate.py`'s ``cb["type"] == "diff"`` branch already fires on claude, and the
+    parity row's "the host drops it / claude sends `kind` + `rawInput`" is a description
+    of the ADAPTER VERSION IT WAS FILLED AT, not a statement that claude needs a second
+    decoder. The frames below are that adapter's output, so the day claude stops sending
+    diff blocks this fails here instead of silently reverting the chip to one provider.
+
+    What this class deliberately does NOT assert: that every claude declaration is a
+    whole-file pair. It is not — ``Edit``'s old/new are the replaced FRAGMENT, and the
+    completion frame emits one diff block PER HUNK of the structured patch. Both are
+    recorded in the parity doc as the open half of this row; pinning today's handling of
+    them as correct is what would make them permanent.
+    """
+
+    def _chip(self, blocks: list[dict], *, on_update: bool) -> dict | None:
+        if on_update:
+            events = extract_tool_update_events(_update_frame(content=blocks, title="Edit"), {}, {})
+            upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+            assert upd, "no update event produced"
+            return upd[0].file_change
+        msg = JsonRpcMessage(
+            method="session/update",
+            params={
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "c1",
+                    "title": "Write src/a.py",
+                    "kind": "edit",
+                    "content": blocks,
+                }
+            },
+        )
+        ev = extract_tool_event(msg, {}, {}, [])
+        assert ev is not None
+        return ev.file_change
+
+    def test_claudes_write_frame_declares_a_creation_chip(self):
+        """``oldText: null`` must not be read as "no declaration" — it is the adapter
+        saying the file did not exist, and the chip's ``before`` for a creation is ``""``.
+        """
+        chip = self._chip(
+            [{"type": "diff", "path": "src/a.py", "oldText": None, "newText": "hello\n"}],
+            on_update=False,
+        )
+        assert chip == {"path": "src/a.py", "before": "", "after": "hello\n"}
+
+    def test_claudes_edit_frame_declares_a_chip_on_the_opening_frame(self):
+        """Claude puts its diff block on the ``tool_call`` frame, not only the update —
+        which is why the opening frame reads ``content`` at all."""
+        chip = self._chip(
+            [{"type": "diff", "path": "src/a.py", "oldText": "a\n", "newText": "b\n"}],
+            on_update=False,
+        )
+        assert chip == {"path": "src/a.py", "before": "a\n", "after": "b\n"}
+
+    def test_claudes_completion_frame_redeclares_it_whole_file(self):
+        """The adapter's own repair path: when the SDK hands it ``originalFile`` it
+        re-declares both sides whole-file, and ``_capture_declared_file_change``'s
+        last-declaration-wins is what lets that replace an earlier partial one."""
+        chip = self._chip(
+            [
+                {
+                    "type": "diff",
+                    "path": "src/a.py",
+                    "oldText": 'def f():\n    return "a"\n',
+                    "newText": 'def f():\n    return "b"\n',
+                }
+            ],
+            on_update=True,
+        )
+        assert chip == {
+            "path": "src/a.py",
+            "before": 'def f():\n    return "a"\n',
+            "after": 'def f():\n    return "b"\n',
+        }
+
+    def test_a_non_diff_content_block_beside_it_is_not_mistaken_for_one(self):
+        """Vacuity floor. Claude also emits ``{type:"content"}`` blocks (``Write`` with no
+        ``file_path``), and the branch must key on the declared type, not on position."""
+        chip = self._chip(
+            [{"type": "content", "content": {"type": "text", "text": "hello\n"}}],
+            on_update=False,
+        )
+        assert chip is None
+
+
 # ── gap 8: the declared level and the inferred level are ONE function ────────
 
 
