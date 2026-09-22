@@ -1716,6 +1716,9 @@ async def batch_embed_items(request: web.Request) -> web.Response:
 
 # ---------- Knowledge Fetch (for chat context injection) ----------
 
+#: Last-resort fallbacks for an unreadable config, mirroring `KnowledgeConfig.fetch_top_n` /
+#: `fetch_max_tokens` — which is where the real defaults now live (#1783). A test pins the two
+#: pairs together so this cannot drift into a second, disagreeing default.
 KNOWLEDGE_FETCH_TOP_N = 3
 KNOWLEDGE_FETCH_MAX_TOKENS = 4096
 # Hard ceiling for a per-request ?max_tokens override (guards against an unbounded
@@ -1741,15 +1744,22 @@ async def search_for_context(request: web.Request) -> web.Response:
     if not q:
         return web.json_response({"error": "q parameter required"}, status=400)
 
-    from personalclaw.config.loader import config_path
-
-    cfg_path = config_path()
+    # Through the config MODEL, not a raw `json.loads(config_path())` (#1783). Both knobs
+    # were read straight out of the file with these module constants as fallbacks, and
+    # declared nowhere — so a hand-edited `"fetch_top_n": 0` or `"fetch_max_tokens": "lots"`
+    # reached this handler unvalidated, and there was no `_meta`, no bounds and no write
+    # path. `KnowledgeConfig` now declares both and `load()` floors them, so the reader
+    # inherits the validation instead of re-implementing half of it.
     try:
-        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        from personalclaw.config.loader import AppConfig
+
+        _knowledge_cfg = AppConfig.load().knowledge
+        top_n = int(getattr(_knowledge_cfg, "fetch_top_n", KNOWLEDGE_FETCH_TOP_N))
+        max_tokens = int(getattr(_knowledge_cfg, "fetch_max_tokens", KNOWLEDGE_FETCH_MAX_TOKENS))
     except Exception:
-        cfg = {}
-    top_n = cfg.get("knowledge", {}).get("fetch_top_n", KNOWLEDGE_FETCH_TOP_N)
-    max_tokens = cfg.get("knowledge", {}).get("fetch_max_tokens", KNOWLEDGE_FETCH_MAX_TOKENS)
+        logger.debug("knowledge fetch config unreadable — using shipped defaults", exc_info=True)
+        top_n = KNOWLEDGE_FETCH_TOP_N
+        max_tokens = KNOWLEDGE_FETCH_MAX_TOKENS
 
     try:
         limit = int(request.query.get("limit", top_n))

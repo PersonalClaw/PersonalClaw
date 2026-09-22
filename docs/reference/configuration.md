@@ -139,7 +139,7 @@ keys tune the automatic skill machinery.
 | `skills.auto_refine_on_deviation` | boolean | `false` | backend-only | Update an auto-created skill when the agent succeeds via a different tool sequence (requires `auto_create_from_sessions`). |
 | `skills.auto_min_tool_calls` | integer (≥2) | `5` | backend-only | Minimum tool calls for a session to qualify for skill extraction. |
 | `skills.auto_similarity_threshold` | number (0–1) | `0.85` | backend-only | Skip creation when an existing skill's description overlaps ≥ this fraction. |
-| `skills.progressive_disclosure_threshold` | integer | `8` | backend-only | When more skills than this match a turn, inject only their index (name + description) and let the agent pull bodies on demand via `skill_invoke`. `0` = always inline. |
+| `skills.progressive_disclosure_threshold` | integer | `2` | backend-only | When more skills than this match a turn, inject only their index (name + description) and let the agent pull bodies on demand via `skill_invoke`. Clamped to `max_triggered - 1` (floor 1) — the match list is already capped at `max_triggered`, so a threshold at or above it can never be exceeded. `0` = always inline, and is never clamped. |
 
 ## After-turn learning (`learning.*`)
 

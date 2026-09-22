@@ -193,11 +193,22 @@ most and losing quietly. Each surfaced body is then capped by its declared
 `context_tier` — `light` / `standard` / `heavy`, described in
 [the format reference](../reference/skill-format.md#context_tier--what-this-skill-may-spend).
 
-There is a third knob, `skills.progressive_disclosure_threshold` (**default 8**),
+There is a third knob, `skills.progressive_disclosure_threshold` (**default 2**),
 which switches the turn to an index-only block once *more* than that many skills
-match. Note that it cannot fire on the defaults: the match list is already capped
-at `max_triggered`, so it stays at 3 and never exceeds 8. Raising
-`max_triggered` past 8 is what brings that path into play.
+match. It is **ordered against `max_triggered`**, not independent of it: the match
+list is already capped at `max_triggered`, so a threshold at or above that cap
+describes a comparison that can never be true. The loader clamps it to
+`max_triggered - 1` for exactly that reason, and logs when it does. `0` still means
+"always inline", and is left alone — disabling the control is a choice, not an
+accident of arithmetic.
+
+So on the shipped defaults (3 and 2) a turn that matches all three surfaced skills
+gets the index; one or two get their bodies inlined. Indexing three skills instead
+of inlining three bodies is a token/quality trade nobody has measured — the index
+costs a `skill_invoke` round-trip when the agent does need a body. Reachability
+won that argument: a control that can never fire is worse than one whose default we
+revisit. Raise the threshold (or `max_triggered`) if your skills are short enough
+that inlining is cheaper than the round-trip.
 
 **One exception to all of it:** surfacing is for the built-in agent only.
 `context.py` skips both the always-on block and trigger surfacing when the turn
