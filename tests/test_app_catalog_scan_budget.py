@@ -24,6 +24,7 @@ Hermetic: ``subprocess.run`` is faked, so no test here reaches a network.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import time
 
@@ -281,3 +282,89 @@ def test_the_per_source_ceiling_leaves_room_for_other_sources():
     assert catalog._CATALOG_PER_SOURCE_SECS < catalog._CATALOG_BUDGET_SECS
     # Room for at least two sources to each take a full ceiling.
     assert catalog._CATALOG_PER_SOURCE_SECS * 2 <= catalog._CATALOG_BUDGET_SECS
+
+
+# ---------------------------------------------------------------------------
+# #1814 — the backoff made a dead source cheap, which also made it SILENT. For a
+# user-added source that is correct: its owner chose the URL and the Store names it under
+# ``unavailableSources``. For the SHIPPED default nobody chose it, so the only symptom is
+# a Store that quietly has fewer cards than it should, with nothing in the log to act on.
+# One WARNING per backoff streak is the whole fix — "per streak" because a line per
+# failure is exactly the repeat cost the backoff above exists to remove.
+# ---------------------------------------------------------------------------
+
+
+def _ok_registry(url: str):
+    """A fake ``git`` for a source that ANSWERS with a one-pointer registry index."""
+
+    def _run(argv, *a, **kw):
+        if "clone" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps({"apps": [{"name": "demo", "repo": url}]}), ""
+        )
+
+    return _run
+
+
+def test_a_dead_shipped_default_warns_once_per_streak_and_a_user_source_never(
+    tmp_path, monkeypatch, caplog
+):
+    """The two halves of the rule in one drive: the shipped default gets exactly ONE
+    warning across a four-failure streak, and the user-added source beside it gets none at
+    any level above debug."""
+    user_url = "https://10.255.255.1/mine.git"
+    _sources(tmp_path, catalog._REGISTRY_GIT_SOURCE, user_url)
+    monkeypatch.setattr(subprocess, "run", _Blackhole())
+
+    t = time.time()
+    with caplog.at_level(logging.DEBUG, logger="personalclaw.apps.catalog"):
+        for _ in range(4):
+            catalog._scan_registries(now=t, deadline=time.monotonic() + 30.0)
+            t += catalog._REGISTRY_FAIL_MAX_SECS + 1.0  # past the window → the next try runs
+
+    # Premise first: both sources really did fail four times in a row, or "one warning"
+    # would be satisfied by a drive that only ever failed once.
+    assert catalog._registry_failures[catalog._REGISTRY_GIT_SOURCE][1] == 4
+    assert catalog._registry_failures[user_url][1] == 4
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    on_default = [r for r in warnings if catalog._REGISTRY_GIT_SOURCE in r.getMessage()]
+    assert len(on_default) == 1, f"expected one warning per streak, got {len(on_default)}"
+    assert not [
+        r for r in warnings if user_url in r.getMessage()
+    ], "a user-added dead source was promoted above debug"
+    # Positive control for that zero: the user source IS logged, just at debug — so the
+    # assertion above is a real level discrimination and not a broken message match.
+    assert [r for r in caplog.records if user_url in r.getMessage()]
+
+
+def test_a_recovered_default_warns_again_on_its_next_streak(tmp_path, monkeypatch, caplog):
+    """Per STREAK, not once per process. A module-level "already warned" flag would pass
+    the count rail above and then stay silent through every later outage — the source
+    recovers and breaks again, and the second break is as worth reporting as the first."""
+    url = catalog._REGISTRY_GIT_SOURCE
+    _sources(tmp_path, url)
+    t = time.time()
+
+    with caplog.at_level(logging.DEBUG, logger="personalclaw.apps.catalog"):
+        monkeypatch.setattr(subprocess, "run", _Blackhole())
+        catalog._scan_registries(now=t, deadline=time.monotonic() + 30.0)
+
+        # It answers: the record clears, which is what ends the streak.
+        monkeypatch.setattr(subprocess, "run", _ok_registry(url))
+        catalog._registry_cache.clear()
+        t += catalog._REGISTRY_FAIL_MAX_SECS + 1.0
+        catalog._scan_registries(now=t, deadline=time.monotonic() + 30.0)
+        assert url not in catalog._registry_failures, "premise: the streak did not end"
+
+        # ...and goes away again. That is a NEW streak.
+        monkeypatch.setattr(subprocess, "run", _Blackhole())
+        catalog._registry_cache.clear()
+        t += catalog._REGISTRY_TTL_SECS + 1.0
+        catalog._scan_registries(now=t, deadline=time.monotonic() + 30.0)
+
+    on_default = [
+        r for r in caplog.records if r.levelno >= logging.WARNING and url in r.getMessage()
+    ]
+    assert len(on_default) == 2, f"expected one warning per streak over two streaks: {on_default}"
