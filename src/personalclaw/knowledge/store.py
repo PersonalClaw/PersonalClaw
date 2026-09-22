@@ -90,22 +90,46 @@ def _external_drop_item(item_id: str) -> None:
         )
 
 
-def _external_replace_item(item_id: str, rows: list[tuple]) -> None:
+#: The column order `_external_replace_item` reads POSITIONALLY, spelled once so every
+#: producer of those rows can SELECT the shape the helper contracts for (#3139). `replace_chunks`
+#: holds its own INSERT tuple; the re-embed pass and the corpus backfill re-query, and a
+#: hand-written shorter list there (`SELECT id, embedding`) mirrors nothing while the call site
+#: still reads as correct — see `_external_replace_item`'s arity guard for why that is now loud.
+_EXTERNAL_ROW_COLUMNS = (
+    "id, item_id, chunk_index, text, embedding, section, line_start, line_end, "
+    "embedding_model_id, embedding_provider"
+)
+#: How many leading columns `_external_replace_item` indexes into.
+_EXTERNAL_ROW_ARITY = 8
+
+
+def _external_replace_item(item_id: str, rows) -> None:
     """Replace *item_id*'s vectors in the bound external store with *rows* (KBVS-1).
 
-    *rows* is ``replace_chunks``' own INSERT tuple — ``(id, item_id, chunk_index, text,
-    embedding, section, line_start, line_end, model_id, provider)`` — read positionally so this
-    stays adjacent to the one write that produces it rather than re-querying what was just
-    written.
+    *rows* carries `_EXTERNAL_ROW_COLUMNS` — ``(id, item_id, chunk_index, text, embedding,
+    section, line_start, line_end, model_id, provider)`` — read positionally so the per-item
+    route stays adjacent to the one write that produces it rather than re-querying what was
+    just written.
 
     Delete-then-upsert, mirroring ``replace_chunks``' own delete-then-insert: a re-chunk mints
     fresh chunk ids, so upserting alone would leave every previous generation's vectors behind
     as orphans. Chunks with no embedding are skipped — an un-embedded chunk has nothing to index
     and the retrieval join excludes it anyway.
+
+    The arity guard below is OUTSIDE the ``try`` on purpose. An unreachable store is an
+    operational condition and swallows; a row of the wrong width is a PROGRAMMING error, and
+    swallowing it is indistinguishable from success — it logs one WARNING nobody reads, writes
+    nothing, and leaves a call site that looks right (#3139, the fourth write site's landmine).
     """
     provider = _external_vector_store()
     if provider is None:
         return
+    for r in rows:
+        if len(r) < _EXTERNAL_ROW_ARITY:
+            raise ValueError(
+                f"external vector store rows need the {_EXTERNAL_ROW_ARITY} leading columns of "
+                f"({_EXTERNAL_ROW_COLUMNS}); got a {len(r)}-column row for item {item_id}"
+            )
     from personalclaw.knowledge.embedder import bytes_to_floats
     from personalclaw.vector_stores.base import VectorRecord
 
@@ -4262,12 +4286,24 @@ class KnowledgeStore:
         # the item's chunk keys from every dimension table and re-inserts the live blobs, so
         # a same-dimension swap (where the row COUNTS match and reconciliation therefore
         # sees nothing wrong) still ends with the index holding the new vectors.
+        #
+        # The SELECT carries `_EXTERNAL_ROW_COLUMNS`, not the two columns ``sync_item`` needs,
+        # because the external mirror below reads the same rows positionally over eight.
         for item_id in sorted(touched):
             live = self.db.execute(
-                "SELECT id, embedding FROM chunks WHERE item_id = ? ORDER BY chunk_index",
+                f"SELECT {_EXTERNAL_ROW_COLUMNS} FROM chunks "  # noqa: S608 — literal constant
+                "WHERE item_id = ? ORDER BY chunk_index",
                 (item_id,),
             ).fetchall()
             self.vec_index.sync_item(item_id, [(r["id"], r["embedding"]) for r in live])
+            # KBVS-1/#3139 — the FOURTH chunk-vector write site, and the only one that rewrites
+            # vectors under UNCHANGED chunk ids. Because the ids are preserved, an external store
+            # left alone here keeps the PREVIOUS model's vectors under ids whose local rows have
+            # just been re-stamped fresh — so RET-4's freshness join, which reads the LOCAL row,
+            # then certifies those stale vectors as comparable. That is confident wrong recall
+            # with a citation attached, not degraded recall, which is why this mirrors in the
+            # same loop as the local index rather than in a later reconciliation.
+            _external_replace_item(item_id, live)
         if touched:
             self.db.commit()
 
@@ -4277,6 +4313,81 @@ class KnowledgeStore:
             "total": total,
             "stale_remaining": count_stale_chunks(self.db, fp),
             "fingerprint": str(fp),
+        }
+
+    def reindex_external_vector_store(self, *, force: bool = False) -> dict:
+        """Push the WHOLE corpus's chunk vectors into the bound external store (#3139).
+
+        The corpus-level counterpart the per-item write-through never had. Binding a provider
+        over an already-populated library left the external store empty, and an
+        empty-but-REACHABLE store is a healthy store — so the fail-soft WARNING never fired and
+        the chunk arm simply answered nothing. The only repair available was re-chunking each
+        item by hand, one at a time.
+
+        Per item, through the same delete-then-upsert the per-item route uses, so a re-run is
+        idempotent and a partial previous generation is replaced rather than merged into.
+
+        Skips the walk when the store already holds the right number of vectors — the whole
+        corpus is re-upserted on every binding otherwise, and binding happens on every gateway
+        boot for an enabled app. ``describe().count`` is the backend's own answer; a backend
+        that cannot report one (``None``) or that is unreachable is always walked, because
+        "cannot tell" must not read as "in sync". *force* walks unconditionally.
+
+        Returns the counts. Not bound is a no-op reporting ``bound: False``.
+        """
+        provider = _external_vector_store()
+        local_chunks = int(
+            self.db.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL").fetchone()[0]
+        )
+        if provider is None:
+            return {
+                "bound": False,
+                "skipped": False,
+                "items": 0,
+                "chunks": 0,
+                "local_chunks": local_chunks,
+                "external_count": None,
+            }
+
+        external_count: int | None = None
+        try:
+            # By contract `describe()` must not raise; an app that breaks the contract must
+            # not break the backfill, so the cheap path degrades to the full walk.
+            external_count = provider.describe().count
+        except Exception:  # noqa: BLE001 - a diagnostics read must never fail a bind
+            logger.debug("external vector store: describe() failed during backfill", exc_info=True)
+        if not force and external_count is not None and external_count == local_chunks:
+            return {
+                "bound": True,
+                "skipped": True,
+                "items": 0,
+                "chunks": 0,
+                "local_chunks": local_chunks,
+                "external_count": external_count,
+            }
+
+        item_ids = [
+            str(r[0])
+            for r in self.db.execute(
+                "SELECT DISTINCT item_id FROM chunks WHERE embedding IS NOT NULL ORDER BY item_id"
+            ).fetchall()
+        ]
+        written = 0
+        for item_id in item_ids:
+            rows = self.db.execute(
+                f"SELECT {_EXTERNAL_ROW_COLUMNS} FROM chunks "  # noqa: S608 — literal constant
+                "WHERE item_id = ? ORDER BY chunk_index",
+                (item_id,),
+            ).fetchall()
+            _external_replace_item(item_id, rows)
+            written += sum(1 for r in rows if r["embedding"])
+        return {
+            "bound": True,
+            "skipped": False,
+            "items": len(item_ids),
+            "chunks": written,
+            "local_chunks": local_chunks,
+            "external_count": external_count,
         }
 
     def search_items_fts(self, query, limit=10, offset=0) -> list:
