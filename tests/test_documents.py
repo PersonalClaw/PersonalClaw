@@ -9,6 +9,8 @@ opening the output in a real application before the session may close.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from personalclaw.documents import available_formats, get_writer
@@ -799,6 +801,11 @@ class TestDocumentRegenerate:
 class TestDocumentNameDedup:
     def _prov(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        # Pinned, not incidental: with no bound Project `_current_project_id` falls through
+        # to `_session_bound_project_id`, which asks the GATEWAY when it can resolve a
+        # session key. An inherited PERSONALCLAW_SESSION_KEY would make the unscoped arms
+        # below depend on a live gateway; blanking it keeps them a pure function of tmp_path.
+        monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "")
         from personalclaw.artifacts.native import NativeArtifactProvider
 
         return NativeArtifactProvider(root=tmp_path / "artifacts")
@@ -806,6 +813,29 @@ class TestDocumentNameDedup:
     @staticmethod
     def _quiet(outcome, slug="", error=""):
         return None
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _project(project_id: str):
+        """Bind a Project for the turn, the way the native runtime's `_invoke` does."""
+        from personalclaw.agents.native import builtin_tools as _bt
+
+        toks = _bt.bind_tool_context(cwd="/tmp", agent="a", project_id=project_id)
+        try:
+            yield
+        finally:
+            _bt.reset_tool_context(toks)
+
+    @staticmethod
+    def _docx_text(prov, slug: str) -> str:
+        """The stored bytes read back as text — the issue proved the corruption by reading
+        the body, so a version number alone is not enough to prove A was left alone."""
+        import io
+
+        from docx import Document
+
+        data, _mime = prov.raw_bytes(slug)
+        return "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
 
     def test_two_identical_no_slug_calls_update_in_place(self, tmp_path, monkeypatch):
         """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`."""
@@ -969,6 +999,119 @@ class TestDocumentNameDedup:
         assert prov.get("sales").version == 1, "a refusal must not bump the existing version"
         assert audited[-1][0] == "denied"
         assert audited[-1][2].startswith("oversized ")
+
+    # ── #3309: the dedup lookup was Project-blind ─────────────────────────────
+    # DHT-5 (above) resolved a repeat NAME through `find_similar`, but that scan ran
+    # `self.list(kind=kind)` with no Project, so it saw EVERY Project's library. Project B
+    # creating "Weekly Note" therefore found Project A's artifact, updated it in place and
+    # left `project_id: project-a` — A silently held B's bytes (recoverable only from
+    # version history) and B's page never showed the document. One code path serves all
+    # five document formats (csv/docx/pdf/pptx/xlsx), so docx here proves all of them.
+
+    def test_a_second_projects_document_does_not_touch_the_firsts(self, tmp_path, monkeypatch):
+        """THE #3309 regression: two Projects, one name ⇒ two artifacts, A untouched."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            first = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Alpha week\n"},
+                "s-a",
+                self._quiet,
+            )
+        with self._project("project-b"):
+            second = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Bravo week\n"},
+                "s-b",
+                self._quiet,
+            )
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        rows = {a.slug: a for a in prov.list()}
+        assert sorted(rows) == [
+            "weekly-note",
+            "weekly-note-2",
+        ], f"B's create reached A's artifact: {sorted(rows)}"
+        assert rows["weekly-note"].project_id == "project-a"
+        assert rows["weekly-note-2"].project_id == "project-b"
+        # B must be told it CREATED — "Updated" would send it looking for a v1 it never made.
+        assert second.startswith("Created docx: weekly-note-2 (v1"), second
+        # A's bytes, not just A's version: the in-place update is what corrupted it.
+        assert rows["weekly-note"].version == 1
+        assert "Alpha week" in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" not in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" in self._docx_text(prov, "weekly-note-2")
+
+    def test_the_same_project_twice_still_dedups(self, tmp_path, monkeypatch):
+        """DHT-5's intended behaviour, pinned: scoping the lookup must not disable it."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# One\n"},
+                "s1",
+                self._quiet,
+            )
+            reply = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Two\n"},
+                "s2",
+                self._quiet,
+            )
+
+        assert [a.slug for a in prov.list()] == ["weekly-note"]
+        assert reply.startswith("Updated docx: weekly-note (v2"), reply
+        assert prov.get("weekly-note").project_id == "project-a"
+        assert "Two" in self._docx_text(prov, "weekly-note")
+
+    def test_an_unscoped_session_dedups_only_against_unscoped_artifacts(
+        self, tmp_path, monkeypatch
+    ):
+        """`_current_project_id()` returns "" — a str — for an unscoped session, never None.
+        So "" must mean *only unscoped*, which is why the new filter is present-vs-absent:
+        a truthy check would read "" as "no filter" and leave the global dedup in place."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        # Two unscoped calls still dedup to one row at v2.
+        _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# One\n"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# Two\n"}, None, self._quiet
+        )
+        assert [a.slug for a in prov.list()] == ["loose"]
+        assert reply.startswith("Updated docx: loose (v2"), reply
+        assert prov.get("loose").project_id == ""
+
+        # But an unscoped call must not reach a Project-scoped row of the same name.
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Filed", "markdown": "# In A\n"},
+                None,
+                self._quiet,
+            )
+        unscoped = _document_create(
+            prov, "document_create", {"name": "Filed", "markdown": "# Nowhere\n"}, None, self._quiet
+        )
+
+        assert unscoped.startswith("Created docx: filed-2 (v1"), unscoped
+        rows = {a.slug: a for a in prov.list()}
+        assert rows["filed"].project_id == "project-a"
+        assert rows["filed"].version == 1
+        assert rows["filed-2"].project_id == ""
+        assert "In A" in self._docx_text(prov, "filed")
 
 
 # ── DFE-3's V1 gate, as a rail: generate with the TOOL, parse it back, diff ──

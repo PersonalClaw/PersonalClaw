@@ -1230,7 +1230,9 @@ def _document_create(
     # names the target directly; WITHOUT one the collision is resolved by NAME, through the
     # very `prov.find_similar` call `artifact_save` makes above, so there is one dedup
     # implementation rather than two that can disagree. Scoped to this format's kind so a
-    # regenerated pptx never swallows a same-named markdown.
+    # regenerated pptx never swallows a same-named markdown, and to this turn's PROJECT so
+    # it never swallows another Project's (#3309) — `_current_project_id()` returns a str,
+    # so an unscoped session passes "" and dedups against unscoped artifacts only.
     #
     # Updated in place rather than refused with a hint — `artifact_save`'s answer — because
     # the hint has nowhere to land: a document tool's whole job this turn is to produce the
@@ -1238,7 +1240,7 @@ def _document_create(
     # passing a new `slug`.
     target = slug if slug and prov.get(slug) is not None else ""
     if not slug:
-        similar = prov.find_similar(display_name, kind=fmt)
+        similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
         if similar is not None:
             target = similar.slug
     if target:
