@@ -152,3 +152,36 @@ def test_readme_coverage_badge_reads_the_branch_the_workflow_publishes() -> None
     )
     assert badge is not None
     assert badge.group(1) == branch
+
+
+def test_a_non_cancelling_workflow_bounds_every_job() -> None:
+    """A serialized lane needs per-job caps, because the group will not evict a hung job.
+
+    `cancel-in-progress: false` is deliberate on full.yml (#2946) so a merge cannot kill
+    the previous commit's verification. The cost is that a wedged job no longer wastes only
+    its own slot — it HOLDS the lane, and every later push queues behind it until GitHub's
+    360-minute default fires. MEASURED 2026-09-22 (#3318): `coverage` hung past 55 minutes
+    with 29 of its 30 sibling jobs already green, and the three pushes behind it reached
+    `jobs: []`. So the bound belongs on the job. Workflows whose group cancels, or that have
+    no group at all, are exempt: there a hung job is evicted or serializes nothing.
+    """
+    unbounded: list[str] = []
+    for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(workflow, dict)
+        concurrency = workflow.get("concurrency")
+        if not isinstance(concurrency, dict) or concurrency.get("cancel-in-progress"):
+            continue
+        jobs = workflow.get("jobs")
+        assert isinstance(jobs, dict)
+        for name, job in jobs.items():
+            if isinstance(job, dict) and job.get("uses"):
+                continue  # a reusable-workflow call carries its timeout in the callee
+            assert isinstance(job, dict)
+            if not isinstance(job.get("timeout-minutes"), int):
+                unbounded.append(f"{path.name}:{name}")
+
+    assert not unbounded, (
+        "these jobs run in a non-cancelling concurrency group with no timeout-minutes, so any "
+        f"one of them can starve the lane for GitHub's 360-minute default: {unbounded}"
+    )
