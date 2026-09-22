@@ -103,6 +103,14 @@ jobs:
           - { python: "3.13", os: macos-14, shard: 3 }
           - { python: "3.13", os: macos-14, shard: 4 }
     runs-on: ${{ matrix.os }}
+    # ── Every job here carries a timeout (#3318) ─────────────────────────────────────────────
+    # `cancel-in-progress: false` above is deliberate (#2946), so a hung job does not just waste
+    # its own slot — it HOLDS the serialized `push` lane, and every later merge queues behind it
+    # until GitHub's 360-min default fires. MEASURED 2026-09-22: coverage hung >55 min on run
+    # 35689470217 while 29 of its 30 jobs had already passed, and three later pushes reached
+    # `jobs: []`. So the bound belongs on the JOB, not on the group: `false` keeps main's
+    # verification uncancellable, and these caps keep one wedged job from starving the lane.
+    timeout-minutes: 45
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
     env:
@@ -184,6 +192,7 @@ jobs:
     needs: [matrix-shard]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: every matrix shard passed
         run: |
@@ -207,6 +216,7 @@ jobs:
     # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:
     # substrate not bureaucracy). Dependabot (S4) drives the actual update PRs.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
@@ -239,6 +249,7 @@ jobs:
     # own; `-n 0` keeps the integrity-race output readable. Published methodology:
     # docs/security/scanner-testing.md.
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
@@ -273,6 +284,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
@@ -542,6 +554,7 @@ jobs:
     # listing, and this job reds with it. Same doctrine as install-smoke's drift leg: "we could
     # not check" must never arrive as "we checked and it was fine".
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # No PERSONALCLAW_HOME — see the matrix job. Nothing here writes under a home.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
