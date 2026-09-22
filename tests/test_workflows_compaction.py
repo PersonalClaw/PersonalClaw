@@ -28,6 +28,7 @@ import json
 
 import pytest
 
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import compaction as C
 from personalclaw.workflows import store
 from personalclaw.workflows.bindings import BindingContext
@@ -91,7 +92,7 @@ class TestBudget:
         windows get different budgets. A hardcoded cap would make these equal."""
         small = C.prompt_char_budget(SMALL_MODEL)
         big = C.prompt_char_budget(BIG_MODEL)
-        assert small == int(8192 * C.CHARS_PER_TOKEN * C.COMPACT_AT_FRACTION)
+        assert small == int(8192 * NOMINAL_CHARS_PER_TOKEN * C.COMPACT_AT_FRACTION)
         assert big > small * 100
 
     def test_an_unresolvable_model_falls_back_to_a_real_budget_not_to_unbounded(self) -> None:
@@ -99,7 +100,7 @@ class TestBudget:
         conservative default applies, so an unknown model still gets compacted eventually."""
         budget = C.prompt_char_budget("no-such-model-anywhere")
         assert budget > 0
-        assert budget == int(200_000 * C.CHARS_PER_TOKEN * C.COMPACT_AT_FRACTION)
+        assert budget == int(200_000 * NOMINAL_CHARS_PER_TOKEN * C.COMPACT_AT_FRACTION)
 
 
 class TestSegmentation:

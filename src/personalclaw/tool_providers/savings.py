@@ -25,6 +25,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 
 def config_dir():
@@ -39,7 +40,6 @@ def config_dir():
 logger = logging.getLogger(__name__)
 
 _FILENAME = "tokenjuice_savings.json"
-_CHARS_PER_TOKEN = 4  # the standard rough estimate; flagged `estimated` in the surface
 
 
 def _path():
@@ -116,7 +116,8 @@ def summary() -> dict[str, Any]:
 
     return {
         "saved_chars": saved_chars,
-        "saved_tokens_estimated": saved_chars // _CHARS_PER_TOKEN,
+        # The nominal ratio; surfaced under an `estimated` key so nobody reads it as measured.
+        "saved_tokens_estimated": saved_chars // NOMINAL_CHARS_PER_TOKEN,
         "estimated": True,
         "projection_count": sum(int(r.get("count", 0)) for r in rows),
         "top_compressor": top,

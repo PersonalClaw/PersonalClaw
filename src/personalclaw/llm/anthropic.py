@@ -62,6 +62,7 @@ _THINKING_BUDGETS: dict[str, int] = {
 
 # Model → context window: the shared reader (personalclaw.model_windows) is the ONE
 # loader of model_tokens.json; this provider passes its own absent-model default.
+from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
 from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
 
 # ── OpenAI-shape → Anthropic-shape translation ────────────────────────────
@@ -382,6 +383,15 @@ class AnthropicProvider(ModelProvider):
         self._base_url = base_url
         self._max_tokens = max_tokens
         self._extra_options: dict[str, object] = dict(extra_options or {})
+        # The served context window this binding DECLARES (``entry.options``'
+        # ``context_window``) — the escape hatch for a self-hosted endpoint whose real
+        # window is neither the model's architectural maximum nor the conservative local
+        # default. POPPED like ``max_tokens``: whatever is left in _extra_options is
+        # forwarded into the SDK request kwargs, and ``context_window`` is not a wire
+        # parameter. ``None`` = undeclared.
+        self.context_window: int | None = _declared_window(
+            self._extra_options.pop("context_window", None)
+        )
         # ``base_url`` lets Anthropic-compatible endpoints (proxies, gateways,
         # self-hosted relays) be reached through the same provider. When None,
         # the SDK uses the official api.anthropic.com base.

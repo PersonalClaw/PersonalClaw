@@ -46,6 +46,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
 # ── Entry gates: per-entity, calibrated, kept ──
@@ -387,7 +389,12 @@ def count_tokens(text: str) -> int:
 
         return len(tiktoken.get_encoding("cl100k_base").encode(text))
     except Exception:
-        return max(1, (len(text) + 3) // 4)
+        # No tokenizer available — fall back to the repo's one nominal ratio, rounding UP
+        # so a non-empty text never estimates as free.
+        return max(
+            1,
+            (len(text) + NOMINAL_CHARS_PER_TOKEN - 1) // NOMINAL_CHARS_PER_TOKEN,
+        )
 
 
 # ── The allocator ──

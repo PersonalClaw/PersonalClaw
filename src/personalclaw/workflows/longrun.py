@@ -31,6 +31,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+
 #: Default window for a sibling view — how many of the most recent items cross the boundary.
 #: `KnowledgeConfig.synthesis_window` overrides it, via `bindings._synthesis_window()`, which is
 #: where that read lives because this module is pure over explicit state. 20 is a compromise:
@@ -421,7 +423,7 @@ class BufferState:
 
     def approx_tokens(self) -> int:
         text = json.dumps(self.items, ensure_ascii=False, default=str)
-        return len(text) // 4  # the usual ~4 chars/token approximation
+        return len(text) // NOMINAL_CHARS_PER_TOKEN
 
     def should_seal(self, *, now: float) -> tuple[bool, str]:
         """Fire? Returns `(seal, reason)`.

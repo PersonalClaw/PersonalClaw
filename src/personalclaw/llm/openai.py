@@ -44,6 +44,7 @@ _DEFAULT_CONTEXT_WINDOW = 128_000
 
 
 # Model → context window tokens (loaded from shared JSON).
+from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
 from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
 
 
@@ -102,6 +103,15 @@ class OpenAIProvider(ModelProvider):
         # in — an empty value means embed() errors clearly instead of silently
         # calling an OpenAI-specific model id on a non-OpenAI endpoint.
         self._embedding_model = str(self._extra_options.pop("embedding_model", ""))
+        # The served context window this binding DECLARES (``entry.options``'
+        # ``context_window``) — the escape hatch for a local endpoint whose real window
+        # is neither the model's architectural maximum nor the conservative local
+        # default. POPPED like ``embedding_model`` and ``max_tokens``: whatever is left
+        # in _extra_options is forwarded into the SDK request kwargs, and
+        # ``context_window`` is not a wire parameter. ``None`` = undeclared.
+        self.context_window: int | None = _declared_window(
+            self._extra_options.pop("context_window", None)
+        )
         self._client: Any = openai.AsyncOpenAI(
             api_key=credential.secret,
             base_url=base_url,
