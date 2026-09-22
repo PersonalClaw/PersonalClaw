@@ -15,8 +15,8 @@ context-length error the engine could have measured and avoided one call earlier
 2. **Error-triggered**, after a failed call: if the provider rejected the prompt for
    LENGTH specifically, re-compact aggressively and retry ONCE before the node fails.
    Layer 2 exists because layer 1's measurement is an APPROXIMATION (see
-   `CHARS_PER_TOKEN`) — it is the backstop for the cases the estimate gets wrong, not a
-   duplicate of it.
+   `prompt_char_budget`'s `chars_per_token`) — it is the backstop for the cases the
+   estimate gets wrong, not a duplicate of it.
 
 **Reuse, not reimplementation.** All the actual compaction is
 `personalclaw.context_compaction.compact` — the same seam the native agent loop uses at
@@ -46,23 +46,9 @@ from typing import Any
 
 from personalclaw.context_compaction import compact, should_compact, total_chars
 from personalclaw.model_windows import model_context_window
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 logger = logging.getLogger(__name__)
-
-#: Chars per token. The model window is denominated in TOKENS and `total_chars` counts
-#: CHARACTERS, so the comparison needs a bridge and this is it — ~4 chars/token is the
-#: standard English-prose ratio.
-#:
-#: 🔴 It is an APPROXIMATION and it is wrong in a knowable direction. Denser content
-#: (code, JSON, paths — exactly what a workflow prompt carries) runs nearer 3 chars/token,
-#: so 4 UNDER-estimates the real token count and the proactive layer therefore fires
-#: LATER than it ideally would; prose runs 4-5 and it fires early, which costs only a
-#: summarizer call. Deliberately not "solved" with a tokenizer: the right tokenizer is
-#: per-model, loading one on the hot path of every node call to refine a threshold whose
-#: whole job is to be approximately-early is a bad trade, and the aggressive
-#: error-triggered layer below is precisely the backstop for the calls this estimate
-#: mis-judges. The two layers are one mechanism: an estimate plus a certainty.
-CHARS_PER_TOKEN = 4
 
 #: Compact proactively at this fraction of the bound window ("~80%").
 COMPACT_AT_FRACTION = 0.80
@@ -78,7 +64,10 @@ _AGGRESSIVE_TAIL = 1
 
 
 def prompt_char_budget(
-    model_ref: str, *, fraction: float = COMPACT_AT_FRACTION, chars_per_token: int = CHARS_PER_TOKEN
+    model_ref: str,
+    *,
+    fraction: float = COMPACT_AT_FRACTION,
+    chars_per_token: int = NOMINAL_CHARS_PER_TOKEN,
 ) -> int:
     """The prompt size, IN CHARS, at which the proactive layer should compact.
 
@@ -86,6 +75,18 @@ def prompt_char_budget(
     adapters use it too), so this never hand-rolls a window per model. An unresolvable
     ref falls back to that module's conservative default rather than to "unbounded" — a
     missing entry must not disable the ladder.
+
+    🔴 `chars_per_token` is an APPROXIMATION and it is wrong in a knowable direction.
+    Denser content (code, JSON, paths — exactly what a workflow prompt carries) runs
+    nearer 3 chars/token, so the nominal 4 UNDER-estimates the real token count and the
+    proactive layer therefore fires LATER than it ideally would; prose runs 4-5 and it
+    fires early, which costs only a summarizer call. Deliberately not "solved" with a
+    tokenizer: the right tokenizer is per-model, loading one on the hot path of every node
+    call to refine a threshold whose whole job is to be approximately-early is a bad
+    trade, and the aggressive error-triggered layer below is precisely the backstop for
+    the calls this estimate mis-judges. The two layers are one mechanism: an estimate plus
+    a certainty. That is also why this stays NOMINAL rather than borrowing the native
+    loop's conservative ratio — here an under-estimate has a backstop; there it does not.
     """
     window_tokens = model_context_window(model_ref)
     return int(window_tokens * chars_per_token * fraction)

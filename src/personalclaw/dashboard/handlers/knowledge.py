@@ -35,6 +35,7 @@ from personalclaw.request_validation import (
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -1723,8 +1724,8 @@ _CONTEXT_MAX_TOKENS_CEILING = 32000
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token for English text."""
-    return len(text) // 4
+    """Rough token estimate at the repo's one nominal chars-per-token ratio."""
+    return len(text) // NOMINAL_CHARS_PER_TOKEN
 
 
 async def search_for_context(request: web.Request) -> web.Response:

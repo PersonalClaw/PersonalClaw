@@ -38,6 +38,7 @@ from typing import Any
 
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import engine_support, leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
@@ -2330,13 +2331,13 @@ def _provider_fix(result: Any) -> str:
 
 
 def _estimate_tokens(prompt: str, response: str) -> int:
-    """A ~4-chars-per-token floor when the provider reported no usage.
+    """A nominal chars-per-token floor when the provider reported no usage.
 
     Deliberately an ESTIMATE and named as one: budgets treat it as a floor so an
     unreported call still costs something against the cap, rather than being free and
     letting an unmetered provider run away.
     """
-    return max(1, (len(prompt) + len(response)) // 4)
+    return max(1, (len(prompt) + len(response)) // NOMINAL_CHARS_PER_TOKEN)
 
 
 # ── dispatch table ───────────────────────────────────────────────────────────

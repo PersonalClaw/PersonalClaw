@@ -77,6 +77,8 @@ import logging
 from dataclasses import dataclass, replace
 from enum import Enum
 
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,12 +102,6 @@ PRESSURE_WARN_FRACTION = 0.75
 
 #: Fraction at which the next few turns will refuse unless something changes.
 PRESSURE_CRITICAL_FRACTION = 0.9
-
-#: The projector's cap is in CHARS while the budget is in TOKENS. 4 is the repo's standard
-#: estimate (``tool_providers/savings.py``'s ``_CHARS_PER_TOKEN``, and ``count_tokens``'
-#: own fallback). It is an ESTIMATE, so a single pass can land just over the limit —
-#: see :data:`_COMPRESSION_PASSES`.
-_CHARS_PER_TOKEN = 4
 
 #: How many times :func:`_compress` may re-aim. Measured: a 40,000-char block projected at
 #: ``target × 4`` chars came back 3,917 tokens against a 3,904 limit — 13 tokens over, so a
@@ -486,7 +482,10 @@ def _compress(
                 break
             comp, tokens = working[i]
             target = max(1, tokens - (total - limit))
-            cap = max(MIN_PROJECTION_CHARS, int(target * _CHARS_PER_TOKEN * factor))
+            # The cap is in CHARS while ``target`` is in TOKENS — converted at the repo's
+            # one nominal ratio. An ESTIMATE, so a pass can land just over the limit,
+            # which is what _COMPRESSION_PASSES exists for.
+            cap = max(MIN_PROJECTION_CHARS, int(target * NOMINAL_CHARS_PER_TOKEN * factor))
             if cap >= len(comp.text):
                 # A cap at or above the text projects nothing (``project_output`` passes
                 # through), so calling it would record a compression that did not happen.

@@ -80,6 +80,7 @@ from personalclaw.llm.prompt_cache import (
     effective_cache_mode,
     mark_cacheable_prefix,
 )
+from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
 from personalclaw.tool_providers.base import RiskLevel
 from personalclaw.workflows.compaction import is_context_overflow
 
@@ -1835,11 +1836,11 @@ class NativeAgentRuntime(AgentProvider):
     # Compact the native loop's history when context crosses this fraction of
     # the model's window (provider-reported context_usage_pct).
     _COMPACT_THRESHOLD_PCT = 70.0
-    # Conservative chars-per-token for the no-usage estimate. Real ratios run
-    # ~3–4 chars/token for prose and lower for code; 3.0 overestimates token
-    # usage, which errs toward compacting slightly early — cheap — rather than
-    # overflowing the window, which kills the turn.
-    _EST_CHARS_PER_TOKEN = 3.0
+    # The CONSERVATIVE ratio, not the nominal one: this is a compaction TRIGGER, so it has
+    # to over-estimate token usage and err toward compacting slightly early — cheap —
+    # rather than overflowing the window, which kills the turn. See
+    # `personalclaw.token_estimate` for why the repo keeps two ratios and not one.
+    _EST_CHARS_PER_TOKEN = CONSERVATIVE_CHARS_PER_TOKEN
 
     def _estimated_context_pct(self) -> float | None:
         """Char-based context estimate for providers that report no usage.
