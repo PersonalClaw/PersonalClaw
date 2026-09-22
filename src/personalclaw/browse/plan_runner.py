@@ -58,7 +58,11 @@ def make_content_tick_runner(
     raising). ``extract`` defaults to :func:`extract_page`, the same chrome-stripping text
     pipeline the connectors use, so the browse tier and the fetch tier hand ``execute_tick`` the
     same shape of text to hash and diff. ``settle`` is an optional post-navigate wait for a page
-    that finishes rendering asynchronously.
+    that finishes rendering asynchronously — optional to the RUNNER, but not to a real caller:
+    ``session.navigate`` only sends ``Page.navigate`` and does not await the load event, so a
+    runner built without one reads a JS-rendered page before it renders. The production
+    WATCHED-SOURCES binding supplies
+    :func:`~personalclaw.knowledge_providers.web_source.make_browse_settle`.
 
     A browser fault is a SOFT tick failure — ``ok=False`` with a note, never a raise — because a
     scheduled actuator must survive a transiently-down browser to run on its next tick; the
