@@ -63,9 +63,11 @@ from personalclaw.sdk.model import (  # noqa: F401
     ProviderResolutionError,
     PullProgress,
     StructuredOutput,
+    declared_context_window,
     get_default_registry,
     infer_capabilities,
     make_think_splitter,
+    model_context_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -377,9 +379,27 @@ class OllamaProvider(ModelProvider):
         # constraint on the wire. ``None`` means "no constraint" — the request goes out
         # exactly as it does today and core's parse-with-targeted-retry stays in charge.
         self._output_format: object | None = resolve_output_format(self._extra_options)
+        # The served window this binding DECLARES (the entry's ``context_window`` option).
+        # POPPED like ``embedding_model``: whatever is left in ``_extra_options`` is forwarded
+        # into Ollama's ``options`` bag, and ``context_window`` is not a wire parameter — it
+        # describes the window, it does not set it. ``None`` = undeclared, resolve it below.
+        self.context_window: int | None = declared_context_window(
+            self._extra_options.pop("context_window", None)
+        )
         self._client: Any = httpx.AsyncClient(base_url=self._endpoint, timeout=timeout)
         self._history: list[dict[str, Any]] = []
-        self._last_context_pct: float = 0.0
+        # ``None`` until the first token report, NOT 0.0 — see the llm/base contract and
+        # :meth:`_context_pct`. 0.0 is a FABRICATED measurement and it silently disabled
+        # compaction for every Ollama session (#2364): the native loop stores this on
+        # ``_last_context_pct``, and 0.0 is not ``None``, so the threshold gate read 0.0
+        # against 70.0 and returned, while the char-based backstop — which fires only when
+        # the gauge is ``None`` — was never reachable. History then grew unbounded until
+        # Ollama silently truncated the prompt.
+        self._last_context_pct: float | None = None
+        # Served window per model id, memoized from ``/api/ps``. Ollama publishes the
+        # window it ACTUALLY serves, so this provider never has to guess; the probe is
+        # vendor-specific, which is why it lives in this app and not in core.
+        self._served_windows: dict[str, int] = {}
         # Flipped True the first time the server rejects a tools request for
         # this model, so subsequent complete() turns skip the doomed first try.
         self._tools_unsupported: bool = False
@@ -569,6 +589,8 @@ class OllamaProvider(ModelProvider):
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
 
+        self._last_context_pct = await self._context_pct(self._model, input_tokens)
+
         yield LLMEvent(
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
@@ -701,6 +723,8 @@ class OllamaProvider(ModelProvider):
                 tool_input=bucket.get("arguments", ""),
             )
 
+        self._last_context_pct = await self._context_pct(model or self._model, input_tokens)
+
         yield LLMEvent(
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
@@ -738,9 +762,72 @@ class OllamaProvider(ModelProvider):
         """No-op: Ollama tool calls are not interactive at this layer."""
         return None
 
+    # ── Context accounting ────────────────────────────────────────────
+
+    async def _served_window(self, model: str) -> int:
+        """Tokens this Ollama runtime actually SERVES for ``model``.
+
+        Resolution order, most-authoritative first:
+
+        1. the binding's declared ``context_window`` — an operator who set ``num_ctx``
+           knows the served window better than any probe or default can;
+        2. ``GET /api/ps`` → ``context_length``, which is the window Ollama loaded the
+           model WITH. This is the number nothing else in the stack has: the shared
+           ``model_tokens.json`` table holds ARCHITECTURAL maxima (``gemma4``'s is
+           262144 while 0.34.2 serves 32768 by default), and ``/api/show`` returns that
+           same architectural figure. Measured on 0.34.2: ``/api/ps`` reports 32768;
+           dividing by the architectural 262144 — or by an adapter default of 128000 —
+           understates usage by 4-8x, which is what made the compaction gate unreachable;
+        3. :func:`model_context_window` with ``local=True`` — the conservative floor for a
+           runtime that told us nothing.
+
+        The probe is memoized per model id: the served window cannot change without a
+        reload, and this runs on the completion path of every turn. It is also strictly
+        best-effort — a probe failure falls through to (3) rather than failing the turn,
+        because an unavailable ``/api/ps`` must not be able to break inference.
+
+        🪤 ``/api/ps`` lists only LOADED models and returns ``{"models": []}`` until one is
+        warm, which is why this is called after the turn's token report rather than at
+        construction: by then the model that just answered is necessarily loaded.
+        """
+        if self.context_window is not None:
+            return self.context_window
+        cached = self._served_windows.get(model)
+        if cached is not None:
+            return cached
+        try:
+            resp = await self._client.get("/api/ps")
+            resp.raise_for_status()
+            for entry in resp.json().get("models") or []:
+                name = str(entry.get("name") or entry.get("model") or "")
+                served = int(entry.get("context_length") or 0)
+                if served > 0 and name in (model, f"{model}:latest"):
+                    self._served_windows[model] = served
+                    logger.debug("ollama: %s serves a %d-token window (/api/ps)", model, served)
+                    return served
+        except Exception as exc:  # noqa: BLE001 - best-effort probe, never fatal
+            logger.debug("ollama: /api/ps served-window probe failed (%s)", exc)
+        return model_context_window(model or None, local=True)
+
+    async def _context_pct(self, model: str, input_tokens: int) -> float | None:
+        """Input tokens as a percentage of the SERVED window, or ``None`` if unknown.
+
+        ``None`` rather than 0.0 when there is nothing to report: the composer renders a
+        plain dot for an absent measurement and a confident ring for a present one, and
+        the native loop's char-based compaction backstop is reachable only while the
+        gauge is ``None``. Reporting 0.0 therefore both fabricates a reading and disables
+        the fallback that exists to cover the absence.
+        """
+        if input_tokens <= 0:
+            return None
+        window = await self._served_window(model)
+        if window <= 0:
+            return None
+        return (input_tokens / window) * 100
+
     # ── Status ────────────────────────────────────────────────────────
 
-    def context_usage_pct(self) -> float:
+    def context_usage_pct(self) -> float | None:
         return self._last_context_pct
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
@@ -890,6 +977,13 @@ def create_provider(config: dict | None = None) -> "OllamaProvider":
     extra: dict[str, object] = {}
     if cfg.get("embedding_model"):
         extra["embedding_model"] = cfg["embedding_model"]
+    # The served-window declaration has to be forwarded here too, not only on the
+    # registry factory path (which passes ``entry.options`` through wholesale). This
+    # factory hand-picks keys, so a schema field it does not name is silently dropped —
+    # the option would render in the form, save to config.json, and never reach the
+    # provider that reads it.
+    if cfg.get("context_window") is not None:
+        extra["context_window"] = cfg["context_window"]
     return OllamaProvider(
         model=str(cfg.get("default_model") or ""),
         endpoint=endpoint,

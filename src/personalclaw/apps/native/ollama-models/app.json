@@ -56,6 +56,18 @@
               "advanced"
             ]
           }
+        },
+        "context_window": {
+          "type": "integer",
+          "minimum": 1,
+          "x-meta": {
+            "label": "Served Context Window",
+            "help": "Tokens this endpoint actually serves (Ollama's num_ctx), used to size the context gauge and trigger compaction. Leave blank to detect it from the running model.",
+            "placeholder": "auto-detected",
+            "tags": [
+              "advanced"
+            ]
+          }
         }
       },
       "required": [
