@@ -638,48 +638,74 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // not read them). The remaining one resets the REPORT, whose failure the panel already announces.
   'pages/settings/DoctorPanel.tsx': 1,
   'pages/settings/DurabilityPanel.tsx': 2,
-  'pages/settings/FeedbackPanel.tsx': 1,
+  // `FeedbackPanel` is GONE from this map, not zeroed: its producers table printed "No feedback yet —
+  // 👍/👎 appear on inbox classifications…" at a user whose every verdict was recorded and unreadable,
+  // and the file's own docstring had written the swallow down as deliberate. It was the defect.
   'pages/settings/InboxSettingsPanel.tsx': 1,
-  'pages/settings/MemoryPanel.tsx': 8,
+  // 8 → 7. The daily-digest read is fixed; it printed "No digests yet" out of a failed fetch. The
+  // seven left are stats/lint/observability decorations and a settings read with its own branch.
+  'pages/settings/MemoryPanel.tsx': 7,
   'pages/settings/ModelBackends.tsx': 1,
   // The sixth is the RECORDS veto's other blind edge (see `ChatPage` above): the reindex failure IS
   // recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state object, and the
   // veto keys off the SETTER's name. The surface tells the user the reindex failed; only the scanner
   // cannot see it.
   'pages/settings/ModelsPanel.tsx': 6,
-  // Both read a provider's JSON SCHEMA, and the substitute is `{ properties: {} }`, which every caller
-  // turns into `props.length === 0` → `return null`. An unreadable schema renders NOTHING, which claims
-  // nothing. The generic fix here would be a form that says it could not load its own shape, and that
-  // is a design question about the multi-instance provider surface, not a swallow to delete.
-  'pages/settings/MultiInstanceCard.tsx': 2,
+  // 2 → 1, and the halving is the interesting part: this entry USED to read "Both read a provider's
+  // JSON SCHEMA", and only one of the two ever did. The remaining site is the schema read, whose
+  // substitute is `{ properties: {} }` — every caller turns that into `props.length === 0` → `return
+  // null`, so an unreadable schema renders NOTHING and claims nothing. The generic fix for it is a form
+  // that says it could not load its own shape, which is a design question about the multi-instance
+  // provider surface, not a swallow to delete. The site that LEFT was `api.providerInstances()`, an
+  // instance LIST: `[]` printed "No instances yet. Add one to start using this provider." over a
+  // provider with five configured MCP servers, with "0 instances" in the header chip beside it. A
+  // count and a sentence are claims; an unrendered form is not. Same file, opposite verdicts.
+  'pages/settings/MultiInstanceCard.tsx': 1,
   'pages/settings/NotificationsPanel.tsx': 1,
-  'pages/settings/PacksPanel.tsx': 2,
+  // 2 → 1. The installed-ledger read is fixed — and fixing it here required moving its TWIN in
+  // `settingsWidgets` in the same commit, because the two share `settings:packs:installed`. The one
+  // left is the bundled catalog, whose own `LoadError` the store section already renders beside it.
+  'pages/settings/PacksPanel.tsx': 1,
   'pages/settings/PromptsPanel.tsx': 1,
-  // The same schema read as `MultiInstanceCard` above, same `{ properties: {} }`, same `return null`.
+  // The same schema read `MultiInstanceCard` above keeps, same `{ properties: {} }`, same `return null`
+  // — and the same open design question, which is why the two move together or not at all.
   'pages/settings/ProviderConfigForm.tsx': 1,
   'pages/settings/ProvidersPanel.tsx': 3,
   'pages/settings/RoutingPanel.tsx': 3,
-  'pages/settings/SearchPanel.tsx': 3,
+  // 3 → 2. The providers read is fixed: a 500 on /api/search/providers told a user with three
+  // registered providers "No search providers configured" and pointed them at the Store to install
+  // their first one. The two left are the active BINDINGS (`{}` → every use-case reads "none — falls
+  // back to General", which is a claim and is worth its own row in the issue) and the `/api/tools`
+  // probe, whose `null` — not `[]` — is deliberate: it withholds the missing-tool note rather than
+  // accusing the user of a missing app off an unreachable read.
+  'pages/settings/SearchPanel.tsx': 2,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
-  // The densest single file left, and the one the issue's ninth comment singled out: a failing
-  // `/api/usage/rollup` still renders "No model usage recorded this period."
-  'pages/settings/UsagePanel.tsx': 7,
+  // 7 → 5. Both rollups are fixed — the pair the issue's ninth comment singled out, where a failing
+  // `/api/usage/rollup` rendered "No model usage recorded this period." and "No usage recorded this
+  // period." on a spend page whose own headline tiles, off a different endpoint, could be showing
+  // $11.35 and 412 turns at the same moment. The five left are all `null`-substituting reads whose
+  // surfaces are gated on the value's presence (`{t && …}`, `{sys && hasActivity && …}`, `dayCap > 0`,
+  // `fold ?? null`), so an unread one costs a section rather than composing a sentence.
+  'pages/settings/UsagePanel.tsx': 5,
   // 3 → 1. The two gone were the lexicon reads, which printed "0 in your lexicon", "No terms yet" and
   // "No learned corrections yet" out of a failed fetch. The one left is `modelsActive`, documented at
   // the site: it feeds a readiness CHIP, so losing it degrades a chip rather than inventing a setting.
   // 🪤 This is also the single file of the sixteen that the old arg-scoped rail DID list — at 1, while
   // it held 3. A number measured through a partial scanner is not a smaller truth, it is a wrong one.
   'pages/settings/VoicePanel.tsx': 1,
-  // The hub's THREE remaining swallows, all deliberate and each explained at its definition:
-  // `usePacksInstalled` is byte-identical to `PacksPanel`'s ledger read because they SHARE a key (a
-  // divergent fetcher would prime that key with a different substitute and make the panel's own
-  // error branch unreachable); `useAgentDefaults`' decorating read of the default agent's NAME
-  // renders as '—'; and `useToolsSavings` backs a meter whose absence is a designed state, under a
-  // prior ruling with its own rail (`dashboard/healthUnknown.test.ts`). Every one of the other 21 is
-  // gone — and note what the three have in common: each is a read whose value the surface does not
-  // make a CLAIM about. That is the line, and it is narrower than "this read is unimportant".
-  'pages/settings/settingsWidgets.tsx': 3,
+  // 3 → 2, and the one that left is worth reading as a lesson about shared keys. `usePacksInstalled`
+  // was budgeted here as deliberate because it is byte-identical to `PacksPanel`'s ledger read and the
+  // two SHARE `settings:packs:installed` — a divergent fetcher primes that key with a different
+  // substitute and makes the panel's own error branch unreachable. That reasoning was sound and it was
+  // an argument about ORDER, not about the swallow: "de-swallowing it is the panel's fix to make". So
+  // both moved in one commit, and the byte-identity that made the entry defensible is what made it
+  // impossible to fix either one alone. The two left make no CLAIM about the value they read:
+  // `useAgentDefaults`' decorating read of the default agent's NAME renders as '—', and
+  // `useToolsSavings` backs a meter whose absence is a designed state under a prior ruling with its
+  // own rail (`dashboard/healthUnknown.test.ts`). That is the line, and it is narrower than "this read
+  // is unimportant".
+  'pages/settings/settingsWidgets.tsx': 2,
   'pages/skills/LearningSummaryBlock.tsx': 1,
   'pages/skills/SkillInspector.tsx': 2,
   'pages/skills/SkillsPage.tsx': 2,
@@ -842,6 +868,10 @@ describe('direct fetches keep their rejection too — the 2026-09-05 false-empty
     ['pages/skills/SkillsPage.tsx', /catch\s*\(e\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)/, 'skill search results'],
     ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setReadyErr\(e\);\s*setReady\(null\)\s*\}\)/, 'ready tasks'],
     ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*if\s*\(alive\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)\s*\}\s*\}\)/, 'search results'],
+    // #532's daily-digest row. Pinned here rather than trusted to §B's count because the RECORDS veto
+    // makes the fixed shape invisible to the census: reverting only the render half — keeping
+    // `setDigestsErr` while deleting the branch that shows it — moves no number in this file.
+    ['pages/settings/MemoryPanel.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setDigestsErr\(e\);\s*setDigests\(null\)\s*\}\)/, 'daily digests'],
   ]
 
   it('each slice records its rejection and renders LoadError for it', () => {

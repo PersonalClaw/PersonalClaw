@@ -114,8 +114,23 @@ const walk = (d: string): string[] =>
   })
 
 const SKELETON = /<(?:List|Form|CardGrid)Skeleton\b[^>]*?\/>/
-/** `what="literal"` or `what={expression}` — a dynamic noun is still a declared noun. */
-const ERR_NOUN = /<(?:LoadError|InlineError)[^>]*?what=(?:"([^"]+)"|\{([^}]+?)\})/
+/** `what="literal"` or `what={expression}` — a dynamic noun is still a declared noun.
+ *
+ *  🪤 `InlineLoadError` WAS MISSING FROM THIS ALTERNATION, and it is the same declaration: its own
+ *  prop doc reads *"A lowercase bare noun, same convention as `LoadError`"*, it renders through the
+ *  same `loadErrorMessage`, and it is what a section-sized failure inside a busy panel uses instead
+ *  of the centred block. So a surface could declare its noun in the sanctioned way and still be
+ *  reported as having invented it — the cycle-148 blind spot ("could not see a dynamic noun") in a
+ *  second costume. Measured before widening, because a rail that grows quietly is not a rail:
+ *  99 skeletons, errPaired **78 → 79**, and the ONE site that gains a noun is the one being fixed
+ *  in this commit (`settings/UsagePanel`, at −1 line). No existing site's noun or distance changes.
+ *
+ *  The brace group is nesting-aware for the same reason: `[^}]+?` truncates a template literal at
+ *  the first `${…}` close, so `` what={`usage by ${keyField}`} `` captured as `` `usage by ${keyField ``
+ *  — which happens to satisfy `carries` by containment while printing a half-noun in every failure
+ *  message. One level of nesting is enough for the forms callers actually write, and the non-greedy
+ *  group still stops at the prop's own close rather than running into `error={…}`. */
+const ERR_NOUN = /<(?:LoadError|InlineLoadError|InlineError)[^>]*?what=(?:"([^"]+)"|\{((?:[^{}]|\{[^{}]*\})+?)\})/
 const RESULTS = /results=\{\{([^}]*)\}\}/
 /** An empty-state title in the same gate: `title="No tasks"` or a bare "No daily digests yet" line. */
 const EMPTY_TITLE = /title=(?:"(No [^"]{2,40})"|\{[^}]*'(No [^']{2,40})')|(?:>|^)\s*(No [a-z][a-z' &-]{2,38})/
@@ -290,6 +305,18 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
     expect(dyn?.errNoun, 'the LoadError one line above declares the noun as an expression')
       .toBe("isSnips ? 'snippets' : 'prompts'")
     expect(dyn && carries(dyn.tag, dyn.errNoun!), 'and the skeleton passes the same expression').toBe(true)
+  })
+
+  it('the INLINE failure counts as a declaration — the arm added for #532', () => {
+    // Vacuity guard on widening `ERR_NOUN`: if `InlineLoadError` stops matching, this site silently
+    // rejoins "the unnamed ones" and the alternation carries a dead arm. Pinned by file + noun, not
+    // by line, for the reason `FROM_EMPTY_STATE` records above.
+    const inline = all.find((s) => s.rel === 'pages/settings/UsagePanel.tsx' && s.errNoun)
+    expect(inline?.errNoun, 'the InlineLoadError one line above declares the noun as an expression')
+      .toBe('`usage by ${keyField}`')
+    expect(inline && carries(inline.tag, inline.errNoun!), 'and the skeleton passes the same expression').toBe(true)
+    // …and the nesting-aware brace group captured the WHOLE template literal, not a prefix of it.
+    expect(inline?.errNoun?.endsWith('`'), 'a truncated capture prints a half-noun on failure').toBe(true)
   })
 
   it('every noun taken from an empty state still matches the copy users read', () => {

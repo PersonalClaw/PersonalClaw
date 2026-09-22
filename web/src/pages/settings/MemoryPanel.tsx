@@ -2059,10 +2059,19 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
  *  (forces a synchronous rebuild for days not yet digested). */
 function DailyDigestSection() {
   const [digests, setDigests] = useState<DailyDigest[] | null>(null)
+  const [digestsErr, setDigestsErr] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const load = (rebuild = false) => {
     setBusy(true)
-    api.dailyDigests(rebuild).then(setDigests).catch(() => setDigests([])).finally(() => setBusy(false))
+    // 🔴 `catch(() => setDigests([]))` printed the EmptyState — "No daily digests yet", with its
+    // claw mark and its pitch for the Build button — out of a failed read (#532). Every digest the
+    // maintenance cadence had built was still there; the panel just could not read them, and said
+    // the opposite. Record the rejection instead: `null` digests plus a recorded error is a state
+    // the section can render honestly, and `[]` is not.
+    api.dailyDigests(rebuild)
+      .then((d) => { setDigests(d); setDigestsErr(null) })
+      .catch((e) => { setDigestsErr(e); setDigests(null) })
+      .finally(() => setBusy(false))
   }
   useEffect(() => load(false), [])
 
@@ -2073,7 +2082,12 @@ function DailyDigestSection() {
         </Button>
         {digests && <span data-type="body-s" className="text-on-surface-low">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
       </div>
-      {!digests ? <ListSkeleton rows={3} what="daily digests" /> : digests.length === 0 ? (
+      {digestsErr ? (
+        // The other half: with the substitute gone, `digests` stays null on a failure and the
+        // skeleton below would run forever. Retry is `load(false)` — a plain re-read, not a
+        // rebuild, because a failed READ is no reason to make the server build anything.
+        <LoadError what="daily digests" error={digestsErr} onRetry={() => load(false)} />
+      ) : !digests ? <ListSkeleton rows={3} what="daily digests" /> : digests.length === 0 ? (
         // Same reasoning as the entity graph: "Build / refresh" is directly above and
         // visible, so this states the fact through the shared primitive and names that
         // control rather than rendering a second button with the same name.

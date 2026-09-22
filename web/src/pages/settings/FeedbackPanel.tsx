@@ -4,7 +4,7 @@ import { api, type FeedbackProducerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
-import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
 
 /** Per-producer feedback accuracy (FEEDBACK-SIGNAL plan 58) — honest counts only.
@@ -20,9 +20,14 @@ import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settings
  *  Rich "is it learning?" analytics belong to LEARNING-VISIBILITY — this is the
  *  raw table. */
 export function FeedbackPanel() {
-  const { data, refresh } = useQuery(
+  // 🔴 THIS SWALLOWED ITS REJECTION AND THE TABLE SPOKE FOR THE SERVER (#532). A failed
+  // /api/feedback/producers resolved to `null`, `rows` fell to `[]`, and the panel printed "No
+  // feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop
+  // findings" to a user whose every verdict was recorded and unreadable. The sentence is a
+  // teaching prompt: it tells someone who HAS been marking things to go start marking things.
+  const { data, status, error: loadErr, refresh } = useQuery(
     'settings:feedback-producers',
-    () => api.feedbackProducers().catch(() => null),
+    () => api.feedbackProducers(),
     { persist: false },
   )
   const [busy, setBusy] = useState('')
@@ -43,7 +48,15 @@ export function FeedbackPanel() {
 
       <Section title="Judgment sources"
         hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
-        {rows.length === 0 ? (
+        {/* Three states, not two — and the middle one is the half that makes de-swallowing real:
+            with the fallback gone `data` is undefined for the failed AND the loading case, so the
+            error branch has to come first or it is unreachable, and the skeleton has to exist or a
+            cold read renders the empty state for a second and calls it an answer. */}
+        {status === 'error' ? (
+          <LoadError what="judgment sources" error={loadErr} onRetry={refresh} />
+        ) : !data ? (
+          <ListSkeleton rows={3} what="judgment sources" />
+        ) : rows.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
             No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills. Verdicts collect here per judgment source.
           </div>
@@ -67,10 +80,15 @@ export function FeedbackPanel() {
  *  `config.json`. They live HERE rather than in a panel of their own because this is the panel that
  *  already owns the mechanism: the section above quotes `window_days` and `min_n` in its own hint.
  *
- *  🪤 ITS OWN READ, and its own failure branch. The producers table above swallows its rejection on
- *  purpose (an unreadable table shows its empty state), but a CONTROL rendered from a swallowed read
- *  claims a saved value nobody saved — and every control here PATCHes on change, so a user
- *  "correcting" a switch that never loaded writes the opposite of what they believe is stored. */
+ *  🪤 ITS OWN READ, and its own failure branch — a DIFFERENT endpoint from the producers table
+ *  above, so the two fail independently and each has to say so for itself. A CONTROL rendered from
+ *  a swallowed read claims a saved value nobody saved, and every control here PATCHes on change, so
+ *  a user "correcting" a switch that never loaded writes the opposite of what they believe is
+ *  stored.
+ *
+ *  🔑 This note used to add that the table above "swallows its rejection on purpose (an unreadable
+ *  table shows its empty state)". That was the defect, not a design — an empty state IS a claim, and
+ *  #532 ruled the whole class. The table now has the same three branches this section does. */
 function FeedbackTuningSection() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const { data, error: loadErr, refresh } = useQuery('settings:feedback', () =>

@@ -203,13 +203,19 @@ describe('the hub no longer fabricates values for a failed read', () => {
       .filter((m, i) => /\.catch\(\(\)\s*=>\s*\(?\s*(\[\]|null|undefined|\{\}|'')/
         .test(widgets.slice(m.index!, starts[i + 1]?.index ?? m.index! + 700)))
       .map((m) => m[1])
-    // EXACTLY these three, and each is explained at its definition. What they have in common is the
-    // line worth remembering, because it is narrower than "this read is unimportant": in all three
-    // the surface makes NO CLAIM about the value.
-    //   usePacksInstalled   byte-identical to `PacksPanel`'s ledger read because they SHARE a key —
-    //                       a divergent fetcher primes that key with a different substitute and makes
-    //                       the PANEL's own error branch unreachable. The honest fix is one key, not
-    //                       two disagreeing fetchers, and that is the panel's change to make.
+    // EXACTLY these two, and each is explained at its definition. What they have in common is the
+    // line worth remembering, because it is narrower than "this read is unimportant": in both the
+    // surface makes NO CLAIM about the value.
+    //
+    // 🔑 `usePacksInstalled` WAS THE THIRD AND IS GONE (#532). Its entry here said the honest fix is
+    // "one key, not two disagreeing fetchers, and that is the panel's change to make" — which was an
+    // argument about ORDER, not a defence of the swallow, and the panel's change is now made. Both
+    // fetchers were de-swallowed in one commit, because the byte-identity that made this hook's
+    // fallback defensible is exactly what made it impossible to fix either side alone: leaving `[]`
+    // here would have primed `settings:packs:installed` and made the panel's new error branch
+    // unreachable on every hub→panel journey. The packs TILE gained the other half — its `failed` is
+    // now `pStatus === 'error' || iStatus === 'error'`, because the big "N installed packs" stat is a
+    // COUNT, and a count is the one thing a failed read does not have.
     //   useAgentDefaults    a MIXED hook: its governing config read has no fallback (the panel's
     //                       honesty depends on that), while its DECORATING read of the default
     //                       agent's name keeps `.catch(() => '')` and renders '—'.
@@ -222,9 +228,9 @@ describe('the hub no longer fabricates values for a failed read', () => {
     //                       that reason.
     // 🪤 The previous version of this rail could not express that distinction — it asked only "does
     // this hook contain any `.catch(() => `" and so counted `useAgentDefaults` as a swallower both
-    // before and after its fix. The list is exact now, which is what makes a fourth arrival visible.
+    // before and after its fix. The list is exact now, which is what makes a THIRD arrival visible.
     expect(swallowing.sort(), 'a hub hook started substituting a value for a failed read again')
-      .toEqual(['useAgentDefaults', 'usePacksInstalled', 'useToolsSavings'])
+      .toEqual(['useAgentDefaults', 'useToolsSavings'])
   })
 
   it('and no tile keeps a branch that only a fabricated value could reach', () => {
