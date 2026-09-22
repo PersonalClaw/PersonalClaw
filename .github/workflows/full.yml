@@ -106,10 +106,16 @@ jobs:
     # ── Every job here carries a timeout (#3318) ─────────────────────────────────────────────
     # `cancel-in-progress: false` above is deliberate (#2946), so a hung job does not just waste
     # its own slot — it HOLDS the serialized `push` lane, and every later merge queues behind it
-    # until GitHub's 360-min default fires. MEASURED 2026-09-22: coverage hung >55 min on run
-    # 35689470217 while 29 of its 30 jobs had already passed, and three later pushes reached
-    # `jobs: []`. So the bound belongs on the JOB, not on the group: `false` keeps main's
-    # verification uncancellable, and these caps keep one wedged job from starving the lane.
+    # until GitHub's 360-min default fires. So the bound belongs on the JOB, not on the group:
+    # `false` keeps main's verification uncancellable, and these caps keep one wedged job from
+    # starving the lane.
+    #
+    # Each cap must clear the job's OWN measured runtime, and the two jobs are not comparable:
+    # `matrix-shard` runs a quarter of the suite per leg, while `coverage` runs all of it in one
+    # process under `--cov` with no xdist split, so coverage is the long pole. MEASURED 2026-09-22
+    # (#3326): coverage's only green run took 47.5 min, and it was separately observed wedged past
+    # 55 min on run 35689470217 — so 40 was below its floor and killed every push to main. Its cap
+    # is 70 (~47% headroom over 47.5); this shard cap stays at 45 for the smaller job.
     timeout-minutes: 45
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
@@ -284,7 +290,8 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Above the job's own 47.5-min measured green runtime — see the cap rationale on matrix-shard.
+    timeout-minutes: 70
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
