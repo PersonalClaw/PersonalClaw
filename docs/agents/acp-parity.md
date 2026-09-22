@@ -120,10 +120,10 @@ capability verdict), `NOT-EXERCISED` (no runtime observation).
 |---|---|---|---|---|---|
 | claude-code | 49 | 14 | 0 | **0** | 2026-08-17 · residual re-drive 2026-08-19 · **residual CLOSED 2026-08-23** (13 → 0). Adapter `0.60.0`, `claude` `2.1.233.669` |
 | codex | 47 | 16 | 0 | **0** | 2026-08-17 · **residual CLOSED 2026-08-23** (20 → 0). Adapter `1.1.4`, `codex` `0.146.1.359` |
-| kiro-cli | 43 | 19 | 1 | **0** | 2026-08-17/18 · follow-up 2026-08-18 · re-drive 2026-08-19 · **residual CLOSED 2026-08-23** (1 → 0). `kiro-cli` `2.18.1` |
+| kiro-cli | 44 | 19 | 0 | **0** | 2026-08-17/18 · follow-up 2026-08-18 · re-drive 2026-08-19 · **residual CLOSED 2026-08-23** (1 → 0). `kiro-cli` `2.18.1` |
 | gemini-cli | — | — | — | 63 | never driven; binary not installed. Out of scope by owner decision |
 
-`49+14+0+0`, `47+16+0+0` and `43+19+1+0` each total 63. **All three shipped columns are complete:
+`49+14+0+0`, `47+16+0+0` and `44+19+0+0` each total 63. **All three shipped columns are complete:
 no cell on any of them lacks a runtime observation.**
 
 > **This table was wrong for four weeks, and the correction is the most important thing on this
@@ -548,7 +548,7 @@ one must date it against the code before calling it wrong.
 `kiro-cli` `2.22.1` today; the column was measured on `2.18.1`. Speaking ACP natively — no adapter in
 the path, so nothing here is an adapter version. Core's `default` dialect, which has no
 permission-mode axis. **The column is COMPLETE: 63 of 63 cells carry a runtime observation**
-(43 CONFIRMED / 19 DIVERGED / 1 ENV). It was also the column that disagreed with itself about the id
+(44 CONFIRMED / 19 DIVERGED / 0 ENV). It was also the column that disagreed with itself about the id
 it is reached by — **fixed 2026-09-19**, see the note directly below; the counts are unchanged,
 because that defect was never one of the 63 cells.
 
