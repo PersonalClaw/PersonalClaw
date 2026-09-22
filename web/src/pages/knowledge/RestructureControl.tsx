@@ -9,6 +9,7 @@ import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { Checkbox, Field, Select, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
+import { InlineLoadError } from '../../ui/ListScaffold'
 
 /** A rejection's human sentence. `ApiError.message` is already the server's `error.message`
  *  (extracted by the shared `errText` when the response was read), so there is nothing to
@@ -90,6 +91,12 @@ function RestructureForm({ item, selection, onDone }: {
   const [done, setDone] = useState<KnowledgeRestructureResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // #532: the duplicates lookup is the half of the comment below that WASN'T true. It resolved its
+  // rejection into `[]`, and the merge verb then printed "No near-duplicates were found for this
+  // item, so there is nothing to fold into it." — the exact permanent-sounding falsehood the comment
+  // warns about, one line under the comment. Separate from `err`, which belongs to the restructure
+  // ACTION and is dismissable + cleared by `reset()`; a load failure is neither.
+  const [dupErr, setDupErr] = useState<unknown>(null)
 
   // 🔴 Both lookups store their REJECTION rather than falling back to an empty list. An empty
   // sections list legitimately means "no headings, cannot be split", and an empty duplicates list
@@ -102,7 +109,7 @@ function RestructureForm({ item, selection, onDone }: {
       .catch((e) => { if (live) { setSections([]); setErr(msg(e)) } })
     api.knowledgeDuplicates(item.id)
       .then((d) => { if (live) setDuplicates(d) })
-      .catch(() => { if (live) setDuplicates([]) })
+      .catch((e) => { if (live) { setDuplicates([]); setDupErr(e) } })
     return () => { live = false }
   }, [item.id])
 
@@ -238,6 +245,9 @@ function RestructureForm({ item, selection, onDone }: {
             ]}
             onChange={(v) => { setMergeId(v); setPlan(null) }} />
         </Field>
+      ) : dupErr !== null ? (
+        /* BEFORE the sentence below, because a rejection also leaves the list empty (#532). */
+        <InlineLoadError what="near-duplicates" error={dupErr} />
       ) : (
         /* No picker at all rather than a DISABLED one. `Select` takes no `disabledReason`, so a
            disabled dropdown is a control whose unavailability nothing states — the global

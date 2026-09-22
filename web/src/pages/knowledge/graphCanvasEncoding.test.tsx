@@ -38,7 +38,10 @@ type Node = { id: string; name?: string; x?: number; y?: number; degree?: number
 type Edge = { source: string; target: string; weight?: number }
 
 function mockGraph(nodes: Node[], edges: Edge[] = []) {
-  globalThis.fetch = vi.fn(async () => ({ json: async () => ({ nodes, edges }) })) as never
+  // `ok: true` because the component checks it (#532): a 4xx/5xx still RESOLVES, so without the
+  // check a failed read reaches the zero-node branch as a crash. A double that omits `ok` is not
+  // modelling the 200 it means to — it is modelling a response no server sends.
+  globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ nodes, edges }) })) as never
 }
 const at = (container: HTMLElement, id: string) =>
   container.querySelector(`[data-entity-id="${id}"]`)?.getAttribute('transform')

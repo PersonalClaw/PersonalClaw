@@ -41,6 +41,23 @@ const docs: UiDoc[] = [
     anatomy: ['role=alert centered column', 'aria-hidden AlertTriangle', 'headline-s "Couldn\'t load your <what>"', "error message or reassurance line", 'optional Retry Button'],
   },
   {
+    name: 'InlineLoadError',
+    keywords: ['error', 'load', 'failed', 'fetch', 'retry', 'alert', 'inline', 'palette', 'menu', 'row'],
+    description:
+      "The one-line sibling of LoadError, for a surface with nowhere to put a centred alert block — a command palette, a mention menu, a path bar, a settings row. That shape is where the issue-532 swallow class concentrated, and measured across the tree it is what those surfaces did about a failed read: resolve the rejection into `[]` and let the empty state speak for the server. Renders `loadErrorMessage(error, what)` — never an empty line — as a role=alert line with an optional Retry. The empty states these sit beside deliberately have no live region, and that difference is the point: it is what makes \"we could not load this\" and \"you have none\" distinguishable to a screen reader as well as on screen.",
+    props: [
+      { name: 'what', description: 'The thing that failed to load — a lowercase bare noun, same convention as LoadError ("your prompts", "run history"). Interpolated into "Couldn\'t load <what>."' },
+      { name: 'error', description: "The rejection. A message the backend authored wins outright; otherwise `ApiError.status` discriminates 404 (\"it no longer exists\") from 401/403 (\"you don't have access\"). Optional — omitted, the generic sentence naming `what` is still a sentence." },
+      { name: 'onRetry', description: 'Re-runs the fetch — rendered as an inline underlined Retry after the message. Omit only when the surface genuinely cannot retry.' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Reach for it wherever a small surface currently resolves a failed fetch into `[]`/`null` — its empty state is otherwise a positive claim about server state the server never made.' },
+      { guidance: true, description: 'Branch on the error BEFORE the empty/loading test: a rejection also satisfies "no items", so an error test placed after it never runs.' },
+      { guidance: false, description: 'Do not use it on a list PAGE — that is LoadError, which replaces the whole surface at page scale.' },
+    ],
+    anatomy: ['role=alert single line', 'aria-hidden AlertTriangle', 'loadErrorMessage sentence', 'optional inline Retry button'],
+  },
+  {
     name: 'ListRow',
     keywords: ['list', 'row', 'card', 'item', 'clickable', 'hover', 'accent', 'motion'],
     description:

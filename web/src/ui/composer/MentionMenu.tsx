@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
-import { FileText, BookText, ScrollText, Loader2 } from 'lucide-react'
+import { FileText, BookText, ScrollText, Loader2, AlertTriangle } from 'lucide-react'
 import { api } from '../../lib/api'
-
-interface FileResult { path: string; name: string; size: number; mtime: number }
 
 /** A menu row is a workspace file, a knowledge-library item, or a user prompt.
  *  Files thread a path into meta.files (the agent reads them); knowledge threads
@@ -29,36 +27,52 @@ function fmtSize(b: number): string {
 // expire after CACHE_TTL so newly-created files still surface within a cadence.
 const CACHE_TTL = 30_000
 const searchCache = new Map<string, { ts: number; rows: Row[] }>()
-async function cachedSearch(query: string, project?: string, leading?: boolean): Promise<Row[]> {
+const settled = <T,>(r: PromiseSettledResult<T[]>): T[] => (r.status === 'fulfilled' ? r.value : [])
+
+/** `rows` plus whether EVERY source we asked rejected — the caller needs the
+ *  difference between "nothing matches" and "we could not search". */
+async function cachedSearch(query: string, project?: string, leading?: boolean): Promise<{ rows: Row[]; failed: boolean }> {
   // `leading` is part of the key: prompts only join the set when the `@` is at the
   // message start (where chat_runner expands `@name`), so leading vs mid-text must
   // not share a cache entry.
   const key = `${leading ? 'L' : ''} ${project || ''} ${query.toLowerCase()}`
   const hit = searchCache.get(key)
   const now = performance.now()
-  if (hit && now - hit.ts < CACHE_TTL) return hit.rows
+  if (hit && now - hit.ts < CACHE_TTL) return { rows: hit.rows, failed: false }
   const ql = query.toLowerCase()
   // Files + knowledge in parallel; either failing degrades to the other. Prompts are
   // added ONLY for a leading `@` (backend expands leading-only) — matched client-side
   // over the user-prompt list (same source PromptPalette uses).
-  const [files, knowledge, prompts] = await Promise.all([
-    api.fileSearch(query, project).then((d) => d.results || []).catch(() => [] as FileResult[]),
-    api.knowledgeItems({ q: query, limit: 6 }).then((d) => d.items || []).catch(() => []),
+  //
+  // #532: `allSettled`, not three `.catch(() => [])`. Per-source degradation is the
+  // deliberate behaviour and it survives here — but the three catches ALSO erased the
+  // case where every source failed, which the menu then rendered as "No matching files
+  // or knowledge" and, worse, cached for CACHE_TTL so the false answer outlived the
+  // outage by 30s.
+  const [files, knowledge, prompts] = await Promise.allSettled([
+    api.fileSearch(query, project).then((d) => d.results || []),
+    api.knowledgeItems({ q: query, limit: 6 }).then((d) => d.items || []),
     leading
       ? api.prompts('user')
           .then((items) => items.filter((p) => `${p.name} ${p.title ?? ''}`.toLowerCase().includes(ql)).slice(0, 6))
-          .catch(() => [])
       : Promise.resolve([]),
   ])
   const rows: Row[] = [
-    ...prompts.map((p): Row => ({ kind: 'prompt', id: p.name, name: p.name, sub: p.title || p.description || 'prompt' })),
-    ...files.map((f): Row => ({ kind: 'file', id: f.path, name: f.name, sub: f.path, size: f.size })),
-    ...knowledge.map((k): Row => ({ kind: 'knowledge', id: k.id, name: k.title || 'Untitled', sub: k.item_type || 'knowledge' })),
+    ...settled(prompts).map((p): Row => ({ kind: 'prompt', id: p.name, name: p.name, sub: p.title || p.description || 'prompt' })),
+    ...settled(files).map((f): Row => ({ kind: 'file', id: f.path, name: f.name, sub: f.path, size: f.size })),
+    ...settled(knowledge).map((k): Row => ({ kind: 'knowledge', id: k.id, name: k.title || 'Untitled', sub: k.item_type || 'knowledge' })),
   ]
-  searchCache.set(key, { ts: now, rows })
-  // bound the cache so it can't grow unbounded across a long session.
-  if (searchCache.size > 80) searchCache.delete(searchCache.keys().next().value as string)
-  return rows
+  // An un-asked source is `Promise.resolve([])`, so it settles fulfilled and never
+  // counts: mid-text (`leading` false) asks two, a leading `@` asks three.
+  const asked = leading ? 3 : 2
+  const failed = [files, knowledge, prompts].filter((r) => r.status === 'rejected').length === asked
+  // Never cache a total failure — a 30s TTL on it is a 30s-long wrong answer.
+  if (!failed) {
+    searchCache.set(key, { ts: now, rows })
+    // bound the cache so it can't grow unbounded across a long session.
+    if (searchCache.size > 80) searchCache.delete(searchCache.keys().next().value as string)
+  }
+  return { rows, failed }
 }
 
 /** `@`-mention file picker — anchored over the composer. Typing `@query` opens
@@ -84,6 +98,10 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
   const [results, setResults] = useState<Row[]>([])
   const [sel, setSel] = useState(0)
   const [loading, setLoading] = useState(false)
+  // Every source we asked rejected. Not `unknown`: `cachedSearch` collapses three independent
+  // rejections, so there is no single error object to carry — what the menu needs is the FACT,
+  // which is why this one site renders a written sentence rather than `InlineLoadError`.
+  const [failed, setFailed] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const selItemRef = useRef<HTMLButtonElement>(null)
   const resultsRef = useRef<Row[]>([])
@@ -92,16 +110,18 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
   selRef.current = sel
 
   useEffect(() => {
-    if (!open || query.length < 2) { setResults([]); setLoading(false); return }
+    if (!open || query.length < 2) { setResults([]); setFailed(false); setLoading(false); return }
     // cache hit → render instantly (no spinner, no debounce); miss → debounce.
     const key = `${leading ? 'L' : ''} ${project || ''} ${query.toLowerCase()}`
     const hit = searchCache.get(key)
-    if (hit && performance.now() - hit.ts < CACHE_TTL) { setResults(hit.rows); setSel(0); setLoading(false); return }
+    if (hit && performance.now() - hit.ts < CACHE_TTL) { setResults(hit.rows); setSel(0); setFailed(false); setLoading(false); return }
     setLoading(true)
     const t = setTimeout(() => {
       cachedSearch(query, project, leading)
-        .then((rows) => { setResults(rows); setSel(0) })
-        .catch(() => setResults([]))
+        .then((r) => { setResults(r.rows); setFailed(r.failed); setSel(0) })
+        // `allSettled` above swallows nothing, so reaching here means a bug in the row
+        // assembly rather than a network failure. Either way the menu must not claim a result.
+        .catch(() => { setResults([]); setFailed(true) })
         .finally(() => setLoading(false))
     }, 180)
     return () => clearTimeout(t)
@@ -183,6 +203,15 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
         <Hint>Type 2+ characters to search {leading ? 'prompts, files & knowledge' : 'files & knowledge'}…</Hint>
       ) : loading && results.length === 0 ? (
         <Hint><Loader2 size={12} className="mr-1.5 inline animate-spin" />Searching…</Hint>
+      ) : failed ? (
+        // 🔴 BEFORE THE EMPTY TEST, AND ANNOUNCED (#532). A total search failure left `results` at
+        // `[]`, so the menu printed "No matching files or knowledge" — a statement about the user's
+        // workspace, made because the search could not run. The `Hint` rows above are deliberately
+        // silent to a screen reader; this one is not, for the same reason `InlineLoadError` is.
+        <div role="alert" data-type="caption" className="px-m py-m text-center text-on-surface-low">
+          <AlertTriangle size={12} className="mr-1.5 inline text-danger opacity-70" aria-hidden />
+          Couldn't search {leading ? 'prompts, files or knowledge' : 'files or knowledge'}.
+        </div>
       ) : results.length === 0 ? (
         <Hint>No matching {leading ? 'prompts, files or knowledge' : 'files or knowledge'}</Hint>
       ) : results.map((r, i) => {
@@ -210,5 +239,5 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
 }
 
 function Hint({ children }: { children: React.ReactNode }) {
-  return <div data-type="caption" className="px-3 py-3 text-center text-on-surface-low">{children}</div>
+  return <div data-type="caption" className="px-m py-m text-center text-on-surface-low">{children}</div>
 }

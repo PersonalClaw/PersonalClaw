@@ -5,7 +5,7 @@ import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
-import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ChipInput, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -432,19 +432,40 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
  *  mis-heard terms. `scrollTo` (from the legacy #/settings/vocabulary redirect)
  *  scrolls the section into view once its data has painted. */
 function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
-  const { data, refresh } = useQuery('settings:lexicon', async () => {
-    const [terms, corrections] = await Promise.all([
-      api.lexiconTerms().catch(() => ({ terms: [] as LexiconTerm[], total: 0 })),
-      api.lexiconCorrections().catch(() => ({ corrections: [] as LexiconCorrection[] })),
-    ])
-    return { terms: terms.terms, total: terms.total, corrections: corrections.corrections }
-  }, { persist: true })
+  // 🔴 ONE KEY WITH TWO PER-SOURCE `.catch`ES MADE THIS SECTION LIE TWICE (#532). The reads were
+  // `api.lexiconTerms().catch(() => ({ terms: [], total: 0 }))` and its correction twin, so an
+  // unreachable `/api/lexicon/*` printed "0 in your lexicon", "No terms yet. Rebuild to seed from
+  // your knowledge graph" and "No learned corrections yet. Teach one above" — three claims about the
+  // user's own vocabulary, every one of them composed from a failed read, and the first two inviting
+  // a REBUILD of a lexicon that may be entirely intact.
+  //
+  // TWO KEYS, not `Promise.allSettled` on one: per-source degradation is the property worth keeping
+  // (a failed corrections read must not blank the terms list), and `useQuery` already gives exactly
+  // that per key — plus its `error` is runtime state, so unlike a rejection folded into `data` it is
+  // never written to sessionStorage by `persist` and cannot outlive the failure it describes.
+  //
+  // 🪤 BOTH FETCHERS ARE `async` DELIBERATELY. `fetchKey` calls the fetcher bare (`const p =
+  // fetcher()`, lib/data/store.ts), so a SYNCHRONOUS throw inside one escapes it, escapes
+  // `useQuery`'s `.catch`, and unmounts the subtree — the section comes back blank with no `error`
+  // ever set, which is a worse version of the very defect this change is about. `async` makes every
+  // failure a rejection, so it lands in `error` and renders as a sentence. Measured: dropping it
+  // crashed `<VocabularySection>` out of `settingsWriteReported`'s two speech drives.
+  const termsQ = useQuery('settings:lexicon:terms', async () => api.lexiconTerms(), { persist: true })
+  const fixesQ = useQuery('settings:lexicon:corrections', async () => api.lexiconCorrections(), { persist: true })
+  const data = termsQ.data || fixesQ.data
+    ? {
+        terms: termsQ.data?.terms ?? [],
+        total: termsQ.data?.total ?? 0,
+        corrections: fixesQ.data?.corrections ?? [],
+      }
+    : null
 
   const [adding, setAdding] = useState('')
   const [heard, setHeard] = useState('')
   const [meant, setMeant] = useState('')
   const [busy, setBusy] = useState(false)
-  const reload = () => { invalidateKeys('settings:lexicon'); refresh() }
+  // Prefix-invalidate: a mutation on either list re-pulls both, which is what the single key did.
+  const reload = () => { invalidateKeys('settings:lexicon', true); termsQ.refresh(); fixesQ.refresh() }
 
   // Legacy #/settings/vocabulary deep-link → scroll here once (after first paint
   // with data, so the sections above have their final height).
@@ -475,7 +496,12 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
   return (
     <div ref={anchor} id="vocabulary" style={{ scrollMarginTop: '1rem' }}>
       <Section title="Vocabulary & corrections" hint="Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Auto-built from your knowledge graph; add your own or prune wrong ones.">
-        {!data ? <ListSkeleton rows={5} /> : (
+        {/* Both reads failed — nothing about the lexicon is known, so the error replaces the whole
+            section rather than each list saying it separately. Before the skeleton, which a pair of
+            rejections also satisfies (`data` stays `null`). */}
+        {termsQ.error && fixesQ.error ? (
+          <LoadError what="lexicon" error={termsQ.error} onRetry={reload} />
+        ) : !data ? <ListSkeleton rows={5} what="lexicon" /> : (
           <>
             <div className="mb-3 flex items-center gap-2">
               <input
@@ -494,8 +520,13 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Rebuild
               </button>
             </div>
-            <p data-type="caption" className="mb-2 text-on-surface-low">{data.total} in your lexicon.</p>
-            {data.terms.length === 0 ? (
+            {/* The count is withheld on a failed terms read for the same reason the list below is:
+                "0 in your lexicon" is a measurement, and there is nothing to measure. */}
+            {!termsQ.error && <p data-type="caption" className="mb-s text-on-surface-low">{data.total} in your lexicon.</p>}
+            {termsQ.error ? (
+              /* Before the empty test, which a rejection also satisfies (`terms` falls back to `[]`). */
+              <InlineLoadError what="your vocabulary" error={termsQ.error} onRetry={reload} />
+            ) : data.terms.length === 0 ? (
               <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
                 No terms yet. <span className="text-on-surface">Rebuild</span> to seed from your knowledge graph, or add one above.
               </div>
@@ -548,7 +579,9 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 <Plus size={15} /> Add
               </Button>
             </div>
-            {data.corrections.length === 0 ? (
+            {fixesQ.error ? (
+              <InlineLoadError what="your learned corrections" error={fixesQ.error} onRetry={reload} />
+            ) : data.corrections.length === 0 ? (
               <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
                 No learned corrections yet. Teach one above — it applies to mic dictation and knowledge audio alike.
               </div>

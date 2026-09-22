@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Network, Sparkles } from 'lucide-react'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
-import { EmptyState } from '../../ui/ListScaffold'
+import { EmptyState, LoadError } from '../../ui/ListScaffold'
 import { PartialCount } from '../../ui/MoreRow'
 
 interface GraphNode {
@@ -222,6 +222,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
   regenerating?: boolean
 } = {}) {
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[]; thinning?: GraphThinning } | null>(null)
+  const [err, setErr] = useState<unknown>(null)
   const [hover, setHover] = useState<string | null>(null)
   // Pan/zoom state: a scale + world-space translation applied via the SVG viewBox.
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
@@ -234,8 +235,19 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
 
   useEffect(() => {
     let alive = true
+    // 🔴 A FAILED GRAPH READ USED TO RENDER THE EMPTY STATE BELOW (#532), which is the worst
+    // possible answer here: that state says "No entities extracted yet" and offers to run the
+    // enrichment pass. So an unreachable gateway asked the user to re-derive insights for a
+    // library whose entities may all already exist. `graph` now HOLDS at `null` and `err` carries
+    // the rejection, so the error branch must precede both the loading and the zero-node tests.
+    //
+    // `r.ok` is checked because without it the error branch is unreachable for the commonest
+    // failure: a 4xx/5xx still resolves, and `r.json()` then yields the error ENVELOPE, whose
+    // `nodes` is undefined — read one line into the zero-node branch as a crash, not a failure.
     fetch('/api/knowledge/graph', { headers: { 'X-Session-Key': 'dashboard:ui' } })
-      .then((r) => r.json()).then((d) => { if (alive) setGraph(d) }).catch(() => { if (alive) setGraph({ nodes: [], edges: [] }) })
+      .then((r) => { if (!r.ok) throw new Error(`graph read failed (${r.status})`); return r.json() })
+      .then((d) => { if (alive) { setErr(null); setGraph(d) } })
+      .catch((e) => { if (alive) setErr(e) })
     return () => { alive = false }
   }, [])
 
@@ -322,6 +334,14 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
   }
   const endDrag = () => { drag.current = null }
 
+  // Before BOTH tests below, each of which a rejection also satisfies (`graph` stays `null`).
+  if (err !== null) {
+    return (
+      <div className="grid h-full place-items-center">
+        <LoadError what="entity graph" error={err} />
+      </div>
+    )
+  }
   if (!graph) return <div className="grid h-full place-items-center text-on-surface-low"><Loader2 size={20} className="animate-spin" /></div>
   // 🔴 THIS STATE MEANS "ITEMS EXIST, ENTITIES DO NOT" — never "the library is empty". The parent
   // renders this view only when `!empty` (`stats.items > 0`), so the old copy here — "Add documents

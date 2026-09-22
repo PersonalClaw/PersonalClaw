@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { api, type MemoryGraphData } from '../../lib/api'
 import { litNeighbourhood } from '../../lib/litSet'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
+import { InlineLoadError } from '../../ui/ListScaffold'
 
 /** Memory graph — the auto-linked node graph of the whole memory store (facts +
  *  their relations), laid out radially in SVG (no graph-lib dependency; mirrors
@@ -40,6 +41,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   const plural = nodeNounPlural ?? `${nodeNoun}s`
   const controlled = data !== undefined  // Studio passes data (even null while loading)
   const [selfGraph, setSelfGraph] = useState<MemoryGraphData | null>(null)
+  const [selfErr, setSelfErr] = useState<unknown>(null)
   const graph = controlled ? (data ?? null) : selfGraph
   const [hover, setHover] = useState<string | null>(null)
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
@@ -66,7 +68,14 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   useEffect(() => {
     if (controlled) return  // parent owns the fetch
     let alive = true
-    api.memoryGraph().then((d) => { if (alive) setSelfGraph(d) }).catch(() => { if (alive) setSelfGraph({ nodes: [], edges: [] }) })
+    // 🔴 A FAILED GRAPH READ IS NOT AN EMPTY GRAPH (#532). This used to
+    // `.catch(() => setSelfGraph({ nodes: [], edges: [] }))`, and `!graph` is the LOADING
+    // sentinel — so a substituted empty fell through to the zero-node branch and printed
+    // "No memory graph yet", a claim about the user's own data made because the fetch failed.
+    // `selfGraph` now HOLDS at `null`, so the error branch below must precede the `!graph` test.
+    api.memoryGraph()
+      .then((d) => { if (alive) { setSelfErr(null); setSelfGraph(d) } })
+      .catch((e) => { if (alive) { setSelfErr(e); setSelfGraph(null) } })
     return () => { alive = false }
   }, [controlled])
 
@@ -134,8 +143,9 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   }
   const endDrag = () => { drag.current = null }
 
+  if (selfErr) return <div ref={boxRef} className="grid place-items-center px-xl text-center" style={{ height: boxH }}><InlineLoadError what="your memory graph" error={selfErr} /></div>
   if (!graph) return <div ref={boxRef} className="grid place-items-center text-on-surface-low" style={{ height: boxH }}><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div ref={boxRef} data-type="body-s" className="grid place-items-center px-6 text-center text-on-surface-low" style={{ height: boxH }}>{emptyHint ?? `No memory graph yet — ${plural} and their links appear here as memory grows.`}</div>
+  if (graph.nodes.length === 0) return <div ref={boxRef} data-type="body-s" className="grid place-items-center px-xl text-center text-on-surface-low" style={{ height: boxH }}>{emptyHint ?? `No memory graph yet — ${plural} and their links appear here as memory grows.`}</div>
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.from, (degree.get(e.from) ?? 0) + 1); degree.set(e.to, (degree.get(e.to) ?? 0) + 1) }
