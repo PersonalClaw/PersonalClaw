@@ -20,9 +20,22 @@ on claude-code, with two findings recorded rather than fixed:
 
 Both fixes are measured on identity and counting rather than on wording, so a later change
 to the notice text cannot make these vacuous.
+
+**The third finding, and the reason this file grew a config class.** With the lifetime fixed,
+the rung was reachable in principle and still *undrivable in practice*: ``CIRCUIT_THRESHOLD``
+was a bare module constant with no ``os.getenv`` and no config read anywhere in
+``loop_breaker.py``, so proving clause 2 on a real instance needed **more than thirty genuine
+tool failures in one run** and there was no way to ask for a lower bar. (Positive control for
+that zero: two siblings in the same package, ``guardrails/ceiling.py`` and
+``guardrails/writes.py``, DO read env — so the absence was specific to this file, not a grep
+artifact.) ``guardrails.loop_breaker.circuit_threshold`` is that seam. The default is
+unchanged at 30; what is new is that a number below it can be asked for, which is what makes
+the abort observable at all.
 """
 
 from __future__ import annotations
+
+import json
 
 from personalclaw.guardrails.loop_breaker import (
     ANNOTATION_ARG_KEYS,
@@ -30,6 +43,7 @@ from personalclaw.guardrails.loop_breaker import (
     CIRCUIT_THRESHOLD,
     WARN_THRESHOLD,
     LoopBreaker,
+    configured_circuit_threshold,
     normalize_call_args,
     params_key,
 )
@@ -169,3 +183,209 @@ class TestTheBreakerLivesForTheSession:
         ).read_text()
         assert "_acp_breaker = session._acp_breaker" in src
         assert "_acp_breaker = LoopBreaker()" not in src
+
+
+def _write_home(tmp_path, monkeypatch, cfg: dict):
+    """Point the loader at a tmp home holding exactly ``cfg``, and return it.
+
+    Writes a REAL ``config.json`` and goes through ``AppConfig.load()`` rather than
+    constructing the dataclass: the defect was a missing *seam*, so a test that handed the
+    breaker a pre-built config object would pass with ``load()`` still dropping the key.
+    """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    (tmp_path / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return tmp_path
+
+
+class TestTheCircuitCeilingIsConfigurable:
+    """The ceiling is the ONE rung an operator can retune, and the round trip is what makes
+    the clause drivable on a shared instance instead of only in a unit test."""
+
+    def test_the_default_is_unchanged_so_no_existing_run_aborts_sooner(self, tmp_path, monkeypatch):
+        """This atom adds a seam; it does not re-tune the breaker. An empty config must
+        still resolve to the shipped 30."""
+        _write_home(tmp_path, monkeypatch, {})
+        assert configured_circuit_threshold() == CIRCUIT_THRESHOLD == 30
+        assert LoopBreaker().circuit_threshold == 30
+
+    def test_a_lowered_ceiling_trips_the_circuit_at_that_number(self, tmp_path, monkeypatch):
+        """The whole point: with the ceiling at 3, four failures abort the run — so the
+        clause can be driven on a real instance without manufacturing 31 broken tool calls."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 3}}}
+        )
+        b = LoopBreaker()
+        assert b.circuit_threshold == 3
+        for _ in range(3):
+            b.record("Bash:{}", True)
+        assert b.circuit_tripped() is False, "at the ceiling, not past it — the compare is strict"
+        b.record("Bash:{}", True)
+        assert b.circuit_tripped() is True
+
+    def test_the_resolution_really_reads_THE_CONFIG_not_just_a_constructor_pin(
+        self, tmp_path, monkeypatch
+    ):
+        """Vacuity floor. A default-constructed breaker is what production builds
+        (``runtime.py`` and ``state.py`` both call ``LoopBreaker()`` with no arguments), so
+        the config has to reach *that* object or the seam exists only for callers who already
+        knew the number."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 7}}}
+        )
+        assert LoopBreaker().circuit_threshold == 7
+        assert LoopBreaker().circuit_threshold != CIRCUIT_THRESHOLD
+
+    def test_zero_is_floored_to_one_so_a_first_failure_never_aborts_a_run(
+        self, tmp_path, monkeypatch
+    ):
+        """``circuit_tripped`` compares ``total_failures > ceiling``, so a ceiling of 0 would
+        abort a run on its FIRST failed tool call and make ordinary retry impossible. The
+        floor is in ``load()`` and mirrored by ``_EDITABLE_CONFIG``'s ``min: 1``."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 0}}}
+        )
+        b = LoopBreaker()
+        assert b.circuit_threshold == 1
+        b.record("Bash:{}", True)
+        assert b.circuit_tripped() is False
+
+    def test_a_junk_value_falls_back_to_the_shipped_ceiling(self, tmp_path, monkeypatch):
+        """A typo must not take the breaker out of service, and must not raise out of
+        ``load()`` either — the rung is an ABORT, so its failure mode has to be the default."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": "lots"}}}
+        )
+        assert LoopBreaker().circuit_threshold == CIRCUIT_THRESHOLD
+
+    def test_an_unreadable_config_leaves_the_shipped_ceiling_standing(self, monkeypatch):
+        """Same polarity one layer up: if the config read itself blows up, the breaker keeps
+        the shipped ceiling rather than losing its circuit rung."""
+        import personalclaw.config.loader as loader
+
+        def _boom():
+            raise RuntimeError("no config today")
+
+        monkeypatch.setattr(loader.AppConfig, "load", staticmethod(_boom))
+        assert configured_circuit_threshold() == CIRCUIT_THRESHOLD
+
+    def test_an_explicit_pin_beats_the_config_and_survives_reset(self, tmp_path, monkeypatch):
+        """The injection point, for a caller that owns the number (a harness driving the
+        rung). It must survive ``reset()``, which re-reads the config for everyone else."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 9}}}
+        )
+        b = LoopBreaker(circuit_threshold=2)
+        assert b.circuit_threshold == 2
+        b.reset()
+        assert b.circuit_threshold == 2
+
+    def test_reset_rearms_the_config_read_so_an_edit_binds_on_the_next_run(
+        self, tmp_path, monkeypatch
+    ):
+        """``runtime.py`` resets per turn, so a ceiling edited from Settings must bind on the
+        next run rather than on the next gateway restart."""
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 20}}}
+        )
+        b = LoopBreaker()
+        assert b.circuit_threshold == 20
+        (tmp_path / "config.json").write_text(
+            json.dumps({"guardrails": {"loop_breaker": {"circuit_threshold": 4}}}), encoding="utf-8"
+        )
+        assert b.circuit_threshold == 20, "cached within the run — one read per run, not per call"
+        b.reset()
+        assert b.circuit_threshold == 4
+
+    def test_a_clean_run_answers_without_reading_the_config_at_all(self, monkeypatch):
+        """``circuit_tripped`` is called on EVERY tool result in the native runtime, so the
+        happy path must not cost an uncached ``AppConfig.load()`` per tool call. Zero failures
+        can never trip a ceiling floored at 1, so the read is skipped."""
+        import personalclaw.guardrails.loop_breaker as lb
+
+        calls: list[int] = []
+        monkeypatch.setattr(lb, "configured_circuit_threshold", lambda: (calls.append(1), 30)[1])
+        b = lb.LoopBreaker()
+        for _ in range(50):
+            assert b.circuit_tripped() is False
+        assert calls == [], "a clean run read the config"
+        b.record("Bash:{}", True)
+        b.circuit_tripped()
+        b.circuit_tripped()
+        assert len(calls) == 1, f"resolved once per run, not per call: {len(calls)}"
+
+    def test_the_field_round_trips_through_load_and_to_dict(self, tmp_path, monkeypatch):
+        """Contract points 2 and 3. ``to_dict`` goes through ``asdict(self.guardrails)``, so a
+        section that never reached the dataclass is the only way this can fail."""
+        from personalclaw.config.loader import AppConfig
+
+        _write_home(
+            tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 12}}}
+        )
+        cfg = AppConfig.load()
+        assert cfg.guardrails.loop_breaker.circuit_threshold == 12
+        assert cfg.to_dict()["guardrails"]["loop_breaker"] == {"circuit_threshold": 12}
+
+    def test_the_write_path_is_allowlisted_with_the_same_floor_load_enforces(self):
+        """Contract point 4. Without this the Settings control 400s while every backend test
+        stays green — the exact gap ``test_config_section_modules``' docstring names."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        assert _EDITABLE_CONFIG["guardrails.loop_breaker.circuit_threshold"] == {
+            "type": "int",
+            "min": 1,
+            "max": 1000,
+        }
+
+    def test_the_settings_control_exists_and_patches_that_path(self):
+        """Contract point 5. The ceiling is user-facing: its abort lands in the user's own
+        chat as an error message, and the panel already owned a section called "Circuit
+        breaker" for a DIFFERENT breaker — so omitting this control would leave a Settings
+        page that shows the provider knobs and hides the one that stops a run."""
+        import pathlib
+
+        panel = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "web/src/pages/settings/GuardrailsPanel.tsx"
+        ).read_text(encoding="utf-8")
+        assert "loop_breaker.circuit_threshold" in panel
+        assert "Tool-loop breaker" in panel
+        # And the two breakers must not both be called just "Circuit breaker" — one section
+        # holding that title beside the other's knobs is how a user reads the provider
+        # threshold as if it governed tool retries.
+        assert "Provider circuit breaker" in panel
+
+    def test_the_module_constant_is_now_only_a_default(self):
+        """The bare-constant defect, pinned: no production module may *evaluate*
+        ``CIRCUIT_THRESHOLD``, because a comparison against it would bypass the config field
+        and make the seam decoration.
+
+        Walked as an AST, not grepped: the prose in this module and in ``loop_breaker``'s own
+        docstrings names the constant repeatedly, and a line-based sweep reports every one of
+        those sentences. The only legitimate evaluations are inside ``loop_breaker`` itself —
+        its own declaration and the fallback return — so the census is a count there and a
+        zero everywhere else.
+        """
+        import ast
+        import pathlib
+
+        import personalclaw
+
+        src_root = pathlib.Path(personalclaw.__file__).parent
+        owner = src_root / "guardrails" / "loop_breaker.py"
+        hits: dict[str, int] = {}
+        for p in src_root.rglob("*.py"):
+            tree = ast.parse(p.read_text(encoding="utf-8"))
+            n = sum(
+                1
+                for node in ast.walk(tree)
+                if (isinstance(node, ast.Name) and node.id == "CIRCUIT_THRESHOLD")
+                or (isinstance(node, ast.Attribute) and node.attr == "CIRCUIT_THRESHOLD")
+            )
+            if n:
+                hits[str(p.relative_to(src_root))] = n
+        assert set(hits) == {
+            "guardrails/loop_breaker.py"
+        }, f"a consumer still evaluates the constant instead of the ceiling: {hits}"
+        # Its declaration and the one fallback return in `configured_circuit_threshold`.
+        assert hits["guardrails/loop_breaker.py"] == 2, hits
+        assert "return CIRCUIT_THRESHOLD" in owner.read_text(encoding="utf-8")

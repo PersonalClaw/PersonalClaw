@@ -46,7 +46,9 @@ macOS-only desktop shell exists but is not yet built or released by CI.)
    personal safety floor **for unattended work** — a daily spend ceiling, an outbound secret
    scan, provider circuit breakers, expiring trust, approval timeouts, deny-lists, single-flight
    locks, and a kill switch — enforced deterministically, never by the model's self-judgment.
-   Interactive chat is never affected by these.
+   The spend ceiling, the secret scan and the kill switch bind unattended work only; the
+   circuit breakers apply to any run, interactive chat included, since a breaker exists to
+   stop a failure storm wherever it happens.
 
 6. **As-built is the spec.** The architecture documents describe the code's current
    reality; the roadmap plans describe intended changes. No document is authoritative

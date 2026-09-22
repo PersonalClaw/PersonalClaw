@@ -168,8 +168,14 @@ describe('a rejected settings save names the control', () => {
     // coherence rules forbid.
     const g = readFileSync(join(SETTINGS, 'GuardrailsPanel.tsx'), 'utf8')
     expect(g).toContain('const patchNum = (path: string, value: number, label?: string)')
+    // Measured as a RATIO, not a count. A hardcoded total reds this test on any new knob even
+    // when that knob labels itself correctly — which is the opposite of what it is here to
+    // catch. The floor keeps it from going vacuous if the rows are ever refactored away.
+    // `patchNum(` with no space only ever matches a CALL — the declaration reads `patchNum = (`.
+    const sites = [...g.matchAll(/patchNum\(/g)].length
     const labelled = [...g.matchAll(/patchNum\('[^']+', v, '[^']+'\)/g)]
-    expect(labelled.length, 'every patchNum call names its control').toBe(5)
+    expect(sites, 'the call sites must stay discoverable').toBeGreaterThanOrEqual(5)
+    expect(labelled.length, 'every patchNum call names its control').toBe(sites)
   })
 
   it('the label is still used for accessibility, not moved off the control', () => {
