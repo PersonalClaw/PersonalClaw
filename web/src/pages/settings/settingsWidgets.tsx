@@ -534,8 +534,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // "evals" the config key uses: a user searching for either word must find this.
     useSearchText() {
       const { data: e } = useEvals()
-      const on = e ? `${e.enabled ? 'on enabled' : 'off disabled'} k ${e.study_default_k} budget ${e.default_budget_usd} agreement ${e.judge_agreement_floor} ablation every ${e.ablation_cadence_days} days` : ''
-      return `evals evaluations eval substrate study studies a/b ab test template judge benchmark retrieval benchmark ablation bake-off budget agreement floor ${on}`
+      // The benchmark ref is included as its SAVED VALUE, not just as the words "benchmark model":
+      // a user who bound `LocalOllama:gemma4:12b` and later wonders where that name is configured
+      // will search for the provider, and this tile is the only place that answers.
+      const on = e ? `${e.enabled ? 'on enabled' : 'off disabled'} k ${e.study_default_k} budget ${e.default_budget_usd} agreement ${e.judge_agreement_floor} ablation every ${e.ablation_cadence_days} days ${e.benchmark_model_ref || 'default chat model fallback'}` : ''
+      return `evals evaluations eval substrate study studies a/b ab test template judge benchmark retrieval benchmark ablation bake-off budget agreement floor benchmark model provider binding gate ${on}`
     },
     render(query, go) {
       const { data: e, error: evalErr, refresh, stale: eStale, status: eStatus } = useEvals()

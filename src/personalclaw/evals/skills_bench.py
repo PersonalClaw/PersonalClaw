@@ -38,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from personalclaw.evals import ablation, harvest
+from personalclaw.evals import ablation, benchmark_binding, harvest
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals.matrix import MatrixSpec, aggregate_by
 
@@ -304,6 +304,11 @@ class SkillBenchReport:
     matrix_id: str = ""
     trials: int = 0
     created_at: str = ""
+    #: WHICH model the two arms scored against, and by which path (#2680 —
+    #: :mod:`personalclaw.evals.benchmark_binding`). Recorded on the refusal path too: the
+    #: surfaced/suppressed delta means nothing unless a reader can see that a real model
+    #: answered, and that a fallen-back run is not a directly-bound one.
+    provider: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -401,6 +406,19 @@ def bench_skill(
         report.subject_origin = "harvested"
         report.subject_run_id = population.subject_run_id
 
+    # #2680 — a cell is spawned with no ambient credentials, so an unbound bench scored both
+    # arms against the offline `scripted` replay: identical bytes whether the skill was
+    # surfaced or suppressed, hence a 0.0 delta reading as "this skill does not earn its
+    # place". Refuse rather than report that, in the same shape as every other refusal above.
+    bench = benchmark_binding.resolve_benchmark_binding()
+    report.provider = bench.to_dict()
+    if not bench.is_bound:
+        report.reason = (
+            f"no model resolved for the bench to score against, so neither arm ran — "
+            f"{bench.detail}"
+        )
+        return report
+
     if run_matrix is None:  # pragma: no cover - the default wiring
         from personalclaw.evals.runner import run_matrix as _default
 
@@ -410,7 +428,7 @@ def bench_skill(
     # The same non-mutation guard the §3.1 runner uses: a bench is an ablation with one
     # component kind, and it must not be the surface where live state gets edited.
     with ablation.live_state_unchanged():
-        result = run_matrix(spec, matrix_id=matrix_id)
+        result = run_matrix(spec, matrix_id=matrix_id, provider_binding=bench.binding)
 
     report.matrix_id = matrix_id
     report.arms = aggregate_by(list(result.cells), overlay_lib.ARM_AXIS)
