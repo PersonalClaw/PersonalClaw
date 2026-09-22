@@ -8,7 +8,7 @@
  * 🔑 WHY THIS LIVES IN THE SHELL'S STORAGE SCOPE, NOT THE SPA'S. The served SPA cannot hold this
  * registry, for two independently sufficient reasons, both measured rather than assumed:
  *
- *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:1243` does
+ *   1. The SPA is re-downloaded from whichever gateway is active. `desktop/main.js:1254` does
  *      `wc.loadURL(localGatewayUrl)` and `connectMode`'s `navigateToEndpoint` does the same for a
  *      paired gateway's origin — either way the shell loads the dashboard *from that gateway's own
  *      origin*. A registry of N gateways has nowhere to live in a bundle that is itself one of the N.
