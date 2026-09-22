@@ -2736,6 +2736,33 @@ class KnowledgeStore:
             out.append(d)
         return out
 
+    def reusable_chunk_vectors(self, item_id: str) -> dict[str, bytes]:
+        """An item's chunk vectors that a re-chunk may carry forward, keyed by chunk TEXT.
+
+        The read half of differential refresh: `embed_item_chunks` re-embeds only the sections
+        `semantics.changed_sections` reports changed, and takes the vectors for the rest from
+        here rather than paying the provider for them again.
+
+        Two conditions, both load-bearing. A NULL embedding is excluded because there is no
+        vector to carry. And the row's fingerprint must equal the selection active NOW
+        (RET-4's own `FRESH_PREDICATE`, so this cannot drift from what the query path calls
+        comparable): carrying a vector from another model into a row that `replace_chunks`
+        will stamp with the current model is precisely the mixed-model corruption the
+        fingerprint exists to prevent. Nothing bound renders as ``('', '')`` through the same
+        COALESCE the predicate uses, so a row written in that state is reusable in it and a
+        row of unknown provenance is never reusable against a bound model.
+        """
+        from .embedding_fingerprint import FRESH_PREDICATE
+
+        fp = active_fingerprint()
+        model_id, provider = fp.params if fp is not None else ("", "")
+        rows = self.db.execute(
+            "SELECT c.text AS text, c.embedding AS embedding FROM chunks c "
+            f"WHERE c.item_id = ? AND c.embedding IS NOT NULL AND {FRESH_PREDICATE}",
+            (item_id, model_id, provider),
+        ).fetchall()
+        return {r["text"]: r["embedding"] for r in rows}
+
     def clear_chunks(self, item_id: str) -> None:
         """Drop an item's chunk rows (e.g. before a re-ingest)."""
         self.vec_index.drop_item(item_id)  # before the ids go away

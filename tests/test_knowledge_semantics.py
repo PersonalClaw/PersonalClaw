@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from personalclaw.knowledge.consolidation import fuzzy_hash
 from personalclaw.knowledge.semantics import (
     DEFAULT_BUDGET,
     HEDGING_LEVELS,
@@ -23,8 +24,10 @@ from personalclaw.knowledge.semantics import (
     ItemRelation,
     Mention,
     aggregate_confidence,
+    changed_sections,
     check_persist,
     chunk_hash,
+    chunk_hashes,
     content_hash,
     decide_write,
     freshness,
@@ -105,6 +108,57 @@ def test_chunk_hashing_is_independent_of_content_hashing():
     """Separate so a 40k report can be refreshed section by section rather than wholesale."""
     assert chunk_hash("a paragraph") == chunk_hash("a  paragraph")
     assert chunk_hash("a") != chunk_hash("b")
+
+
+def test_the_chunk_hash_form_notices_what_the_dedup_hash_throws_away():
+    """Why `consolidation.fuzzy_hash` is not the chunk-hash form (#1783).
+
+    `normalize_for_dedup` strips every non-alphanumeric character, which is right for deciding
+    that two phrasings are one item and wrong for deciding that a section needs re-embedding:
+    under it `A > B` and `A < B` are the same text, so an inverted comparison would never be
+    refreshed. Asserted against the real dedup hash rather than a re-implementation, so this
+    fails if either form's rule changes.
+    """
+    assert fuzzy_hash("A > B") == fuzzy_hash("A < B")
+    assert chunk_hash("A > B") != chunk_hash("A < B")
+
+
+# ── differential refresh ──
+
+
+def test_only_changed_sections_are_refreshed():
+    stored = {"intro": "a" * 16, "body": "b" * 16}
+    fresh = {"intro": "a" * 16, "body": "c" * 16}
+    assert changed_sections(stored, fresh) == ["body"]
+
+
+def test_a_new_section_counts_as_changed():
+    assert changed_sections({}, {"new": "a" * 16}) == ["new"]
+
+
+def test_a_removed_section_does_not():
+    """Re-synthesizing a section that no longer exists is meaningless."""
+    assert changed_sections({"gone": "a" * 16}, {}) == []
+
+
+def test_a_truncated_hash_compared_to_a_full_one_reports_changed():
+    """The studied failure: storing a truncated hash and comparing a full one made every section
+    look changed forever — a refresh that always re-synthesizes everything, at full cost,
+    silently. Reporting "changed" is the safe direction; treating incomparable values as equal
+    means never refreshing."""
+    assert changed_sections({"a": "abcd1234"}, {"a": "abcd1234abcd1234"}) == ["a"]
+
+
+def test_chunk_hashes_are_one_canonical_form():
+    hashes = chunk_hashes({"a": "text one", "b": "text two"})
+    assert len({len(h) for h in hashes.values()}) == 1
+
+
+def test_the_mapper_and_the_scalar_are_the_same_form():
+    """The convergence, asserted rather than asserted-by-inspection: a mapper that hashed
+    differently from `chunk_hash` is the two-forms defect back again, and `changed_sections`
+    cannot detect it (both sides would be self-consistent)."""
+    assert chunk_hashes({"a": "some section text"}) == {"a": chunk_hash("some section text")}
 
 
 # ── confidence aggregation ──
