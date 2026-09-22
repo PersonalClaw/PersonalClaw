@@ -81,6 +81,7 @@ from personalclaw.llm.prompt_cache import (
     mark_cacheable_prefix,
 )
 from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
     from personalclaw.agents.provider import AgentRuntimeDefinition
@@ -932,6 +933,62 @@ class NativeAgentRuntime(AgentProvider):
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
+                        # ── OVERFLOW RECOVERY, ahead of the classifier ──
+                        # A LENGTH rejection is the one inference failure whose retry has
+                        # to change the PROMPT, and it must be caught before
+                        # _inference_failure_mode: that collapses a vendor 400 to
+                        # PROVIDER_ERROR, which is retryable, so the generic path below
+                        # would spend the turn's single retry re-sending the same
+                        # oversized history — the identical failure, one backoff later.
+                        # The gate is the generic `can_retry` conjunction with
+                        # is_retryable(fmode) swapped for the overflow test, so no
+                        # existing guard is relaxed: a retry after visible text would
+                        # re-stream what the user already read, and after a tool call the
+                        # model did real work.
+                        overflow = is_context_overflow(exc)
+                        if (
+                            overflow
+                            and not inference_retried
+                            and not visible_streamed
+                            and not tool_calls
+                            and not self._cancelled
+                        ):
+                            before, after = self._compact_now(self._last_context_pct)
+                            if after < before:
+                                self._audit_inference_attempt(
+                                    _inference_failure_mode(exc),
+                                    attempt=1,
+                                    started_ms=attempt_started,
+                                    passed=False,
+                                )
+                                inference_retried = True
+                                logger.warning(
+                                    "native: context overflow — compacted %d→%d chars, "
+                                    "retrying once: %s",
+                                    before,
+                                    after,
+                                    exc,
+                                )
+                                # REBUILD from the compacted history, re-reading the
+                                # generation _compact_now just bumped. Never append to
+                                # the existing msgs the way the correction-note path
+                                # below does: that retries with a LARGER prompt, which
+                                # for this failure is a guaranteed second failure.
+                                # _compact_now owns the cache-prefix bump and the
+                                # structural re-arm; the anti-thrashing saves list is
+                                # deliberately NOT appended here (see its trap note —
+                                # that list is the automatic trigger's own bookkeeping,
+                                # and polluting it latches threshold compaction off).
+                                msgs = mark_cacheable_prefix(
+                                    self._messages, mode, generation=self._cache_generation
+                                )
+                                assistant_text = ""
+                                usage = None
+                                continue
+                            # after == before: the pass reclaimed nothing — a truthful
+                            # outcome, not a failure. Retrying an identical prompt would
+                            # burn a call to learn what compaction already proved, so
+                            # fall through to the raise below.
                         fmode = _inference_failure_mode(exc)
                         can_retry = (
                             not inference_retried
@@ -939,6 +996,12 @@ class NativeAgentRuntime(AgentProvider):
                             and not tool_calls
                             and not self._cancelled
                             and is_retryable(fmode)
+                            # A LENGTH rejection never enters the BLIND retry. Narrowing
+                            # here rather than widening is_retryable/FailureMode to carry
+                            # overflow keeps the generic path from ever re-sending
+                            # unchanged history: the only retry an overflow gets is the
+                            # compacting one above, and only when it reclaimed something.
+                            and not overflow
                         )
                         self._audit_inference_attempt(
                             fmode,
@@ -1788,14 +1851,28 @@ class NativeAgentRuntime(AgentProvider):
         chars-per-token) is the backstop trigger for exactly that case. It feeds
         COMPACTION ONLY and is never written to ``_last_context_pct``: an
         estimate must not be displayed as a measurement.
+
+        The window this divides by has to be the window the provider SERVES. A local
+        runtime is exactly the case that reaches here (a loopback endpoint that rejects
+        ``stream_options`` reports no usage), and it is also the case the shared table
+        answers with an architectural maximum — so resolving it as any other model would
+        divide by a number up to ~31x too large and produce an estimate that can never
+        cross the threshold this backstop exists to cross. The local-ness signal is the
+        guard's own sniffer, not a second one; the per-binding ``context_window``
+        override the provider popped out of its options overrides both.
         """
         from personalclaw import context_compaction as cc
+        from personalclaw.guardrails.model_call import _is_local_provider
         from personalclaw.model_windows import model_context_window
 
         chars = cc.total_chars(self._messages)
         if chars <= 0:
             return None
-        window_tokens = model_context_window(self.agent_model or None)
+        window_tokens = model_context_window(
+            self.agent_model or None,
+            local=_is_local_provider(self._model),
+            override=getattr(self._model, "context_window", None),
+        )
         if window_tokens <= 0:
             return None
         return (chars / self._EST_CHARS_PER_TOKEN) / window_tokens * 100.0

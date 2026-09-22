@@ -55,9 +55,9 @@ SRC = Path(personalclaw.__file__).parent
 # the table mirrors it rather than normalising it away.
 _CITATIONS = (
     ("stats.py", 43, 44, "cache_read_tokens", "stats.py:43-44"),
-    ("llm/anthropic.py", 529, 531, "input_tokens = it", "llm/anthropic.py:529-531"),
-    ("llm/anthropic.py", 715, 717, "input_tokens = it", ":715-717"),
-    ("llm/anthropic.py", 84, 98, "cache_read_input_tokens", "llm/anthropic.py:84-98"),
+    ("llm/anthropic.py", 539, 541, "input_tokens = it", "llm/anthropic.py:539-541"),
+    ("llm/anthropic.py", 725, 727, "input_tokens = it", ":725-727"),
+    ("llm/anthropic.py", 85, 99, "cache_read_input_tokens", "llm/anthropic.py:85-99"),
     ("pricing.py", 106, 113, "cache_read_rate", "pricing.py:106-113"),
     ("usage_ledger.py", 197, 200, "cache_creation_tokens", "usage_ledger.py:197-200"),
     ("pricing.py", 166, 168, "cache_creation_tokens", "pricing.py:166-168"),
