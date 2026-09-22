@@ -1054,6 +1054,9 @@ def _write_conflict_edges(store, conflicts: list[dict], *, source_item: str) -> 
 
     `left` is the incoming claim throughout the conflict tier, so `prefer == "left"` means the
     claim being persisted is the one the ladder favours.
+
+    `provenance` is unconditionally `extracted`: every row reaching here was recorded by
+    `find_conflicts`, which proves a conflict with no model call.
     """
     from personalclaw.knowledge import contradiction
 
@@ -1063,7 +1066,7 @@ def _write_conflict_edges(store, conflicts: list[dict], *, source_item: str) -> 
             target=str(c.get("right_item", "") or ""),
             relation=_relation_for(c),
             confidence=float(c.get("confidence", 1.0) or 1.0),
-            provenance="extracted" if c.get("basis") == "deterministic" else "inferred",
+            provenance="extracted",
             justification=str(c.get("detail", "") or ""),
         )
         for c in conflicts
