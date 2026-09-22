@@ -914,6 +914,206 @@ async def test_browse_tier_soft_fails_when_no_gateway_is_configured(store):
     ]
 
 
+# ── §(d) tier 3 SC#7: the post-navigate settle (BA-6) ───────────────────────────────
+#
+# `session.navigate` only SENDS `Page.navigate`; it does not await the load event. So the tick's
+# `page.html()` can run before a client-rendered page has built its DOM, and the runner then
+# extracts nothing, reports `ok=False` and does NOT advance the content cursor — forever, for
+# every JS-rendered watched source. These drive the REAL runner through the same injected
+# `open_session` seam production uses, so no browser is launched.
+
+
+class _FramePage:
+    """A page whose DOM changes between reads — a client-rendered page seen through the same
+    ``html()``/``current_url()`` surface the live CDP driver exposes. The last frame sticks."""
+
+    def __init__(self, *frames: str):
+        self._frames = list(frames)
+        self.reads = 0
+
+    async def html(self) -> str:
+        self.reads += 1
+        return self._frames[min(self.reads - 1, len(self._frames) - 1)]
+
+    async def current_url(self) -> str:
+        return PAGE_URL
+
+
+class _RaisingPage(_FramePage):
+    async def html(self) -> str:
+        self.reads += 1
+        raise RuntimeError("the page went away")
+
+
+class _FakeSession:
+    def __init__(self):
+        self.navigated: list[str] = []
+
+    async def start(self) -> None:
+        return None
+
+    async def navigate(self, url: str) -> None:
+        self.navigated.append(url)
+
+
+class _Clock:
+    """A fake clock that only advances when the settle sleeps — so a test asserts the wait's
+    BUDGET rather than spending it."""
+
+    def __init__(self):
+        self.t = 0.0
+        self.slept: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    async def sleep(self, secs: float) -> None:
+        self.slept.append(secs)
+        self.t += secs
+
+
+def _tick_runner(page, *, settle):
+    from personalclaw.browse.plan_runner import make_content_tick_runner
+
+    async def _open(_cdp_url):
+        async def _close() -> None:
+            return None
+
+        return _FakeSession(), page, _close
+
+    return make_content_tick_runner(
+        open_session=_open, resolve_url=lambda: "ws://gw/1", settle=settle
+    )
+
+
+def _watch_plan():
+    from personalclaw.browse.plans import KIND_WATCH_PAGE, BrowsePlan
+
+    return BrowsePlan(id="w1", goal="watch the page", kind=KIND_WATCH_PAGE, start_url=PAGE_URL)
+
+
+def _hydrated_app() -> str:
+    """:func:`_js_shell` AFTER hydration: the bundle is still in the DOM (a real SPA does not
+    remove it) and the entries now exist, with enough prose to clear the §2.3 shell floor."""
+    return (
+        _changelog(body_extra=f"<p>{_PROSE}</p>")
+        .replace("<body>", '<body><div id="root">')
+        .replace("</body>", '</div><script src="/bundle.js"></script></body>')
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_settle_is_what_makes_a_late_rendering_page_yield_text():
+    # Frames: the pre-render shell twice (a shell is perfectly QUIESCENT before hydration starts,
+    # which is why the wait tests for a RENDERED page and not merely for a stable DOM), then the
+    # hydrated app.
+    from personalclaw.knowledge_providers.web_source import looks_rendered, make_browse_settle
+
+    # Fixture control: the frames really are "shell" then "rendered" by §2.3's own measurement,
+    # so the drive below is testing the wait and not a mislabelled pair of pages.
+    assert looks_rendered(_js_shell()) is False
+    assert looks_rendered(_hydrated_app()) is True
+
+    frames = (_js_shell(), _js_shell(), _hydrated_app(), _hydrated_app())
+
+    # Leg 1 — the defect: no settle, so the tick reads the shell and confirms nothing.
+    bare = _FramePage(*frames)
+    without = await _tick_runner(bare, settle=None)(_watch_plan())
+    assert without.ok is False and without.verified is False
+    assert "no extractable text" in without.note
+    assert bare.reads == 1  # read once, straight after the navigate
+
+    # Leg 2 — the fix: the same page, the same runner, plus the settle.
+    clock = _Clock()
+    page = _FramePage(*frames)
+    out = await _tick_runner(page, settle=make_browse_settle(sleep=clock.sleep, now=clock.now))(
+        _watch_plan()
+    )
+    assert out.ok is True and out.verified is True
+    assert "Version 2.1.0 released today" in out.content
+    assert page.reads >= 4  # it did NOT stop on the two identical shell reads
+    assert clock.now() < 10.0  # and it stopped as soon as the page rendered, not at the ceiling
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_is_already_a_document_costs_one_confirming_read():
+    # No regression and no added latency path worth the name: a rendered page pays a single poll
+    # interval to confirm the DOM is stable, then the tick reads it exactly as it did before.
+    from personalclaw.knowledge_providers.web_source import (
+        BROWSE_SETTLE_POLL_SECONDS,
+        make_browse_settle,
+    )
+
+    clock = _Clock()
+    page = _FramePage(_changelog())
+    out = await _tick_runner(page, settle=make_browse_settle(sleep=clock.sleep, now=clock.now))(
+        _watch_plan()
+    )
+    assert out.ok is True and "Version 2.1.0 released today" in out.content
+    assert clock.slept == [BROWSE_SETTLE_POLL_SECONDS]  # one interval, not a fixed sleep
+    assert page.reads == 3  # two settle reads that agreed + the tick's own read
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_never_renders_gives_up_at_the_ceiling():
+    # A scheduled actuator must not be able to hang on a page that never settles: at the ceiling
+    # the wait returns and the tick reports the SAME soft failure it reports today.
+    from personalclaw.knowledge_providers.web_source import (
+        BROWSE_SETTLE_POLL_SECONDS,
+        BROWSE_SETTLE_TIMEOUT_SECONDS,
+        make_browse_settle,
+    )
+
+    clock = _Clock()
+    page = _FramePage(_js_shell())
+    out = await _tick_runner(page, settle=make_browse_settle(sleep=clock.sleep, now=clock.now))(
+        _watch_plan()
+    )
+    assert out.ok is False and "no extractable text" in out.note
+    assert "root" in out.html  # the raw markup still reaches the caller's own detectors
+    assert clock.now() == pytest.approx(BROWSE_SETTLE_TIMEOUT_SECONDS)
+    assert len(clock.slept) == int(BROWSE_SETTLE_TIMEOUT_SECONDS / BROWSE_SETTLE_POLL_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_a_dom_read_fault_inside_the_settle_stays_a_soft_tick_failure():
+    from personalclaw.knowledge_providers.web_source import make_browse_settle
+
+    clock = _Clock()
+    out = await _tick_runner(
+        _RaisingPage(""), settle=make_browse_settle(sleep=clock.sleep, now=clock.now)
+    )(_watch_plan())
+    assert out.ok is False and "the page went away" in out.note  # reported, never raised
+    assert clock.slept == []  # the settle hands the fault straight back
+
+
+@pytest.mark.asyncio
+async def test_the_production_browse_tick_is_built_with_a_settle(store, monkeypatch):
+    # THE regression rail for SC#7: the runner has accepted a `settle` all along and this — its
+    # only production call site — passed none. Asserting the wiring, not just the policy.
+    from personalclaw.browse import plan_runner
+
+    seen: list[dict] = []
+
+    def _recording_factory(**kw):
+        seen.append(kw)
+
+        async def _run(_plan):
+            from personalclaw.browse.plans import TickOutcome
+
+            return TickOutcome(content="x", html="<html/>", ok=True, verified=True)
+
+        return _run
+
+    monkeypatch.setattr(plan_runner, "make_content_tick_runner", _recording_factory)
+    browse = WebSourceProvider(store)._browse_for(
+        source_id=None, budget_cfg={"cdp_url": "ws://gw/1"}
+    )
+    await browse(PAGE_URL)
+    assert len(seen) == 1
+    assert callable(seen[0]["settle"]), "the production browse tick must pass a settle wait"
+
+
 # ── §2.2 output hygiene: one adversarial case per default ───────────────────────────
 
 
