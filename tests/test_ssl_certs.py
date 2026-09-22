@@ -1,13 +1,47 @@
 """Tests for _ssl_compat SSL certificate bootstrap."""
 
+import contextlib
 import os
 from unittest.mock import patch
 
+import pytest
+
 from personalclaw._ssl_compat import _CA_CANDIDATES, _ensure_ssl_certs
+
+_CA_ENV_KEYS = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+
+
+@contextlib.contextmanager
+def _preserved_ca_env():
+    """Restore the CA env vars on exit, whether or not they started set.
+
+    `monkeypatch.delenv(name, raising=False)` records NO undo entry when the key is
+    already absent, so a value the code under test writes with a direct
+    `os.environ[name] = ...` survives teardown. These tests assert that
+    `_ensure_ssl_certs()` DID write the env, so every one of them leaks a bundle
+    path holding the literal text "fake cert bundle" into the rest of the worker —
+    and the next test to build an httpx client dies with
+    `X509: NO_CERTIFICATE_OR_CRL_FOUND` (issue 3341). Snapshot-and-restore does not
+    depend on the starting state, so it closes the case `delenv` cannot.
+    """
+    saved = {key: os.environ.get(key) for key in _CA_ENV_KEYS}
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 class TestEnsureSslCerts:
     """Tests for _ensure_ssl_certs()."""
+
+    @pytest.fixture(autouse=True)
+    def _no_ca_env_leak(self):
+        with _preserved_ca_env():
+            yield
 
     def test_noop_when_ssl_cert_file_already_set(self, monkeypatch):
         """Should return immediately if SSL_CERT_FILE is already set."""
@@ -134,3 +168,48 @@ class TestEnsureSslCerts:
 
             importlib.reload(personalclaw.cli)
         mock_fn.assert_called()
+
+
+class TestPreservedCaEnv:
+    """The guard that keeps this file from poisoning the rest of its xdist worker.
+
+    Asserted on the helper directly rather than as an ordered pair of tests, so the
+    coverage holds under any xdist distribution rather than only when both halves
+    land on the same worker.
+    """
+
+    def test_restores_a_key_that_started_unset(self, monkeypatch):
+        """The leaking case: a direct write over an absent key must not survive."""
+        for key in _CA_ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
+        with _preserved_ca_env():
+            for key in _CA_ENV_KEYS:
+                os.environ[key] = "/tmp/fake-bundle.crt"
+
+        for key in _CA_ENV_KEYS:
+            assert key not in os.environ
+
+    def test_restores_a_key_that_started_set(self, monkeypatch):
+        """The ambient-environment case: the original value comes back, not the write."""
+        for key in _CA_ENV_KEYS:
+            monkeypatch.setenv(key, f"/original/{key}.pem")
+
+        with _preserved_ca_env():
+            for key in _CA_ENV_KEYS:
+                os.environ[key] = "/tmp/fake-bundle.crt"
+
+        for key in _CA_ENV_KEYS:
+            assert os.environ[key] == f"/original/{key}.pem"
+
+    def test_restores_even_when_the_body_raises(self, monkeypatch):
+        """A failing assertion inside a test must not skip the restore."""
+        for key in _CA_ENV_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
+        with pytest.raises(RuntimeError):
+            with _preserved_ca_env():
+                os.environ["SSL_CERT_FILE"] = "/tmp/fake-bundle.crt"
+                raise RuntimeError("boom")
+
+        assert "SSL_CERT_FILE" not in os.environ
