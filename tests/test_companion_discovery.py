@@ -253,12 +253,29 @@ def test_collect_ignores_unparseable_packets():
 # ── real sockets ───────────────────────────────────────────────────────────────
 
 
+# A free port cannot be RESERVED. `_free_udp_port` must close its probe socket before
+# `start()` can bind the number it returned, and anything on the host — including the other
+# xdist worker running this same file — may take it in that window. Measured on main's
+# `Full` run 35764976454, where this fixture failed a macOS leg with `[Errno 48] Address
+# already in use` (#3324). So acquire-and-bind is retried AS A UNIT: one attempt is a coin
+# flip, and no probe can remove the race because the bind is a separate syscall.
+_PORT_ATTEMPTS = 8
+
+
 @pytest.fixture()
 def live_advertiser():
     """A real Advertiser on a high port. Unicast-driven, so no multicast setup is needed."""
-    port = _free_udp_port()
-    adv = disc.Advertiser(_service(), listen_port=port)
-    assert adv.start() is True, "the advertiser could not open its socket"
+    for attempt in range(_PORT_ATTEMPTS):
+        port = _free_udp_port()
+        adv = disc.Advertiser(_service(), listen_port=port)
+        if adv.start() is True:
+            break
+        if attempt == _PORT_ATTEMPTS - 1:
+            pytest.fail(
+                f"the advertiser could not open its socket on any of {_PORT_ATTEMPTS} "
+                "separately probed free ports — that is port contention on this host, "
+                "not a defect in the responder"
+            )
     try:
         yield adv, port
     finally:
@@ -266,9 +283,17 @@ def live_advertiser():
 
 
 def _free_udp_port() -> int:
+    """A port free for the WILDCARD bind `Advertiser.start` actually performs.
+
+    Probing `127.0.0.1:0` answers a DIFFERENT question: a port can be free on loopback and
+    held on another interface, and `start()` binds `("", port)`. So the probe binds the
+    wildcard with the same `SO_REUSEADDR` the advertiser sets, and the two now agree about
+    what "free" means.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.bind(("127.0.0.1", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("", 0))
         return int(s.getsockname()[1])
     finally:
         s.close()
