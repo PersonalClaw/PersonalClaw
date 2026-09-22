@@ -491,6 +491,12 @@
     "type": "bool"
   },
   {
+    "default": "",
+    "path": "evals.benchmark_model_ref",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 0.0,
     "path": "evals.default_budget_usd",
     "sensitive": false,

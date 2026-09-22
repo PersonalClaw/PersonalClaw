@@ -764,6 +764,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
     "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
     "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
+    # #2680 — the `Provider:model` the paired evals (gate/ablation/skills-bench) score
+    # against. Free-text on purpose: WHETHER the ref resolves is a question only the home
+    # can answer (`providers[]` + the model's own availability), and it answers with a
+    # reason the run records — an unresolvable ref makes a run REFUSE to score, which is
+    # strictly more legible than this boundary guessing at a pool. `.strip()` mirrors
+    # load(), so the file matches what runtime reads. Carries no secret: the ref names a
+    # `providers[]` entry, and the cell's key still arrives by env-var NAME (cell_provider).
+    "evals.benchmark_model_ref": {"type": "str", "max_len": 128, "sanitize": lambda v: v.strip()},
     # PROACTIVE-ASSISTANT §"Config Map" (PA-1) — the runtime-editable triage subset.
     # `auto_execute_enabled` IS here on purpose: it is the plan's one-click revoke, so
     # a user who dislikes what the digest did must be able to switch acting off from

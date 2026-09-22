@@ -3932,6 +3932,7 @@ class AppConfig:
                 ablation_cadence_days=_safe_int(evals_data.get("ablation_cadence_days"), 30),
                 bakeoff_capture_enabled=bool(evals_data.get("bakeoff_capture_enabled", False)),
                 default_budget_usd=float(evals_data.get("default_budget_usd", 0.0) or 0.0),
+                benchmark_model_ref=str(evals_data.get("benchmark_model_ref", "") or "").strip(),
             ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),

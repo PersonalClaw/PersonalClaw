@@ -16,11 +16,12 @@ easy-to-fake halves:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 
-from personalclaw.evals import ablation, harvest
+from personalclaw.evals import ablation, benchmark_binding, harvest
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import skills_bench
 from personalclaw.evals.matrix import FAILED, PASSED, VERIFIER_ABSENT, CellResult, MatrixResult
@@ -77,6 +78,26 @@ def loader(bench_home):
     (skills / SKILL_NAME).mkdir(parents=True)
     (skills / SKILL_NAME / "SKILL.md").write_text(SKILL_BODY, encoding="utf-8")
     return SkillsLoader(skills_path=skills, install_builtins=False)
+
+
+def _bind_a_model(home, **config) -> None:
+    """Give the home ONE resolvable ``Provider:model`` (#2680).
+
+    :func:`~personalclaw.evals.skills_bench.bench_skill` now REFUSES to score when no model
+    resolves, because an unbound bench ran both arms against the offline ``scripted`` replay
+    and reported the resulting 0.0 delta as ``remove`` — "this skill does not earn its
+    place", concluded from a measurement that never happened. So every test that wants the
+    matrix to run has to say which model it runs against; that is the precondition, not
+    boilerplate. The refusal itself is owned by
+    ``test_an_unbound_bench_refuses_to_score_rather_than_reporting_remove``.
+
+    ``**config`` merges extra keys into ``config.json`` so a test that needs its own config
+    content can have it without dropping the provider.
+    """
+    payload: dict = {"providers": [{"name": "Acme"}]}
+    payload.update(config)
+    (home / "config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    (home / "active_models.json").write_text(json.dumps({"chat": ["Acme:m1"]}), encoding="utf-8")
 
 
 # ── the choke point ───────────────────────────────────────────────────────────
@@ -256,6 +277,7 @@ def test_the_default_subject_is_a_consulted_runs_own_harvested_case(bench_home, 
     mine = _harvest_case("release-triage", (f"skill:{SKILL_NAME}",))
     theirs = _harvest_case("other-flow", ("skill:some/other",))
     assert {c["name"] for c in hv.load_harvested_suite()} == {mine, theirs}, "vacuity floor"
+    _bind_a_model(bench_home)
 
     population = skills_bench.replay_population(SKILL_NAME)
     assert type(population) is skills_bench.ReplayPopulation
@@ -285,6 +307,7 @@ def test_the_default_subject_is_a_consulted_runs_own_harvested_case(bench_home, 
 def test_an_explicit_subject_is_recorded_as_the_operators_and_not_a_replay(bench_home, loader):
     """The two claims must stay distinguishable in the report."""
     _harvest_case("release-triage", (f"skill:{SKILL_NAME}",))
+    _bind_a_model(bench_home)
     report = skills_bench.bench_skill(
         SKILL_NAME,
         subject="triage-scenario",
@@ -377,6 +400,7 @@ def _fake_matrix(scores, *, seen=None):
 
 def test_bench_replays_consulted_runs_surfaced_vs_suppressed(bench_home, loader):
     _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
+    _bind_a_model(bench_home)
     seen: list = []
     report = skills_bench.bench_skill(
         SKILL_NAME,
@@ -406,6 +430,7 @@ def test_bench_replays_consulted_runs_surfaced_vs_suppressed(bench_home, loader)
 
 def test_a_no_delta_skill_benches_as_remove(bench_home, loader):
     _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
+    _bind_a_model(bench_home)
     report = skills_bench.bench_skill(
         SKILL_NAME,
         subject="triage-scenario",
@@ -418,6 +443,42 @@ def test_a_no_delta_skill_benches_as_remove(bench_home, loader):
     )
     assert report.verdict == ablation.REMOVE
     assert report.delta == pytest.approx(0.005)
+
+
+def test_an_unbound_bench_refuses_to_score_rather_than_reporting_remove(bench_home, loader):
+    """#2680 — the refusal that exists because the test directly above it was the OUTCOME.
+
+    A cell spawns with no ambient credentials, so an unbound bench ran both arms against the
+    offline ``scripted`` replay: identical bytes surfaced and suppressed, a ~0.0 delta, and
+    ``classify`` reading that as ``REMOVE`` — "this skill does not earn its place", concluded
+    from a comparison that never happened. Since ``REMOVE`` is the verdict that FILES A
+    RETIREMENT PROPOSAL, the failure mode was a recommendation to delete a skill on the
+    strength of a measurement nobody took.
+
+    So: no model ⇒ ``INCONCLUSIVE`` with the precondition named, and no matrix spent.
+    """
+    _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
+    # Deliberately no `_bind_a_model(bench_home)` — that omission IS the condition under test.
+
+    def _must_not_run(spec, *, matrix_id, **kwargs):  # pragma: no cover - asserted absent
+        raise AssertionError("the bench must not score arms it has no model to score with")
+
+    report = skills_bench.bench_skill(
+        SKILL_NAME,
+        subject="triage-scenario",
+        loader=loader,
+        now=NOW,
+        run_matrix=_must_not_run,
+    )
+    assert report.suppression["verified"] is True, "vacuity floor: the EARLIER rails all passed"
+    assert report.verdict == ablation.INCONCLUSIVE
+    assert report.verdict != ablation.REMOVE
+    assert report.delta is None
+    assert report.arms == {}
+    assert "no model resolved" in report.reason
+    assert benchmark_binding.CONFIG_FIELD in report.reason
+    # Recorded on the refusal path too, so the artifact says WHY rather than only that it failed.
+    assert report.provider["source"] == benchmark_binding.SOURCE_UNRESOLVED
 
 
 def test_an_unverified_suppression_refuses_before_spending_a_run(bench_home, loader, monkeypatch):
@@ -443,10 +504,10 @@ def test_an_unverified_suppression_refuses_before_spending_a_run(bench_home, loa
 
 def test_the_bench_never_mutates_live_state(bench_home, loader):
     _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
-    (bench_home / "config.json").write_text('{"a": 1}\n', encoding="utf-8")
+    _bind_a_model(bench_home, a=1)
 
     def _leaky(spec, *, matrix_id, **kwargs):
-        (bench_home / "config.json").write_text('{"a": 2}\n', encoding="utf-8")
+        _bind_a_model(bench_home, a=2)
         return MatrixResult(spec=spec, cells=[], aggregates={})
 
     with pytest.raises(ablation.LiveStateMutatedError, match="config.json"):
@@ -457,6 +518,7 @@ def test_the_bench_never_mutates_live_state(bench_home, loader):
 
 def test_an_unmeasured_arm_is_reported_not_averaged(bench_home, loader):
     _seed_consulted_run("run-a", [f"skill:{SKILL_NAME}"])
+    _bind_a_model(bench_home)
     report = skills_bench.bench_skill(
         SKILL_NAME,
         subject="triage-scenario",

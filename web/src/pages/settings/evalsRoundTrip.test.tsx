@@ -7,7 +7,7 @@ import { EvalsPanel } from './EvalsPanel'
 // ── The fifth point of the config round-trip contract, derived from the OTHER FOUR ───────────────
 //
 // `evals.*` had four of the five: the dataclass + `_meta` (`config/learning.py:EvalsConfig`),
-// `load()`, `to_dict()`, and five entries in the PATCH allowlist
+// `load()`, `to_dict()`, and entries in the PATCH allowlist
 // (`dashboard/handlers/core.py:_EDITABLE_CONFIG`). It had no frontend control — measured,
 // `git grep -in evals -- web/src/pages/settings` returned **0** across 33 subpages — while
 // `#/learning` rendered four panels telling the user to turn the substrate on.
@@ -18,9 +18,10 @@ import { EvalsPanel } from './EvalsPanel'
 // and bounded by that min/max. So the failure modes it catches are the ones a hand-written
 // expectation cannot:
 //
-//   · a sixth key added to the allowlist and never surfaced  → the panel is missing a control
+//   · a key added to the allowlist and never surfaced        → the panel is missing a control
 //   · a control for a key the allowlist REFUSES              → a switch that flips, 400s, rolls back
 //   · a stepper whose range disagrees with the backend's     → an offer the save path rejects
+//   · a control of the wrong SHAPE for its declared type     → a stepper for a `str` key (`roleOf`)
 //   · copy drifting from `_meta`                             → the CLI's `--describe` and the UI
 //                                                              give two answers to one question
 //
@@ -35,6 +36,11 @@ import { EvalsPanel } from './EvalsPanel'
 // blast-radius`, `--seed demo-home`): each of the five patched from the UI, read back through
 // `GET /api/config/personalclaw`, and `#/learning` re-rendered from four "off" panels to four
 // live ones. `bakeoff_capture_enabled` was `curl`-ed at the same endpoint and answered 400.
+//
+// `benchmark_model_ref` (`#2680`) was driven the same way on port 10680 against a local Ollama: the
+// ref set from this row, read back at the same endpoint, then a loop-2 gate run whose PERSISTED
+// artifact recorded `cell_model_fingerprint: {"chat": "LocalOllama:gemma4:12b"}` and a real
+// `cell_model_fp` — which is the whole point of the field, and not something this file can assert.
 
 const SETTINGS = join(process.cwd(), 'src', 'pages', 'settings')
 const PY = join(__dirname, '../../../../src/personalclaw')
@@ -127,16 +133,40 @@ const ALLOW = allowlist()
 const META = evalsMeta()
 const EDITABLE = Object.keys(ALLOW).sort()
 
+/** The ARIA role the allowlist's declared `type` obliges the panel to render.
+ *
+ *  Derived rather than listed, because the allowlist is what decides: adding an `"evals.x":
+ *  {"type": "str"}` entry and surfacing it as a stepper would type-check, render, and 400 on save.
+ *  `str` is the third type this panel has had to carry (`#2680`'s `benchmark_model_ref`), and the
+ *  bare `type === 'bool' ? 'switch' : 'spinbutton'` it replaced would have silently demanded a
+ *  spinbutton for it. */
+function roleOf(key: string): 'switch' | 'spinbutton' | 'textbox' {
+  const t = ALLOW[key].type
+  if (t === 'bool') return 'switch'
+  if (t === 'str') return 'textbox'
+  return 'spinbutton'
+}
+
+/** Whether a key is a NUMBER — the only shape a min/max/step assertion means anything for. A bare
+ *  `type !== 'bool'` skip would have handed `Number(null)` → `NaN` to the bounds test the moment a
+ *  string field arrived, and `NaN !== undefined` fails with no explanation of why. */
+const isNumeric = (key: string) => roleOf(key) === 'spinbutton'
+
 // ── The parse itself must not be vacuously green ─────────────────────────────────────────────────
 
 describe('the derivation reads the real files', () => {
-  it('finds the five allowlisted evals keys, and only those', () => {
+  it('finds the six allowlisted evals keys, and only those', () => {
     expect(py('dashboard/handlers/core.py').length, 'the handler must be readable').toBeGreaterThan(5000)
     // Named, not counted: a floor like `> 3` stays green when a key is dropped AND one is added.
     expect(EDITABLE).toEqual([
-      'ablation_cadence_days', 'default_budget_usd', 'enabled',
+      'ablation_cadence_days', 'benchmark_model_ref', 'default_budget_usd', 'enabled',
       'judge_agreement_floor', 'study_default_k',
     ])
+    // And the shapes, because the role each control must take is derived from them (`roleOf`).
+    // `benchmark_model_ref` is this panel's first `str`; asserting the type here is what makes the
+    // "one control per key" census below able to expect a textbox rather than a sixth stepper.
+    expect(ALLOW.benchmark_model_ref.type).toBe('str')
+    expect(EDITABLE.map(roleOf).filter((r) => r === 'textbox').length).toBe(1)
   })
 
   it('finds every EvalsConfig field with a non-empty label and help', () => {
@@ -144,9 +174,10 @@ describe('the derivation reads the real files', () => {
     // cannot hand `META` an empty object. The number is scaled to `config/learning.py` (~22k
     // chars); it was 50000 while these fields lived in the far larger `config/loader.py`.
     expect(py('config/learning.py').length).toBeGreaterThan(15000)
-    // 🪤 THE FIELD-SET PIN, and the real vacuity guard. This panel exists to surface fields that
-    // ALREADY existed — it must not have grown one. Six fields: the five editable ones plus the
-    // privacy-gated capture flag. A seventh is a deliberate decision, so it fails here.
+    // 🪤 THE FIELD-SET PIN, and the real vacuity guard. Seven fields: the six editable ones plus the
+    // privacy-gated capture flag. An eighth is a deliberate decision, so it fails here. (It was six
+    // when this panel only surfaced pre-existing fields; `#2680` added `benchmark_model_ref` as a
+    // new one, and adding it here IS the decision being recorded.)
     expect(Object.keys(META).sort()).toEqual([...EDITABLE, 'bakeoff_capture_enabled'].sort())
     for (const [k, m] of Object.entries(META)) {
       expect(m.label.length, `${k} label`).toBeGreaterThan(3)
@@ -182,11 +213,18 @@ const notify = vi.fn()
 vi.mock('../../app/appSdk', () => ({ notify: (...a: unknown[]) => notify(...a) }))
 
 /** The saved config, built from the dataclass's OWN defaults — so the fixture cannot drift from
- *  what a fresh install actually holds. */
+ *  what a fresh install actually holds.
+ *
+ *  🪤 The string branch is not cosmetic. `benchmark_model_ref`'s default is `""`, and the previous
+ *  bool-or-`Number()` coercion turned it into `NaN` — which React renders as the literal text "NaN"
+ *  in the input, so the panel would have mounted showing a saved value nobody set, and every
+ *  assertion about it would have been made against that. A quoted literal is now unquoted as itself. */
 function savedConfig(): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, m] of Object.entries(META)) {
-    out[k] = m.def === 'False' ? false : m.def === 'True' ? true : Number(m.def)
+    const quoted = /^(["'])(.*)\1$/.exec(m.def)
+    out[k] = quoted ? quoted[2]
+      : m.def === 'False' ? false : m.def === 'True' ? true : Number(m.def)
   }
   return out
 }
@@ -235,8 +273,17 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
   })
 
   it('renders one control per allowlisted key — and no others', async () => {
-    const { container } = await mount()
-    const controls = [...container.querySelectorAll('[role="switch"], input[type="number"]')]
+    // The fixture must carry a real empty string, not the `NaN` the old numeric coercion produced —
+    // otherwise the text row below is asserted against a value React invented. See `savedConfig`.
+    expect(DEFAULTS.benchmark_model_ref, 'a string default must survive the fixture').toBe('')
+    await mount()
+    // 🪤 Counted BY ROLE, not by CSS. The `input[type="number"], [role="switch"]` selector this
+    // replaced silently missed the new text row: `ui/forms`' `TextInput` renders no `type` attribute
+    // at all (HTML defaults it to text), so the census read 5 of 6 and the panel looked complete
+    // while a control was unaccounted for. Roles are also what the assertions below select on, so
+    // this now counts the same things they do.
+    const controls = ['switch', 'spinbutton', 'textbox']
+      .flatMap((role) => screen.queryAllByRole(role))
     expect(controls.length, 'one control per allowlisted key, no more').toBe(EDITABLE.length)
   })
 
@@ -244,8 +291,7 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
     await mount()
     for (const key of EDITABLE) {
       const label = META[key].label
-      const role = ALLOW[key].type === 'bool' ? 'switch' : 'spinbutton'
-      expect(screen.getByRole(role, { name: label }), `${key} must be named "${label}"`).toBeTruthy()
+      expect(screen.getByRole(roleOf(key), { name: label }), `${key} must be named "${label}"`).toBeTruthy()
     }
   })
 
@@ -254,8 +300,7 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
     for (const key of EDITABLE) {
       // Rendered, and in the SAME ROW as its control — a sentence elsewhere on the page describes
       // nothing. (`hintEl` asserts the text; `contains` asserts it is beside the right control.)
-      const role = ALLOW[key].type === 'bool' ? 'switch' : 'spinbutton'
-      const control = screen.getByRole(role, { name: META[key].label })
+      const control = screen.getByRole(roleOf(key), { name: META[key].label })
       const hint = hintEl(key)
       const row = hint.parentElement?.parentElement
       expect(row?.contains(control), `${key}: the hint must sit with its control`).toBe(true)
@@ -264,18 +309,28 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
 
   it('and ASSOCIATES it, wherever the primitive supports one', async () => {
     await mount()
+    let associated = 0
     for (const key of EDITABLE) {
-      if (ALLOW[key].type === 'bool') continue   // see `hintEl` — ui/Toggle drops the hint id
-      const el = screen.getByRole('spinbutton', { name: META[key].label })
+      if (roleOf(key) === 'switch') continue   // see `hintEl` — ui/Toggle drops the hint id
+      // The text row is in scope here, not skipped: `ui/forms`' `TextInput` consumes
+      // `useFieldHintId()` exactly as `NumberField` does, so a hint beside it that is not its
+      // description would be a real regression and not a primitive's limitation.
+      const el = screen.getByRole(roleOf(key), { name: META[key].label })
       expect(el.getAttribute('aria-describedby'), `${key} must be described`).toBe(hintEl(key).id)
       expect(describedText(el).trim().startsWith(META[key].help.trim()), `${key} description`).toBe(true)
+      associated++
     }
+    // Positive control: a `continue` that swallowed everything would pass the loop silently.
+    expect(associated, 'four steppers and one textbox must be asserted').toBe(5)
   })
 
   it('bounds every stepper by the allowlist’s own min/max', async () => {
     await mount()
     for (const key of EDITABLE) {
-      if (ALLOW[key].type === 'bool') continue
+      // Numeric only, and by SHAPE: a `str` field declares `max_len`, not `min`/`max`, so a bare
+      // `!== 'bool'` skip would compare `Number(null)` → `NaN` against `undefined` and fail here
+      // rather than at the control that was actually wrong.
+      if (!isNumeric(key)) continue
       const el = screen.getByRole('spinbutton', { name: META[key].label })
       expect(Number(el.getAttribute('min')), `${key} min`).toBe(ALLOW[key].min)
       expect(Number(el.getAttribute('max')), `${key} max`).toBe(ALLOW[key].max)
@@ -285,7 +340,7 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
   it('steps finely enough to express the value it is displaying', async () => {
     await mount()
     for (const key of EDITABLE) {
-      if (ALLOW[key].type === 'bool') continue
+      if (!isNumeric(key)) continue
       const el = screen.getByRole('spinbutton', { name: META[key].label })
       const step = Number(el.getAttribute('step'))
       const def = Number(META[key].def)
@@ -327,7 +382,7 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
   it('every numeric row patches its own allowlisted path', async () => {
     await mount()
     for (const key of EDITABLE) {
-      if (ALLOW[key].type === 'bool') continue
+      if (!isNumeric(key)) continue
       const el = screen.getByRole('spinbutton', { name: META[key].label })
       const next = (ALLOW[key].min ?? 0) + Number(el.getAttribute('step'))
       fireEvent.change(el, { target: { value: String(next) } })
@@ -350,6 +405,47 @@ describe('#/settings/evals surfaces exactly what the allowlist permits', () => {
     fireEvent.change(el, { target: { value: '0' } })
     fireEvent.blur(el)
     await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('evals.judge_agreement_floor', 0))
+  })
+
+  it('the benchmark row patches a ref, and can CLEAR it back to the fallback (#2680)', async () => {
+    // Both directions, because both are meaningful values here and only one of them is obvious.
+    //
+    // Setting a ref is the point of the field. Clearing it is the DOCUMENTED way to say "use my
+    // default chat model" — `_meta` promises exactly that — so a row that can only ever add a ref
+    // offers a one-way door out of the fallback, and the only way back would be `personalclaw config
+    // set` or editing `config.json`. `TextRow` commits only when `dirty`, which is what makes the
+    // second half a real assertion rather than a repeat of the first: the empty string has to differ
+    // from what the row currently holds, and it only does because the optimistic PATCH above moved
+    // `cfg` first. This is the string analogue of the `#2952` floor case directly above.
+    await mount()
+    const el = screen.getByRole('textbox', { name: META.benchmark_model_ref.label })
+    expect((el as HTMLInputElement).value, 'a fresh install holds no ref').toBe('')
+    // The placeholder must teach the SHAPE `cell_provider.resolve_binding` requires — it splits on
+    // the first colon and refuses a ref without one, so an unqualified model id is the one input
+    // that reaches the resolver and fails it.
+    expect(el.getAttribute('placeholder')).toBe('Provider:model')
+
+    fireEvent.change(el, { target: { value: 'LocalOllama:gemma4:12b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(patchConfig)
+      .toHaveBeenCalledWith('evals.benchmark_model_ref', 'LocalOllama:gemma4:12b'))
+
+    fireEvent.change(el, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('evals.benchmark_model_ref', ''))
+  })
+
+  it('says, on the row itself, that an unresolvable model means NO score (#2680)', async () => {
+    // The panel's standing rule is that every hint IS its `_meta` verbatim, and `hintEl` already
+    // pins that. What this adds is that the *sentence* carries the consequence, because this is the
+    // one field whose absence does not degrade a run — it stops one. A user reading "the model the
+    // evals use" and leaving it empty must be able to learn from this row alone that a gate can
+    // decline to score, rather than discovering it from a refusal after the fact.
+    await mount()
+    const hint = (hintEl('benchmark_model_ref').textContent ?? '').toLowerCase()
+    expect(hint, 'it must name the fallback').toMatch(/falls back/)
+    expect(hint, 'and that a refusal, not a zero, is the other outcome').toMatch(/refuses to score/)
+    expect(hint, 'and say what the zero would have been').toMatch(/never measured/)
   })
 })
 

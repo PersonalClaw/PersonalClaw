@@ -397,6 +397,18 @@ class EvalsConfig:
             "no default cap — each study still declares its own budget at registration.",
         ),
     )
+    benchmark_model_ref: str = field(
+        default="",
+        metadata=_meta(
+            "Benchmark model",
+            "The Provider:model the paired evals score against — the loop-2 gate, the "
+            "ablation report and the skills bench. Empty falls back to your default chat "
+            "model; when neither resolves, a run REFUSES to score instead of reporting a "
+            "zero it never measured. It is named here rather than inherited because an "
+            "eval cell is spawned with no ambient credentials, so the model it uses has "
+            "to be expressed for the run's pin to record what actually answered.",
+        ),
+    )
 
 
 @dataclass
