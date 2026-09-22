@@ -481,8 +481,21 @@ async def test_a_core_locked_tool_is_never_refused(monkeypatch):
     # #506's gate floors at destructive (fail-closed: nothing was read, so nothing can be
     # called safe) — a second refusal that would have made this test look like a
     # disable-gate regression. That fail-closed behaviour is pinned on its own below.
+    #
+    # `provider` is named EXPLICITLY so this stand-in is still the one reached. Since #3310
+    # the no-provider arm prepends the real cwd-coupled platform provider, which owns `bash`
+    # and would serve it — correct for production, and it would turn this into a test of the
+    # real shell rather than of the disable gate. The by-name arm consults the registry
+    # first, which `_install_provider` patches, so naming the provider keeps the subject
+    # here the gate.
     resp = await tools_mod.api_tool_invoke(
-        _InvokeRequest({"tool": "bash", "arguments": {"command": "ls"}})
+        _InvokeRequest(
+            {
+                "tool": "bash",
+                "provider": "personalclaw-filesystem",
+                "arguments": {"command": "ls"},
+            }
+        )
     )
     assert resp.status == 200
     assert prov.invoked == [("bash", {"command": "ls"})]
@@ -650,8 +663,18 @@ async def test_a_read_only_shell_call_needs_no_confirmation(monkeypatch):
     _install_provider(monkeypatch, prov)
     _disable(monkeypatch)
 
+    # `provider` named explicitly for the same reason as in the disable-gate test above:
+    # since #3310 the no-provider arm prepends the real platform provider, which owns
+    # `bash`. The subject here is the per-invocation DOWNGRADE, not which provider serves
+    # the tool, so the stand-in has to stay the one that records the call.
     resp = await tools_mod.api_tool_invoke(
-        _InvokeRequest({"tool": "bash", "arguments": {"command": "ls"}})
+        _InvokeRequest(
+            {
+                "tool": "bash",
+                "provider": "personalclaw-filesystem",
+                "arguments": {"command": "ls"},
+            }
+        )
     )
     assert resp.status == 200
     assert prov.invoked == [("bash", {"command": "ls"})]
@@ -741,3 +764,243 @@ async def test_a_shell_call_whose_command_was_never_received_fails_closed(monkey
     resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "bash"}))
     assert resp.status == 403
     assert prov.invoked == []
+
+
+# ── #3310: the invoke resolver must reach the cwd-coupled PLATFORM provider ────
+#
+# `create_platform_tools_provider` had four consumers. Three prepended it — `GET /api/tools`
+# (which is why the page LISTS all nine), the group partition, and the native bridge (which
+# is why the agent can call them). The fourth was this route, the only one that EXECUTES,
+# and it resolved through `get_provider`/`list_providers` alone. The provider is deliberately
+# not in the registry (it is cwd-coupled for path confinement), so all nine 404'd: the Tools
+# page's "Try it" button could not run a tool the same page listed, and
+# `ScriptContext.call_tool`'s own two documented examples — `bash` with `rm -rf` and with
+# `ls` — both answered `404 tool not found: bash`, leaving the zero-token `script` mode with
+# no filesystem or shell reach at all.
+#
+# These tests deliberately do NOT use `_install_provider`/`_RecordingProvider`, and they do
+# not call `register_provider`. Either one would substitute the exact registration whose
+# absence IS the bug, and a defective tree would look identical to a fixed one under it. The
+# only fixture is `PERSONALCLAW_WORKSPACE` — the workspace root a user configures — which is
+# also what keeps the real home and the real filesystem out of reach.
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    """A configured workspace root, the way a user sets one. Not a resolver patch."""
+    root = tmp_path / "ws"
+    root.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(root))
+    return root
+
+
+def _payload(resp):
+    import json
+
+    return json.loads(resp.body.decode())
+
+
+@pytest.mark.asyncio
+async def test_invoke_reaches_the_platform_provider_by_name(workspace, monkeypatch):
+    """The reported defect, at the route: `read_file` on `personalclaw-filesystem` ran."""
+    _disable(monkeypatch)
+    (workspace / "probe.txt").write_text("hello from the workspace", encoding="utf-8")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest(
+            {
+                "tool": "read_file",
+                "provider": "personalclaw-filesystem",
+                "arguments": {"path": "probe.txt"},
+            }
+        )
+    )
+    assert resp.status == 200, _payload(resp)
+    body = _payload(resp)
+    assert body["ok"] is True, body
+    assert "hello from the workspace" in body["output"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_resolves_a_platform_tool_with_no_provider_named(workspace, monkeypatch):
+    """The resolver's SECOND arm — and the load-bearing one.
+
+    `ScriptContext.call_tool` defaults `provider` to `""`, so every cron script reaches this
+    route through the scan, not the by-name lookup. A fix that only wired the explicit arm
+    would light up the Tools page's "Try it" button and leave the documented zero-token
+    `script` mode exactly as broken as it was.
+    """
+    _disable(monkeypatch)
+    (workspace / "probe.txt").write_text("resolved by scan", encoding="utf-8")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "read_file", "arguments": {"path": "probe.txt"}})
+    )
+    assert resp.status == 200, _payload(resp)
+    assert "resolved by scan" in _payload(resp)["output"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_dir",
+        "glob",
+        "grep",
+        "repo_map",
+        "bash",
+        "tool_result_get",
+    ],
+)
+async def test_every_platform_tool_resolves(tool, workspace, monkeypatch):
+    """All nine, not just the one in the issue title.
+
+    The assertion is about RESOLUTION, not success: a tool reached with no arguments may
+    answer `ok: false` on its own validation, and `bash` with no command to screen fails
+    closed at the risk gate (403). What none of them may do any more is 404 — that answer
+    means the resolver never found a provider, which was true of every one of the nine.
+    """
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": tool, "arguments": {}}))
+    assert resp.status != 404, f"{tool} still unresolved: {_payload(resp)}"
+
+
+@pytest.mark.asyncio
+async def test_the_platform_tool_names_match_the_bundles_own_surface(workspace):
+    """Vacuity floor for the parametrize above: the nine names are the whole bundle.
+
+    Derived from the provider itself rather than restated, so a category that gains or
+    loses a tool reds here instead of quietly shrinking the list the test above walks.
+    """
+    from personalclaw.agents.native.builtin_tools import (
+        PLATFORM_TOOL_NAMES,
+        create_platform_tools_provider,
+    )
+
+    surface = {t.name for t in await create_platform_tools_provider().list_tools()}
+    assert surface == set(PLATFORM_TOOL_NAMES)
+    assert surface == {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_dir",
+        "glob",
+        "grep",
+        "repo_map",
+        "bash",
+        "tool_result_get",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_path_outside_the_workspace_is_still_refused(workspace, tmp_path, monkeypatch):
+    """The confinement `provider_bridge` builds this provider per-session FOR is preserved.
+
+    Prepending the bundle is only safe because the instance carries the workspace it is
+    confined to. A prepend that took the default cwd would confine these tools to whatever
+    directory the gateway process happens to be running in — and then this absolute path
+    would resolve, because it is a real file the gateway user can read.
+    """
+    _disable(monkeypatch)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("must not be readable through the workspace tools", encoding="utf-8")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest(
+            {
+                "tool": "read_file",
+                "provider": "personalclaw-filesystem",
+                "arguments": {"path": str(outside)},
+            }
+        )
+    )
+    body = _payload(resp)
+    assert body.get("ok") is False, body
+    assert "escapes the workspace root" in (body.get("error") or ""), body
+
+
+@pytest.mark.asyncio
+async def test_the_prepend_does_not_confine_the_tools_to_the_gateways_own_cwd(
+    workspace, tmp_path, monkeypatch
+):
+    """States the same property from the other side, where a wrong cwd is VISIBLE.
+
+    `test_a_path_outside_the_workspace_is_still_refused` would also pass if the provider were
+    confined to the gateway's cwd (the path is outside that too). This one cannot: it reads a
+    RELATIVE path, so it only succeeds when the resolved base is the configured workspace.
+    Run from the repo root — the gateway's usual cwd — a relative `probe.txt` would miss.
+    """
+    _disable(monkeypatch)
+    monkeypatch.chdir(tmp_path)  # a "gateway cwd" that is NOT the workspace
+    (workspace / "only-in-the-workspace.txt").write_text("found", encoding="utf-8")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "read_file", "arguments": {"path": "only-in-the-workspace.txt"}})
+    )
+    assert resp.status == 200, _payload(resp)
+    assert "found" in _payload(resp)["output"]
+
+
+@pytest.mark.asyncio
+async def test_a_destructive_platform_call_still_fails_closed(workspace, monkeypatch):
+    """#506's gate must NOT regress — the one way a naive prepend makes things worse.
+
+    Before the prepend, `bash` 404'd, so the risk gate on this route had never actually been
+    exercised against the real platform provider: every test of it ran through a stand-in.
+    This is the same refusal, measured through the provider that now serves the call.
+    """
+    _disable(monkeypatch)
+    victim = workspace / "victim"
+    victim.mkdir()
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "bash", "arguments": {"command": f"rm -rf {victim}"}})
+    )
+    assert resp.status == 403, _payload(resp)
+    assert _payload(resp)["error"]["code"] == "risk_confirmation_required"
+    assert victim.is_dir(), "the gate 403'd but the command ran anyway"
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_workspace_refuses_instead_of_using_the_gateways_cwd(monkeypatch):
+    """`default_workspace_dir()`'s empty return is a REFUSAL, and must not be laundered.
+
+    It means the resolved root is either not a usable directory or is a sensitive
+    (credential) location. Falling through to `Path.cwd()` would confine the shell and file
+    tools to whatever directory the gateway was started in — the same
+    containment-decision-becomes-an-ambient-value shape `session._resolve_acp_spawn_cwd`
+    already refuses for a CLI spawn. So this answers 503 naming the missing setting, not the
+    404 "tool not found" the route used to give and not a silent run somewhere else.
+    """
+    _disable(monkeypatch)
+    monkeypatch.setattr("personalclaw.config.loader.default_workspace_dir", lambda: "")
+
+    for body in (
+        {"tool": "read_file", "provider": "personalclaw-filesystem", "arguments": {"path": "x"}},
+        {"tool": "read_file", "arguments": {"path": "x"}},
+    ):
+        resp = await tools_mod.api_tool_invoke(_InvokeRequest(body))
+        assert resp.status == 503, _payload(resp)
+        assert _payload(resp)["error"]["code"] == "workspace_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_the_prepend_does_not_shadow_the_registry(workspace, monkeypatch):
+    """POSITIVE CONTROL: a registry provider's tool still resolves after the prepend.
+
+    A prepend that REPLACED the registry arm would pass every test above and break the other
+    83 tools. The control provider here is an unrelated stand-in (`artifact_list`) — it is
+    not the platform registration whose absence is the bug, so installing it proves the
+    second arm survived rather than substituting the fix.
+    """
+    prov = _RecordingProvider("artifact_list", risk="safe")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "artifact_list"}))
+    assert resp.status == 200, _payload(resp)
+    assert prov.invoked == [("artifact_list", {})]
