@@ -626,10 +626,21 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
     }
   }
 
-  // Create a WebContentsView positioned below the tab bar
+  // Create a WebContentsView positioned below the tab bar.
+  //
+  // The sandbox flag travels WITH the preload and only with it. `preload.js` does
+  // `require("./capabilities")`; a sandboxed preload gets a polyfilled `require` that
+  // resolves `electron` and three builtins and nothing else, so at Electron's default the
+  // preload throws on its second line and `window.pclawDesktop` is never defined — the
+  // bridge is absent rather than broken, which is why nothing ever logged. The no-bridge
+  // branch keeps the sandbox: it exists for a gateway on the network, the one origin here
+  // we do not trust, so it must not be the one that loses it. `connectDialog.js` pairs the
+  // two the same way.
   const view = new WebContentsView({
     webPreferences: {
-      ...(attachBridge ? { preload: path.join(__dirname, "preload.js") } : {}),
+      ...(attachBridge
+        ? { preload: path.join(__dirname, "preload.js"), sandbox: false }
+        : {}),
       contextIsolation: true,
       nodeIntegration: false,
     },

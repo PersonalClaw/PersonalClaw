@@ -329,6 +329,35 @@ describe("IPC surface — the renderer reaches nothing outside the namespace", (
   });
 });
 
+/** The body of each `webPreferences: { … }` literal in a source file, comments STRIPPED.
+ *
+ * Brace-balanced rather than line-matched, because a flag has to be read against the block
+ * it sits in: the shell opens windows with and without a preload and they want different
+ * flags. Comments come out because a block's own explanation names the flags it sets — the
+ * first cut of this helper kept them and passed a main.js whose only `sandbox: false` was
+ * the prose describing it, which is the same class of false green the rail exists to end. */
+function webPreferenceBlocks(src) {
+  const blocks = [];
+  const opener = /webPreferences:\s*\{/g;
+  for (let m = opener.exec(src); m; m = opener.exec(src)) {
+    const start = m.index + m[0].length;
+    let depth = 1;
+    let i = start;
+    for (; i < src.length && depth > 0; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") depth -= 1;
+    }
+    if (depth !== 0) continue;
+    blocks.push(
+      src
+        .slice(start, i - 1)
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, ""),
+    );
+  }
+  return blocks;
+}
+
 describe("contextIsolation stays on", () => {
   // The bridge is only a boundary while contextIsolation is true and
   // nodeIntegration false. Nothing in the runtime would fail loudly if someone
@@ -351,6 +380,35 @@ describe("contextIsolation stays on", () => {
     const windows = (src.match(/webPreferences:/g) || []).length;
     const isolation = (src.match(/contextIsolation:/g) || []).length;
     assert.strictEqual(isolation, windows, "a webPreferences block without contextIsolation");
+  });
+
+  // The three rails above were all green while the shipped bridge was DEAD: they check
+  // what the preload is allowed to see, never whether the preload can load at all. Both
+  // of this shell's preloads `require()` a sibling module for their channel vocabulary,
+  // and a sandboxed preload cannot — `require` there resolves `electron` plus three
+  // builtins, so a relative path throws and the whole preload is skipped silently. Pairing
+  // the flag with the preload key is the assertion; `sandbox: false` on a window with no
+  // preload would be a loss, not a fix, so the rail deliberately does not ask for it.
+  it("every window that attaches a preload also sets sandbox: false", () => {
+    for (const file of ["main.js", "connectDialog.js"]) {
+      const text = fs.readFileSync(path.join(ROOT, file), "utf8");
+      const blocks = webPreferenceBlocks(text);
+      assert.strictEqual(
+        blocks.length,
+        (text.match(/webPreferences:\s*\{/g) || []).length,
+        `could not read every webPreferences block in ${file}`,
+      );
+      const bridged = blocks.filter((block) => /\bpreload:/.test(block));
+      assert.ok(bridged.length >= 1, `${file} opens no preload-bearing window`);
+      for (const block of bridged) {
+        assert.match(
+          block,
+          /\bsandbox:\s*false\b/,
+          `${file} attaches a preload without sandbox: false — at Electron's default the ` +
+            "preload throws on its require() and its bridge is absent from the renderer",
+        );
+      }
+    }
   });
 });
 
