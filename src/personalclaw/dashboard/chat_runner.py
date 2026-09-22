@@ -2995,6 +2995,28 @@ async def run_chat(
                             "tool_call_id": event.tool_call_id,
                             "purpose": _purpose,
                             "input": _input_preview,
+                            # The DECLARED tool kind, persisted (`AAP-8` §2.5 gap 7,
+                            # second half). `_kind` was computed above and broadcast on
+                            # the live `tool_call` WS frame, but never written here — so
+                            # the kind read absent on every persisted ACP tool row while
+                            # the live socket carried it, which is the `tool_kind: null`
+                            # of `acp-parity.md`'s re-drive sitting in the SAME row as a
+                            # populated `input`: the two are computed a few lines apart
+                            # and only one of them was written.
+                            # The consequence is on screen after a reload, not during
+                            # the turn: `iconForTool` resolves an ACP card's icon from
+                            # the declared kind (`toolRenderers/native.tsx` `_BY_KIND`)
+                            # and falls back to a keyword regex over the CLI's prose
+                            # title when it is absent — which is how an honestly-titled
+                            # provider ends up worse off than a mislabelled one (`G34`).
+                            # Spelled `kind`, matching the live WS key the frontend
+                            # already reads, so the two representations of one fact
+                            # cannot drift. Omitted when empty: the native runtime
+                            # declares no kind, and a persisted `""` would claim it
+                            # declared an empty one. `"unknown"` IS kept — that is the
+                            # decoder's own placeholder for "this frame declared none"
+                            # and absence must stay representable (`G10`).
+                            **({"kind": _kind} if _kind else {}),
                         }
                         if event.tool_call_id
                         else None
