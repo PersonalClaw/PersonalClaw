@@ -52,6 +52,31 @@ logger = logging.getLogger(__name__)
 DEFAULT_ITEM_TYPE = "note"
 
 
+def _default_ttl() -> str:
+    """`knowledge.default_ttl`, the fallback expiry for a write that asks for none. Its
+    FIRST reader (#1783).
+
+    The field shipped with a user-facing `_meta` label promising "optional default expiry
+    for newly persisted items", and the mechanism behind it was already complete:
+    `semantics.ttl_to_expiry` turns `30d` into an absolute `expires_at`, and
+    `check_persist` applies it whenever a `ttl` arrives. What was missing is the only
+    thing that made the label true — the per-action read here passed the action's own
+    `ttl` and nothing else, so a store configured to expire knowledge after a month
+    expired nothing unless every individual write repeated the value.
+
+    Returns "" (no expiry) when config is unreadable, which is both the field's default
+    and the safe direction: expiry demotes an item in retrieval, and inventing one from a
+    failed config read would demote knowledge the owner never asked to age out.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return str(getattr(AppConfig.load().knowledge, "default_ttl", "") or "").strip()
+    except Exception:
+        logger.debug("knowledge default_ttl unreadable — persisting without expiry", exc_info=True)
+        return ""
+
+
 @dataclass
 class ConflictPass:
     """One persist-time conflict pass: what was proven, and what is left to judge.
@@ -140,7 +165,11 @@ class KnowledgePersistActionProvider(ActionProvider):
             citations=cited.stored,
             marker_citations=cited.records,
             unsourced=bool(cfg.get("unsourced")),
-            ttl=str(cfg.get("ttl", "") or ""),
+            # `or _default_ttl()`: the action's own `ttl` wins, and a write that names none
+            # inherits `knowledge.default_ttl`. An explicit `expires_at` still beats both —
+            # `check_persist` prefers the absolute value, so a caller that computed its own
+            # expiry is not overridden by the store-wide default.
+            ttl=str(cfg.get("ttl", "") or "") or _default_ttl(),
             expires_at=str(cfg.get("expires_at", "") or ""),
         )
         if not check.ok:

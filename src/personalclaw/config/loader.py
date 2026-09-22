@@ -1695,13 +1695,15 @@ class SkillsConfig:
         ),
     )
     progressive_disclosure_threshold: int = field(
-        default=8,
+        default=2,
         metadata=_meta(
             "Progressive Disclosure Threshold",
             "When more than this many skills match a turn, inject only their compact "
             "INDEX (name + description) and let the agent pull full bodies on demand "
             "via skill_invoke — instead of inlining every matched body. Token "
-            "efficiency at scale; 0 disables (always inline). Default 8.",
+            "efficiency at scale; 0 disables (always inline). Capped at "
+            "`max_triggered - 1`, because a threshold at or above the number of skills "
+            "that can ever be surfaced is a control that cannot fire.",
         ),
     )
 
@@ -1726,6 +1728,28 @@ class SkillsConfig:
             object.__setattr__(self, "auto_refine_on_deviation", False)
         if self.progressive_disclosure_threshold < 0:
             object.__setattr__(self, "progressive_disclosure_threshold", 0)
+        # ORDERED against `max_triggered`, not merely bounded (#1783). Both knobs are
+        # absolute counts over the same list, and surfacing truncates that list to
+        # `max_triggered` (`skills/loader.py`, via `surface_skills(max_skills=…)`) BEFORE
+        # `context.py` asks `len(triggered) > progressive_disclosure_threshold`. At the
+        # shipped 3 and 8 the question had no reachable `True` answer: the branch was
+        # dead code behind a knob, a `_meta` label and a settings row.
+        #
+        # So the ceiling is `max_triggered - 1` — the largest value the comparison can
+        # still exceed — with a floor of 1 so the clamp can never land on 0, which means
+        # "disabled" and must stay something the owner chooses rather than something
+        # arithmetic picks. 0 in, 0 out: an explicit disable survives untouched.
+        if self.progressive_disclosure_threshold:
+            ceiling = max(1, self.max_triggered - 1)
+            if self.progressive_disclosure_threshold > ceiling:
+                logger.warning(
+                    "progressive_disclosure_threshold %d is at or above max_triggered %d, "
+                    "so the index branch could never fire; using %d",
+                    self.progressive_disclosure_threshold,
+                    self.max_triggered,
+                    ceiling,
+                )
+                object.__setattr__(self, "progressive_disclosure_threshold", ceiling)
 
 
 @dataclass
@@ -1945,6 +1969,30 @@ class KnowledgeConfig:
             "least the requested result limit, whichever is larger). A larger window gives "
             "the reranker more to reorder at the cost of a bigger prompt; a smaller one is "
             "cheaper and faster.",
+        ),
+    )
+    # The chat-injection fetch budget. Declared here because both values were already
+    # LIVE — `search-for-context` read `knowledge.fetch_top_n` / `knowledge.fetch_max_tokens`
+    # straight out of the raw config.json with module constants as fallbacks, so a
+    # hand-edited file changed behaviour while the model, the validation, the `_meta` label
+    # and the write path did not exist (#1783). That is the config round-trip contract
+    # failing in reverse: not a knob nothing reads, but a reader nothing declares.
+    fetch_top_n: int = field(
+        default=3,
+        metadata=_meta(
+            "Knowledge Cards Per Turn",
+            "How many retrieved knowledge items chat injection offers as context cards by "
+            "default. A per-request `?limit=` still overrides it; this is the value used "
+            "when the caller does not say.",
+        ),
+    )
+    fetch_max_tokens: int = field(
+        default=4096,
+        metadata=_meta(
+            "Knowledge Context Budget",
+            "Approximate token budget those cards may fill in total, so a single long "
+            "article cannot crowd the rest of the turn out of the window. A per-request "
+            "`?max_tokens=` overrides it and is clamped to a hard ceiling regardless.",
         ),
     )
 
@@ -4022,7 +4070,7 @@ class AppConfig:
                 auto_min_tool_calls=int(skills_data.get("auto_min_tool_calls", 5)),
                 auto_similarity_threshold=float(skills_data.get("auto_similarity_threshold", 0.85)),
                 progressive_disclosure_threshold=int(
-                    skills_data.get("progressive_disclosure_threshold", 8)
+                    skills_data.get("progressive_disclosure_threshold", 2)
                 ),
             ),
             workflows=WorkflowsConfig(
@@ -4159,6 +4207,14 @@ class AppConfig:
                 # shipped default; `_EDITABLE_CONFIG` bounds the PATCH path separately.
                 rerank_enabled=bool(knowledge_data.get("rerank_enabled", False)),
                 rerank_candidates=int(knowledge_data.get("rerank_candidates", 20) or 20),
+                # #1783. `_safe_int` + a floor of 1, not the `or <default>` idiom above: these
+                # two were read raw out of config.json for their whole life, so a file already
+                # carrying a string or a 0 exists in the wild, and both values divide the turn
+                # budget — a 0 here would offer no cards at all while reporting success.
+                fetch_top_n=max(1, _safe_int(knowledge_data.get("fetch_top_n"), 3) or 3),
+                fetch_max_tokens=max(
+                    1, _safe_int(knowledge_data.get("fetch_max_tokens"), 4096) or 4096
+                ),
             ),
             security=SecurityConfig(
                 denied_commands=[

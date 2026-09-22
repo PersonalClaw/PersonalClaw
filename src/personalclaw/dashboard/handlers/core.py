@@ -1139,6 +1139,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # arm (`personalclaw retrieval-eval`) is how an operator decides whether to flip it.
     "knowledge.rerank_enabled": {"type": "bool"},
     "knowledge.rerank_candidates": {"type": "int", "min": 1, "max": 200},
+    # #1783 — the chat-injection fetch budget. Both floors are 1, matching `load()`'s own
+    # floor: this path REJECTS out of range instead of clamping, and a 0 accepted here would
+    # be replaced by the shipped default on the next load — a PATCH that reports success and
+    # offers no cards. The token ceiling is 32000 because that is
+    # `_CONTEXT_MAX_TOKENS_CEILING`, which `search-for-context` applies to the configured
+    # value as well as to a `?max_tokens=` override, so anything larger is unreachable.
+    "knowledge.fetch_top_n": {"type": "int", "min": 1, "max": 50},
+    "knowledge.fetch_max_tokens": {"type": "int", "min": 1, "max": 32000},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

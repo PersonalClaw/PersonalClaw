@@ -809,6 +809,18 @@
     "type": "int"
   },
   {
+    "default": 4096,
+    "path": "knowledge.fetch_max_tokens",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3,
+    "path": "knowledge.fetch_top_n",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 900,
     "path": "knowledge.maintenance_max_staleness_secs",
     "sensitive": false,
@@ -1565,7 +1577,7 @@
     "type": "int"
   },
   {
-    "default": 8,
+    "default": 2,
     "path": "skills.progressive_disclosure_threshold",
     "sensitive": false,
     "type": "int"
