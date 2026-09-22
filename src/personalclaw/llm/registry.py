@@ -319,11 +319,19 @@ def reset_default_registry() -> None:
 
 # Config-type → base-registry-type aliases. EMPTY after the model-provider-as-app
 # migration (Phase B): every provider type — the two generic protocols
-# (``openai_compatible``/``anthropic_compatible``, registered by the generic apps,
-# installed by default) AND every branded provider (together/groq/deepseek/mistral/
-# google/…, each its own installed app) — now registers its OWN type, so a config
-# ``type`` maps to itself. Kept as an (empty) single source of truth in case a future
-# provider needs an alias; ``canonical_provider_type`` is the one call site.
+# (``openai_compatible``/``anthropic_compatible``) AND every branded provider
+# (together/groq/deepseek/mistral/google/…, each its own app) — now registers its OWN
+# type, so a config ``type`` maps to itself. Kept as an (empty) single source of truth
+# in case a future provider needs an alias; ``canonical_provider_type`` is the one call
+# site.
+#
+# 🪤 This used to say the two generic protocol apps were "installed by default". They are
+# not, and never were: neither ships under ``apps/native/`` and there is no default-install
+# list — both declare ``openai>=1.0`` / ``anthropic>=0.20``, which ``seed_builtin_apps()``
+# would silently skip because it never calls ``_install_python_deps()``. Exactly ONE model
+# provider is installed by default, ``ollama-models``, and it qualifies precisely because it
+# declares no dependencies (Chairman ruling R1, 2026-09-21). Either way this map stays empty:
+# a bundled app registers its own type through the same SDK seam a Store install uses.
 _CONFIG_TYPE_MAP: dict[str, str] = {}
 
 

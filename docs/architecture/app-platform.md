@@ -11,8 +11,8 @@ system, crons, and the MCP bridge. Paths are relative to
 
 | Tier | Location | Notes |
 |---|---|---|
-| Native (26) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
-| First-party (36) | workspace `apps/` | Slack channel, model providers, speech, Minutes/Growth dashboards |
+| Native (31) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
+| First-party (68) | workspace `apps/` | Slack channel, hosted model providers, speech, Minutes/Growth dashboards |
 | Third-party | user sources → `~/.personalclaw/apps/` | fixtures at `third-party-apps/` (`hello-search`, `demo-dashboard`) |
 
 The gateway loads **installed copies** at `~/.personalclaw/apps/<name>/`.
@@ -304,6 +304,31 @@ input to the agent manifest and `tests/test_api_manifest_drift.py` fails on a to
 one. That is catalogue data about the shipped distribution's agent surface, not provider
 implementation — but it does mean "no core edits" is exact for provider behaviour and not
 yet exact for tool *metadata*.
+
+**The second bundle that owns code: `apps/native/ollama-models/`** — the local Ollama model
+provider, bundled under Chairman ruling R1 (2026-09-21) so that a fresh install has a chat
+**and** embedding provider without a credential and without cloning a second repository. It
+is the contract's first non-`tool` user, and it demonstrates the two things the exemplar
+could not:
+
+- **A `model` provider needs no core edit at all**, not even the residual metadata one. It
+  registers its own type at module import —
+  `get_default_registry().register_type(...)`, reached through the published
+  `personalclaw.sdk.model` re-export — and core's generic `ModelTypeHandler` does the rest.
+  There is no `llm/*.py` self-register and no registry special case; `TOOL_META` is a
+  tool-surface map, so a model bundle never touches it.
+- **"Only core's own dependencies" is a hard constraint, not a preference.**
+  `seed_builtin_apps()` never calls `_install_python_deps()` (only `install()` and
+  `update()` do), so a bundled app that declares a dependency gets a tile that is dead on
+  arrival with nothing logged. `ollama-models` was chosen precisely because its two
+  third-party imports, `httpx` and `aiohttp`, are already core runtime dependencies.
+  `tests/test_native_ollama_bundle.py` rails both halves across **every** bundle.
+
+Note also that the packaged files of a bundled app are re-synced into an existing install on
+every boot (`app_manager._resync_native_bundle`), not just its `app.json`: seeding is
+once-only and a native app is locked against the `POST /api/apps/{name}/update` push path,
+so without that resync a provider fix shipped in a new wheel would reach a fresh home and
+never an upgraded one. `data/` and `installed.json` are never touched.
 
 ## Crons
 
