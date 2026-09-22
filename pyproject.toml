@@ -207,6 +207,24 @@ dev = [
     "personalclaw[models]",
     "personalclaw[mcp]",
     "personalclaw[bedrock]",
+    # The `openai` SDK is a TEST-ENVIRONMENT dependency, not a core one. Two suites are
+    # `pytest.importorskip("openai")`-gated and were therefore SILENTLY UNVERIFIED in CI
+    # (`uv sync --locked --extra dev` never installed it): test_ea2_openai_sdk_drive.py —
+    # whose own docstring says the skip leaves "Success Criteria 2 UNVERIFIED here" — and
+    # test_evals_cell_provider.py's protocol-client test. Worse, an eval CELL cannot run
+    # without it at all: evals/cell_provider.py::_register_cell_type binds every cell
+    # through llm/branded_specs.py::build_protocol_provider, whose non-`anthropic` branch
+    # constructs OpenAIProvider, so the SDK is a hard runtime requirement of the evals
+    # subsystem — and evals/runner.py maps the child's non-zero exit to VERIFIER_ABSENT,
+    # which turns the MissingSDKError into an empty scored set rather than an error.
+    # Measured 2026-09-22 in a `uv sync --locked --extra dev` env: the two gated suites go
+    # 0-run -> 35 passed, and #2680's paired-eval gate test goes FAILED -> passed, with
+    # the SDK presence as the only variable. This does NOT weaken the provider-boundary
+    # tenet (line ~106): openai/anthropic stay out of CORE, the lazy adapter imports and
+    # their MissingSDKError remedy are unchanged, and `pip install personalclaw` stays
+    # lean. The extra whose exclusion from dev/test IS deliberate says so explicitly
+    # ([keychain], above); this one never did.
+    "personalclaw[openai]",
     # Formatter/linter majors are pinned to the SAME major CI resolves from uv.lock,
     # because CI runs `uv sync --locked` while the documented dev install is
     # `pip install -e ".[dev]"` — which ignores the lock and resolves freely. An
