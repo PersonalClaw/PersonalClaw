@@ -1,0 +1,196 @@
+{
+  "_comment": [
+    "BEHAVIOURAL parity pin for token-lint's comment-state tracker (#3337).",
+    "",
+    "token_lint_rules.json makes the four PATTERNS one artifact, and",
+    "tokenLintRuleParity.test.ts asserts the TS copies are byte-identical to it. But",
+    "deciding which text on a line is CODE is consumer LOGIC, not a pattern — it lives",
+    "twice, once per language:",
+    "  - web/src/design/tokenLintRule.ts  `stripComments`",
+    "  - personalclaw/apps/quality.py     `strip_comments`",
+    "A regex can be shared as data; a lexer cannot. So the BEHAVIOUR is shared as data",
+    "instead: every case below is run by BOTH sides' tests, and a case that reds in one",
+    "language and passes in the other is a parity break — the same two-dialect defect",
+    "the rules file exists to prevent, one layer up.",
+    "",
+    "Each case is a whole synthetic FILE (`lines`), because the defect is cross-line by",
+    "nature. `expected` is one entry per line: the violation kinds the rail must report",
+    "for that line, in the order hex-then-px. `end_state` is 'code' or 'block' at EOF and",
+    "is the load-bearing control: a tracker that leaves block state stuck open reads as",
+    "'the rest of the file is clean' and silently stops catching real raw hexes, which",
+    "is the ONE way this change could weaken the rail rather than fix it. That is not a",
+    "hypothetical: tracking template literals as a third state leaked exactly this way on",
+    "three corpus files carrying a backtick inside a regex literal, which is why backticks",
+    "are not a state and why that case is pinned below.",
+    "",
+    "Both directions are represented on purpose. Cases named `red_*` MUST still be",
+    "caught (the rail's value); cases named `clean_*` MUST now pass (the bug fixed).",
+    "Do not delete a `red_*` case to make a tracker change green — that is the",
+    "weakening this file exists to block."
+  ],
+  "cases": [
+    {
+      "name": "clean_interior_line_of_a_multiline_jsx_comment",
+      "why": "The reported defect. SkillInspector.tsx:65's shape: the issue reference sits on an interior line that carries no comment marker of its own.",
+      "lines": [
+        "  return (",
+        "    {/* Which surface this is: the inspector for a",
+        "        persistently-wrong auto skill (#1783). The inspector,",
+        "        not the list row — the row only summarises. */}",
+        "    <div className=\"bg-surface-high\" />",
+        "  )"
+      ],
+      "expected": [[], [], [], [], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_interior_line_of_a_ts_block_comment",
+      "why": "Same shape in a .ts file with a bare /* … */ rather than JSX braces.",
+      "lines": [
+        "/* Routing note, see #3324 and #532 for the",
+        "   prior attempts; #1783 is the live one. */",
+        "export const ROUTE = 'skills'"
+      ],
+      "expected": [[], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_jsdoc_continuation_lines",
+      "why": "A `*`-prefixed continuation line is inside a block, not merely `*`-shaped. The old rule matched the SHAPE; this must hold on state.",
+      "lines": [
+        "/**",
+        " * Measured on #1783: 58 of 61 switches resolve.",
+        " */",
+        "export function f() { return 1 }"
+      ],
+      "expected": [[], [], [], []],
+      "end_state": "code"
+    },
+    {
+      "name": "red_raw_hex_on_a_line_of_real_code",
+      "why": "Positive control, the base case. If this ever goes clean the rail is worthless.",
+      "lines": ["const c = '#1a2b3c'", "const d = '#fff'"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_raw_hex_on_code_that_FOLLOWS_a_closed_block_comment",
+      "why": "The specific way a tracker breaks: block state left stuck open after `*/` makes every later line read clean. This case is the one that catches it.",
+      "lines": [
+        "/* rationale, citing #1783",
+        "   across two lines */",
+        "const c = '#1a2b3c'",
+        "const px = <div style={{ fontSize: 13px }} />"
+      ],
+      "expected": [[], [], ["hex"], ["px"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_trailing_code_after_a_block_comment_closed_on_the_SAME_line",
+      "why": "Edge case, decided deliberately: the comment is stripped and the CODE after it is still linted. Anything else would make `/* … */ const c = '#abc'` a free bypass.",
+      "lines": ["/* see #1783 */ const c = '#abc'"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_trailing_block_comment_after_real_code",
+      "why": "The mirror: code first, comment second. The code half must still red and the comment half must not add a second hit.",
+      "lines": ["const c = '#abc' /* was #1783's colour */"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_containing_a_block_terminator",
+      "why": "`app/swPolicy.ts` and `ui/SystemWidget.tsx` shapes: a `//` comment quoting `/*` or `*/`. `//` must win, or the tracker opens a block that never closes.",
+      "lines": [
+        "// the bare comment `/* keep the draft */` cited #1783",
+        "// and `*/` alone must not close anything",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_string_literal_containing_a_block_opener",
+      "why": "`ui/widget/editMode.ts` ships exactly this. A string-unaware tracker treats it as a comment opener and swallows the rest of the file.",
+      "lines": [
+        "export const BEGIN = '/*EDITMODE-BEGIN*/'",
+        "export const DOC = 'across all 34 #/settings/* subpages'",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_inside_a_string_is_still_a_violation",
+      "why": "Strings are not comments. Stripping comments must not start excusing string content — that is where every raw colour actually lives.",
+      "lines": ["const s = \"color: #ff0000\"", "const t = `border: 1px solid #00ff00`"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_inside_a_multiline_template_literal",
+      "why": "A backtick is an ordinary character, so template CONTENT stays linted across lines: a css-in-template hex is a real violation and the strict direction is to keep catching it.",
+      "lines": [
+        "const css = `",
+        "  color: #f0f0f0;",
+        "  border-radius: 4px;",
+        "`",
+        "const c = '#abc'"
+      ],
+      "expected": [[], ["hex"], [], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_inside_an_embedded_js_template",
+      "why": "`ui/widget/widgetSrcdoc.ts` and `pages/tools/ToolOutput.tsx` ship multi-line templates of embedded JS whose lines start with `//` and cite issue numbers. A line whose first non-space chars are `//` is prose in any non-block state.",
+      "lines": [
+        "export const SCRIPT = `(function(){",
+        "  // the widget never learns why. Measured twice (#2263), months apart",
+        "  el.style.color = '#abc'",
+        "})();`"
+      ],
+      "expected": [[], [], ["hex"], []],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_backtick_inside_a_regex_literal_does_not_desync",
+      "why": "MEASURED: three corpus files carry one — `pages/chat/parseAssistant.ts` (`[\\s(`'\"]`), `pages/tools/ToolOutput.tsx` and `ui/content/renderers.tsx` (both /^```/m). Tracking template state desynchronised on exactly these and leaked block state to EOF. Telling a regex literal from a division needs real parser context, so backticks are simply not a state.",
+      "lines": [
+        "const FENCE_RE = /(^|\\n)#{1,6}\\s|```|\\*\\*[^*]+\\*\\*/",
+        "const FILE_RE = /(?:^|[\\s(`'\"])((?:~|\\/)[\\w./-]+)/g",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_escaped_quote_does_not_close_the_string",
+      "why": "A tracker that closes on an escaped quote desynchronises and starts stripping real code as comment.",
+      "lines": ["const s = 'it\\'s /* not */ a comment'", "const c = '#abc'"],
+      "expected": [[], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_nested_jsx_comment_braces_close_at_the_FIRST_terminator",
+      "why": "JS block comments do not nest, so `{/* {/* */} */}` closes at the first `*/` and the tail is code. Stated rather than assumed: the corpus has no nested shape, and pinning it keeps the two languages from inventing different answers.",
+      "lines": ["{/* outer {/* inner */} const c = '#abc' */}"],
+      "expected": [["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "end_state_block_when_a_comment_never_closes",
+      "why": "The control's own control. An unterminated `/*` genuinely comments out the rest of the file, so reporting clean lines is CORRECT here — what must not be silent is the state, and `end_state` is how a caller sees it.",
+      "lines": ["/* opened and never closed", "const c = '#abc'"],
+      "expected": [[], []],
+      "end_state": "block"
+    },
+    {
+      "name": "end_state_block_survives_a_line_comment_it_contains",
+      "why": "Inside a block, `//` has no meaning. A tracker that honours it there would resume linting mid-comment and re-create the bug one line lower.",
+      "lines": ["/* opened", "// still inside the block, citing #1783", "and still inside"],
+      "expected": [[], [], []],
+      "end_state": "block"
+    }
+  ]
+}

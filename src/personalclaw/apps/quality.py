@@ -50,7 +50,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from personalclaw.apps.manifest import AppManifest
 
@@ -122,10 +122,107 @@ def frontend_sources(app_dir: Path) -> list[Path]:
     return out
 
 
+class StrippedSource(NamedTuple):
+    """The Python twin of ``StrippedSource`` in ``web/src/design/tokenLintRule.ts``."""
+
+    #: One entry per input line, in order: that line with comment text removed. Same
+    #: length as ``text.split("\n")``, so an index is still a line number.
+    code: list[str]
+    #: The state the scanner ended in — ``"code"`` or ``"block"``. ``"block"`` means a
+    #: block comment never closed; a stuck-open tracker reads as "the rest of the file is
+    #: clean", which is exactly the weakening to catch, so callers must assert on this.
+    end_state: str
+
+
+def strip_comments(text: str) -> StrippedSource:
+    """Split ``text`` into lines and blank out comment text, carrying block-comment state
+    across newlines (#3337).
+
+    Both consumers used to decide "is this a comment?" from the line's OWN first
+    characters, so an INTERIOR line of a multi-line ``{/* … */}`` block — which carries no
+    marker — was linted as code. Every decimal digit is a hex digit, so the ``hex`` pattern
+    matches any 3-to-8-digit issue reference (``#532``, ``#1783``); citing an issue number
+    in a comment therefore failed the gate. Tightening the pattern does not help: ``#1783``
+    is four digits.
+
+    Two scoping decisions, both measured against the host corpus rather than assumed:
+
+    1. STRING-AWARE, and ``//`` beats ``/*``. A ``/*`` inside a string or a line comment
+       must not open a block, because a tracker that opens one there leaves state stuck
+       open and silently stops catching real raw hexes for the rest of the file — the ONLY
+       way this change could weaken the gate instead of fixing it. All three shapes ship in
+       the host frontend today (``'/*EDITMODE-BEGIN*/'``; ``'… #/settings/* subpages'``;
+       a ``/*`` quoted inside a ``//`` comment).
+    2. Template literals are NOT a tracked state; a backtick is an ordinary character.
+       Tracking them desynchronises on a backtick inside a REGEX literal, which also ships
+       today, and telling a regex literal from a division needs real parser context. Not
+       tracking them is the STRICT direction — template content stays linted, so a raw hex
+       in a css-in-template is still caught — and over all 665 host files it changed the
+       violation set by zero lines.
+
+    A line whose first non-space characters are ``//`` is prose in any non-block state,
+    which covers the ``//`` comments inside embedded-JS template literals.
+
+    Not handled, deliberately — a ``/*`` in JSX text or in a regex character class. Both
+    need a real parser, neither occurs in the corpus, and both fail STRICT (state opens,
+    code is dropped), which :attr:`StrippedSource.end_state` reports.
+
+    Behavioural parity with the TS twin is pinned by ``token_lint_comment_cases.json``,
+    which both sides' tests read.
+    """
+    state = "code"
+    code: list[str] = []
+    for line in text.split("\n"):
+        if state != "block" and line.strip().startswith("//"):
+            code.append("")
+            continue
+        kept: list[str] = []
+        quote = ""  # "" | "'" | '"' — line-local by construction
+        i = 0
+        n = len(line)
+        while i < n:
+            c = line[i]
+            nxt = line[i + 1] if i + 1 < n else ""
+            if state == "block":
+                if c == "*" and nxt == "/":
+                    state = "code"
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if quote:
+                kept.append(c)
+                if c == "\\":
+                    kept.append(nxt)
+                    i += 2
+                    continue
+                if c == quote:
+                    quote = ""
+                i += 1
+                continue
+            if c in ("'", '"'):
+                quote = c
+                kept.append(c)
+                i += 1
+                continue
+            if c == "/" and nxt == "/":
+                break  # the rest of the line is a comment
+            if c == "/" and nxt == "*":
+                state = "block"
+                i += 2
+                continue
+            kept.append(c)
+            i += 1
+        code.append("".join(kept))
+    return StrippedSource(code=code, end_state=state)
+
+
 def token_lint_file(path: Path, rules: dict[str, str] | None = None) -> list[str]:
     """Token-lint one file. Returns ``"<line>: <kind> — <text>"`` strings (empty = clean).
-    Same line semantics as the host lint: comment-only lines are skipped because design
-    rationale legitimately cites hex/px in prose."""
+    Same line semantics as the host lint: comment text is stripped by
+    :func:`strip_comments` before the patterns run, because design rationale legitimately
+    cites hex/px in prose. The reported text is the ORIGINAL line, so a violation still
+    reads the way the author wrote it."""
     r = rules or load_token_lint_rules()
     hex_re = re.compile(r["hex"])
     px_re = re.compile(r["raw_px"])
@@ -133,13 +230,12 @@ def token_lint_file(path: Path, rules: dict[str, str] | None = None) -> list[str
     calc_re = re.compile(r["calc_with_token"])
     hits: list[str] = []
     text = path.read_text(encoding="utf-8", errors="replace")
-    for i, line in enumerate(text.split("\n"), start=1):
-        trimmed = line.strip()
-        if trimmed.startswith("//") or trimmed.startswith("*") or trimmed.startswith("/*"):
-            continue
-        if hex_re.search(line):
+    lines = text.split("\n")
+    for i, code in enumerate(strip_comments(text).code, start=1):
+        trimmed = lines[i - 1].strip()
+        if hex_re.search(code):
             hits.append(f"{i}: hex — {trimmed[:80]}")
-        if px_re.search(line) and not calc_re.search(line) and not ok_re.search(line):
+        if px_re.search(code) and not calc_re.search(code) and not ok_re.search(code):
             hits.append(f"{i}: px — {trimmed[:80]}")
     return hits
 
