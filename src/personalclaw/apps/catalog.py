@@ -445,6 +445,21 @@ def _registry_backed_off(source: str, *, now: float) -> bool:
 def _note_registry_failure(source: str, *, now: float) -> None:
     _at, consecutive = _registry_failures.get(source, (0.0, 0))
     _registry_failures[source] = (now, consecutive + 1)
+    # A SHIPPED default that cannot be fetched is worth an operator's attention: nobody
+    # added it, so nobody thinks to look for it — the only other signal is a Store card
+    # quietly missing. A user-added source stays at debug (logged by _read_git_registry):
+    # its owner chose the URL and the Store already names it under unavailableSources.
+    # ONCE PER STREAK, not per failure: ``consecutive`` here is the PRE-increment count, so
+    # 0 is the streak's first failure. A line per failure is the log spam the backoff above
+    # exists to prevent, and a recovered source clears its record so the next streak warns
+    # again.
+    if consecutive == 0 and source == _REGISTRY_GIT_SOURCE:
+        logger.warning(
+            "app registry: could not fetch the shipped default app source %s — the Store "
+            "will list it as unavailable until it answers. It is retried with backoff, so "
+            "a transient outage needs no action; remove the source if it is gone for good.",
+            source,
+        )
 
 
 @dataclass
