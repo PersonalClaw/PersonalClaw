@@ -8,6 +8,9 @@ behaves exactly as it does today.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from personalclaw.identity import (
@@ -15,8 +18,9 @@ from personalclaw.identity import (
     current_username,
     is_valid_username,
     slugify_username,
-    suggest_username,
 )
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 class TestSlugify:
@@ -67,8 +71,64 @@ class TestSlugify:
         assert not is_valid_username("Keyur Golani")
         assert is_valid_username("")  # empty is canonical
 
-    def test_suggest_from_display_name(self):
-        assert suggest_username("Keyur Golani") == "keyur-golani"
+
+class TestOneSlugSuggester:
+    """TSE-1 — the display-name → handle suggestion has exactly ONE implementation.
+
+    The suggester is a FRONTEND concern: it pre-fills a field the user can still edit,
+    while the server re-normalizes whatever is finally submitted (``slugify_username`` at
+    the PUT boundary and again on load). So the rule lives in TypeScript, where the
+    keystroke is, and this module deliberately does not carry a Python twin — the one it
+    had was exported, never called, and would have read as the canonical rule to the next
+    reader while the shipped suggestion came from somewhere else entirely.
+
+    What CAN drift, silently, is the pair that remains: the TS mirror of the slug rule and
+    the cap it copies. These two tests are the rail — the same shape as
+    ``test_api_version_one_origin.py``'s constant-parity check.
+    """
+
+    TS_MODULE = REPO / "web" / "src" / "app" / "identity.tsx"
+
+    def test_exactly_one_frontend_slug_implementation(self):
+        """NEGATIVE CONTROL. A second NFKD folder under ``web/src`` means a second
+        convention was minted — which is how this atom's predecessor ended up with a
+        Python function and a TypeScript function claiming the same job."""
+        folders = sorted(
+            p.relative_to(REPO).as_posix()
+            for p in (REPO / "web" / "src").rglob("*.ts*")
+            if "NFKD" in p.read_text(encoding="utf-8")
+        )
+        assert folders == [self.TS_MODULE.relative_to(REPO).as_posix()], (
+            "the display-name→handle rule must have ONE home "
+            f"(web/src/app/identity.tsx); found {folders}"
+        )
+
+    def test_the_frontend_cap_still_equals_this_modules(self):
+        src = self.TS_MODULE.read_text(encoding="utf-8")
+        match = re.search(r"export const USERNAME_MAX_LEN = (\d+)", src)
+        assert match, "web/src/app/identity.tsx must export USERNAME_MAX_LEN"
+        assert int(match.group(1)) == USERNAME_MAX_LEN, (
+            f"the frontend cap ({match.group(1)}) drifted from identity.USERNAME_MAX_LEN "
+            f"({USERNAME_MAX_LEN}) — bump both in the same change, or the suggested handle "
+            "is silently trimmed by the server after the user accepts it"
+        )
+        # …and the suggester READS the constant rather than re-hardcoding the number,
+        # which is what makes the assertion above cover it.
+        assert ".slice(0, USERNAME_MAX_LEN)" in src, (
+            "the TS suggester must slice at USERNAME_MAX_LEN, not a literal — a hardcoded "
+            "cap is invisible to the parity check above"
+        )
+
+    def test_this_module_exports_no_suggester(self):
+        """The deleted function, stated as a property so it cannot quietly return.
+
+        A Python suggester has no caller it could serve: every surface that pre-fills the
+        field is a React input, and a server-side suggestion would have to be plumbed
+        through an endpoint that does not exist.
+        """
+        import personalclaw.identity as identity_mod
+
+        assert [n for n in vars(identity_mod) if n.startswith("suggest")] == []
 
 
 class TestConfigRoundTrip:

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
-import { useIdentity, DEFAULT_USER_NAME } from '../../app/identity'
+import { useIdentity, DEFAULT_USER_NAME, suggestHandle } from '../../app/identity'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api } from '../../lib/api'
@@ -13,19 +13,10 @@ import { Button } from '../../ui/Button'
  *  across machines) and the assistant's name (agent.bot_name — the {{bot_name}}
  *  prompt var), plus a re-trigger for onboarding.
  *  (Content width is a shell control now — the top-right corner pill — not here.) */
-/** Mirror of the server's slug rule, for the placeholder suggestion only — the
- *  server is authoritative and re-normalizes whatever we send. */
-function suggestHandle(displayName: string): string {
-  return displayName
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^[-_]+|[-_]+$/g, '')
-    .slice(0, 32)
-    .replace(/[-_]+$/, '')
-}
+/* `suggestHandle` moved to `app/identity` when first-run onboarding began asking for
+   the handle too (TSE-1): two surfaces suggesting a slug from the display name need
+   ONE rule, not a copy each. The server stays authoritative either way — it
+   re-normalizes whatever we send. */
 
 export function AccountPanel() {
   const { name, setName, clearName } = useIdentity()
