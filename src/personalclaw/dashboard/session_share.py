@@ -42,6 +42,7 @@ from typing import Any
 
 from personalclaw.artifacts.models import Artifact
 from personalclaw.dashboard import session_export
+from personalclaw.security import redact_field
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ SHARE_TAG = "shared-chat"
 def share_name(title: str, key: str) -> str:
     """Artifact display name. Redacted, because an auto-titled chat can carry a secret in
     its title — the same reason ``render_markdown`` redacts the heading."""
-    base = session_export.redact_field(title or key or "Conversation").strip()
+    base = redact_field(title or key or "Conversation").strip()
     return f"{base or 'Conversation'} (shared chat)"
 
 

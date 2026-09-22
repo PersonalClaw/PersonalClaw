@@ -1409,6 +1409,33 @@ async def start_dashboard(
     app.router.add_post("/api/channels/{name}/disconnect", api_channel_disconnect)
     app.router.add_post("/api/channels/{name}/test", api_channel_test)
 
+    # Agent Rooms — shared transcripts several bound agents deliberate in. Gated by
+    # `rooms.enabled` inside each handler rather than by skipping registration, so
+    # flipping the config takes effect without a gateway restart.
+    from personalclaw.dashboard.handlers.rooms import (
+        api_room_archive,
+        api_room_export,
+        api_room_get,
+        api_room_member_add,
+        api_room_member_remove,
+        api_room_message_post,
+        api_rooms_create,
+        api_rooms_list,
+    )
+
+    app.router.add_get("/api/rooms", api_rooms_list)
+    app.router.add_post("/api/rooms", api_rooms_create)
+    # Every literal sub-path sits BEFORE `/api/rooms/{room_id}` for the same reason the
+    # channel trust route does — aiohttp resolves in registration order — except that
+    # here the sub-paths are all two segments deep, so only `{room_id}` itself needs the
+    # ordering care. Railed by `tests/test_rooms_api.py`.
+    app.router.add_post("/api/rooms/{room_id}/archive", api_room_archive)
+    app.router.add_post("/api/rooms/{room_id}/members", api_room_member_add)
+    app.router.add_delete("/api/rooms/{room_id}/members/{name}", api_room_member_remove)
+    app.router.add_post("/api/rooms/{room_id}/messages", api_room_message_post)
+    app.router.add_get("/api/rooms/{room_id}/export", api_room_export)
+    app.router.add_get("/api/rooms/{room_id}", api_room_get)
+
     # Tools — aggregated listing from all tool providers
     from personalclaw.dashboard.handlers.tools import (
         api_providers_toggle,

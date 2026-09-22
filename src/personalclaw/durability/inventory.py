@@ -265,6 +265,21 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="chat transcripts",
     ),
+    # A TREE rather than `jsonl_append` like its `sessions` sibling, because the directory is
+    # mixed: `rooms/index.json` is one document of room records and members, while each
+    # `rooms/<id>/` holds that room's `transcript.jsonl` plus the archive `ConversationLog`
+    # rotation leaves behind. `union_by_id` is the room id, which IS the directory name.
+    # Nothing here is `derived_within`: a rotated archive segment is the only remaining copy
+    # of the transcript lines it holds, so excluding it would lose the older half of every
+    # long-running room while appearing to back the room up.
+    StateEntry(
+        id="rooms",
+        kind=KIND_TREE,
+        path="rooms",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="agent room records, members, and shared transcripts",
+    ),
     StateEntry(
         id="subagents",
         kind=KIND_TREE,

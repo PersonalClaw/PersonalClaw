@@ -23,7 +23,7 @@ import json
 import logging
 from typing import Any
 
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_field
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +39,6 @@ _ROLE_LABELS = {
     "system": "System",
     "tool": "Tool",
 }
-
-
-def redact_field(text: str) -> str:
-    """Both redaction passes over one field. Applied to EVERY role — see the module
-    docstring for why the write path's role exemption can't be inherited here.
-
-    Public because the export filename and ``session_share`` need the SAME redaction for
-    the names they derive (SM-8/SM-9). One implementation across every export/share
-    surface, never a second pass that redacts slightly less.
-    """
-    if not text:
-        return ""
-    safe, _ = redact_exfiltration_urls(str(text))
-    safe, _ = redact_credentials(safe)
-    return safe
 
 
 def _content_messages(messages: list[dict]) -> list[dict]:

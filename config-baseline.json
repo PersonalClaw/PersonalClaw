@@ -1397,6 +1397,24 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "rooms.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 8,
+    "path": "rooms.max_members",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 6,
+    "path": "rooms.round_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 0.1,
     "path": "routing.cloud_quality_margin",
     "sensitive": false,
