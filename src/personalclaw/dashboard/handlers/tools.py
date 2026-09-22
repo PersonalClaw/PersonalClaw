@@ -3,6 +3,7 @@ from all registered tool providers (the Tool entity)."""
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
@@ -10,6 +11,9 @@ from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+if TYPE_CHECKING:
+    from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +305,58 @@ async def api_tools_list(request: web.Request) -> web.Response:
     return web.json_response({"tools": tools_out, "load_failures": get_load_failures()})
 
 
+def _platform_provider_for_invoke() -> "tuple[ToolProvider | None, str]":
+    """The cwd-coupled PLATFORM provider for one ``/api/tools/invoke`` call.
+
+    Returns ``(provider, refusal)`` — exactly one is truthy.
+
+    #3310. ``create_platform_tools_provider`` had four consumers and three of them
+    prepended it: ``GET /api/tools`` (so the page LISTS all nine filesystem/shell tools),
+    the group partition (so ``core`` reports honestly), and the native bridge (so the agent
+    can call them). The fourth — this route, the only one that EXECUTES — resolved through
+    ``get_provider``/``list_providers`` alone, and the provider is deliberately not in the
+    registry, so every one of the nine 404'd. The Tools page listed a tool its own "Try it"
+    button could not run, and ``ScriptContext.call_tool``'s two documented examples
+    (``bash`` with ``rm -rf`` and with ``ls``) both answered ``404 tool not found: bash``,
+    leaving the zero-token ``script`` mode with no filesystem or shell reach at all.
+
+    Staying OUT of the registry is the right call and is not what changed here: the provider
+    is cwd-coupled for workspace path confinement (``provider_bridge`` builds one per
+    session for exactly that reason), so a process-wide singleton would have to pick one
+    workspace for every caller. Prepending a per-call instance is what the other three
+    consumers already do.
+
+    The cwd is ``default_workspace_dir()``, the same root a new chat session gets. Its
+    empty return is a REFUSAL, not an unknown — the resolved root is either not a usable
+    directory or is a sensitive (credential) location — and it must not be laundered into
+    ``Path.cwd()``, which is whatever directory the gateway was started in. That is the
+    laundering ``session._resolve_acp_spawn_cwd`` already refuses for a CLI spawn, and the
+    stakes here are the same: shell and file tools confined to a path the user cannot
+    predict. So an unresolved workspace refuses loudly instead, at the last point that can
+    still stop the call.
+    """
+    from personalclaw.agents.native.builtin_tools import create_platform_tools_provider
+    from personalclaw.config.loader import default_workspace_dir
+
+    try:
+        root = str(default_workspace_dir() or "").strip()
+    except Exception:  # noqa: BLE001 — an unreadable workspace is a refusal, not a 500
+        logger.warning("Failed to resolve the workspace root for a tool invocation", exc_info=True)
+        root = ""
+    if not root:
+        return None, (
+            "No usable workspace directory resolved, so the filesystem and shell tools have "
+            "no folder to run in. Running them in the gateway's own working directory is "
+            "refused. Set a workspace root (PERSONALCLAW_WORKSPACE, or the workspace "
+            "directory in Settings)."
+        )
+    try:
+        return create_platform_tools_provider(cwd=root), ""
+    except Exception as exc:  # noqa: BLE001 — same: a refusal the caller can report
+        logger.warning("Failed to build the platform tool provider", exc_info=True)
+        return None, f"The filesystem and shell tools could not be prepared: {exc}"
+
+
 async def api_tool_invoke(request: web.Request) -> web.Response:
     """POST /api/tools/invoke — execute one tool through the Tool entity.
 
@@ -309,6 +365,11 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     the agent has, without importing the in-process registry. Body:
     ``{"tool": str, "arguments": dict, "provider"?: str, "confirm_risk"?: str}``.
     Returns ``{ok, output, error}``.
+
+    "The same surface the agent has" starts with the nine filesystem/shell tools, which is
+    why the resolver PREPENDS the cwd-coupled platform provider rather than reading the
+    registry alone — see ``_platform_provider_for_invoke`` for why it is not registered and
+    what #3310 measured when this route was the one consumer that skipped it.
 
     "The same surface the agent has" includes the user's tool preferences: a tool disabled
     on the Tools page is refused here with ``403 tool_disabled``, exactly as the runtime
@@ -321,6 +382,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     per-invocation downgrade keeps a read-only ``bash`` in the free tier — see the gate
     itself for why the scope stops exactly there.
     """
+    from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
     from personalclaw.tool_providers.registry import get_provider, list_providers
 
     try:
@@ -370,16 +432,38 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "provider must be a string"}, status=400)
     provider_name = provider_raw or ""
 
+    # The cwd-coupled platform provider, built for this call — see
+    # `_platform_provider_for_invoke` for why it is not in the registry and why this route
+    # has to prepend it (#3310). Built once here: both resolver arms need it, and it is a
+    # cheap constructor (no I/O beyond resolving the workspace root).
+    platform, platform_refusal = _platform_provider_for_invoke()
+
     # Resolve the provider: explicit name, else the first provider advertising the tool.
     provider = None
     if provider_name:
+        # REGISTRY FIRST, platform as the fallback for its own name. The two namespaces are
+        # disjoint in production — `tool_prefs.LOCKED_PROVIDERS` reserves
+        # `personalclaw-filesystem` for the platform bundle and nothing registers it — so
+        # this order changes no existing by-name resolution; it only adds the one name the
+        # registry can never answer for.
         provider = get_provider(provider_name)
+        if provider is None and platform is not None and platform.name == provider_name:
+            provider = platform
         if provider is None:
+            # A request that named the platform provider while the workspace is unresolved
+            # gets the refusal that explains itself, not "unknown provider" — the provider
+            # exists; the folder it would run in does not.
+            if platform_refusal and provider_name == "personalclaw-filesystem":
+                return json_error("workspace_unresolved", message=platform_refusal, status=503)
             return web.json_response(
                 {"ok": False, "error": f"unknown tool provider: {provider_name}"}, status=404
             )
     else:
-        for p in list_providers():
+        # PLATFORM FIRST, matching `provider_bridge`'s own `[platform, *list_providers()]`:
+        # the nine platform tools are the primitives, and a later-registered provider
+        # reusing one of their names must not capture a call the agent would have served
+        # from the bundle.
+        for p in ([platform] if platform is not None else []) + list_providers():
             try:
                 if any(t.name == tool_name for t in await p.list_tools()):
                     provider = p
@@ -387,6 +471,10 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             except Exception:
                 continue
     if provider is None:
+        # Same distinction as above for the no-provider arm: if the tool we could not find
+        # is one the platform bundle owns, the workspace is why — say so.
+        if platform_refusal and tool_name in PLATFORM_TOOL_NAMES:
+            return json_error("workspace_unresolved", message=platform_refusal, status=503)
         return web.json_response({"ok": False, "error": f"tool not found: {tool_name}"}, status=404)
 
     # Resolve the tool's own definition once: both the user-disabled gate below and the
