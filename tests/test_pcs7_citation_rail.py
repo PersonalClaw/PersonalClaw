@@ -50,13 +50,13 @@ SRC = Path(personalclaw.__file__).parent
 # (module path relative to the package, start, end, token the docstring CLAIMS is there,
 #  how the citation is spelled in the prose).
 #
-# ``:715-717`` is cited as a bare "twin" continuation of the preceding anthropic.py
+# ``:730-732`` is cited as a bare "twin" continuation of the preceding anthropic.py
 # citation, so its prose spelling carries no path. That is deliberate in the docstring and
 # the table mirrors it rather than normalising it away.
 _CITATIONS = (
     ("stats.py", 43, 44, "cache_read_tokens", "stats.py:43-44"),
     ("llm/anthropic.py", 539, 541, "input_tokens = it", "llm/anthropic.py:539-541"),
-    ("llm/anthropic.py", 725, 727, "input_tokens = it", ":725-727"),
+    ("llm/anthropic.py", 730, 732, "input_tokens = it", ":730-732"),
     ("llm/anthropic.py", 85, 99, "cache_read_input_tokens", "llm/anthropic.py:85-99"),
     ("pricing.py", 106, 113, "cache_read_rate", "pricing.py:106-113"),
     ("usage_ledger.py", 197, 200, "cache_creation_tokens", "usage_ledger.py:197-200"),

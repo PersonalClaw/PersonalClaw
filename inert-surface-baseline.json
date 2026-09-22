@@ -259,7 +259,7 @@
       ]
     },
     "src/personalclaw/sdk/model.py": {
-      "inert": 10,
+      "inert": 9,
       "surfaces": [
         "sdk_export:AnthropicProvider",
         "sdk_export:CredentialMissing",
@@ -267,7 +267,6 @@
         "sdk_export:MediaModel",
         "sdk_export:ModelCatalog",
         "sdk_export:OpenAIProvider",
-        "sdk_export:model_context_window",
         "sdk_export:openai_compatible_list_models",
         "sdk_export:register_media_catalog",
         "sdk_export:register_scanner"
@@ -423,9 +422,9 @@
       "config_reader": 13,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 204,
+      "sdk_export": 203,
       "trigger_kind": 0
     },
-    "inert": 225
+    "inert": 224
   }
 }

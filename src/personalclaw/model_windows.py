@@ -17,15 +17,30 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 # What a LOCAL runtime actually SERVES, as opposed to what the model's architecture
 # allows. Every ``model_tokens.json`` entry for a local family is the architectural
 # maximum (``llama3.1`` 128000, ``qwen2.5`` 32000, ``mistral`` 32000); the window a
-# loopback runtime hands out is its own ``num_ctx`` / ``--ctx-size``, and Ollama — the
-# local runtime :func:`personalclaw.guardrails.model_call._is_local_provider` detects —
-# defaults that to 4096. Resolving the architectural number for a locally-served model
-# overstates the window by up to ~31x, which is not a cosmetic error: a compaction
-# trigger expressed as a fraction of the window becomes arithmetically unreachable, so
-# history grows unbounded until the provider rejects the turn outright. 4096 is the
-# SERVED default, so it is the honest answer for a local binding that declares nothing.
-# An operator serving more (or less) declares it back through the per-binding
-# ``context_window`` override — see :func:`declared_context_window`.
+# loopback runtime hands out is its own ``num_ctx`` / ``--ctx-size``, which is a
+# DEPLOYMENT choice and not a property of the model. Resolving the architectural number
+# for a locally-served model overstates the window by up to ~31x, which is not a
+# cosmetic error: a compaction trigger expressed as a fraction of the window becomes
+# arithmetically unreachable, so history grows unbounded until the provider rejects the
+# turn outright.
+#
+# 🪤 This constant is a deliberately CONSERVATIVE FLOOR, not a measurement, and an
+# earlier version of this comment claimed otherwise ("Ollama defaults that to 4096").
+# That is false on current Ollama: measured against 0.34.2, `/api/show` reported an
+# architectural 262144 and `/api/ps` reported an actually-served 32768 for the same
+# model, against a table entry of 128000. The floor is chosen for its ASYMMETRY, which
+# is what makes guessing low safe and guessing high not: a too-LARGE denominator means
+# silent prompt truncation with no exception at all (measured: HTTP 200 and a quietly
+# shortened prompt — there is nothing for the reactive recovery path to catch), while a
+# too-SMALL one only compacts earlier than necessary. So it stays small on purpose, and
+# tests/test_model_windows.py pins it inside 2048..8192 to keep it that way.
+#
+# The honest served number is not guessable from here, so it arrives by declaration:
+# an operator serving more (or less) declares it through the per-binding
+# ``context_window`` override (:func:`declared_context_window`), and a provider whose
+# runtime PUBLISHES its served window probes for it in the provider's own app — the
+# bundled ``ollama-models`` app reads `/api/ps` — because that probe is vendor-specific
+# and core stays provider-agnostic.
 LOCAL_SERVED_CONTEXT_WINDOW = 4096
 
 _TOKENS_FILE = Path(__file__).resolve().parent / "model_tokens.json"
@@ -53,12 +68,25 @@ def declared_context_window(value: object) -> int | None:
     ONE reader for "did this binding declare its served window?", so the provider
     adapters (which pop it out of their options bag) and the consumers that pass it back
     in here agree on the answer. A positive int is a declaration; ``bool`` is excluded
-    because ``True`` is not a window; ``0``, ``None`` and anything non-numeric mean
+    because ``True`` is not a window; ``0``, ``None`` and anything uncoercible mean
     UNDECLARED, i.e. resolve from the table as usual.
+
+    🪤 A numeric STRING is a declaration, because that is what the write path actually
+    stores: Settings persists provider options verbatim from the form, so a real dev home
+    carries ``"context_window": "32768"``. An ``isinstance(value, (int, float))`` test is
+    False for every value a user has ever typed, which would make this override a knob
+    with no reader on its only user-facing path — the identical defect the sibling
+    ``timeout_secs`` option shipped with (see ``_timeout_or_default`` in the bundled
+    ``ollama-models`` app, which documents the measured 60s-instead-of-900s symptom).
+    Garbage still reads as undeclared rather than raising: a malformed option must not
+    make a provider unbuildable.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or value is None:  # bool is an int subclass; not a window
         return None
-    window = int(value)
+    try:
+        window = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
     return window if window > 0 else None
 
 
@@ -77,6 +105,16 @@ def model_context_window(
     ``override`` is the per-binding escape hatch and wins over every other answer,
     including ``local`` — an operator who declared the served window knows it better
     than any default here can.
+
+    🪤 The two keywords are NOT interchangeable and they reach different call sites.
+    ``override`` is a truth claim, so it is honoured on both the char-ESTIMATE path and
+    the provider-MEASURED gauge (``llm/openai.py`` / ``llm/anthropic.py`` pass it when
+    turning a real ``input_tokens`` into a percentage). ``local`` is only a conservative
+    floor for the estimate, and the measured gauges deliberately do NOT pass it: a real
+    26682-token prompt divided by :data:`LOCAL_SERVED_CONTEXT_WINDOW` displays 651%,
+    which fabricates a measurement in the opposite direction from the bug the floor
+    exists to prevent. Estimates may err toward compacting early; a displayed
+    measurement may not err at all.
 
     ``local`` says the binding is served by a LOCAL runtime, and it short-circuits the
     WHOLE resolution to :data:`LOCAL_SERVED_CONTEXT_WINDOW` rather than fronting one

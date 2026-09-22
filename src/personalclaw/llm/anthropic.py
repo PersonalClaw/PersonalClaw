@@ -630,7 +630,12 @@ class AnthropicProvider(ModelProvider):
             )
 
         if input_tokens > 0:
-            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW)
+            # ``override=`` and deliberately NOT ``local=``: the binding's declaration is
+            # truth for a measured percentage, while the conservative local floor is only
+            # a denominator for the char ESTIMATE — dividing a real token count by it
+            # would over-report (see the matching note in llm/openai.py, #2364). With no
+            # declaration this is byte-identical to the plain table lookup.
+            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
             self._last_context_pct = (input_tokens / ctx) * 100
 
         if assistant_text:
@@ -811,7 +816,10 @@ class AnthropicProvider(ModelProvider):
 
         context_pct: float | None = None
         if input_tokens > 0:
-            ctx = _model_window(model or self._model, _DEFAULT_CONTEXT_WINDOW)
+            # ``override=`` only — see the note at the streaming gauge above.
+            ctx = _model_window(
+                model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
+            )
             context_pct = (input_tokens / ctx) * 100
 
         yield LLMEvent(

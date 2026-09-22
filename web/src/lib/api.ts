@@ -4286,7 +4286,12 @@ export interface ModelProviderTypeField {
   type?: string
   default?: string
   enum?: string[]
-  'x-meta'?: { label?: string; help?: string; sensitive?: boolean; tags?: string[] }
+  // Bounds on a numeric setting. Declared by manifests (ollama-models' `context_window`
+  // carries `minimum: 1`) and honoured by both schema renderers, so a field the manifest
+  // says is a positive integer cannot be typed as prose into a text box.
+  minimum?: number
+  maximum?: number
+  'x-meta'?: { label?: string; help?: string; placeholder?: string; sensitive?: boolean; tags?: string[] }
 }
 // Ollama model management (#48). Local = downloaded on the host; search = library candidates.
 export interface OllamaLocalModel {

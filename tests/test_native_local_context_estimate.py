@@ -1,13 +1,21 @@
 """Rail: the native no-usage backstop divides by the window a LOCAL runtime SERVES (#2364).
 
-`_estimated_context_pct` is the compaction trigger for providers that report no usage —
-which is, in practice, the local ones: a loopback endpoint that rejects `stream_options`
-never delivers a usage chunk, so `_last_context_pct` stays `None` forever and the char
-estimate is the only thing that can ever cross `_COMPACT_THRESHOLD_PCT`.
+`_estimated_context_pct` is the compaction trigger for providers that report no usage: an
+OpenAI-compatible endpoint that rejects `stream_options` never delivers a usage chunk, so
+`_last_context_pct` stays `None` forever and the char estimate is the only thing that can
+ever cross `_COMPACT_THRESHOLD_PCT`.
+
+🪤 "No usage" is NOT the same as "local", and conflating the two is how this bug survived a
+green suite. Ollama — the runtime the loopback guard is aimed at — reports
+`prompt_eval_count` on every turn, so a real Ollama binding takes the MEASURED branch and
+never reaches anything this file's first two classes assert.
+`TestALocalProviderThatDoesReportUsage` at the bottom covers that half; a green drive
+against a live local model exercises only that class.
 
 It divided by `model_context_window(agent_model)`, and for a local model that table holds
-the ARCHITECTURAL maximum: `llama3.1:8b` reads `llama3.1`'s 128000 while Ollama serves its
-own `num_ctx`, 4096 by default. The estimate was therefore ~31x too small, and the backstop
+the ARCHITECTURAL maximum: `llama3.1:8b` reads `llama3.1`'s 128000 while the runtime serves
+its own, smaller `num_ctx` (measured on Ollama 0.34.2: 32768 served against 262144
+architectural). The estimate was therefore many times too small, and the backstop
 was not merely inaccurate — it was unreachable: a history that had already overflowed the
 real window scored ~3%, so compaction never fired and history grew until the provider
 rejected the turn outright. (That rejection is the failure the sibling change recovers
@@ -111,7 +119,14 @@ class TestTheBackstopIsReachable:
     def test_a_local_history_over_the_served_window_is_compacted(self):
         rt = _runtime(_Model("http://127.0.0.1:11434/v1"))
         rt._messages = _convo(6)
-        assert rt._last_context_pct is None, "a local endpoint reports no usage — the premise"
+        # 🪤 This asserts the STUB's contract, not a property of local endpoints. An earlier
+        # version of this line read "a local endpoint reports no usage — the premise", which
+        # is false and is why a green suite proved less than it looked like it did: Ollama
+        # reports ``prompt_eval_count`` on every turn, so on a real local binding
+        # ``_last_context_pct`` is NOT None and this whole estimate path never runs. The
+        # measured arm below covers that half; here the point is only that the runtime is in
+        # the unmeasured state, so what follows exercises the backstop rather than the gauge.
+        assert rt._last_context_pct is None, "the stub reports no usage — unmeasured state"
         before = total_chars(rt._messages)
         rt._maybe_compact()
         assert total_chars(rt._messages) < before
@@ -134,6 +149,63 @@ class TestTheBackstopIsReachable:
         rt._maybe_compact()
         assert total_chars(rt._messages) == before
         assert rt._compaction_saves == []
+
+
+class TestALocalProviderThatDoesReportUsage:
+    """🪤 The other half, and the one a green Ollama drive cannot prove.
+
+    This file's premise — "local means no usage" — is only true of an OpenAI-compatible
+    endpoint that rejects ``stream_options``. Ollama, the local runtime the guard sniffs
+    for, reports ``prompt_eval_count`` on every single turn, so on a real local binding
+    the gauge is a number and the estimate path above is dead code. Both arms therefore
+    have to exist: driving a live Ollama exercises only THIS class, and a green drive is
+    not evidence that the backstop works.
+
+    Which is exactly how the defect survived: the bundled Ollama provider reported a
+    fabricated ``0.0`` rather than ``None``, so ``_maybe_compact`` took the measured
+    branch with a number that could never cross the threshold, while the estimate the
+    tests above cover was unreachable by construction.
+    """
+
+    def test_a_measured_gauge_is_used_instead_of_the_estimate(self):
+        rt = _runtime(_Model("http://127.0.0.1:11434/v1"))
+        rt._messages = _convo(6)
+        # What a real Ollama turn leaves behind: input tokens over the SERVED window.
+        rt._last_context_pct = 81.43
+        before = total_chars(rt._messages)
+        rt._maybe_compact()
+        after = total_chars(rt._messages)
+        assert after < before
+        # The gauge stays MEASURED, scaled by what the pass actually reclaimed (the
+        # documented optimistic reset in `_compact_now`) — it is not replaced by an
+        # estimate and it does not fall back to `None`. Asserted as the scaling rule
+        # rather than a literal so it cannot be satisfied by an unrelated number.
+        assert rt._last_context_pct == pytest.approx(81.43 * (after / before))
+        assert rt._last_context_pct is not None
+
+    def test_a_fabricated_zero_suppresses_compaction_entirely(self):
+        """The defect, stated as a rail. ``0.0`` fails the threshold AND is not ``None``,
+        so it also makes the backstop unreachable: a history that the unmeasured arm above
+        compacts is left untouched here. This is why the fix is ``None``, not a smaller
+        number — any fabricated value disables both paths at once."""
+        rt = _runtime(_Model("http://127.0.0.1:11434/v1"))
+        rt._messages = _convo(6)
+        rt._last_context_pct = 0.0
+        before = total_chars(rt._messages)
+        rt._maybe_compact()
+        assert total_chars(rt._messages) == before
+        assert rt._compaction_saves == []
+
+    def test_the_same_history_unmeasured_is_compacted(self):
+        """The discriminating control for the pair above: identical history, gauge
+        ``None`` instead of ``0.0``, and the backstop fires. The ONLY difference between
+        these two tests is the fabricated zero."""
+        rt = _runtime(_Model("http://127.0.0.1:11434/v1"))
+        rt._messages = _convo(6)
+        rt._last_context_pct = None
+        before = total_chars(rt._messages)
+        rt._maybe_compact()
+        assert total_chars(rt._messages) < before
 
 
 def _convo(n_tool_rounds: int, tool_size: int = 2000) -> list[dict]:

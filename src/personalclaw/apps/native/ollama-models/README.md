@@ -56,6 +56,27 @@ any other app. (Or `POST /api/apps {"source": ".../apps/ollama-models"}`.)
 | `default_model` | Default Model | Model to use when no specific model is requested. Leave empty to use the first available. |
 | `embedding_model` | Embedding Model | Ollama model to use for embedding operations. Leave empty to use sentence-transformers instead. |
 | `timeout_secs` | Request Timeout | Maximum seconds to wait for a response from Ollama. |
+| `context_window` | Served Context Window | Tokens this endpoint actually serves (Ollama's `num_ctx`). Leave blank to detect it. |
+
+### The context window
+
+The window a local runtime serves is a **deployment** choice, not a property of the model,
+and it is usually far below the model's architectural maximum — measured on Ollama 0.34.2,
+one model reported a 262144-token architecture while serving 32768. PersonalClaw sizes the
+context gauge and the compaction trigger against the served number, so getting it wrong is
+not cosmetic: too large and the 70% compaction gate is never crossed, history grows, and
+Ollama silently truncates the prompt (HTTP 200, no error to catch).
+
+This provider resolves it in three steps, most authoritative first:
+
+1. **`context_window`, if you set it.** Set this whenever you run Ollama with an explicit
+   `num_ctx` (or `OLLAMA_CONTEXT_LENGTH`) — you know the number and no probe can beat it.
+2. **`GET /api/ps`**, which reports the window the model was actually loaded with. This is
+   the number neither the model table nor `/api/show` has — both return the architectural
+   maximum. Probed after the first turn (the endpoint lists only *loaded* models) and
+   memoized, since the served window cannot change without a reload.
+3. **A conservative default** when the runtime says nothing. Deliberately small: compacting
+   early is wasteful, whereas overestimating truncates the prompt with no error at all.
 
 ## License
 
