@@ -33,11 +33,18 @@ vi.mock('../lib/api', () => ({
     theme: () => new Promise(() => {}),
   },
 }))
-vi.mock('./identity', () => ({
-  useIdentity: () => ({ setName }),
-  firstNameOf: (n: string) => n.split(' ')[0],
-  DEFAULT_USER_NAME: 'Operator',
-}))
+vi.mock('./identity', async (orig) => {
+  // PARTIAL mock, so the real `suggestHandle` runs: it is the rule the handle field shows,
+  // and a stub would let these tests pass while the operator saw something else. The full
+  // mock this replaced also had to be edited every time the module gained an export.
+  const real = await orig<typeof import('./identity')>()
+  return {
+    ...real,
+    // `username` is the STORED handle the flow seeds its handle field from (TSE-1);
+    // '' is a fresh install, which is what these tests are.
+    useIdentity: () => ({ setName, username: '' }),
+  }
+})
 // The 3D backdrop needs a real canvas; the flow's logic does not.
 vi.mock('../ui/DotGlow', () => ({ DotGlow: () => null }))
 // PEP-5's import step, stubbed like its siblings: this file tests the SHELL's resume writes,
@@ -159,7 +166,10 @@ describe('every step transition persists its resume point', () => {
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' }))
     // `onboarded` is derived from a non-empty server name, so committing it is what
     // closes the flow — it must happen after the terminal step is recorded.
-    expect(setName).toHaveBeenCalledWith('Ada Lovelace')
+    // TWO arguments since TSE-1: the attribution handle rides along in the SAME write, so
+    // the name and the handle cannot disagree about whether first run happened. The second
+    // is the suggestion the untouched field was visibly showing.
+    expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace')
     // Still exactly three resume points, because `STEPS` in `onboarding.py` has no id between
     // `first_success` and `done`: OU-3's step IS `first_success`, so leaving it for the recap
     // writes nothing new and a user who reloads on the recap resumes at the unfinished step.
@@ -310,7 +320,9 @@ describe('skip at any step lands in a working dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Skip setup/ }))
     // Identity is what releases the route guard, so a skip that did not commit it would
     // leave the user pinned to the onboarding screen forever.
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator'))
+    // The handle is '' rather than a slug of the default name: the guard needs a non-empty
+    // NAME, nothing needs a handle, and a skipped run must not be stamped `operator` (TSE-1).
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator', ''))
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
     // …and the rail marker is written, so the skipper gets the starter rail like anyone else.
     expect(readNavDisclosure().mode).toBe('starter')
@@ -326,7 +338,9 @@ describe('skip at any step lands in a working dashboard', () => {
     await enterNameAndImport()
     expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup and go to the dashboard' }))
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace'))
+    // Both halves of identity survive the skip: the name that was typed, and the handle the
+    // untouched field was showing when the name step was passed (TSE-1).
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace'))
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
   })
 

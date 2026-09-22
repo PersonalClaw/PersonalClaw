@@ -31,11 +31,18 @@ vi.mock('../../lib/api', () => ({
     personalclawConfig: () => new Promise(() => {}),
   },
 }))
-vi.mock('../identity', () => ({
-  useIdentity: () => ({ setName }),
-  firstNameOf: (n: string) => n.split(' ')[0],
-  DEFAULT_USER_NAME: 'Operator',
-}))
+vi.mock('../identity', async (orig) => {
+  // PARTIAL mock, so the real `suggestHandle` runs: it is the rule the handle field shows,
+  // and a stub would let these tests pass while the operator saw something else. The full
+  // mock this replaced also had to be edited every time the module gained an export.
+  const real = await orig<typeof import('../identity')>()
+  return {
+    ...real,
+    // `username` is the STORED handle the flow seeds its handle field from (TSE-1);
+    // '' is a fresh install, which is what these tests are.
+    useIdentity: () => ({ setName, username: '' }),
+  }
+})
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 // PEP-5's import step, stubbed to its escape hatch for the same reason — `importStep.test.tsx`
 // owns its own behaviour, and un-stubbed it would fetch a scan on mount.
@@ -103,7 +110,8 @@ describe('the done screen points at the Inbox with a link that can leave the flo
     fireEvent.click(screen.getByRole('button', { name: 'Open the Inbox instead' }))
     // Not a navigation: the guard owns where a just-onboarded user goes (see exitTo.ts).
     expect(peekOnboardingExit()).toBe('inbox')
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace'))
+    // The second argument is TSE-1's attribution handle, committed in the same write.
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace'))
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
   })
 })

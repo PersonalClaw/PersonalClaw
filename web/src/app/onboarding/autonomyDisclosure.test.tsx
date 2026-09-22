@@ -38,11 +38,18 @@ vi.mock('../../lib/api', () => ({
     theme: () => new Promise(() => {}),
   },
 }))
-vi.mock('../identity', () => ({
-  useIdentity: () => ({ setName }),
-  firstNameOf: (n: string) => n.split(' ')[0],
-  DEFAULT_USER_NAME: 'Operator',
-}))
+vi.mock('../identity', async (orig) => {
+  // PARTIAL mock, so the real `suggestHandle` runs: it is the rule the handle field shows,
+  // and a stub would let these tests pass while the operator saw something else. The full
+  // mock this replaced also had to be edited every time the module gained an export.
+  const real = await orig<typeof import('../identity')>()
+  return {
+    ...real,
+    // `username` is the STORED handle the flow seeds its handle field from (TSE-1);
+    // '' is a fresh install, which is what these tests are.
+    useIdentity: () => ({ setName, username: '' }),
+  }
+})
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 vi.mock('./ImportStep', () => ({
   ImportStep: ({ onSkip }: { onSkip: () => void }) => (

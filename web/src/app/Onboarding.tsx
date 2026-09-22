@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
@@ -13,7 +13,7 @@ import { Toggle } from '../ui/Toggle'
 import { ScalarControl } from '../ui/TokenControls'
 import { TOKENS, type ScalarToken } from '../design/tokenRegistry'
 import { spring, stagger, listItemEnter } from '../design/motion'
-import { useIdentity, firstNameOf, DEFAULT_USER_NAME } from './identity'
+import { useIdentity, firstNameOf, suggestHandle, DEFAULT_USER_NAME } from './identity'
 import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
@@ -74,10 +74,32 @@ const BOUNCINESS = TOKENS.find((t) => t.varName === '--bounciness') as ScalarTok
  *  Those writes are what OU-4's resume reads; the progress POST is fire-and-forget on
  *  purpose — a failed write must never block a user's first run. */
 export function Onboarding() {
-  const { setName } = useIdentity()
+  const { setName, username: storedHandle } = useIdentity()
   const [step, setStep] = useState<StepId>('name')
   const [name, setNameDraft] = useState('')
   const [savedName, setSavedName] = useState('')
+  /** The attribution handle (`dashboard.username`), asked for HERE rather than only in
+   *  Settings → Account — a handle that first run never mentions is one almost nobody
+   *  ever sets, and records written before it exists cannot be attributed afterwards
+   *  (TEAM-SHARED-ENTITIES §1: a rename affects future writes only).
+   *
+   *  Untouched, the field SHOWS a suggestion derived from the display name as it is
+   *  typed. `handleTouched` is what makes it the operator's once they edit it —
+   *  INCLUDING when they clear it. An empty handle is a legitimate end state ("leave it
+   *  empty to keep records unattributed"), so a suggestion that grew back over a
+   *  deliberate clear would fabricate the one value this field must never invent. */
+  /** Seeded from the STORED handle, not empty: a re-run of the flow ("Restart onboarding"
+   *  in Settings → Account) must offer back the handle this install already has rather
+   *  than a fresh suggestion, or finishing would silently replace a deliberate handle
+   *  with one derived from the name. Seeding as `touched` is the same rule — the
+   *  suggestion may not overwrite a choice already made.
+   *
+   *  Reading the context value as INITIAL state is safe because `App` renders a spinner
+   *  until `loaded` (App.tsx:448), so the identity fetch has already resolved by the
+   *  time this component first mounts. */
+  const [handle, setHandleDraft] = useState(storedHandle)
+  const [handleTouched, setHandleTouched] = useState(storedHandle.length > 0)
+  const [savedHandle, setSavedHandle] = useState(storedHandle)
   const [readiness, setReadiness] = useState<OnboardingState | null>(null)
   const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
   const [triedSummary, setTriedSummary] = useState<string>('')
@@ -142,7 +164,14 @@ export function Onboarding() {
     // BACKWARDS — recording `essentials` for a run already at `first_success` would lose a
     // step of progress on the next reload.
     const target = resume ?? 'import'
-    setSavedName(n); setStep(target)
+    setSavedName(n)
+    // Capture the handle at the same moment as the name: this is the last render on
+    // which the field is on screen, and `finish()` — several steps later — is what
+    // writes it. An untouched field commits the suggestion it was VISIBLY showing, so
+    // what lands is what the operator saw and accepted, never a value computed behind
+    // them from a name they might still have edited.
+    setSavedHandle(handleTouched ? handle.trim() : suggestHandle(n))
+    setStep(target)
     // The import step is deliberately NOT a stored resume point (`STEPS` has no id for it,
     // exactly as it has none between `first_success` and `done`). It does not need one: item
     // identity is a fingerprint and the importer keeps a ledger of what it wrote, so a run
@@ -186,7 +215,18 @@ export function Onboarding() {
     // can never disagree, and abandoning the flow leaves no record behind.
     setNavMode(showEverything ? 'expert' : 'starter')
     // commit identity LAST so the gate (`onboarded`) flips only on completion
-    setName(savedName || DEFAULT_USER_NAME)
+    //
+    // The handle rides along in the SAME write — one act commits identity, so the name
+    // and the handle can never disagree about whether first run happened. It is passed
+    // explicitly (rather than derived server-side from `user_name`) because only a
+    // surface that ASKED may send one: see `setName` in app/identity.
+    //
+    // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup
+    // from the first step falls back to DEFAULT_USER_NAME for the name because the route
+    // guard needs a non-empty one, but there is no equivalent need for a handle and
+    // `slugify_username` never invents a fallback — so a skipped run commits '' and the
+    // records it writes stay unattributed, which is the shipped promise.
+    setName(savedName || DEFAULT_USER_NAME, savedHandle)
   }
   /** Leave setup unfinished, from any step. The flow is guidance, never a gate, and the two
    *  in-step escapes ("Set up later", "Skip this") only move to the NEXT step — a user who
@@ -252,10 +292,15 @@ export function Onboarding() {
               silently removed the announcement this screen already relies on. */}
           <ol className="flex w-full list-none flex-col gap-2 p-0">
             <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
-              subtitle="How the system addresses you. Saved on the server, so it follows you across devices."
-              state={stateOf('name')} doneSummary={savedName ? `${savedName}` : undefined}
+              subtitle="How the system addresses you, plus the handle your records carry. Saved on the server, so it follows you across devices."
+              state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
               onActivate={() => setStep('name')}>
-              <NameStep value={name} onChange={setNameDraft} onSubmit={commitName} />
+              {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
+                  so it tracks the name as it is typed; the first edit (clearing included)
+                  makes it the operator's and stops the tracking. */}
+              <NameStep value={name} onChange={setNameDraft} onSubmit={commitName}
+                handle={handleTouched ? handle : suggestHandle(name)}
+                onHandleChange={(v) => { setHandleTouched(true); setHandleDraft(v) }} />
             </StepRow>
 
             {/* PEP-5 — adopt another local agent tool's setup. It sits BEFORE essentials
@@ -324,21 +369,83 @@ export function Onboarding() {
   )
 }
 
-/** Step 1 — name (pill input with focus glow, Enter/arrow to advance). */
-function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: string) => void; onSubmit: () => void }) {
+/** Step 1 — name + attribution handle (pill inputs with focus glow, Enter/arrow to advance).
+ *
+ *  The handle sits BESIDE the display name rather than in Settings only, because it is the
+ *  one identity field that cannot be applied retroactively: a rename affects future writes
+ *  only (TEAM-SHARED-ENTITIES §1), so every record created before the handle exists is
+ *  permanently unattributed. First run is the only moment at which asking costs nothing.
+ *
+ *  It is a SUGGESTION, never a requirement — the Continue button stays gated on the name
+ *  alone, and clearing the handle is a supported answer that means "keep my records
+ *  unattributed". So this step gained a field without gaining a gate. */
+function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
+  value: string
+  onChange: (v: string) => void
+  onSubmit: () => void
+  handle: string
+  onHandleChange: (v: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-s">
+      <PillField value={value} onChange={onChange} onEnter={onSubmit} autoFocus
+        ariaLabel="Your name" placeholder="Your name"
+        trailing={
+          <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
+            {...unavailableWhen(!value.trim(), 'Enter your name first')}
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+            style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }} aria-label="Continue">
+            <ArrowRight size={17} />
+          </motion.button>
+        } />
+      {/* The hint is wired with `aria-describedby` rather than left as adjacent prose: the
+          rule it states (normalized, optional, not a login) is the whole reason an operator
+          would leave this empty on purpose, and a screen-reader user who only hears the
+          label "Username" has no way to reach it. */}
+      <PillField value={handle} onChange={onHandleChange} onEnter={onSubmit}
+        ariaLabel="Username" placeholder="your-handle" describedBy="onboarding-handle-hint" />
+      <p id="onboarding-handle-hint" data-type="caption" className="px-m leading-relaxed" style={{ color: 'var(--color-on-surface-low)' }}>
+        Optional. A short handle stamped onto things you create, so contributions stay
+        attributable later — a label, not a login. Leave it empty to keep records
+        unattributed.
+      </p>
+    </div>
+  )
+}
+
+/** The flow's pill-shaped text field — the identity step's own chrome, now that the step asks
+ *  two questions instead of one.
+ *
+ *  Extracted rather than copied: the two fields sit directly above one another, so a second copy
+ *  of the six-class wrapper plus the six-class input would be visible drift the moment either one
+ *  was touched. It also keeps `primitiveAdoption`'s raw-input ratchet flat — one `<input>`, two
+ *  uses — which is what that rail asks for (`ui/FilterChip`'s note records the same move).
+ *
+ *  NOT `ui/forms`' `TextInput`: this is a 17px pill on a glowing backdrop with a submit button
+ *  living INSIDE the field, and the shared family is a settings-row control (fixed sizes, `rounded-md`,
+ *  its own surface tokens). Adopting it here would mean overriding all of it — the case
+ *  `primitiveAdoption.baseline.json` already records twice. Local to this file for the same reason:
+ *  the flow is its only caller, and `ui/` is for chrome more than one surface actually shares. */
+function PillField({ value, onChange, onEnter, ariaLabel, placeholder, describedBy, autoFocus, trailing }: {
+  value: string
+  onChange: (v: string) => void
+  onEnter: () => void
+  ariaLabel: string
+  placeholder: string
+  describedBy?: string
+  autoFocus?: boolean
+  /** Rendered inside the pill, after the input — the name field's submit arrow. */
+  trailing?: ReactNode
+}) {
   return (
     <div className="flex items-center gap-s rounded-pill bg-surface-high px-s py-1.5 ring-1 ring-outline/40 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-      <input autoFocus value={value} onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
-        aria-label="Your name"
-        placeholder="Your name"
+      <input autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onEnter() }}
+        aria-label={ariaLabel}
+        aria-describedby={describedBy}
+        placeholder={placeholder}
         className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
-      <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
-        {...unavailableWhen(!value.trim(), 'Enter your name first')}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
-        style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }} aria-label="Continue">
-        <ArrowRight size={17} />
-      </motion.button>
+      {trailing}
     </div>
   )
 }
