@@ -358,6 +358,14 @@ personalclaw = [
     # line makes `load_token_lint_rules()` raise rather than pass everything — loud,
     # not silently permissive, which is the direction this atom cares about.
     "apps/token_lint_rules.json",
+    # …and the BEHAVIOURAL pin beside it (#3337). The four patterns are data, so parity is
+    # byte-equality; deciding which text on a line is CODE is a LEXER, which cannot be
+    # shared as data, so it exists twice (`stripComments` / `strip_comments`) and its
+    # behaviour is pinned by a shared case file instead. It ships with the rule it pins so
+    # the apps-repo CI can check its wheel's lint the same way the host does — a wheel
+    # carrying the patterns but not the cases could drift the comment semantics silently,
+    # which is the half of the gate an app author actually trips.
+    "apps/token_lint_comment_cases.json",
     # The shipped BYO-runner catalog (EXECUTION-ISOLATION §3.1, EI-5). Settings → Agents
     # renders one row per definition, so a wheel without this line ships an EMPTY runner
     # catalog: no Claude Code / Codex / Gemini CLI / Kiro rows, no adapter verification to

@@ -41,7 +41,9 @@ from personalclaw.apps.quality import (
     load_token_lint_rules,
     main,
     run_bundle_tests,
+    strip_comments,
     token_lint_bundle,
+    token_lint_file,
     verify_app,
     verify_tree,
 )
@@ -268,6 +270,87 @@ class TestDesignSystemAxis:
         # …and the rule is not vacuous: the dirty file still fails.
         (d / "ui" / "src" / "index.tsx").write_text(_DIRTY_TSX, encoding="utf-8")
         assert list(token_lint_bundle(d)) == ["ui/src/index.tsx"]
+
+
+# --------------------------------------------------------------------------- #
+# Comment state — the block-comment tracker, and its parity with the TS twin
+# --------------------------------------------------------------------------- #
+
+#: BEHAVIOURAL parity pin, read by BOTH languages' tests. A regex can be shared as data
+#: (``token_lint_rules.json``); a lexer cannot, so ``strip_comments`` exists twice and it
+#: is the BEHAVIOUR that is shared instead. See the file's own ``_comment``.
+COMMENT_CASES_PATH = Path(personalclaw.__file__).parent / "apps" / "token_lint_comment_cases.json"
+
+
+def _comment_cases() -> list[dict]:
+    data = json.loads(COMMENT_CASES_PATH.read_text(encoding="utf-8"))
+    return list(data["cases"])
+
+
+class TestCommentState:
+    """An interior line of a multi-line ``{/* … */}`` block carries no marker of its own,
+    so the old shape-based skip linted it as code — and since every decimal digit is a hex
+    digit, the ``hex`` pattern matched any 3-to-8-digit issue reference. An app author
+    citing an issue number in a block comment failed the bundle quality gate (#3337).
+    """
+
+    def test_the_shared_case_file_was_found_and_carries_both_directions(self):
+        """Vacuity floor, twice over. An empty ``cases`` list would make every
+        parametrised test below vanish and the suite would still be green; a file with
+        only ``clean_*`` cases would green a tracker that stopped catching raw hexes
+        ENTIRELY, which is the whole risk of tracking comment state."""
+        cases = _comment_cases()
+        assert len(cases) >= 10, COMMENT_CASES_PATH
+        reds = [c for c in cases if any(c["expected"])]
+        cleans = [c for c in cases if not any(c["expected"])]
+        assert len(reds) >= 5, "no positive controls — a no-op tracker would pass"
+        assert len(cleans) >= 5, "no negative controls — the bug would not be covered"
+        for c in cases:
+            assert len(c["expected"]) == len(c["lines"]), f"{c['name']}: one per line"
+            assert c["end_state"] in ("code", "block"), f"{c['name']}: end_state"
+
+    @pytest.mark.parametrize("case", _comment_cases(), ids=lambda c: c["name"])
+    def test_the_python_tracker_reaches_the_declared_verdict(self, case, tmp_path):
+        """The Python half of the parity pin. A case that reds here and passes in
+        ``tokenLintRuleParity.test.ts`` (or vice versa) is the two-dialect defect the
+        rules file exists to prevent, one layer up: the host would lint one way and an
+        app's badge would be earned another."""
+        text = "\n".join(case["lines"])
+        stripped = strip_comments(text)
+        assert len(stripped.code) == len(case["lines"]), "a line index must stay a line number"
+        assert stripped.end_state == case["end_state"], f"{case['name']}: {case['why']}"
+
+        # Drive it through the REAL entry point, not just the scanner, so the caller's
+        # wiring is covered too: token_lint_file reports "<line>: <kind> — <text>".
+        f = tmp_path / "case.tsx"
+        f.write_text(text, encoding="utf-8")
+        got: list[list[str]] = [[] for _ in case["lines"]]
+        for hit in token_lint_file(f):
+            lineno, _, rest = hit.partition(": ")
+            got[int(lineno) - 1].append(rest.split(" — ")[0])
+        assert got == [list(e) for e in case["expected"]], f"{case['name']}: {case['why']}"
+
+    def test_the_reported_text_is_the_original_line_not_the_stripped_one(self, tmp_path):
+        """A violation should read the way the author wrote it. Only the VERDICT runs on
+        comment-stripped text; reporting the stripped text would print a line the author
+        cannot find in their editor."""
+        f = tmp_path / "x.tsx"
+        f.write_text("/* why */ const c = '#abc'\n", encoding="utf-8")
+        assert token_lint_file(f) == ["1: hex — /* why */ const c = '#abc'"]
+
+    def test_an_unterminated_block_comment_is_reported_through_end_state(self, tmp_path):
+        """A stuck-open tracker reads as "the rest of the file is clean" and silently
+        stops catching raw hexes — the ONE way this change could weaken the gate rather
+        than fix it. An unterminated ``/*`` genuinely comments out the rest of the file,
+        so the clean verdict is correct; what must not be silent is the STATE."""
+        text = "/* opened and never closed\nconst c = '#abc'\n"
+        assert strip_comments(text).end_state == "block"
+        f = tmp_path / "x.tsx"
+        f.write_text(text, encoding="utf-8")
+        assert token_lint_file(f) == []
+        # The floor: close the comment and the very same line is caught again.
+        f.write_text("/* opened and closed */\nconst c = '#abc'\n", encoding="utf-8")
+        assert token_lint_file(f) == ["2: hex — const c = '#abc'"]
 
 
 # --------------------------------------------------------------------------- #
