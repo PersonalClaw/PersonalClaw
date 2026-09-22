@@ -5,7 +5,7 @@ import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, Field } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 // The editable sources.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py SourcesConfig). One master toggle + bounded integers, each PATCHed
@@ -22,14 +22,20 @@ export function SourcesPanel() {
   const [knowledgeCfg, setKnowledgeCfg] = useState<SourcesCfg | null>(null)
   const [scratchpad, setScratchpad] = useState<string | null>(null)
 
-  const { data } = useQuery('settings:sources', () =>
+  // 🔴 THE FALLBACK RENDERED DEFAULTS AS THOUGH THEY WERE THE USER'S SETTINGS (#532). A failed
+  // config read resolved into `{ sources: {}, scratchpadPath: '', knowledge: {} }`, and every
+  // control below reads its value as `cfg[key] ?? <default>` — so the whole panel painted with the
+  // master switch off, the shipped intervals and an empty scratchpad path, asserting a configuration
+  // nobody had saved. A settings form is the one surface where a fabricated value is indistinguishable
+  // from a real one, because reading it back IS how the user checks what is set.
+  const { data, error, refresh } = useQuery('settings:sources', () =>
     api.personalclawConfig().then((c) => ({
       sources: (c.sources ?? {}) as SourcesCfg,
       // planning.* and knowledge.* are sibling sections, not part of sources.*, so they are
       // fetched with the same request rather than a second round trip.
       scratchpadPath: String(((c.planning ?? {}) as Record<string, unknown>).scratchpad_path ?? ''),
       knowledge: (c.knowledge ?? {}) as SourcesCfg,
-    })).catch(() => ({ sources: {} as SourcesCfg, scratchpadPath: '', knowledge: {} as SourcesCfg })),
+    })),
     { persist: true },
   )
 
@@ -41,7 +47,10 @@ export function SourcesPanel() {
     }
   }, [data])
 
-  if (!data || !cfg || knowledgeCfg === null || scratchpad === null) return <FormSkeleton sections={4} />
+  // Before the skeleton, which a rejection also satisfies (`data` stays undefined, so `cfg` is
+  // never seeded and every test below holds) — the panel would otherwise skeleton forever.
+  if (error) return <LoadError what="source settings" error={error} onRetry={refresh} />
+  if (!data || !cfg || knowledgeCfg === null || scratchpad === null) return <FormSkeleton sections={4} what="source settings" />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error
   // (a swallowed 400 would look exactly like a successful save).

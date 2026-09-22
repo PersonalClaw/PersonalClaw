@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Scale } from 'lucide-react'
 import { api, type KnowledgeConflict } from '../../lib/api'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 
@@ -21,15 +21,25 @@ import { accentChip } from '../../design/accent'
  *  order. */
 export function ConflictPanel() {
   const [conflicts, setConflicts] = useState<KnowledgeConflict[] | null>(null)
+  // #532: the rejection used to become `[]`, and the panel then rendered "No contradictions
+  // recorded" — the single most load-bearing claim this surface makes, asserted out of a failed
+  // read. `null` already means "not loaded", so a substitute here can only ever lie.
+  const [err, setErr] = useState<unknown>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let alive = true
     api.knowledgeConflicts()
       .then((d) => { if (alive) setConflicts(d.conflicts) })
-      .catch(() => { if (alive) setConflicts([]) })
+      .catch((e) => { if (alive) setErr(e) })
     return () => { alive = false }
-  }, [])
+  }, [reloadKey])
 
+  // Error BEFORE the skeleton: on failure `conflicts` stays `null`, so the loading test below is
+  // also true and would spin forever if it came first.
+  if (err !== null) {
+    return <LoadError what="contradictions" error={err} onRetry={() => { setErr(null); setReloadKey((k) => k + 1) }} />
+  }
   if (conflicts === null) return <ListSkeleton rows={3} what="contradictions" />
   if (conflicts.length === 0) {
     return (

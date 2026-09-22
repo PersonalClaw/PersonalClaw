@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Sparkles, RefreshCw, ArrowUpRight } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { SlotEmptyState } from './kit'
+import { InlineLoadError } from '../../../ui/ListScaffold'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -26,12 +27,17 @@ import type { RouteProps } from '../../../app/useQueryState'
 export function Suggestions({ navigate }: RouteProps) {
   const [items, setItems] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  // The rejection, not a substitute for it. `.catch(() => setItems([]))` resolved a failed read
+  // into an empty list, and the branch below then told the user "No suggestions yet — they build
+  // from your activity." — an explanation of a state the server never reported.
+  const [err, setErr] = useState<unknown>(null)
 
   const load = useCallback((force = false) => {
     setLoading(true)
+    setErr(null)
     api.suggestions(force)
       .then((d) => setItems(d.suggestions ?? []))
-      .catch(() => setItems([]))
+      .catch(setErr)
       .finally(() => setLoading(false))
   }, [])
 
@@ -43,6 +49,11 @@ export function Suggestions({ navigate }: RouteProps) {
         {[0, 1, 2].map((i) => <div key={i} className="skeleton h-10 w-full rounded-lg" style={{ opacity: 1 - i * 0.2 }} />)}
       </div>
     )
+  }
+  // Error before empty: a failed read leaves `items` at its last good value (or `[]` on first
+  // paint), which satisfies the empty branch too.
+  if (err !== null) {
+    return <InlineLoadError what="your suggestions" error={err} onRetry={() => load(true)} />
   }
   if (items.length === 0) {
     return <SlotEmptyState icon={Sparkles}>No suggestions yet — they build from your activity.</SlotEmptyState>

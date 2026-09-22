@@ -113,8 +113,18 @@ const SRC = join(process.cwd(), 'src')
 //
 // So the scan is structural now: paren-match the call and look ONLY at its argument list. A comment
 // cannot pad it, and a mutation two lines down cannot be mistaken for the fetcher.
+//
+// 🪤 THE STRIPPER MUST NOT MOVE A LINE. Both replacements used to delete newlines, and every line
+// number this file reports in a failure message is counted from the STRIPPED text — so the numbers
+// drifted upward through any file with a block comment in it, and a reader sent to
+// `MemoryPanel.tsx:214` found something else there. `^\s*//` was the worse of the two: `\s` matches
+// `\n`, so a blank line followed by a comment line was consumed as ONE match and the blank line's
+// newline went with it. Measured: with `^[ \t]*//` and block comments blanked rather than removed,
+// the `lib/api.ts` control below resolves to its exact line.
 const codeOf = (abs: string) =>
-  readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  readFileSync(abs, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^[ \t]*\/\/.*$/gm, '')
 /** An absolute path as the repo-relative form the budget below is keyed on. */
 const rel = (abs: string) => abs.slice(SRC.length + 1)
 
@@ -130,6 +140,93 @@ const rel = (abs: string) => abs.slice(SRC.length + 1)
 // 2. `''` AND `""`. A fabricated empty STRING is the same lie for a scalar read that `[]` is for a
 //    list — `.catch(() => '')` on a name read paints "—" and calls it an answer.
 const SWALLOW = /\.catch\(\(\)\s*=>\s*\(?\s*(\[\]|null|undefined|\{\}|''|"")/
+
+// ── the WHOLE-FILE scanner §B's census runs on ───────────────────────────────────────────────────
+//
+// 🔴 `SWALLOW` + `cachedCalls` CAN ONLY SEE INSIDE A `useQuery(` ARGUMENT LIST, and that is a
+// structural blind spot, not a coverage gap: a file with ZERO `useQuery` calls is invisible to it
+// however many rejections it fabricates a substitute for. Measured on this branch — 18 files and 25
+// sites are in exactly that position, among them `ui/composer/MentionMenu.tsx` (the `@`-mention menu
+// said "No matching files or knowledge" on a failed search AND cached that for 30s),
+// `pages/files/browse/PathBar.tsx`, `pages/settings/DoctorPanel.tsx` and `lib/api.ts` itself. So the
+// census below scans each production file WHOLE and `SWALLOW` is kept for the one property that is
+// genuinely per-call: which consumer of a shared cache KEY poisons the others.
+//
+// 🪤 THERE ARE THREE SYNTACTIC FORMS AND THIS COUNTS TWO — deliberately, and the boundary is the
+// point, because "widen the pattern" instructions in this family keep naming one form and reading as
+// though they closed the gap:
+//
+//   A  `.catch(() => [] | null | undefined | '' | ({}))`   — expression body           93 sites
+//   B  `.catch(() => { if (alive) setX([]) })`             — braced, assigns a literal 28 sites
+//   C  `catch { }` / `.catch(() => {})`                    — empty body, no assignment  NOT counted
+//
+// C is NOT a swallow of this class. It discards a VOID rejection and fabricates nothing: localStorage
+// reads, clipboard writes, socket teardown, fire-and-forget mutations. Counting it would add ~85
+// sites that no surface renders a claim from, which is precisely the noise this file's paren-matching
+// was introduced to escape. The distinction is syntactic and exact: an unparenthesised `{}` after
+// `=>` is an empty BLOCK, a parenthesised `({})` is a fabricated object — so form A admits the second
+// and not the first.
+const SWALLOW_EMPTY = String.raw`\[\]|null\b|undefined\b|''|""|\{\s*\}`
+/** 🪤 AND THE STRUCTURED ONE, which is how the scanner's OWN blind spot was found: fixing
+ *  `settings/MemoryGraph.tsx` changed no count, because its fallback was
+ *  `.catch(() => setSelfGraph({ nodes: [], edges: [] }))` — an object literal with PROPERTIES, which
+ *  `\{\s*\}` does not match. A fabricated envelope is the same lie as a fabricated `[]` and a bigger
+ *  one: it invents the whole shape of a response. Admitting it took `origin/main` 280c175f4 from
+ *  66 files / 132 sites to 75 / 148 — 16 more sites in 9 more files, among them
+ *  `knowledge/KnowledgeGraph.tsx`, a byte-for-byte twin of the MemoryGraph site.
+ *
+ *  This is deliberately a SYNTACTIC over-approximation — it counts `({ available: false })`, which is
+ *  a capability probe's real answer. That is the design the whole section runs on: one wide rule, one
+ *  semantic veto (`RECORDS_THE_ERROR`), and every correct site sitting in the budget with a written
+ *  reason. Narrowing it instead would mean a rule that models control flow, and nobody can predict
+ *  the verdict of one of those. */
+const SWALLOW_SHAPE = String.raw`${SWALLOW_EMPTY}|\{\s*[\w'"]`
+/** Form A, anchored at the first character after `=>`. `\[\]` is not followed by `\)`, which is what
+ *  makes it CAST-TOLERANT: 21 of the 30 array-form sites in the tree are `catch(() => [] as Foo[])`,
+ *  and a selector ending in `\)` would score 9 — a 70% false negative on the single commonest shape.
+ *  Includes the inline setter (`catch(() => setX([]))`), which is the same fabrication via a state
+ *  write rather than a return. A BARE `{` after `=>` is a block and is handled below, so the object
+ *  shape is admitted only through the paren — form C stays out by construction. */
+const FABRICATES = new RegExp(
+  String.raw`^(?:\(\s*(?:${SWALLOW_SHAPE})|\[\]|null\b|undefined\b|''|""|set[A-Z]\w*\(\s*(?:${SWALLOW_SHAPE}))`,
+)
+/** Form B: somewhere in the braced body, a state setter is handed an empty or fabricated value. */
+const FABRICATES_IN_BLOCK = new RegExp(String.raw`set[A-Z]\w*\(\s*(?:${SWALLOW_SHAPE})`)
+/** …UNLESS the same body also records the rejection. This veto is load-bearing: without it the
+ *  census counts `.catch((e) => { setSearchErr(e); setResults(null) })` — the exact shape §C's PINS
+ *  below REQUIRE — as a swallow, and 15 of the tree's correct sites fire it, four of them fixes in
+ *  this very commit. A detector that reds the code that clears the defect is worse than none. */
+const RECORDS_THE_ERROR = /set\w*(?:Err|Error|Fail)\w*\(/i
+
+/** The line number of every fabricating `.catch` in a whole file. */
+function swallowSites(src: string): number[] {
+  const lines: number[] = []
+  // One arrow parameter at most: `.catch(() => …)` or `.catch((e) => …)`. A `.catch(fn)` reference
+  // fabricates nothing here, and a multi-arg arrow is not a rejection handler.
+  for (const m of src.matchAll(/\.catch\(\((\s*\w*\s*)\)\s*=>\s*/g)) {
+    const at = (m.index ?? 0) + m[0].length
+    let hit: boolean
+    if (src[at] === '{') {
+      let depth = 1
+      let i = at + 1
+      while (i < src.length && depth > 0) {
+        if (src[i] === '{') depth++
+        else if (src[i] === '}') depth--
+        i++
+      }
+      const body = src.slice(at + 1, i - 1)
+      hit = FABRICATES_IN_BLOCK.test(body) && !RECORDS_THE_ERROR.test(body)
+    } else {
+      // A bare expression body that fabricates is only form A when the handler ignored the
+      // rejection — `(e) => e.message` is a transform, not a substitute. And the 64-char slice is
+      // safe where this file's old 220-char window was not: `FABRICATES` is `^`-anchored, so it can
+      // only ever read the expression that starts right here.
+      hit = m[1].trim() === '' && FABRICATES.test(src.slice(at, at + 64))
+    }
+    if (hit) lines.push(src.slice(0, m.index).split('\n').length)
+  }
+  return lines
+}
 
 /** Every `useQuery(…)` call in a file, as `{ key, args, line }` — `args` is the call's own argument
  *  list, paren-matched from the opening paren to its partner.
@@ -388,7 +485,7 @@ describe('the migrated surfaces read the error', () => {
     expect(poisoners, 'a swallow here makes every other consumer of the key unable to see the failure').toEqual([])
   })
 
-  it('no adopter swallows the rejection inside its fetcher', () => {
+  it('no adopter swallows a rejection anywhere in the file', () => {
     // `.catch(() => [])` inside the fetcher makes the error branch unreachable by construction: the
     // hook is handed a successful empty list. A surface that renders LoadError while still swallowing
     // is asserting a state it can never enter.
@@ -402,12 +499,18 @@ describe('the migrated surfaces read the error', () => {
     // file had already reasoned was right. Deferring to the budget keeps the two halves from
     // contradicting each other: an adopter may carry exactly the swallows §B has written down, and
     // the number still may only fall.
+    //
+    // 🪤 WHOLE-FILE, on §B's scanner — it used to scan only `useQuery(` arguments, and that made this
+    // assertion weaker than its own name. An adopter's `useQuery` reads could be spotless while an
+    // effect three hundred lines down fabricated `[]` for the same surface, and the swallow it is
+    // named after would not be counted here. Sharing one scanner with §B also means the budget has
+    // ONE definition: an adopter row and a tree row can no longer drift apart by construction.
     for (const relPath of ADOPTERS) {
-      const swallowing = cachedCalls(codeOf(join(SRC, relPath))).filter((c) => SWALLOW.test(c.args))
+      const at = swallowSites(codeOf(join(SRC, relPath)))
       expect(
-        swallowing.length,
-        `${relPath} swallows ${swallowing.length} fetch rejection(s) at line(s) `
-        + `${swallowing.map((c) => c.line).join(', ')}; §B's budget allows ${SWALLOW_BUDGET[relPath] ?? 0}`,
+        at.length,
+        `${relPath} swallows ${at.length} rejection(s) at line(s) ${at.join(', ')}; `
+        + `§B's budget allows ${SWALLOW_BUDGET[relPath] ?? 0}`,
       ).toBe(SWALLOW_BUDGET[relPath] ?? 0)
     }
   })
@@ -436,41 +539,137 @@ describe('the migrated surfaces read the error', () => {
 // this repo went 3 → 9 inside a single already-listed file with CI green. A name says "this file is
 // known"; only a number says "this file is known AND has not got worse".
 //
+// 🔴 AND A CENSUS IS ONLY AS WIDE AS ITS SCANNER — the second time the same lesson had to be learnt
+// here. The census above replaced a named list with a sweep of the whole tree, and then scanned each
+// of those files through `cachedCalls`, which reads `useQuery(` argument lists ONLY. So it swept 604
+// files and could only ever see a fraction of each: the 35 files the rebase alone added were invisible
+// not because nobody had listed them but because they do not fetch through `useQuery`.
+// Sweeping every file is not the same property as reading every file, and a rail that conflates them
+// reports the tree it can parse as though it were the tree that exists.
+//
 // A NUMBER HERE IS A DEBT, NOT A DISPENSATION. Each entry is a fetcher that resolves a rejection
 // into a value the server never sent, and the surface then renders it as an answer. The way to edit
 // this map is downward.
+//
+// 🔑 RE-BASELINED AT `origin/main` 280c175f4 WHEN THE SCANNER STOPPED BEING `useQuery`-SCOPED (#532),
+// and the four numbers below are the argument for the rebase — all four measured on that one commit,
+// over the same 604 production files, so the only variable between them is how much of each file the
+// scanner could read:
+//
+//   31 files /  51 sites   the OLD rail: whole-tree sweep, `useQuery(`-argument scan
+//   66 files / 132 sites   the same sweep reading each file WHOLE          (form A 102, form B 30)
+//   75 files / 148 sites   …and admitting the STRUCTURED literal           (form A 111, form B  37)
+//   63 files / 127 sites   the map below: that baseline minus this commit  (form A  99, form B  28)
+//
+// Nothing the first two steps surfaced was a NEW defect. The old map dropped no file, gained 44, and
+// eleven of the files it already named turned out to carry more than it could see (`ToolsPage` 1 → 5,
+// `MemoryPanel` 4 → 8, `CodeCockpitPage` 1 → 4). Among the 44 is `lib/api.ts` — the exemplar #532
+// itself cites, which the rail it was filed against could not read.
+//
+// The last line is this commit: 16 files reduced, 12 of them to zero, 21 sites removed. Every fix was
+// a surface printing a positive claim about server state out of a failed read. 🪤 AND 15 OF THE 16 WERE
+// INVISIBLE TO THE OLD SCAN — only `VoicePanel` appears in its 31-file map, and even there at 1 rather
+// than the 3 it held. So a rail that was green on this commit was green about a tree it had never read.
+// That is the measurement that makes this a rebase and not a re-count.
 const SWALLOW_BUDGET: Record<string, number> = {
-  // Measured at `origin/main` 398e6b7a6, then re-measured after the settings hub was converted:
-  // `settingsWidgets.tsx` 23 → 2, tree 71 → 50. Every other entry is untouched by that change and
-  // is recorded here for the first time — previously none of them was visible to any rail.
+  // ── The error-PATH parse fallbacks. Correct code, and permanent: `r.json().catch(() => null)` is
+  // read BEFORE `r.ok`, so the substitute feeds the error message, never a surface claim. These are
+  // the sites #532's own comment warns against blanket-deleting, and they are why this map is a
+  // budget rather than a target of zero.
+  'app/appSdk.tsx': 3,
+  'lib/api.ts': 5,
+  'lib/errText.ts': 1,
+
+  // Fails CLOSED, which is the one safe direction here: the readiness probe's substitute is
+  // `{ needs_model: true, has_model_provider: false }`, so an unreadable probe shows the setup step
+  // rather than telling a user with no provider that they are ready to chat.
+  'app/Onboarding.tsx': 1,
   'app/usePlatform.ts': 1,
-  'pages/agents/AgentDetail.tsx': 1,
-  // The one this file already documented as a deliberate keep: an instant-paint seed that only ever
-  // SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.
-  'pages/code/CodeCockpitPage.tsx': 1,
+  'lib/agents.ts': 1,
+  // The sixth is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content: "(couldn't
+  // load the full result: …)" })` puts the failure in the copy the user reads. The veto matches SETTER
+  // names (`setSearchErr`), and this records into a FIELD — so widen the veto and it starts exempting
+  // any `setX({ error })` that never renders; leave it, and one honest site sits here with a reason.
+  'pages/ChatPage.tsx': 6,
+  'pages/agents/AgentDetail.tsx': 3,
+  'pages/artifacts/ArtifactCard.tsx': 1,
+  'pages/chat/OrganizeChip.tsx': 1,
+  'pages/chat/SessionSkillsReview.tsx': 1,
+  // Includes the one this file already documented as a deliberate keep: an instant-paint seed that
+  // only ever SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.
+  'pages/code/CodeCockpitPage.tsx': 4,
+  // A status-DISCRIMINATING branch, and the reason this map counts form B at all rather than trusting
+  // a braced body: `if (e.status === 404) setResume(null)` reads a 404 as the answer "there is no
+  // draft to resume", which is exactly what a 404 means. Left as debt rather than teaching the scanner
+  // a third exemption — the rule for that would have to model status checks, and a rule that models
+  // control flow is a rule nobody can predict the verdict of.
+  'pages/code/CodeSection.tsx': 1,
+  // Git semantics, documented at both sites: an untracked file has no HEAD blob, so the `''` fallback
+  // is what makes it render as all-added; a file deleted from the working copy has no working blob, so
+  // the same fallback renders it as all-removed. Both substitutes are the true content of a side that
+  // does not exist — the only two sites in this map where an empty string is the server's real answer.
+  'pages/code/DiffView.tsx': 2,
   'pages/dashboard/PinnedTiles.tsx': 2,
+  // Path autocomplete. No sentence is composed from the result, so an empty suggestion list asserts
+  // nothing — the narrow line the settings-hub keeps below are also on the right side of.
+  'pages/files/browse/PathBar.tsx': 1,
+  'pages/files/filesData.ts': 1,
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
+  'pages/loop/LoopComposer.tsx': 3,
+  'pages/loops/DesignCockpitPage.tsx': 1,
+  // The artifact tab's swallow is GONE (it printed an empty document for a failed read). What is left
+  // is a per-item `api.task(id).catch(() => null)` behind a `.filter(Boolean)` — partial degradation
+  // of a fan-out, deliberately — and a fire-and-forget `updateULoop` mutation, a different family.
+  'pages/loops/LoopCockpitPage.tsx': 3,
+  'pages/loops/LoopsSection.tsx': 1,
+  // 🪤 THE FILE #532's BODY HELD UP AS THE EXEMPLAR, and it is in this map — which is the clearest
+  // statement of what a number here means. `dirErrorMessage` is the pattern every fix in this commit
+  // copies; the counted site is a different read in the same file, a peek section whose every consumer
+  // is `length > 0`-gated, so it composes no sentence at all. Exemplary and over the line are not
+  // opposites, and a census that scored its own exemplar at zero would be measuring the wrong thing.
+  'pages/projects/ProjectsSection.tsx': 1,
+  'pages/prompts/promptWidgets.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
-  'pages/settings/ChatPanel.tsx': 1,
-  'pages/settings/DurabilityPanel.tsx': 1,
+  'pages/settings/AlwaysOnConventions.tsx': 1,
+  'pages/settings/ChatPanel.tsx': 3,
+  // The automation list swallow is FIXED (the panel said "You have no automations yet" when it could
+  // not read them). The remaining one resets the REPORT, whose failure the panel already announces.
+  'pages/settings/DoctorPanel.tsx': 1,
+  'pages/settings/DurabilityPanel.tsx': 2,
   'pages/settings/FeedbackPanel.tsx': 1,
-  'pages/settings/MemoryPanel.tsx': 4,
+  'pages/settings/InboxSettingsPanel.tsx': 1,
+  'pages/settings/MemoryPanel.tsx': 8,
   'pages/settings/ModelBackends.tsx': 1,
-  'pages/settings/ModelsPanel.tsx': 3,
-  'pages/settings/MultiInstanceCard.tsx': 1,
+  // The sixth is the RECORDS veto's other blind edge (see `ChatPage` above): the reindex failure IS
+  // recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state object, and the
+  // veto keys off the SETTER's name. The surface tells the user the reindex failed; only the scanner
+  // cannot see it.
+  'pages/settings/ModelsPanel.tsx': 6,
+  // Both read a provider's JSON SCHEMA, and the substitute is `{ properties: {} }`, which every caller
+  // turns into `props.length === 0` → `return null`. An unreadable schema renders NOTHING, which claims
+  // nothing. The generic fix here would be a form that says it could not load its own shape, and that
+  // is a design question about the multi-instance provider surface, not a swallow to delete.
+  'pages/settings/MultiInstanceCard.tsx': 2,
   'pages/settings/NotificationsPanel.tsx': 1,
   'pages/settings/PacksPanel.tsx': 2,
   'pages/settings/PromptsPanel.tsx': 1,
+  // The same schema read as `MultiInstanceCard` above, same `{ properties: {} }`, same `return null`.
+  'pages/settings/ProviderConfigForm.tsx': 1,
   'pages/settings/ProvidersPanel.tsx': 3,
-  'pages/settings/RoutingPanel.tsx': 1,
-  'pages/settings/SearchPanel.tsx': 1,
+  'pages/settings/RoutingPanel.tsx': 3,
+  'pages/settings/SearchPanel.tsx': 3,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
   // The densest single file left, and the one the issue's ninth comment singled out: a failing
   // `/api/usage/rollup` still renders "No model usage recorded this period."
   'pages/settings/UsagePanel.tsx': 7,
+  // 3 → 1. The two gone were the lexicon reads, which printed "0 in your lexicon", "No terms yet" and
+  // "No learned corrections yet" out of a failed fetch. The one left is `modelsActive`, documented at
+  // the site: it feeds a readiness CHIP, so losing it degrades a chip rather than inventing a setting.
+  // 🪤 This is also the single file of the sixteen that the old arg-scoped rail DID list — at 1, while
+  // it held 3. A number measured through a partial scanner is not a smaller truth, it is a wrong one.
   'pages/settings/VoicePanel.tsx': 1,
   // The hub's THREE remaining swallows, all deliberate and each explained at its definition:
   // `usePacksInstalled` is byte-identical to `PacksPanel`'s ledger read because they SHARE a key (a
@@ -484,32 +683,98 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/skills/LearningSummaryBlock.tsx': 1,
   'pages/skills/SkillInspector.tsx': 2,
   'pages/skills/SkillsPage.tsx': 2,
-  'pages/tools/ToolsPage.tsx': 1,
+  'pages/tasks/TasksListPage.tsx': 2,
+  'pages/terminal/TerminalPage.tsx': 1,
+  // The fifth is a capability probe whose substitute is `({ available: false })` — the widened scanner
+  // counts a structured literal, and this is the shape it is deliberately wrong about. "We could not
+  // reach the capability check" and "the capability is not available" are the same fact to a user who
+  // cannot use it either way, so `available: false` IS the answer, not a stand-in for one.
+  'pages/tools/ToolsPage.tsx': 5,
   'pages/triggers/TriggersListPage.tsx': 1,
+  // TWO swallows fixed here, and the second is the reason a line citation is a poor spec: the ledger
+  // read (`:150`, the line #532 and #2940 both name) said "No runs recorded yet", and the VERSION read
+  // eleven lines above it said "No version history yet" — same defect, same file, outside the citation.
+  // The two left reset values the page makes no claim about: a diff preview rendered only when
+  // non-empty, and the definition itself, whose absence the page's own not-found branch owns.
+  'pages/workflows/WorkflowDefDetail.tsx': 2,
+  // A SECONDARY read on a page whose primary run fetch has a real error branch: the continuations list
+  // is rendered only when non-empty, so a failed read costs a section, not a claim — and the page has
+  // already told the user if the run itself could not be read.
+  'pages/workflows/WorkflowRunDetail.tsx': 1,
+  // Documented at the site: the freshness column is decoration on a row whose identity came from the
+  // list read. An unreadable timestamp renders as unknown freshness, which is what it is.
+  'pages/workflows/WorkflowsListPage.tsx': 1,
+  'ui/DegradedChip.tsx': 1,
+  'ui/PlanningWalkthrough.tsx': 3,
+  'ui/chat/ChatPlanGate.tsx': 1,
+  // A capability probe: the rejection IS the answer (`setAvailable(false)`), and it counts here only
+  // because clearing the disabled-reason string reads as a fabrication to a syntactic scanner. Left
+  // as debt rather than vetoed — one more special case in the scanner costs more than one row here.
+  'ui/composer/useScreenShare.ts': 1,
 }
 
 describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', () => {
-  /** file → how many of its `useQuery` fetchers swallow. Production modules only. */
+  /** file → how many rejections it resolves into a value the server never sent. Production only. */
   const census = (): Map<string, number> => {
     const out = new Map<string, number>()
     for (const abs of walk(SRC)) {
-      const n = cachedCalls(codeOf(abs)).filter((c) => SWALLOW.test(c.args)).length
+      const n = swallowSites(codeOf(abs)).length
       if (n > 0) out.set(rel(abs), n)
     }
     return out
   }
 
-  it('VACUITY: the census still recognises the shape it counts', () => {
+  it('VACUITY: the census still recognises every shape it counts', () => {
     // A regex that matches nothing reads exactly like a clean tree — the trap this file's sibling
     // states in its own header. Both floors are deliberately well under the live numbers so ordinary
     // progress does not trip them, and they are floors on the SCANNER, not on the defect.
     const c = census()
-    expect(c.size, 'the swallow scanner found no site at all').toBeGreaterThanOrEqual(10)
-    expect([...c.values()].reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(20)
-    // And it must see the two widened forms specifically, or the widening silently rots back.
-    expect(SWALLOW.test('.catch(() => ({}))'), 'the parenthesised object body').toBe(true)
-    expect(SWALLOW.test(".catch(() => '')"), 'the fabricated empty string').toBe(true)
-    expect(SWALLOW.test('.catch((e) => setErr(e))'), 'a CAPTURE is not a swallow').toBe(false)
+    expect(c.size, 'the swallow scanner found no site at all').toBeGreaterThanOrEqual(30)
+    expect([...c.values()].reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(60)
+
+    // ── POSITIVE CONTROLS, AS SHAPES ─────────────────────────────────────────────────────────────
+    // 🪤 SHAPES, NOT `file:line` PINS. The obvious way to write this control is to name the sites
+    // #532 cited and assert they score — and it is wrong twice over: a pin rots on the next line
+    // shift (this file's ghost-budget test exists because names rot), and worse, a pin on a site
+    // someone FIXES inverts into a demand that the defect come back. Two of the issue's three cited
+    // controls have already moved out from under their citations. A shape cannot rot that way.
+    const counts = (src: string) => swallowSites(src).length
+    expect(counts('api.x().catch(() => null)'), 'the bare null fallback').toBe(1)
+    expect(counts('api.x().catch(() => setItems([]))'), 'the inline setter form').toBe(1)
+    expect(counts('api.x().catch(() => ({}))'), 'the parenthesised object body').toBe(1)
+    expect(counts(".catch(() => '')"), 'the fabricated empty string').toBe(1)
+    expect(counts('.catch(() => { if (alive) setRows([]) })'), 'the braced setter form').toBe(1)
+    // CAST TOLERANCE, the selector hazard #532 names explicitly: 21 of the tree's 30 array-form
+    // sites are `catch(() => [] as Foo[])`, so a selector that closes on `\)` scores 9 of 30 — a 70%
+    // false negative on the commonest shape in the class. Both spellings must count the same.
+    expect(counts('.catch(() => [])'), 'the bare array fallback').toBe(1)
+    expect(counts('.catch(() => [] as SessionArchive[])'), 'the SAME site, cast').toBe(1)
+    expect(counts('.catch(() => [] as unknown as Row[])'), 'and double-cast').toBe(1)
+    // THE STRUCTURED LITERAL, and this pair is here because its absence was not noticed by reading the
+    // regex — it was noticed by fixing `settings/MemoryGraph.tsx` and watching the census not move. A
+    // shape the scanner cannot see is a shape no count can be trusted about, so both spellings of a
+    // fabricated ENVELOPE get a control: the returned one and the one handed to a setter.
+    expect(counts('.catch(() => ({ nodes: [], edges: [] }))'), 'the fabricated envelope').toBe(1)
+    expect(counts('.catch(() => setGraph({ nodes: [], edges: [] }))'), 'the SAME lie, via a setter').toBe(1)
+    expect(counts(".catch(() => ({ 'a': 1 }))"), 'a quoted key is still a literal').toBe(1)
+
+    // ── NEGATIVE CONTROLS ────────────────────────────────────────────────────────────────────────
+    expect(counts('.catch(() => {})'), 'form C: an empty BLOCK fabricates nothing').toBe(0)
+    expect(counts('.catch(() => setErr(e))'), 'a CAPTURE is not a swallow').toBe(0)
+    expect(counts('.catch((e) => e.message)'), 'a TRANSFORM is not a swallow').toBe(0)
+    expect(counts('.catch(reportToast)'), 'a handler REFERENCE is out of scope').toBe(0)
+    // The veto, and the reason it is not optional: this is the exact shape §C's PINS below REQUIRE.
+    // Without it the census reds the code that clears the defect.
+    expect(
+      counts('.catch((e) => { setSearchErr(e); setResults(null) })'),
+      'record-then-reset is the CORRECT pattern, not a swallow',
+    ).toBe(0)
+
+    // The live file control: `lib/api.ts` carries the issue's own `:84` exemplar plus four siblings,
+    // all `r.json().catch(() => null)` parse fallbacks read BEFORE `r.ok`. They are correct code and
+    // will never be "fixed", which makes the file a permanent positive control on the scanner — if it
+    // ever scores zero, the scanner broke, not the tree.
+    expect(c.get('lib/api.ts') ?? 0, 'the live positive control stopped counting').toBeGreaterThan(0)
   })
 
   it('every swallowing file is in the budget — a NEW one turns CI red', () => {

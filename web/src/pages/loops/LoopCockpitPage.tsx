@@ -12,6 +12,7 @@ import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { Eyebrow } from '../../ui/Eyebrow'
+import { InlineLoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
@@ -1163,10 +1164,18 @@ function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?
    *  regenerate it. This is AS-3's design-loop dispatch target. */
   loopId?: string }) {
   const [content, setContent] = useState<string | null>(artifact.content ?? null)
+  // 🔴 A FAILED ARTIFACT READ IS NOT AN ARTIFACT WITH NO CONTENT (#532). This used to
+  // `.catch(() => setContent(''))`, and `content == null` is the LOADING sentinel — so a failed
+  // fetch fell into the blank-content branch below and printed "This artifact has no inline
+  // content", a claim about the artifact made because the read failed. `content` now HOLDS at
+  // `null`, so the error branch must precede the `null` test.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
   useEffect(() => {
     if (content != null) return
     let alive = true
-    api.artifact(artifact.slug).then((full) => { if (alive) setContent(full.content ?? '') }).catch(() => { if (alive) setContent('') })
+    api.artifact(artifact.slug)
+      .then((full) => { if (alive) { setLoadErr(null); setContent(full.content ?? '') } })
+      .catch((e) => { if (alive) { setLoadErr(e); setContent(null) } })
     return () => { alive = false }
   }, [artifact.slug])
   const ctype = useMemo(() => resolveContentType({ kind: artifact.kind }), [artifact.kind])
@@ -1178,6 +1187,14 @@ function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?
       <span className="normal-case tracking-normal">{artifact.kind}{artifact.version > 1 ? ` · v${artifact.version}` : ''}</span>
       {onOpen && <TextLink onClick={() => onOpen(artifact.slug)} icon={ExternalLink} iconPosition="trailing" iconSize={12} className="ml-auto normal-case tracking-normal">Open in Artifacts</TextLink>}
     </>
+  )
+  // `DocSurface` renders its children as markdown (`children: string`), so the alert gets the
+  // same surface shell directly rather than being stringified through it.
+  if (loadErr) return (
+    <div className="rounded-xl bg-surface px-2xl py-xl ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
+      <Eyebrow className="mb-l flex items-center gap-s border-b border-outline-variant/30 pb-m">{eyebrow}</Eyebrow>
+      <InlineLoadError what="this artifact" error={loadErr} />
+    </div>
   )
   if (content == null) return <DocSurface eyebrow={eyebrow}>{'Loading…'}</DocSurface>
   if (!content.trim()) return (

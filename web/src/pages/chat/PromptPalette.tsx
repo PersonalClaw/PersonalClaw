@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { FieldError } from '../../ui/forms'
+import { LoadError } from '../../ui/ListScaffold'
 import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
@@ -27,10 +28,17 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
   const [picked, setPicked] = useState<PromptItem | null>(null)  // full detail (with merged_variables)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [err, setErr] = useState('')
+  // #532: separate from `err`, which belongs to the DETAIL pick. The list read used to
+  // `.catch(() => setItems([]))`, and the empty branch below then said "No user prompts yet. Create
+  // one on the Prompts page." — a create-your-first pitch shown to a user whose prompts were merely
+  // unreachable. Two different failures need two slots; a shared one would make the list error
+  // clearable by picking a prompt.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
-    api.prompts('user').then(setItems).catch(() => setItems([]))
-  }, [])
+    api.prompts('user').then(setItems).catch(setLoadErr)
+  }, [reloadKey])
 
   const filtered = useMemo(() => {
     if (!items) return null
@@ -98,7 +106,9 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
           )}
           {err && <FieldError>{err}</FieldError>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
-            {filtered === null ? (
+            {loadErr !== null ? (
+              <LoadError what="prompts" error={loadErr} onRetry={() => { setLoadErr(null); setReloadKey((k) => k + 1) }} />
+            ) : filtered === null ? (
               <div className="flex h-40 items-center justify-center"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
             ) : filtered.length === 0 ? (
               <div data-type="body-s" className="flex h-40 flex-col items-center justify-center gap-1 px-4 text-center text-on-surface-low">

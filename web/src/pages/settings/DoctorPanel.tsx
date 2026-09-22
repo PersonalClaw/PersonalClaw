@@ -13,7 +13,7 @@ import { PanelHeader, Section } from './settingsUI'
 import { relPast } from '../schedule/scheduleMeta'
 import { Select, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, InlineLoadError } from '../../ui/ListScaffold'
 
 // Prettify a capability key for a card title ("serving-fs" → "Serving / fs",
 // "model-providers" → "Model providers"). The backend keys are URL-safe slugs;
@@ -214,10 +214,15 @@ function AutomationSimulator() {
   const [pick, setPick] = useState('')
   const [desc, setDesc] = useState<AutomationWouldExecute | null>(null)
   const [err, setErr] = useState<unknown>(null)
+  // #532: distinct from `err`, which is the SIMULATE failure. The list read used to
+  // `.catch(() => setTriggers([]))`, and `empty` then drove two separate claims — the
+  // "No automations yet. Create one on the Automations page" line and the Describe button's
+  // `disabledReason` "You have no automations yet" — out of a failed read.
+  const [listErr, setListErr] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    api.triggers().then((r) => setTriggers(r.triggers)).catch(() => setTriggers([]))
+    api.triggers().then((r) => setTriggers(r.triggers)).catch(setListErr)
   }, [])
 
   const run = async () => {
@@ -253,10 +258,11 @@ function AutomationSimulator() {
             automations" on a machine that has three — non-null and still wrong, the ambiguous-name
             failure the settings-panel census turned up. */}
         <Button variant="secondary" size="sm" onClick={run} loading={busy} disabled={!pick}
-          disabledReason={empty ? 'You have no automations yet' : 'Pick an automation first'}>
+          disabledReason={listErr !== null ? "Couldn't load your automations" : empty ? 'You have no automations yet' : 'Pick an automation first'}>
           <FlaskConical size={14} /> Describe
         </Button>
       </div>
+      {listErr !== null && <InlineLoadError what="your automations" error={listErr} />}
       {/* 🪤 Deliberately NOT "…and it will appear here": this list is read once on mount, so that
           sentence would promise a live update the panel does not do — and the empty-state-promise
           census exists precisely to keep that shape out. */}

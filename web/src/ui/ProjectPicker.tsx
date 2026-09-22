@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { FolderKanban, ChevronDown, Check, Plus } from 'lucide-react'
 import { api, type ProjectItem } from '../lib/api'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
+import { InlineLoadError } from './ListScaffold'
 import { overlayEnter, physics } from '../design/motion'
 
 /** A compact project chooser for the Goal Loop + Code create flows.
@@ -30,6 +31,11 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
 }) {
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState<ProjectItem[] | null>(null)
+  // #532: this read used to `.catch(() => setProjects([]))`, which cost more than a wrong sentence.
+  // The list is ALSO the stale-value self-heal below, so an empty list on failure read as "your
+  // bound project no longer exists" and fired `onChange('')` — a failed fetch silently discarded
+  // the user's selection. Keeping `projects` null on failure leaves that effect inert.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
   const ref = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // Archived projects are "put away" — don't offer them as a target for NEW work.
@@ -58,9 +64,9 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
   // real name immediately AND a STALE value (e.g. the active project was deleted in
   // another tab) can self-heal to "" rather than sending a dead id.
   useEffect(() => {
-    if (projects || (!open && !value)) return
-    api.projects().then(setProjects).catch(() => setProjects([]))
-  }, [open, value, projects])
+    if (projects || loadErr || (!open && !value)) return
+    api.projects().then(setProjects).catch(setLoadErr)
+  }, [open, value, projects, loadErr])
 
   // Once the list is loaded, if our value names a project that no longer exists,
   // reset to "New project" (""), so the picker never points at a deleted project.
@@ -137,7 +143,11 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
             <span className="min-w-0 flex-1 truncate">{emptyLabel ?? 'New project'} {(emptyHint ?? '(auto-named)') && <span className="text-on-surface-low/70">{emptyHint ?? '(auto-named)'}</span>}</span>
             {!value && <Check size={13} className="shrink-0 text-primary" />}
           </button>
-          {selectable === null ? (
+          {loadErr !== null ? (
+            // The shared rail, and it keeps the "New project" option above reachable — the picker is
+            // still usable for the unbound case while the existing list is unknown.
+            <div className="px-s"><InlineLoadError what="your projects" error={loadErr} /></div>
+          ) : selectable === null ? (
             <div data-type="caption" className="px-2 py-2 text-on-surface-low">Loading…</div>
           ) : selectable.length === 0 ? (
             <div data-type="caption" className="px-2 py-2 text-on-surface-low">No existing projects.</div>

@@ -16,6 +16,7 @@ import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, type ScheduleDraft,
 } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { InlineLoadError } from '../../ui/ListScaffold'
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
@@ -311,6 +312,10 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
   const [limit, setLimit] = useState(5)
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [unsupported, setUnsupported] = useState<string | null>(null)
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  // Retry tick. `setLimit(limit)` would be a no-op — same value, no re-render, a Retry button
+  // that does nothing — so the effect needs a value that actually changes.
+  const [retry, setRetry] = useState(0)
   // The did/suppressed fold (WF2AUT-10): inert `skipped_*` rows stay hidden until revealed.
   const [showSuppressed, setShowSuppressed] = useState(false)
   // `schedule:abc` → `abc`; `store:file:notes` → `file:notes`, which IS the run-store key.
@@ -321,11 +326,19 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
     api.triggerHistory(triggerId, limit).then((d) => {
       if (!alive) return
       setUnsupported(d.supported === false ? (d.reason || 'this kind keeps no run records') : null)
+      setLoadErr(null)
       setRuns(d.runs); setTotal(d.total)
-    }).catch(() => { if (alive) setRuns([]) })
+    }).catch((e) => { if (alive) { setLoadErr(e); setRuns(null) } })
     return () => { alive = false }
-  }, [triggerId, limit, reloadKey])
+  }, [triggerId, limit, reloadKey, retry])
 
+  // 🔴 THE ERROR BRANCH COMES FIRST, AND IT HAS TO (#532). This read used to end
+  // `.catch(() => setRuns([]))`, and `runs === null` is the LOADING sentinel — so a failed fetch
+  // did not merely lose the error, it landed in the zero-length branch one line down and printed
+  // "No runs recorded yet.": a factual claim about the server's records, emitted precisely when
+  // the server could not be reached. `runs` now HOLDS at `null` on failure, which is why this
+  // test has to precede the `null` check rather than follow it.
+  if (loadErr) return <Section label="History"><InlineLoadError what="run history" error={loadErr} onRetry={() => setRetry((n) => n + 1)} /></Section>
   if (runs === null) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">Loading…</div></Section>
   if (unsupported) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">{unsupported}</div></Section>
   if (runs.length === 0) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">No runs recorded yet.</div></Section>
@@ -393,10 +406,18 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
 /** Lazy-load one run's full record (with trace) on expand. */
 function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: string; preview: ScheduleRun }) {
   const [run, setRun] = useState<ScheduleRun | null>(preview.trace ? preview : null)
+  // 🔴 A FAILED DETAIL READ IS NOT "THIS RUN PRODUCED NO OUTPUT" (#532). This used to
+  // `.catch(() => setRun(preview))`, and `preview` is the LIST row — real, but carrying no
+  // `trace`. So a failed fetch rendered an expanded run with timings and an empty body, which is
+  // exactly what a run that genuinely produced nothing looks like. The preview's timings are true
+  // and still shown; what changes is that the missing trace is now attributed instead of implied.
+  const [traceErr, setTraceErr] = useState<unknown>(null)
   useEffect(() => {
     if (run) return
     let alive = true
-    api.triggerRunDetail(triggerId, runId).then((r) => { if (alive) setRun(r) }).catch(() => { if (alive) setRun(preview) })
+    api.triggerRunDetail(triggerId, runId)
+      .then((r) => { if (alive) { setTraceErr(null); setRun(r) } })
+      .catch((e) => { if (alive) { setTraceErr(e); setRun(preview) } })
     return () => { alive = false }
   }, [triggerId, runId])
   if (!run) return <div className="px-m pb-2 text-on-surface-low text-[0.75rem]">Loading trace…</div>
@@ -427,6 +448,9 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
       {/* `trace` is the full result; `summary` is just a prefix of it — render the
           richest one we have as markdown, not raw text. */}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
+      {/* `traceErr != null`, not `traceErr &&` — the state is `unknown`, and `unknown && …`
+          is `unknown`, which is not a ReactNode. */}
+      {traceErr != null && !run.trace && <InlineLoadError what="this run's trace" error={traceErr} />}
     </div>
   )
 }
