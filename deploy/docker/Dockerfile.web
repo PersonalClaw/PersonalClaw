@@ -15,7 +15,39 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY web/package.json web/
 
+# THE ROOT `postinstall` HOOK RUNS HERE AND ITS SCRIPT HAS TO BE PRESENT. `package.json`
+# declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci` invokes it — and
+# `scripts/` was not copied, so npm died with `exit code 2` on a missing file and this image
+# could not be built at all. The script is already WRITTEN for this case: its header names
+# "Docker build context" among the not-a-dev-clone paths and it exits 0 at the
+# `git rev-parse --is-inside-work-tree` guard (`.git` is dockerignored). It was never given
+# the chance. Copying it is therefore the fix rather than `--ignore-scripts`, which would
+# also suppress the dependency postinstalls the SPA build needs (esbuild's, notably).
+#
+# This broke AFTER the last release, which is why no green check ever showed it: `v0.1.3`
+# carried only `hooks:install`, and `postinstall` arrived later in #1030 (194bf9988).
+# `release.yml` is the ONLY workflow that builds this file, it has not run since that tag, and
+# it uses the same `context: .`, so the next release would have failed here.
+COPY scripts/install_git_hooks.sh scripts/
+
 RUN npm ci --workspace=web --prefer-offline
+
+# THE SPA TYPECHECKS AGAINST ONE FILE OUTSIDE `web/`. `web/src/lib/scanFindings.ts:1` does
+# `import glossSource from '../../../src/personalclaw/scan_rule_gloss.json'`, which resolves
+# to /app/src/personalclaw/… from WORKDIR /app — so without it `tsc --noEmit` fails TS2307
+# and the `build` script never reaches vite.
+#
+# It is exactly ONE file, measured rather than assumed: it is the only non-test module under
+# `web/src` whose specifier escapes `web/`, and tsc reports every TS2307 rather than the
+# first, so the single error in the build log IS the complete count. The other out-of-tree
+# references under `web/src` are runtime path STRINGS in `*.test.*` files, which typecheck
+# without resolving. If another cross-tree import ever lands, it fails here the same way and
+# belongs on this list.
+#
+# Same provenance as the COPY above: `scanFindings.ts` arrived after `v0.1.3` (4c03d73ae), and
+# `release.yml` — this file's only builder — has not run since, so this too would have failed
+# the next release rather than any PR.
+COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
 
 # Copy full web source and build
 COPY web/ web/
