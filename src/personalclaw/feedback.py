@@ -353,8 +353,8 @@ def _settings() -> dict[str, Any]:
     try:
         from personalclaw.providers.entity_routes import _load_entity_settings
 
-        data = _load_entity_settings("feedback")
-        return data if isinstance(data, dict) else {}
+        # Fail-OPEN on a discarded read (`or {}`) — the choice the docstring above states.
+        return _load_entity_settings("feedback") or {}
     except Exception:  # noqa: BLE001
         logger.warning("feedback settings unreadable — suppressing nothing", exc_info=True)
         return {}

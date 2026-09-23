@@ -36,7 +36,12 @@ against core protocols). Paths are relative to
   `alert_keywords`/`alert_on_name_mention` fields were retired and generalized
   into per-kind rule `conditions` (below), so the same keyword / name-mention
   escalation now applies to loop requests and proposals, not just messages.
-  `inbox.evaluate_alert()` reads the `inbox/alert` rule's conditions.
+  `inbox.evaluate_alert()` reads the `inbox/alert` rule's conditions. This store is
+  the one entity-settings file that fails **closed**: `auto_cleanup_enabled`'s
+  default *runs a delete*, so a file that cannot be parsed suppresses cleanup and
+  logs why, rather than resolving to the 90-day default and deleting items a stored
+  `false`/`3650` said to keep. An **absent** file is unaffected and still means
+  "first run, use the defaults" — see `load_inbox_settings()`.
 
 ## The shared inbox (multi-owner attribution)
 
