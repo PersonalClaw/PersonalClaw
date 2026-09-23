@@ -138,7 +138,7 @@ jobs:
           for line in pathlib.Path('/tmp/ready.json').read_text().splitlines():
               if line.startswith('PERSONALCLAW_READY:'):
                   d = json.loads(line[len('PERSONALCLAW_READY:'):])
-                  print(f"PORT={d['port']}; TOKEN={shlex.quote(d['token'])}")
+                  print(f"export PORT={d['port']}; export TOKEN={shlex.quote(d['token'])}")
                   break
           PY
           )"
@@ -154,14 +154,36 @@ jobs:
             exit 1
           fi
           echo "gateway on $PORT"
-          # Status captured separately so a failure never prints the URL (which carries the
-          # token). Only the code is echoed.
-          CODE=$(curl -s -o /tmp/onb.json -w '%{http_code}' \
-                   "http://127.0.0.1:$PORT/api/onboarding?token=$TOKEN")
-          if [ "$CODE" != "200" ]; then
-            echo "::error::GET /api/onboarding returned $CODE (expected 200)"
-            exit 1
-          fi
+          # FETCH WITH urllib, NOT curl. `python:3.12-slim` HAS NO CURL — measured: the job
+          # died here with `curl: not found` and exit 127 while the gateway itself was
+          # healthy (it had already printed its port). Installing curl to test a Python
+          # package on a Python image would also weaken V1's premise, which is that this
+          # machine is bare.
+          #
+          # This is strictly better than the curl call it replaces, not just a substitute:
+          # the token now travels in-process instead of on a command line, so it never
+          # appears in the step's echoed command, in `ps`, or in a shell history — and the
+          # URL is no longer something a failure path could print.
+          python3 - <<'PY'
+          import json, os, pathlib, sys, urllib.error, urllib.parse, urllib.request
+          port, token = os.environ["PORT"], os.environ["TOKEN"]
+          url = f"http://127.0.0.1:{port}/api/onboarding?" + urllib.parse.urlencode({"token": token})
+          try:
+              with urllib.request.urlopen(url, timeout=30) as r:
+                  code, body = r.status, r.read()
+          except urllib.error.HTTPError as e:
+              # Print the CODE only. The URL carries the token, so it is never echoed.
+              print(f"::error::GET /api/onboarding returned {e.code} (expected 200)")
+              sys.exit(1)
+          except urllib.error.URLError as e:
+              print(f"::error::GET /api/onboarding unreachable: {e.reason}")
+              sys.exit(1)
+          if code != 200:
+              print(f"::error::GET /api/onboarding returned {code} (expected 200)")
+              sys.exit(1)
+          pathlib.Path("/tmp/onb.json").write_bytes(body)
+          print("onboarding answered 200")
+          PY
           python3 - <<'PY'
           import json, pathlib
           d = json.loads(pathlib.Path('/tmp/onb.json').read_text())
