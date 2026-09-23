@@ -405,6 +405,15 @@ def _make_state(tmp_path):
     sessions.get_pid = MagicMock(return_value=None)
     client = AsyncMock()
     client.provider_id = "acp:kiro-cli"
+    # `get_or_create` hands run_chat the POOLED PROVIDER (an AcpAgentProvider), whose
+    # abort seam is `cancel(*, wait_ack_timeout)` — the same one SessionManager
+    # .cancel_current drives for a user-pressed Stop. `cancel_session` exists ONLY on
+    # the inner AcpClient. A bare AsyncMock auto-creates ANY attribute, which is how
+    # `client.cancel_session.assert_awaited()` read GREEN here for a call production
+    # never made: the real provider has no such name, so the abort sites' getattr
+    # returned None and the turn was announced aborted while it ran to completion.
+    # Deleting it makes the mock refuse the wrong name the way the provider does.
+    del client.cancel_session
     sessions.get_or_create = AsyncMock(return_value=(client, True, False))
     sessions.record_failure = AsyncMock()
     sessions.check_context_usage = MagicMock()
@@ -659,8 +668,9 @@ class TestAcpLoopBreaker:
         texts = _texts(session)
         assert any("Run aborted by the loop breaker" in t for t in texts), texts[-3:]
         # The turn is aborted by cancelling the CLI's turn, not by abandoning the
-        # stream — so every post-loop finalizer still runs.
-        client.cancel_session.assert_awaited()
+        # stream — so every post-loop finalizer still runs. `cancel`, not
+        # `cancel_session`: see `_make_state`.
+        client.cancel.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_circuit_announced_once_not_per_result(self, tmp_path):
@@ -670,6 +680,63 @@ class TestAcpLoopBreaker:
         await _drive(state, session)
         hits = [t for t in _texts(session) if "Run aborted by the loop breaker" in t]
         assert len(hits) == 1, hits
+
+    def test_the_abort_seam_is_the_one_the_REAL_provider_implements(self):
+        """The control that was missing, and the reason the abort shipped inert.
+
+        Every test above drives `run_chat` with a bare `AsyncMock` for the provider, so
+        the object under test answered to ANY attribute name. Both ACP abort sites did
+        ``getattr(client, "cancel_session", None)`` and skipped the call when it came
+        back ``None`` — silently, with no log — so on the real pooled provider the host
+        announced "Run aborted by the loop breaker", wrote a SEL row saying
+        ``aborted_turn: true``, and the CLI then ran every remaining tool call and
+        finished the turn normally. Measured on a live ``acp:claude-code`` session with
+        ``circuit_threshold`` PATCHed to 2: tripped at failure 3, rendered the message
+        verbatim, then completed with 6 tool calls.
+
+        So assert the seam against the CLASS, not against a mock: `cancel` is declared
+        on the `AgentProvider` base that every provider implements, which is why the
+        typo could never raise.
+        """
+        from personalclaw.agents.provider import AgentProvider
+        from personalclaw.llm.acp_agent import AcpAgentProvider
+
+        assert callable(getattr(AcpAgentProvider, "cancel", None))
+        # The base declares it, so a provider can never be missing it — that is what
+        # makes `cancel` safe to call unconditionally where `cancel_session` was not.
+        assert callable(getattr(AgentProvider, "cancel", None))
+        # The name the abort sites used belongs to the INNER client, one layer down.
+        assert not hasattr(AcpAgentProvider, "cancel_session")
+        assert callable(getattr(AcpClient, "cancel_session", None))
+
+    @pytest.mark.asyncio
+    async def test_abort_helper_reports_a_provider_with_no_cancel_seam(self, caplog):
+        """The uncontrolled zero, now controlled: an object the helper cannot cancel is
+        LOGGED rather than passed over. Without this branch a future rename reproduces
+        the original defect exactly — an abort that announces itself and does nothing."""
+        import logging
+
+        from personalclaw.dashboard.chat_runner import _abort_acp_turn
+
+        class _NoCancel:
+            pass
+
+        with caplog.at_level(logging.WARNING, logger="personalclaw.dashboard.chat_runner"):
+            await _abort_acp_turn(_NoCancel(), "breaker trip")
+        assert any("exposes no cancel() seam" in r.getMessage() for r in caplog.records), [
+            r.getMessage() for r in caplog.records
+        ]
+
+    @pytest.mark.asyncio
+    async def test_abort_helper_drives_the_provider_cancel_seam(self):
+        """Positive control on the helper itself: it awaits `cancel` fire-and-forget
+        (``wait_ack_timeout=0.0``), matching `SessionManager.cancel_current`."""
+        from personalclaw.dashboard.chat_runner import _abort_acp_turn
+
+        provider = AsyncMock()
+        del provider.cancel_session
+        await _abort_acp_turn(provider, "breaker trip")
+        provider.cancel.assert_awaited_once_with(wait_ack_timeout=0.0)
 
     @pytest.mark.asyncio
     async def test_passing_stream_produces_no_breaker_text(self, tmp_path):
@@ -696,7 +763,7 @@ class TestAcpLoopBreaker:
         texts = " ".join(_texts(session))
         assert "was blocked" not in texts
         assert "Run aborted by the loop breaker" not in texts
-        client.cancel_session.assert_not_awaited()
+        client.cancel.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_distinct_arguments_are_not_one_bucket(self, tmp_path):
@@ -796,7 +863,7 @@ class TestBreakerFiresOnRealRuntimeFrames:
         session = _session()
         await _drive(state, session)
         assert any("Run aborted by the loop breaker" in t for t in _texts(session))
-        client.cancel_session.assert_awaited()
+        client.cancel.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_codex_frames_still_reach_the_warn_rung(self, tmp_path):
