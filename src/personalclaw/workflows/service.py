@@ -750,6 +750,22 @@ async def start_run(
 #: The loop kinds whose behaviour has actually arrived in their bundled template, so a run of that
 #: template IS the loop. Grows by one per port; when it equals `loop_aliases.KIND_TO_TEMPLATE` the
 #: loop path and its `KIND_CONVERGENCE` table retire together.
+#:
+#: 🔴 `research` is deliberately NOT here yet, and its absence is a MEASUREMENT rather than an
+#: omission. Its behaviour HAS arrived in `deep-research` — the convergence policy, a separate
+#: judge, the `RESEARCH.md` deliverable, the breadth×depth sweep, the whole loop-kind contract in
+#: `tests/test_workflows_loop_templates.py` — but the run path cannot yet DRIVE a loop whose body is
+#: a `stage`, which is what all five of these templates are. Three independent engine defects,
+#: each pinned with a control in `tests/test_pp16_research_kind_as_run.py`: the iteration counter is
+#: not advanced from the stage reconciler (fixed there), the double-execution claim is keyed on the
+#: NODE ID so a loop cannot re-run its own body inside the lease TTL, and a reconciled stage's
+#: output never reaches the binding namespace in its declared shape, so a loop's `progress_field`
+#: and its judge contract both read nothing.
+#:
+#: Adding `research` here before those are fixed would REPLACE a working loop with a worse one: a
+#: research loop today runs on `loop/watchdog.py` and iterates, and routing it here would give the
+#: user a run that executes one round and escalates. That is the outcome this door's own docstring
+#: refuses, so the frozenset waits for the engine fix rather than the template.
 PORTED_LOOP_KINDS: frozenset[str] = frozenset({"general"})
 
 
@@ -774,9 +790,20 @@ async def start_kind_run(
       without it a `sdlc` loop would start a `code-project` run whose nodes carry none of
       `sdlc.py`'s 1,788 lines and report success.
 
+    * a ported kind whose template declares NO `loop_field: task` input. The parameter name is the
+      template's choice — measured, the five templates the kinds resolve to spell it `task`,
+      `brief` and `question` — so the launch reads the marker off the template rather than spelling
+      one name for all five (`loop_run_map`'s `task` row: *"the noun change needs a per-template
+      input name, not one constant"*). A ported template that forgot the marker is refused here
+      instead of starting a run whose worker was handed nothing.
+
     `exit_condition` is the loop's `success_criteria` under the name the template declares for it —
-    the same concept ("what done means"), not a new input. Left blank, the template's own declared
-    default applies via `_with_declared_defaults`.
+    the same concept ("what done means"), not a new input. Left blank, or unclaimed by any input,
+    the template's own declared default applies via `_with_declared_defaults`.
+
+    The template is read HERE as well as inside `start_run`, and deliberately: the alternative is to
+    teach the generic door the loop vocabulary, which would put `success_criteria` in the signature
+    every non-loop caller uses. One extra provider read per launch is the cheaper asymmetry.
     """
     from personalclaw.workflows import loop_aliases
 
@@ -802,9 +829,31 @@ async def start_kind_run(
             template=template,
             ported=sorted(PORTED_LOOP_KINDS),
         )
-    inputs: dict[str, Any] = {"task": task}
-    if exit_condition:
-        inputs["exit_condition"] = exit_condition
+    definition = await _raw_def(template)
+    if definition is None:
+        # The SAME code `start_run` reports for the same cause, so a missing bundled provider reads
+        # identically whichever door was used. Distinct from the marker refusal below: "the template
+        # is not there" and "the template is there and declares no task input" are different bugs.
+        return _service_failure(
+            "WF_DEF_NOT_FOUND", f"no workflow definition named {template!r}", kind=normalized
+        )
+    spec = definition if isinstance(definition, dict) else definition.to_dict()
+    intake = loop_aliases.template_intake(spec)
+    task_input = intake.get("task", "")
+    if not task_input:
+        return _service_failure(
+            "WF_LOOP_KIND_NO_TASK_INPUT",
+            (
+                f"template {template!r} declares no input marked `loop_field: task`, so there is "
+                f"nowhere to put a {normalized!r} loop's task"
+            ),
+            kind=normalized,
+            template=template,
+        )
+    inputs: dict[str, Any] = {task_input: task}
+    criterion_input = intake.get("success_criteria", "")
+    if criterion_input and exit_condition:
+        inputs[criterion_input] = exit_condition
     return await start_run(name=template, inputs=inputs, **start_kw)
 
 

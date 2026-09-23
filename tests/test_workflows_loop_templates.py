@@ -40,6 +40,13 @@ LOOP_TEMPLATES = (
     # runtime_hints split, the loop bounds and the shipping metadata are the SAME contract
     # for it. Its own R5 structural gates are tested in `test_workflows_code_project.py`.
     "code-project",
+    # The research descendant. It joins this suite as the SECOND half of PP-16's research port:
+    # before that port it was a triage-and-branch pipeline with no judge, no runtime_hints and an
+    # unbounded loop, so it could not have held this contract — which is exactly why "the kind
+    # resolves to it" was never evidence that the kind's behaviour had arrived. Membership here is
+    # the claim: a `research` loop and a `deep-research` run are now held to the same judge
+    # contract, loop bounds and shipping metadata as the four kinds ported before it.
+    "deep-research",
 )
 
 
@@ -402,7 +409,11 @@ def test_every_declared_progress_field_can_be_emitted_by_its_body():
             assert any(
                 field in str((n.get("config") or {}).get("prompt") or "") for n in emitters
             ), f"{name}:{loop.get('id')} never tells the body what {field!r} means"
-    assert checked >= 2, "the two shipped until_dry templates that declare a field must be swept"
+    assert checked >= 3, (
+        "the shipped until_dry templates that declare a field must be swept — the floor rose to 3 "
+        "when PP-16's research port gave `deep-research`'s round loop a `new_findings_count` field "
+        "(before it, that loop declared none and was bounded only by a cap that did not bind)"
+    )
 
 
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)

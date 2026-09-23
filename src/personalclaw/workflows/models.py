@@ -581,14 +581,30 @@ class InputParam:
     required: bool = False
     default: Any = None
     help: str = ""
+    #: PP-16: which `Loop` column a loop-kind launch puts in this input, if any.
+    #:
+    #: Declared HERE rather than in a table keyed by template name, because the parameter's name is
+    #: the template's own choice — measured, the five templates the loop kinds resolve to spell the
+    #: task `task`, `brief` and `question` — and a table describing another file's input block is a
+    #: copy that drifts. `loop_aliases.template_intake` reads it; `LOOP_INTAKE_FIELDS` closes the
+    #: vocabulary and the validator reports a typo at authoring time.
+    #:
+    #: Empty for every input that is not a loop-kind intake point, which is almost all of them.
+    loop_field: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "type": self.type,
             "required": self.required,
             "default": self.default,
             "help": self.help,
         }
+        # Omitted when unset rather than serialized as "": every input in the library would
+        # otherwise gain a key that means nothing, on a surface (`GET /api/workflows/defs`) the
+        # launch dialog renders field by field.
+        if self.loop_field:
+            d["loop_field"] = self.loop_field
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> InputParam:
@@ -597,6 +613,7 @@ class InputParam:
             required=bool(d.get("required", False)),
             default=d.get("default"),
             help=str(d.get("help", "") or ""),
+            loop_field=str(d.get("loop_field", "") or "").strip().lower(),
         )
 
 
