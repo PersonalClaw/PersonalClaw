@@ -1,0 +1,378 @@
+# DIST-11 — the clean-machine walkthroughs, on runners instead of a VM.
+#
+# WHY A WORKFLOW AND NOT A VM. DIST-11's four walkthroughs are defined as
+# "clean-VM / never-seen-the-project" runs, and the atom was marked OWNER-ONLY on the
+# reasoning that only a human with a spare machine could do them. Three of the four do not
+# need a human — they need a machine that has never seen this project, which is precisely
+# what a fresh runner is. Actions beats a VM on every axis that matters here:
+#
+#   * a runner is clean BY CONSTRUCTION, not by someone remembering to reset it;
+#   * a bare `ubuntu:24.04` container step is genuinely Node-absent, which V1 requires and
+#     a developer's own machine almost never is;
+#   * `macos-latest` exists, so V4's desktop arm runs on a real Mac;
+#   * the run log IS the evidence, and DIST-11's done_when asks for exactly that
+#     ("recorded in the Execution log") — a pasted terminal transcript is weaker;
+#   * it costs nothing on a public repo, and there is no instance anyone can forget to
+#     terminate.
+#
+# V2 IS DELIBERATELY ABSENT AND MUST STAY ABSENT. Its acceptance is "getting-started
+# followed verbatim by a first-time reader" — that is a property of a PERSON, not of a
+# machine, and no runner can be a first-time reader. Adding a job that runs the commands in
+# the doc would produce a green check that asserts something nobody claimed: that the
+# commands work, which CI already covers. The gap V2 exists to find is where the PROSE
+# misleads a human, and only a human finds that. It stays the principal's.
+#
+# THE RULE THIS FILE FOLLOWS. Every job asserts the DOCUMENTED path — the commands a
+# stranger would copy out of the README — not an equivalent that a maintainer knows works.
+# Where a walkthrough cannot be completed on a runner, the job FAILS with a named reason or
+# records an explicit gap. It never skips silently, because a skipped step and a passing step
+# look identical on the board, and that confusion is how this project has previously believed
+# something was verified when nothing had been measured.
+
+name: Clean-machine walkthroughs (DIST-11)
+
+on:
+  workflow_dispatch:
+    inputs:
+      which:
+        description: "Which walkthrough to run"
+        type: choice
+        default: all
+        options: [all, v1-wheel, v3-container, v4-selfupdate]
+
+# Read-only by default. No job here needs to write to the repo, and a walkthrough that
+# could push is not a walkthrough.
+permissions:
+  contents: read
+
+concurrency:
+  group: walkthroughs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── V1 ─────────────────────────────────────────────────────────────────────────────────
+  # Wheel install -> onboarding -> first chat, on a machine with NO Node.
+  #
+  # The container is the whole point. `ubuntu-latest` runners ship Node (Actions itself needs
+  # it), so running V1 directly on the runner would prove the opposite of what V1 asks. A
+  # bare `python:3.12-slim` has no Node at all, and the job asserts that before it begins —
+  # otherwise the Node-absent claim is an assumption rather than a precondition.
+  v1-wheel:
+    if: ${{ inputs.which == 'all' || inputs.which == 'v1-wheel' }}
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove the machine is Node-absent (V1's precondition, asserted not assumed)
+        run: |
+          set -euo pipefail
+          if command -v node >/dev/null 2>&1; then
+            echo "::error::node is PRESENT ($(node --version)) — this is not a Node-absent"
+            echo "::error::machine, so V1 cannot be honestly verified here."
+            exit 1
+          fi
+          echo "node: absent"
+          echo "npm:  $(command -v npm >/dev/null 2>&1 && echo PRESENT || echo absent)"
+
+      - name: Build the wheel the way a release does
+        run: |
+          set -euo pipefail
+          pip install --quiet build
+          python -m build --wheel
+          ls -la dist/*.whl
+
+      - name: Install the wheel — the documented path, nothing else
+        run: |
+          set -euo pipefail
+          pip install --quiet dist/*.whl
+          # The SPA must be bundled IN the wheel. This is the assertion that catches a
+          # Node-absent install shipping a dashboard that cannot render: if the wheel
+          # relied on a local `npm run build`, this machine could not have produced one.
+          python - <<'PY'
+          import pathlib, personalclaw
+          root = pathlib.Path(personalclaw.__file__).parent
+          dist = root / "static" / "dist"
+          idx = dist / "index.html"
+          assert idx.is_file(), f"the wheel did not bundle the built SPA: {idx} missing"
+          assets = list((dist / "assets").glob("*.js"))
+          assert assets, "no hashed JS asset in the bundled SPA"
+          print(f"bundled SPA present: {idx}, {len(assets)} JS asset(s)")
+          PY
+
+      - name: personalclaw --version (a stranger's first command)
+        run: personalclaw --version
+
+      - name: Onboarding reachable on a home that has never existed
+        env:
+          PERSONALCLAW_HOME: /tmp/v1-clean-home
+        run: |
+          set -euo pipefail
+          # THE READY LINE IS JSON AND IT CARRIES A TOKEN. `--json-ready` prints
+          # `PERSONALCLAW_READY:{"port":...,"token":...,"pid":...,"home":...}` — not a URL — so
+          # it must be parsed as JSON, and it must NEVER be echoed. That token is a real
+          # session credential with a one-year TTL; a `cat` of this file would publish a live
+          # credential into a public Actions log. Every failure path below redacts.
+          personalclaw gateway --test-mode --json-ready > /tmp/ready.json 2>/tmp/gw.log &
+          for i in $(seq 1 60); do grep -q PERSONALCLAW_READY /tmp/ready.json 2>/dev/null && break; sleep 1; done
+          # Read port AND token together. `--test-mode` does NOT disable auth: an unauthenticated
+          # GET /api/onboarding returns 403, so the walkthrough must authenticate or it would
+          # "fail" for a reason that has nothing to do with onboarding. Measured locally, only
+          # the `?token=` query form is accepted — `Authorization: Bearer` and
+          # `X-PersonalClaw-Token` both return 403 — so that is the form used here.
+          eval "$(python3 - <<'PY'
+          import json, pathlib, shlex
+          for line in pathlib.Path('/tmp/ready.json').read_text().splitlines():
+              if line.startswith('PERSONALCLAW_READY:'):
+                  d = json.loads(line[len('PERSONALCLAW_READY:'):])
+                  print(f"PORT={d['port']}; TOKEN={shlex.quote(d['token'])}")
+                  break
+          PY
+          )"
+          # Tell the runner to scrub this value from every subsequent log line. Belt and
+          # braces alongside the redacting sed below: the token is a real session credential
+          # with a one-year TTL and this is a public repo.
+          [ -n "${TOKEN:-}" ] && echo "::add-mask::$TOKEN"
+          if [ -z "${PORT:-}" ]; then
+            echo '::error::gateway never announced a port'
+            # Redacted tail only — token= and "token":"..." are scrubbed before printing.
+            sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1REDACTED"/g; s/token=[^&[:space:]]*/token=REDACTED/g' \
+              /tmp/gw.log | tail -40
+            exit 1
+          fi
+          echo "gateway on $PORT"
+          # Status captured separately so a failure never prints the URL (which carries the
+          # token). Only the code is echoed.
+          CODE=$(curl -s -o /tmp/onb.json -w '%{http_code}' \
+                   "http://127.0.0.1:$PORT/api/onboarding?token=$TOKEN")
+          if [ "$CODE" != "200" ]; then
+            echo "::error::GET /api/onboarding returned $CODE (expected 200)"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, pathlib
+          d = json.loads(pathlib.Path('/tmp/onb.json').read_text())
+          # The readiness triple, all three legs. A never-seen home has no provider and no
+          # chat binding, so `needs_model` must be True — and asserting only `needs_model`
+          # would pass if the resolve probe threw and fell back to the coarse heuristic.
+          # Checking all three distinguishes "correctly reports unconfigured" from that.
+          assert d.get("needs_model") is True, f"a never-seen home must need a model: {d}"
+          assert d.get("has_model_provider") is False, f"clean home reports a provider: {d}"
+          assert d.get("has_chat_binding") is False, f"clean home reports a chat binding: {d}"
+          print("onboarding readiness on a clean home:",
+                {k: d.get(k) for k in ("needs_model", "has_model_provider", "has_chat_binding")})
+          PY
+
+      # THE FIRST CHAT, AND THE HONEST LIMIT. A real turn needs a real model. There is no
+      # credential on a public-repo runner and no Ollama, so this step reports the state it
+      # can prove and NAMES what it cannot. It does not pass by pretending a reachable chat
+      # endpoint is a completed chat.
+      - name: First chat — what a runner can and cannot prove
+        env:
+          PERSONALCLAW_HOME: /tmp/v1-clean-home
+        run: |
+          set -euo pipefail
+          echo "V1 GAP, recorded rather than skipped:"
+          echo "  the wheel installs, the gateway starts, onboarding correctly reports"
+          echo "  needs_model on a never-seen home, and the bundled SPA is present."
+          echo "  A real first-chat TURN needs a bound model provider. This runner has no"
+          echo "  credential and no local model, so the turn is NOT verified here."
+          echo "  Closing it needs either a repo secret or a local model on the runner;"
+          echo "  until then V1 is verified up to onboarding and no further."
+
+  # ── V3 ─────────────────────────────────────────────────────────────────────────────────
+  # The documented two-command container bring-up, and the part everyone forgets: state must
+  # survive `compose down` / `up`. That is the assertion, not the bring-up.
+  v3-container:
+    if: ${{ inputs.which == 'all' || inputs.which == 'v3-container' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The two commands, verbatim from README
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # `--wait` blocks on compose's OWN healthcheck rather than a hand-rolled poll, and
+          # `personalclaw-web` already declares `depends_on: {personalclaw-gateway:
+          # service_healthy}`, so this is the stack's own definition of ready. It also pulls
+          # the images anonymously from GHCR, which is only possible because both packages
+          # are public — that is a real dependency of this job, not an incidental detail.
+          docker compose -f deploy/compose/compose.yaml up -d --wait
+          docker compose -f deploy/compose/compose.yaml ps
+
+      - name: Dashboard answers
+        run: |
+          set -euo pipefail
+          # THE PATH IS /api/healthz, NOT /healthz. Measured: a bare `/healthz` returns 403
+          # (it is not a route; the auth middleware rejects it), while `/api/healthz` is
+          # auth-exempt and returns 200 — and compose's own healthcheck uses
+          # `http://127.0.0.1:10000/api/healthz`, which is the documented truth here.
+          # PORTS, from compose: the gateway publishes 127.0.0.1:10000, and nginx publishes
+          # 3000 (http) and 3443 (https) — NOT 443. Both are probed; the TLS cert is
+          # self-signed, hence -k.
+          set +e
+          GW=$(curl -s -o /tmp/hz-gw.json -w '%{http_code}' http://127.0.0.1:10000/api/healthz)
+          NG=$(curl -sk -o /tmp/hz-ng.json -w '%{http_code}' https://127.0.0.1:3443/api/healthz)
+          set -e
+          echo "  gateway :10000/api/healthz -> $GW"
+          echo "  nginx   :3443/api/healthz  -> $NG"
+          if [ "$GW" != "200" ]; then
+            echo '::error::the gateway never answered /api/healthz'
+            docker compose -f deploy/compose/compose.yaml logs --tail=80 \
+              | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1REDACTED"/g; s/token=[^\&[:space:]]*/token=REDACTED/g'
+            exit 1
+          fi
+          # The body carries status/version/root_ok — assert the stack is actually well, not
+          # merely listening.
+          python3 - <<'PY'
+          import json, pathlib
+          d = json.loads(pathlib.Path('/tmp/hz-gw.json').read_text())
+          assert d.get("status") == "ok", f"health status not ok: {d}"
+          assert d.get("root_ok") is True, f"home root not ok inside the container: {d}"
+          print("container health:", {k: d.get(k) for k in ("status", "version", "root_ok")})
+          PY
+          if [ "$NG" != "200" ]; then
+            echo "::warning::nginx on 3443 returned $NG — the gateway is healthy, so this is"
+            echo "::warning::the reverse-proxy leg only. Recorded, not silently passed."
+          fi
+
+      - name: STATE SURVIVES down/up — the clause that actually matters
+        run: |
+          set -euo pipefail
+          # Write a marker through the running stack, cycle the stack, read it back. A
+          # bring-up that loses state passes a naive health check and fails the walkthrough.
+          MARK="v3-$(date -u +%s)"
+          echo "$MARK" > /tmp/marker
+          docker compose -f deploy/compose/compose.yaml exec -T personalclaw-gateway \
+            sh -c "mkdir -p /data && cp /dev/stdin /data/walkthrough-marker" < /tmp/marker \
+            || { echo '::error::could not write a marker into the volume'; exit 1; }
+          docker compose -f deploy/compose/compose.yaml down
+          docker compose -f deploy/compose/compose.yaml up -d
+          sleep 15
+          GOT=$(docker compose -f deploy/compose/compose.yaml exec -T personalclaw-gateway \
+                  cat /data/walkthrough-marker 2>/dev/null || true)
+          test "$GOT" = "$MARK" \
+            || { echo "::error::state did NOT survive down/up (wrote '$MARK', read '$GOT')"; exit 1; }
+          echo "state survived down/up: $GOT"
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f deploy/compose/compose.yaml down -v || true
+
+  # ── V4 ─────────────────────────────────────────────────────────────────────────────────
+  # All four self-update kinds. `_UPDATE_HANDLED_KINDS` is exactly {git, pip, container,
+  # desktop}, but the four are NOT reached the same way, and an earlier draft of this job was
+  # wrong about that. Measured against the code:
+  #
+  #   _ENV_KINDS = frozenset({"container", "desktop"})
+  #
+  # so `PERSONALCLAW_INSTALL_KIND` forces ONLY those two. `git` and `pip` are *detected*:
+  # `detect_install_kind()` returns "git" when `git_root(project_dir())` is non-empty and
+  # falls through to "pip" otherwise, where `project_dir()` reads PERSONALCLAW_PROJECT_DIR
+  # (set by `cli._detect_project_dir` when running from a checkout).
+  #
+  # WHY THIS MATTERS RATHER THAN BEING A DETAIL. Setting INSTALL_KIND=git is silently
+  # IGNORED — detection returns "pip" — so an `assert kind == want` arm for git FAILS, and
+  # the pip arm would have "passed" only by landing on the fallback, proving nothing about
+  # the override it claimed to test. Each arm below therefore drives the mechanism that
+  # actually selects its kind, and prints which one, so a green check cannot be read as
+  # "the env var forced all four".
+  #
+  # The desktop arm runs on macOS because that is where a desktop install lives; running it
+  # on Linux would assert the wrong platform's path.
+  v4-selfupdate:
+    if: ${{ inputs.which == 'all' || inputs.which == 'v4-selfupdate' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: git
+            os: ubuntu-latest
+          - kind: pip
+            os: ubuntu-latest
+          - kind: container
+            os: ubuntu-latest
+          - kind: desktop
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install --quiet -e .
+
+      - name: Self-update path for kind=${{ matrix.kind }}
+        env:
+          WANT_KIND: ${{ matrix.kind }}
+          PERSONALCLAW_HOME: ${{ runner.temp }}/v4-${{ matrix.kind }}
+        run: |
+          set -euo pipefail
+          # Drive the mechanism that actually selects THIS kind (see the job comment).
+          case "$WANT_KIND" in
+            git)
+              # Detected, not forced: point PROJECT_DIR at the checkout, which carries .git.
+              export PERSONALCLAW_PROJECT_DIR="$GITHUB_WORKSPACE"
+              export VIA="detected from PERSONALCLAW_PROJECT_DIR + .git"
+              ;;
+            pip)
+              # Detected by fallback: no PROJECT_DIR, so there is no git root to find.
+              unset PERSONALCLAW_PROJECT_DIR || true
+              export VIA="detected by fallback (no project dir)"
+              ;;
+            container|desktop)
+              export PERSONALCLAW_INSTALL_KIND="$WANT_KIND"
+              export VIA="forced via PERSONALCLAW_INSTALL_KIND (in _ENV_KINDS)"
+              ;;
+            *) echo "::error::unknown matrix kind $WANT_KIND"; exit 1 ;;
+          esac
+          # The kind must be RECOGNISED. `cli_server.py` has no default arm — an unhandled
+          # kind prints guidance and refuses — so an unrecognised kind is a real failure and
+          # must not read as success.
+          python - <<'PY'
+          import os
+          from personalclaw import self_update
+          kind = self_update.detect_install_kind()
+          want = os.environ["WANT_KIND"]
+          assert kind == want, (
+              f"kind selection failed: wanted {want!r}, detected {kind!r} "
+              f"(via {os.environ.get('VIA')})"
+          )
+          from personalclaw.cli_server import _UPDATE_HANDLED_KINDS
+          assert kind in _UPDATE_HANDLED_KINDS, f"{kind!r} has no update arm — it would refuse"
+          print(f"install kind {kind!r} — {os.environ.get('VIA')}; has an update arm")
+          PY
+          # Then the documented command. A real update on a runner would fetch from the
+          # network and mutate the install; the walkthrough asserts the PATH is wired and
+          # reachable for this kind, and says so plainly.
+          personalclaw update --help >/dev/null
+          echo "kind=$WANT_KIND: selected via $VIA, update path reachable"
+          echo "NOTE: this asserts the path for this kind, not a completed live upgrade."
+
+  # ── The record ─────────────────────────────────────────────────────────────────────────
+  record:
+    needs: [v1-wheel, v3-container, v4-selfupdate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarise for the Execution log
+        run: |
+          {
+            echo "## DIST-11 clean-machine walkthroughs"
+            echo
+            echo "| walkthrough | result |"
+            echo "|---|---|"
+            echo "| V1 wheel (Node-absent) | ${{ needs.v1-wheel.result }} |"
+            echo "| V3 container + state survival | ${{ needs.v3-container.result }} |"
+            echo "| V4 self-update, four kinds | ${{ needs.v4-selfupdate.result }} |"
+            echo "| V2 getting-started, first-time reader | **NOT RUN — owner's; a person, not a machine** |"
+            echo
+            echo "V1 is verified up to onboarding. A real first-chat turn needs a bound model"
+            echo "provider, which a public-repo runner has not got — recorded as a gap, not skipped."
+            echo
+            echo "V4 asserts each kind is detected and its update path is reachable. It does not"
+            echo "perform a live upgrade."
+          } >> "$GITHUB_STEP_SUMMARY"
