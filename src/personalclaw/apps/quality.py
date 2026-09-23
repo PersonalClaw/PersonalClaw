@@ -131,6 +131,8 @@ class StrippedSource(NamedTuple):
     #: The state the scanner ended in — ``"code"`` or ``"block"``. ``"block"`` means a
     #: block comment never closed; a stuck-open tracker reads as "the rest of the file is
     #: clean", which is exactly the weakening to catch, so callers must assert on this.
+    #: :func:`token_lint_bundle` refuses the file by name when it is not ``"code"``
+    #: (#3347) — a silent clean verdict on an unreadable file earned the badge.
     end_state: str
 
 
@@ -145,7 +147,7 @@ def strip_comments(text: str) -> StrippedSource:
     in a comment therefore failed the gate. Tightening the pattern does not help: ``#1783``
     is four digits.
 
-    Two scoping decisions, both measured against the host corpus rather than assumed:
+    Three scoping decisions, each measured against the host corpus rather than assumed:
 
     1. STRING-AWARE, and ``//`` beats ``/*``. A ``/*`` inside a string or a line comment
        must not open a block, because a tracker that opens one there leaves state stuck
@@ -153,19 +155,31 @@ def strip_comments(text: str) -> StrippedSource:
        way this change could weaken the gate instead of fixing it. All three shapes ship in
        the host frontend today (``'/*EDITMODE-BEGIN*/'``; ``'… #/settings/* subpages'``;
        a ``/*`` quoted inside a ``//`` comment).
-    2. Template literals are NOT a tracked state; a backtick is an ordinary character.
-       Tracking them desynchronises on a backtick inside a REGEX literal, which also ships
-       today, and telling a regex literal from a division needs real parser context. Not
-       tracking them is the STRICT direction — template content stays linted, so a raw hex
-       in a css-in-template is still caught — and over all 665 host files it changed the
-       violation set by zero lines.
+    2. Template literals are a LINE-LOCAL quote, and only when the line closes them
+       (#3347). A backtick opens quote state only if another backtick follows on the SAME
+       line, so ``` `${proto}//${host}` ``` is content while an UNPAIRED backtick — the
+       three regex literals that ship today (``/^```/m`` and friends) and the opening line
+       of a multi-line template — stays an ordinary character. That asymmetry is the whole
+       point: pairing on the line needs no parser context, never survives a newline (so
+       state cannot leak to EOF, which is how template tracking broke before), and leaves
+       a trailing ``//`` comment on a regex-literal line still stripped — un-stripping one
+       would re-create #3337's defect, since every decimal digit is a hex digit. Multi-line
+       template CONTENT therefore stays linted, so a raw hex in a css-in-template is still
+       caught. Measured over all 665 host files: 7 lines of stripped code change, and the
+       violation set and every EOF state are unchanged.
+
+    3. ``://`` is a scheme separator, not a comment (#3347). Only the IMMEDIATELY preceding
+       character counts, so ``case 'x': // note`` is still prose while a URL in JSX text —
+       unquoted, so rule 1 cannot help it — no longer truncates the line. Three host lines
+       carry this shape today.
 
     A line whose first non-space characters are ``//`` is prose in any non-block state,
     which covers the ``//`` comments inside embedded-JS template literals.
 
     Not handled, deliberately — a ``/*`` in JSX text or in a regex character class. Both
-    need a real parser, neither occurs in the corpus, and both fail STRICT (state opens,
-    code is dropped), which :attr:`StrippedSource.end_state` reports.
+    need a real parser and neither occurs in the corpus. Both fail STRICT (state opens,
+    code is dropped), which :attr:`StrippedSource.end_state` reports and
+    :func:`token_lint_bundle` refuses on.
 
     Behavioural parity with the TS twin is pinned by ``token_lint_comment_cases.json``,
     which both sides' tests read.
@@ -177,7 +191,7 @@ def strip_comments(text: str) -> StrippedSource:
             code.append("")
             continue
         kept: list[str] = []
-        quote = ""  # "" | "'" | '"' — line-local by construction
+        quote = ""  # "" | "'" | '"' | "`" — line-local by construction
         i = 0
         n = len(line)
         while i < n:
@@ -200,12 +214,16 @@ def strip_comments(text: str) -> StrippedSource:
                     quote = ""
                 i += 1
                 continue
-            if c in ("'", '"'):
+            if c in ("'", '"') or (c == "`" and line.find("`", i + 1) != -1):
                 quote = c
                 kept.append(c)
                 i += 1
                 continue
             if c == "/" and nxt == "/":
+                if i and line[i - 1] == ":":
+                    kept.append(c)  # `https://` — a scheme, not a comment
+                    i += 1
+                    continue
                 break  # the rest of the line is a comment
             if c == "/" and nxt == "*":
                 state = "block"
@@ -217,35 +235,61 @@ def strip_comments(text: str) -> StrippedSource:
     return StrippedSource(code=code, end_state=state)
 
 
-def token_lint_file(path: Path, rules: dict[str, str] | None = None) -> list[str]:
-    """Token-lint one file. Returns ``"<line>: <kind> — <text>"`` strings (empty = clean).
-    Same line semantics as the host lint: comment text is stripped by
-    :func:`strip_comments` before the patterns run, because design rationale legitimately
-    cites hex/px in prose. The reported text is the ORIGINAL line, so a violation still
-    reads the way the author wrote it."""
-    r = rules or load_token_lint_rules()
+#: What :func:`token_lint_bundle` reports for a file the tracker could not read to the end
+#: (#3347). It occupies the same ``{relpath: [...]}`` channel as a line violation, so the
+#: badge refusal in :func:`verify_app` names the file with no extra wiring.
+EOF_UNREADABLE = "EOF: unreadable — an unterminated /* comments out the rest of this file"
+
+
+def _lint_source(text: str, r: dict[str, str]) -> tuple[list[str], str]:
+    """The scanner both entry points share: per-line hits, plus the EOF state that says
+    whether those hits saw the whole file."""
     hex_re = re.compile(r["hex"])
     px_re = re.compile(r["raw_px"])
     ok_re = re.compile(r["px_ok_context"])
     calc_re = re.compile(r["calc_with_token"])
     hits: list[str] = []
-    text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.split("\n")
-    for i, code in enumerate(strip_comments(text).code, start=1):
+    stripped = strip_comments(text)
+    for i, code in enumerate(stripped.code, start=1):
         trimmed = lines[i - 1].strip()
         if hex_re.search(code):
             hits.append(f"{i}: hex — {trimmed[:80]}")
         if px_re.search(code) and not calc_re.search(code) and not ok_re.search(code):
             hits.append(f"{i}: px — {trimmed[:80]}")
-    return hits
+    return hits, stripped.end_state
+
+
+def token_lint_file(path: Path, rules: dict[str, str] | None = None) -> list[str]:
+    """Token-lint one file. Returns ``"<line>: <kind> — <text>"`` strings (empty = clean).
+    Same line semantics as the host lint: comment text is stripped by
+    :func:`strip_comments` before the patterns run, because design rationale legitimately
+    cites hex/px in prose. The reported text is the ORIGINAL line, so a violation still
+    reads the way the author wrote it.
+
+    Per-line only, by construction: an empty list means "no line of CODE violated", which
+    is not the same claim as "this file is clean" when the tracker never reached EOF.
+    :func:`token_lint_bundle` owns that distinction — it is the one the badge reads."""
+    r = rules or load_token_lint_rules()
+    return _lint_source(path.read_text(encoding="utf-8", errors="replace"), r)[0]
 
 
 def token_lint_bundle(app_dir: Path) -> dict[str, list[str]]:
-    """Token-lint every frontend source in the bundle → ``{relpath: [violations]}``."""
+    """Token-lint every frontend source in the bundle → ``{relpath: [violations]}``.
+
+    A file whose scan ends outside ``code`` state is REFUSED by name rather than reported
+    clean (#3347). An unterminated ``/*`` genuinely comments out the rest of the file, so
+    zero line violations is arithmetically correct and substantively a lie: the linter
+    stopped seeing code, and a silent clean verdict is what awarded ``designSystem: "v2"``
+    to a bundle carrying a raw hex two lines below the opener. The refusal rides the
+    existing channel — any non-empty entry is already a failed declaration to the caller —
+    and is appended LAST so a real line violation still leads the message."""
     rules = load_token_lint_rules()
     out: dict[str, list[str]] = {}
     for f in frontend_sources(app_dir):
-        hits = token_lint_file(f, rules)
+        hits, end_state = _lint_source(f.read_text(encoding="utf-8", errors="replace"), rules)
+        if end_state != "code":
+            hits.append(EOF_UNREADABLE)
         if hits:
             out[f.relative_to(app_dir).as_posix()] = hits
     return out

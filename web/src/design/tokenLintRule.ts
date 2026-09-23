@@ -45,7 +45,7 @@ export function lineViolations(line: string): ('hex' | 'px')[] {
 // number in a comment, the convention this program runs on, therefore reddened the
 // rail. Tightening HEX to 3/4/6/8 digits does not help: `#1783` is four.
 //
-// So the BLOCK state is tracked across lines instead. Two scoping decisions, both
+// So the BLOCK state is tracked across lines instead. Three scoping decisions, each
 // measured against the real corpus rather than assumed:
 //
 // 1. STRING-AWARE, and `//` beats `/*`. A `/*` inside a string or a line comment must
@@ -57,14 +57,25 @@ export function lineViolations(line: string): ('hex' | 'px')[] {
 //      - `ui/Toggle.doc.ts`       — `'… all 34 #/settings/* subpages …'`, likewise
 //      - `app/swPolicy.ts`        — ``// THE RULE: `/api/*` responses …``, `/*` in a `//`
 //
-// 2. Template literals are NOT a tracked state; a backtick is an ordinary character.
-//    Tracking them desynchronises on a backtick inside a REGEX literal, which also
-//    ships today — `pages/chat/parseAssistant.ts` (`[\s(`'"]`), `pages/tools/ToolOutput.tsx`
-//    and `ui/content/renderers.tsx` (both ```` /^```/m ````) — and telling a regex literal
-//    from a division needs real parser context. Not tracking them costs nothing and is
-//    the STRICT direction: template content stays linted, so a raw hex in a css-in-template
-//    is still caught. Measured over all 665 corpus files, template tracking changed the
-//    violation set by zero lines and leaked block state on those three.
+// 2. Template literals are a LINE-LOCAL quote, and only when the line CLOSES them (#3347).
+//    A backtick opens quote state only if another backtick follows on the same line, so
+//    `` `${proto}//${host}` `` is content while an UNPAIRED backtick stays an ordinary
+//    character — which is what keeps the three regex literals that ship today working:
+//    `pages/chat/parseAssistant.ts` (`[\s(`'"]`), `pages/tools/ToolOutput.tsx` and
+//    `ui/content/renderers.tsx` (both ```` /^```/m ````). Their trailing `//` comments
+//    stay stripped, and un-stripping one would re-create #3337 (every decimal digit is a
+//    hex digit, so `// see #1783` would read as a raw hex). Pairing on the line needs no
+//    parser context and cannot survive a newline, so state never leaks to EOF — the way
+//    tracking template literals as a third state broke before. Multi-line template CONTENT
+//    therefore stays linted: a raw hex in a css-in-template is still caught. Measured over
+//    all 665 corpus files: 7 lines of stripped code change, violation set and every EOF
+//    state unchanged.
+//
+// 3. `://` is a scheme separator, not a comment (#3347). Only the IMMEDIATELY preceding
+//    character counts, so `case 'x': // note` is still prose, while a URL in JSX text —
+//    unquoted, so rule 1 cannot help it — no longer truncates the line and hides the code
+//    after it. Three corpus lines carry this shape today (`appSdk.tsx`, `useChatSocket.ts`,
+//    `TerminalView.tsx`).
 //
 // A line whose first non-space characters are `//` is prose in any non-block state.
 // That covers the `//` comments inside the embedded-JS templates of `widgetSrcdoc.ts`
@@ -74,10 +85,11 @@ export function lineViolations(line: string): ('hex' | 'px')[] {
 // character class (`/[/*]/`). The corpus has neither, both need a real parser, and both
 // fail STRICT (state opens, code is dropped), which `stripComments` reports through
 // `endState` — see the EOF control in tokenLint.test.ts, which asserts that no source
-// file ends outside `code`.
+// file ends outside `code`, and `token_lint_bundle`, which refuses such a file by name.
 
 /** Lexer state that can survive a newline. Single/double-quoted strings cannot (JS
- *  forbids a bare newline inside one), so those are line-local. */
+ *  forbids a bare newline inside one); a template literal can, but is deliberately
+ *  line-local anyway (decision 2) so its state can never leak to EOF. */
 export type SourceState = 'code' | 'block'
 
 export interface StrippedSource {
@@ -99,7 +111,7 @@ export function stripComments(text: string): StrippedSource {
   for (const line of text.split('\n')) {
     if (state !== 'block' && line.trim().startsWith('//')) { code.push(''); continue }
     const kept: string[] = []
-    let quote = '' // '' | "'" | '"' — line-local by construction
+    let quote = '' // '' | "'" | '"' | '`' — line-local by construction
     let i = 0
     while (i < line.length) {
       const c = line[i]
@@ -114,8 +126,11 @@ export function stripComments(text: string): StrippedSource {
         i += 1
         continue
       }
-      if (c === "'" || c === '"') { quote = c; kept.push(c); i += 1; continue }
-      if (c === '/' && line[i + 1] === '/') break // the rest of the line is a comment
+      if (c === "'" || c === '"' || (c === '`' && line.indexOf('`', i + 1) !== -1)) { quote = c; kept.push(c); i += 1; continue }
+      if (c === '/' && line[i + 1] === '/') {
+        if (i > 0 && line[i - 1] === ':') { kept.push(c); i += 1; continue } // `https://` — a scheme, not a comment
+        break // the rest of the line is a comment
+      }
       if (c === '/' && line[i + 1] === '*') { state = 'block'; i += 2; continue }
       kept.push(c)
       i += 1

@@ -20,8 +20,9 @@
     "'the rest of the file is clean' and silently stops catching real raw hexes, which",
     "is the ONE way this change could weaken the rail rather than fix it. That is not a",
     "hypothetical: tracking template literals as a third state leaked exactly this way on",
-    "three corpus files carrying a backtick inside a regex literal, which is why backticks",
-    "are not a state and why that case is pinned below.",
+    "three corpus files carrying a backtick inside a regex literal, which is why a backtick",
+    "is a LINE-LOCAL quote and only when the line closes it (#3347) — never a state that",
+    "can survive a newline. Both halves of that asymmetry are pinned below.",
     "",
     "Both directions are represented on purpose. Cases named `red_*` MUST still be",
     "caught (the rail's value); cases named `clean_*` MUST now pass (the bug fixed).",
@@ -130,7 +131,7 @@
     },
     {
       "name": "red_hex_inside_a_multiline_template_literal",
-      "why": "A backtick is an ordinary character, so template CONTENT stays linted across lines: a css-in-template hex is a real violation and the strict direction is to keep catching it.",
+      "why": "A backtick is only a LINE-LOCAL quote, so it never survives the newline and template CONTENT stays linted across lines: a css-in-template hex is a real violation and the strict direction is to keep catching it.",
       "lines": [
         "const css = `",
         "  color: #f0f0f0;",
@@ -155,13 +156,46 @@
     },
     {
       "name": "clean_backtick_inside_a_regex_literal_does_not_desync",
-      "why": "MEASURED: three corpus files carry one — `pages/chat/parseAssistant.ts` (`[\\s(`'\"]`), `pages/tools/ToolOutput.tsx` and `ui/content/renderers.tsx` (both /^```/m). Tracking template state desynchronised on exactly these and leaked block state to EOF. Telling a regex literal from a division needs real parser context, so backticks are simply not a state.",
+      "why": "MEASURED: three corpus files carry one — `pages/chat/parseAssistant.ts` (`[\\s(`'\"]`), `pages/tools/ToolOutput.tsx` and `ui/content/renderers.tsx` (both /^```/m). Tracking template state desynchronised on exactly these and leaked block state to EOF. Telling a regex literal from a division needs real parser context, so a backtick is a line-local quote and only when the line closes it — an unpaired one stays an ordinary character.",
       "lines": [
         "const FENCE_RE = /(^|\\n)#{1,6}\\s|```|\\*\\*[^*]+\\*\\*/",
         "const FILE_RE = /(?:^|[\\s(`'\"])((?:~|\\/)[\\w./-]+)/g",
         "const c = '#abc'"
       ],
       "expected": [[], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_url_in_jsx_text",
+      "why": "#3347's first unmodelled shape. A URL in JSX TEXT is not inside a quote, so `//` read as a line comment and truncated the line — the hex after it went unreported with end_state still 'code', invisible to every EOF control. `://` is a scheme separator: only the IMMEDIATELY preceding character counts, so `case 'x': // note` is still prose.",
+      "lines": [
+        "    <p>full docs at https://personalclaw.dev/apps</p>",
+        "    <div style={{ color: '#1a2b3c' }} />",
+        "    <a href=\"/x\">{/* see #1783 */}</a>"
+      ],
+      "expected": [[], ["hex"], []],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_protocol_relative_url_in_a_template_literal",
+      "why": "#3347's second unmodelled shape, the same class one quote-kind over: a template literal is string content, but a backtick was an ordinary character, so `//` inside one truncated the line and hid the hex on it. No colon precedes a protocol-relative `//cdn`, so rule 3 cannot reach this one — the quote set has to.",
+      "lines": [
+        "const css = `background: url(//cdn.example/bg.png); color: #ff0000`",
+        "const c = '#abc'"
+      ],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "clean_line_comment_after_an_unpaired_backtick_in_a_regex_literal",
+      "why": "The NEGATIVE control for the case above, and the reason a backtick is a quote only when the line closes it. These three shapes ship today (`renderers.tsx`, `agentFeed.ts`, `scheduleMeta.ts`): one unpaired backtick inside a regex literal, then a real trailing `//` comment citing an issue number. Treating that backtick as a quote would leave the comment linted and re-create #3337, since every decimal digit is a hex digit.",
+      "lines": [
+        "const FENCE = /^```/m,  // fenced code, measured on #1783",
+        "const INLINE = text.replace(/`([^`]+)`/g, '$1') // inline code → #532",
+        "const PUNCT = text.replace(/[*_~`>#|-]/g, ' ') // stray markdown (#3324)",
+        "const c = '#abc'"
+      ],
+      "expected": [[], [], [], ["hex"]],
       "end_state": "code"
     },
     {
