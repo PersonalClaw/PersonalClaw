@@ -272,6 +272,34 @@ def walk(node: Node, path: str = "root") -> list[tuple[str, Node]]:
     return out
 
 
+#: A loop/foreach iteration marker: `@2` or `#3`. Anchored on the digits so a `#` inside a node
+#: id cannot be mistaken for one.
+INSTANCE_MARKER_RE = re.compile(r"[@#]\d+")
+
+
+def spec_path(path: str) -> str:
+    """An instance path → the SPEC path `walk` produced it from.
+
+    `root.body#3` and `root.body@2` are instances of the same spec node; the state map is keyed by
+    instance, but every spec lookup — the node's id, its config, its declared deps — needs the
+    shared path.
+
+    Removes each marker IN PLACE rather than truncating at the first or last one, because a marker
+    is only trailing when the body is a leaf. Give a loop or foreach a CONTAINER body and the
+    marker lands mid-path, which is the shape every bundled loop template uses:
+
+    * truncating broke the spec lookup for anything BELOW a marker —
+      `root.children[0].body@0.children[0]` became `root.children[0].body`, so a `wait` nested in a
+      loop body resolved to the body SEQUENCE. Measured live: `_wake_due_nodes` read it as a gate
+      and every cycle failed with "gate timed out with no answer", for a template holding no gate.
+    * and it broke every run SURFACE the same way (#3371): the node list labelled each body
+      sibling with the body's id, so two rows both read `step` instead of `work` and `judge`, and
+      `inspect_node`/`output()` answered `WF_NODE_NOT_RUN` for a body node that had run and FAILED.
+      A loop-body node was reachable under no id at all.
+    """
+    return INSTANCE_MARKER_RE.sub("", path)
+
+
 # ── outcomes (WF2-R5) ────────────────────────────────────────────────────────
 
 
