@@ -111,9 +111,24 @@ describe('token-lint comment-state parity (TS ↔ packaged cases)', () => {
     // and the suite would still be green. Require real cases, and require BOTH
     // directions — a file with only `clean_*` cases would green a tracker that
     // stopped catching raw hexes entirely, which is the whole risk of this change.
+    //
+    // The counts run over INTENDED cases only, and the prefix check is what keeps that
+    // honest: a `gap_*` case declares what the tracker does where that is a known HOLE,
+    // reports no violations, and must not pad the negative-control count it is
+    // invisible to. Same assertion as the Python half, deliberately.
     expect(cases.length, CASES_PATH).toBeGreaterThanOrEqual(10)
-    expect(cases.filter((c) => c.expected.some((e) => e.length)).length).toBeGreaterThanOrEqual(5)
-    expect(cases.filter((c) => c.expected.every((e) => e.length === 0)).length).toBeGreaterThanOrEqual(5)
+    const PREFIXES = ['clean_', 'red_', 'end_state_', 'gap_']
+    for (const c of cases) {
+      expect(
+        PREFIXES.some((p) => c.name.startsWith(p)),
+        `${c.name}: unknown prefix, expected one of ${PREFIXES.join(', ')}`,
+      ).toBe(true)
+    }
+    const intended = cases.filter((c) => !c.name.startsWith('gap_'))
+    expect(intended.filter((c) => c.expected.some((e) => e.length)).length).toBeGreaterThanOrEqual(5)
+    expect(
+      intended.filter((c) => c.expected.every((e) => e.length === 0)).length,
+    ).toBeGreaterThanOrEqual(5)
     for (const c of cases) {
       expect(c.expected.length, `${c.name}: one expectation per line`).toBe(c.lines.length)
       expect(['code', 'block'], `${c.name}: end_state`).toContain(c.end_state)
