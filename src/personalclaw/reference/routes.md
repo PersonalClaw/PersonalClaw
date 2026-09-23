@@ -653,7 +653,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/rooms/{room_id}/export` — the transcript, redacted.
 - `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?}.
 - `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.
-- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks into the room.
+- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks, then the room answers.
 - `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

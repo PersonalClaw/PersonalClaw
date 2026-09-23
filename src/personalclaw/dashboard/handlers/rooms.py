@@ -21,12 +21,15 @@ Two postures worth naming here, because they are invisible in the route bodies:
   permission an app has not declared — so an installed app cannot reach these routes
   unless it declares them. That is asserted in the tests rather than re-implemented.
 
-The human is the only caller that reaches these routes today, which is also why no route
-here runs a member's turn: that is `AR-4`.
+The human is the only caller that reaches these routes. Posting a message is the one route
+that runs anything afterwards: it hands the roster to ``rooms.turn`` (see
+:func:`api_room_message_post`), which is where a member's provider session is actually held.
+The cursors that keep that feed from re-sending what a member has already read are `AR-4`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 
@@ -40,7 +43,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.rooms import store
+from personalclaw.rooms import store, turn
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ def _require_enabled() -> None:
 #: emitter that answers it, status and all.
 #:
 #: A table here rather than a status on ``RoomError`` itself, because the store is also
-#: reachable from a CLI and from `AR-4`'s turn loop, neither of which has a status code —
+#: reachable from a CLI and from ``rooms.turn``, neither of which has a status code —
 #: HTTP framing belongs to the HTTP layer.
 #:
 #: **Why each row spells its code out twice.** The first shape was one line repeated in
@@ -221,13 +224,21 @@ async def api_room_member_remove(request: web.Request) -> web.Response:
 
 
 async def api_room_message_post(request: web.Request) -> web.Response:
-    """POST /api/rooms/{room_id}/messages {content} — the human speaks into the room.
+    """POST /api/rooms/{room_id}/messages {content} — the human speaks, then the room answers.
 
-    Only the human: the message is written with an empty ``speaker``, which is what
+    Only the human may POST: the message is written with an empty ``speaker``, which is what
     ``history.speaker_of`` reports for the human. A member's message is written by
-    `AR-4`'s turn loop after the provider answers, not by a caller claiming a speaker
-    name here — accepting one would let any caller forge a member's words into the
-    transcript every other member then reads as that member's position.
+    :func:`~personalclaw.rooms.turn.run_member_turn` after that member's provider answers,
+    never by a caller claiming a speaker name here — accepting one would let any caller forge
+    a member's words into the transcript every other member then reads as that member's
+    position.
+
+    The human's line is appended FIRST and synchronously, so a 201 means it is durable even
+    if every member then fails; the round itself runs in the background because N provider
+    turns do not fit in a request. The response carries ``speaking``: the members whose
+    listen policy admits them, which is what lets a caller (and the `AR-8` UI) distinguish
+    "nobody was listening" from "the answers have not landed yet". Poll
+    ``GET /api/rooms/{room_id}`` for the replies.
     """
     room_id = request.match_info["room_id"]
     try:
@@ -236,11 +247,47 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         content = require_string(body, "content")
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
         messages = store.read_messages(room_id)
+        speaking = [m.name for m in turn.speakers_for(store.members_for_turn(room_id), content)]
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"messages": messages}, status=201)
+    if speaking:
+        _start_round(request, room_id, content)
+    return web.json_response({"messages": messages, "speaking": speaking}, status=201)
+
+
+def _start_round(request: web.Request, room_id: str, content: str) -> None:
+    """Fire the roster's turn in the background, holding a reference so it is not GC'd.
+
+    ``state._background_tasks`` is the shipped set every other fire-and-forget handler
+    parks its task in (``dashboard/side.py`` is the closest sibling); an un-referenced
+    ``create_task`` is collectable mid-turn, which would make a member's reply vanish for
+    reasons no log explains.
+
+    A missing ``SessionManager`` is logged at ERROR and drops the round rather than 500-ing a
+    request whose message is already durably on the transcript — the human's words are the
+    part they cannot re-derive, and every member's reply is one more human message away. The
+    log is the point: a dropped round must be findable, not inferred from a quiet room.
+
+    ``app["state"]`` rather than ``app.get("state")``, which is both this surface's idiom and
+    the only one that is honest under ``make_mocked_request``: its app is a ``MagicMock``, so
+    ``.get`` answers a truthy mock for a key nobody set and this guard would wave through a
+    round driven by a mock session manager.
+    """
+    try:
+        state = request.app["state"]
+        sessions = state.sessions
+    except (KeyError, AttributeError):
+        sessions = None
+    if sessions is None:
+        logger.error(
+            "rooms: no SessionManager on the dashboard state — room %s takes no turn", room_id
+        )
+        return
+    task = asyncio.create_task(turn.run_human_message_round(sessions, room_id, content))
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
 
 
 async def api_room_export(request: web.Request) -> web.Response:

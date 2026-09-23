@@ -91,7 +91,7 @@ class RoomError(Exception):
     other caller forgets to add.
 
     ``code`` carries no HTTP status, deliberately: this store is also reachable from a CLI
-    and from `AR-4`'s turn loop, neither of which has one. The status lives beside the
+    and from ``rooms.turn``'s turn path, neither of which has one. The status lives beside the
     wire code in ``dashboard.handlers.rooms._REFUSALS``, which a test keeps exhaustive over
     every code raised here — so adding a raise without a row reds rather than 500s.
     """
@@ -491,9 +491,10 @@ def _redact(text: str) -> str:
     **Applied to EVERY role, including the human's own words** — which is stricter than
     the session write path, and deliberately so. ``chat_persistence`` may exempt ``user``
     because a solo session's transcript is only ever replayed to that user's own provider;
-    a room transcript is the inter-member wire (`AR-4` feeds it to every member's provider
-    as fenced text), so a credential the human types into a room would be handed to every
-    bound agent. The premise that justifies the exemption does not hold here.
+    a room transcript is the inter-member wire (``turn.build_member_prompt`` feeds it to
+    every member's provider as fenced text), so a credential the human types into a room
+    would be handed to every bound agent. The premise that justifies the exemption does not
+    hold here.
     """
     return redact_field(text)
 
