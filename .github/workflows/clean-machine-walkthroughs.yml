@@ -75,26 +75,39 @@ jobs:
           echo "node: absent"
           echo "npm:  $(command -v npm >/dev/null 2>&1 && echo PRESENT || echo absent)"
 
-      - name: Build the wheel the way a release does
+      # INSTALL THE RELEASED WHEEL, DO NOT BUILD ONE HERE. The first version of this job ran
+      # `python -m build --wheel` in this container and then asserted the SPA was bundled.
+      # That assertion FAILED, correctly, and the failure is worth recording because it is a
+      # property of the build rather than a flake:
+      #
+      #   * `src/personalclaw/static/dist` is a SYMLINK to `../../../web/dist`;
+      #   * the build backend is plain `setuptools.build_meta` and invokes no npm step.
+      #
+      # So on a Node-absent machine with no prior `npm run build` the symlink dangles and the
+      # locally built wheel cannot contain a dashboard — by construction, not by accident.
+      # Building here therefore tested something no stranger ever does and could only ever go
+      # red. V1's actual subject is the RELEASED artifact: `pip install personalclaw` is the
+      # documented path, and the release pipeline builds the SPA on a runner that has Node.
+      # Verified against PyPI: personalclaw-0.1.3-py3-none-any.whl carries
+      # `personalclaw/static/dist/index.html` plus 212 hashed JS assets.
+      - name: Install the RELEASED wheel from PyPI — a stranger's documented path
         run: |
           set -euo pipefail
-          pip install --quiet build
-          python -m build --wheel
-          ls -la dist/*.whl
+          pip install --quiet personalclaw
+          python -c "import personalclaw, sys; print('installed', personalclaw.__version__ if hasattr(personalclaw,'__version__') else '(version attr absent)')"
 
-      - name: Install the wheel — the documented path, nothing else
+      - name: The released wheel must bundle the built SPA
         run: |
           set -euo pipefail
-          pip install --quiet dist/*.whl
-          # The SPA must be bundled IN the wheel. This is the assertion that catches a
-          # Node-absent install shipping a dashboard that cannot render: if the wheel
-          # relied on a local `npm run build`, this machine could not have produced one.
+          # Catches a Node-absent install shipping a dashboard that cannot render. This
+          # machine provably could not have built the SPA (asserted Node-absent above), so a
+          # pass here can only mean the wheel carried it.
           python - <<'PY'
           import pathlib, personalclaw
           root = pathlib.Path(personalclaw.__file__).parent
           dist = root / "static" / "dist"
           idx = dist / "index.html"
-          assert idx.is_file(), f"the wheel did not bundle the built SPA: {idx} missing"
+          assert idx.is_file(), f"the released wheel did not bundle the built SPA: {idx} missing"
           assets = list((dist / "assets").glob("*.js"))
           assert assets, "no hashed JS asset in the bundled SPA"
           print(f"bundled SPA present: {idx}, {len(assets)} JS asset(s)")
@@ -223,14 +236,48 @@ jobs:
               | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1REDACTED"/g; s/token=[^\&[:space:]]*/token=REDACTED/g'
             exit 1
           fi
-          # The body carries status/version/root_ok — assert the stack is actually well, not
-          # merely listening.
+          # ASSERT WHAT THE PUBLISHED IMAGE CAN SATISFY, AND MEASURE THE REST.
+          #
+          # An earlier version asserted `root_ok is True` unconditionally and went red with
+          # `{'status': 'ok', 'version': '0.1.3'}`. That was an ANACHRONISTIC assertion, not a
+          # container bug: `/api/healthz`'s identity fields (`pid`, `home_id`, `root_ok`)
+          # landed 2026-09-18 in #3010, while v0.1.3 was tagged 2026-07-30 — `root_ok` has
+          # ZERO occurrences in the tree at that tag. The container answered correctly for its
+          # version; the job asked for a field that version cannot have.
+          #
+          # The finding underneath the red is the one worth keeping, so this step now REPORTS
+          # it instead of tripping over it: GHCR `latest` serves 0.1.3, so the documented
+          # two-command container path gives a stranger a build that is weeks behind `main`.
+          # That is a distribution fact a walkthrough should surface, and silently asserting
+          # past it would have hidden it.
           python3 - <<'PY'
-          import json, pathlib
+          import json, os, pathlib
           d = json.loads(pathlib.Path('/tmp/hz-gw.json').read_text())
+          # Always true, in every version that has ever served this route.
           assert d.get("status") == "ok", f"health status not ok: {d}"
-          assert d.get("root_ok") is True, f"home root not ok inside the container: {d}"
-          print("container health:", {k: d.get(k) for k in ("status", "version", "root_ok")})
+          served = str(d.get("version") or "")
+          assert served, f"healthz carried no version: {d}"
+          identity = {k: d.get(k) for k in ("pid", "home_id", "root_ok")}
+          have = {k: v for k, v in identity.items() if v is not None}
+          print(f"container health: status=ok version={served}")
+          if have:
+              # The image carries the identity channel, so hold it to the contract.
+              assert d.get("root_ok") is True, f"home root not ok inside the container: {d}"
+              print(f"  identity channel present and healthy: {sorted(have)}")
+          else:
+              print("  IMAGE SKEW, recorded rather than asserted past:")
+              print(f"    the image serving :10000 reports version {served} and its /api/healthz")
+              print("    carries NO identity fields (pid/home_id/root_ok). Those landed in #3010")
+              print("    on 2026-09-18; v0.1.3 was tagged 2026-07-30 and has zero occurrences of")
+              print("    root_ok. So this is the published image being older than `main`, not a")
+              print("    container fault — and it means the DOCUMENTED container path hands a")
+              print("    stranger a build without the zombie-gateway detection that main has.")
+          # Written to the summary so the skew is visible on the run, not just in the log.
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write(f"\n- V3 container image serves version **{served}**; "
+                           f"identity fields present: **{sorted(have) or 'none'}**\n")
           PY
           if [ "$NG" != "200" ]; then
             echo "::warning::nginx on 3443 returned $NG — the gateway is healthy, so this is"
