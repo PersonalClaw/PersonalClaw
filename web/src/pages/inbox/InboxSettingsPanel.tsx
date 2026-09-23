@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { Loading, LoadError } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 import { NumberField } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
@@ -15,22 +16,31 @@ export function InboxSettingsPanel() {
   // NOT the inbox entity-settings store the rest of this panel uses — so they're
   // read/written via the config PATCH (the ONE place the runtime reads them),
   // never the entity store (which would be a silent no-op toggle).
+  // `null` = not read yet, which is why both switches below are disabled until the config
+  // resolves. A failed read leaves them `null` too — see `loadConfig`.
   const [engagementOn, setEngagementOn] = useState<boolean | null>(null)
   const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
+  const [cfgErr, setCfgErr] = useState('')
 
   // `setS(null)` on failure left `!s` true, and the gate below rendered `<Loading />` FOREVER. Capture the
   // rejection instead so the drawer can say what happened; `load` lets the user retry without reopening.
   const [loadErr, setLoadErr] = useState<unknown>(null)
   const load = () => api.inboxSettings().then((v) => { setS(v); setLoadErr(null) }).catch(setLoadErr)
   useEffect(() => { load() }, [])
-  useEffect(() => {
-    api.personalclawConfig()
-      .then((c) => {
-        setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
-        setSourcesOn(Boolean(c?.inbox?.enabled))
-      })
-      .catch(() => { setEngagementOn(false); setSourcesOn(false) })
-  }, [])
+  // 🔴 #532 row 19: this catch used to `setEngagementOn(false); setSourcesOn(false)`, and in this
+  // component `false` means "read, and the setting is off" while `null` means "not read yet". So a
+  // failed `GET /api/config` rendered two live OFF switches with no failure anywhere on screen —
+  // the panel asserting a configuration it had never read, on the two flags that decide whether the
+  // inbox collects anything at all. The rejection is recorded instead: both flags stay `null` (so
+  // both switches stay disabled) and the band below says what happened, with a retry.
+  const loadConfig = () => api.personalclawConfig()
+    .then((c) => {
+      setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
+      setSourcesOn(Boolean(c?.inbox?.enabled))
+      setCfgErr('')
+    })
+    .catch((e) => setCfgErr(String((e as Error)?.message || e)))
+  useEffect(() => { loadConfig() }, [])
 
   const patch = (p: Partial<InboxSettings>) => {
     // Roll back on refusal (#624): notifying alone still left the field showing a
@@ -70,6 +80,10 @@ export function InboxSettingsPanel() {
   return (
     <div className="flex flex-col gap-l">
       <div className="flex justify-end"><SavedToast show={saved} /></div>
+
+      {cfgErr && (
+        <InlineError icon onRetry={loadConfig}>Couldn't read your inbox configuration: {cfgErr}</InlineError>
+      )}
 
       <Row label="Poll message sources"
         hint="Collect messages from connected poll sources (filesystem drops; channel apps). Agents can always post here directly.">

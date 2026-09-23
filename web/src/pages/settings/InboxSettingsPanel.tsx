@@ -43,22 +43,25 @@ export function InboxSettingsPanel() {
   const { data, error: loadErr, refresh } = useQuery('settings:inbox', () => api.inboxSettings(), { persist: true })
   useEffect(() => { if (data) setS(data) }, [data])
 
-  useEffect(() => {
-    api.personalclawConfig()
-      .then((c) => {
-        setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
-        setSourcesOn(Boolean(c?.inbox?.enabled))
-        setTriageOn(Boolean(c?.proactive?.triage_enabled))
-        setAutoExecOn(Boolean(c?.proactive?.auto_execute_enabled))
-      })
-      // 🪤 The two inbox switches keep their historical `false` fallback, but the triage ones do
-      // NOT: a failed config read that rendered "triage off" would be this panel telling the user
-      // their digest is disabled when it may be running. They stay `null` and say so.
-      .catch((e) => {
-        setEngagementOn(false); setSourcesOn(false)
-        setCfgErr(String((e as Error)?.message || e))
-      })
-  }, [])
+  // 🔴 #532 row 19: this catch used to `setEngagementOn(false); setSourcesOn(false)`, under a comment
+  // calling that fallback deliberate ("the two inbox switches keep their historical `false`
+  // fallback"). It was not defensible — `false` is this component's value for "read, and the setting
+  // is off", so a failed `GET /api/config` rendered two OFF switches as saved configuration on the
+  // two flags that decide whether the inbox collects anything at all. The triage pair next to them
+  // already did the honest thing for the same rejection, which is what made the inconsistency
+  // visible: ONE read, four switches, two of them lying about it. All four stay `null` now — every
+  // switch below is disabled until the read succeeds — and the band at the top of the panel reports
+  // the rejection with a retry.
+  const loadConfig = () => api.personalclawConfig()
+    .then((c) => {
+      setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
+      setSourcesOn(Boolean(c?.inbox?.enabled))
+      setTriageOn(Boolean(c?.proactive?.triage_enabled))
+      setAutoExecOn(Boolean(c?.proactive?.auto_execute_enabled))
+      setCfgErr('')
+    })
+    .catch((e) => setCfgErr(String((e as Error)?.message || e)))
+  useEffect(() => { loadConfig() }, [])
 
   const patch = (p: Partial<InboxSettings>) => {
     // Roll back on refusal (#624): the notify below reports the failure, but the
@@ -77,6 +80,13 @@ export function InboxSettingsPanel() {
   }
 
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }
+
+  // Why a switch with no value is unavailable — and the two cases are different facts. "Still
+  // reading" self-heals; a rejection does not, so saying "still reading" after the read FAILED is
+  // the hover-text version of the same defect #532 row 19 named in the switch itself.
+  const cfgUnread = cfgErr
+    ? "Couldn't read your configuration, so this switch has no saved value to show — retry at the top of the panel."
+    : 'Still reading your configuration — this switch appears once it loads.'
 
   const setSources = (v: boolean) => {
     setSourcesOn(v)
@@ -120,6 +130,14 @@ export function InboxSettingsPanel() {
       <PanelHeader title="Inbox" hint="What gets flagged in the unified inbox, and how long items are kept." />
       <div className="mb-l flex justify-end"><SavedToast show={saved} /></div>
 
+      {/* ONE read backs the Collection and Proactive-triage switches, so its failure is reported
+          once, here, above both of them — not inside the section that happened to notice first. */}
+      {cfgErr && (
+        <div className="mb-l">
+          <InlineError icon onRetry={loadConfig}>Couldn't read your inbox configuration: {cfgErr}</InlineError>
+        </div>
+      )}
+
       {/* Alerting moved to Notifications → Per-kind delivery (plan 42 S3): keyword /
           name-mention escalation is a `conditions` block on ANY notification rule now, so
           the same rules cover loops and proposals, not just inbox messages. */}
@@ -148,21 +166,16 @@ export function InboxSettingsPanel() {
           a rules list under a disabled digest reads as dormant-but-kept (criterion 10) only when
           the switch that made it dormant is directly above it. */}
       <Section title="Proactive triage" hint="One scheduled digest of what accumulated, with proposals you answer. Off by default; nothing is collected or spent while it is off.">
-        {cfgErr && (
-          <div className="mb-m">
-            <InlineError icon>Couldn't read your triage settings: {cfgErr}</InlineError>
-          </div>
-        )}
         <Row label="Morning triage digest" hint="Collect, filter and propose on a schedule. Turning this off retires the schedule and keeps every rule you taught — turning it back on is lossless.">
           <Toggle on={!!triageOn} onChange={setTriage} label="Morning triage digest"
             disabled={triageOn === null}
-            disabledReason="Still reading your configuration — this switch appears once it loads." />
+            disabledReason={cfgUnread} />
         </Row>
         <Row label="Auto-execute the trivial tier" hint="Let the digest perform reversible inbox actions (archive, mark read, mute) on its own, inside your daily budget and per-run cap. Every one is a ledger row with a one-click undo.">
           <Toggle on={!!autoExecOn} onChange={setAutoExec} label="Auto-execute the trivial tier"
             disabled={autoExecOn === null || !triageOn}
             disabledReason={autoExecOn === null
-              ? 'Still reading your configuration — this switch appears once it loads.'
+              ? cfgUnread
               : 'Turn the Morning triage digest on first — there is nothing to auto-execute without it.'} />
         </Row>
       </Section>
