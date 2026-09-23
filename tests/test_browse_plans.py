@@ -166,6 +166,60 @@ def test_a_read_only_plan_runs_unattended_at_its_own_floor(plan_home):
     assert r.refused is False and runner.calls == ["w1"]
 
 
+def test_a_submit_plan_is_refused_unattended_at_exactly_its_own_floor(plan_home):
+    """A grant of exactly ``draft_only`` is not a PROMOTING grant (BA-6 ``done_when``).
+
+    ``granted_rung`` hands out ``draft_only`` for any type the store has not promoted, so this
+    is the grant a real ungranted submit-bearing plan arrives with — not an exotic input. The
+    security property is that the browser is never touched, not merely that ``ok`` is False.
+    """
+    bp.save_plan(_walk())  # submits=True → floor draft_only
+    runner = StubRunner(lambda plan, n: bp.TickOutcome(ok=True, verified=True, submitted=True))
+    r = asyncio.run(
+        bp.execute_tick(
+            bp.load_plan("f1"), run=runner, unattended=True, granted_rung=RUNG_DRAFT_ONLY
+        )
+    )
+    assert r.refused is True and r.ok is False
+    assert runner.calls == []  # the browser was never driven
+    assert bp.load_plan("f1").cursor.get("step", 0) == 0  # and the cursor did not move
+
+
+def test_equality_with_the_floor_admits_a_reader_and_refuses_a_submitter(plan_home):
+    """The two arms of the same clause, side by side: one operator cannot serve both.
+
+    A blanket ``<=`` at this guard would refuse the read-only arm — including the only
+    production caller, the WATCHED-SOURCES browse tier, which polls a ``watch_page`` plan at
+    exactly ``one_tap``. A blanket ``<`` admits an ungoverned submit. Hence ``plan.submits``.
+    """
+    bp.save_plan(_watch())  # read-only, floor one_tap
+    bp.save_plan(_walk())  # submits, floor draft_only
+    reader = StubRunner(lambda plan, n: bp.TickOutcome(content="v", ok=True))
+    submitter = StubRunner(lambda plan, n: bp.TickOutcome(ok=True, verified=True, submitted=True))
+
+    at_floor_read_only = asyncio.run(
+        bp.execute_tick(bp.load_plan("w1"), run=reader, unattended=True, granted_rung=RUNG_ONE_TAP)
+    )
+    at_floor_submits = asyncio.run(
+        bp.execute_tick(
+            bp.load_plan("f1"), run=submitter, unattended=True, granted_rung=RUNG_DRAFT_ONLY
+        )
+    )
+
+    assert at_floor_read_only.refused is False and reader.calls == ["w1"]
+    assert at_floor_submits.refused is True and submitter.calls == []
+
+
+def test_an_attended_tick_bypasses_the_floor_guard_entirely(plan_home):
+    """``unattended=False`` is a human at the keyboard, so the floor does not apply at all."""
+    bp.save_plan(_walk())  # submits=True → floor draft_only
+    runner = StubRunner(lambda plan, n: bp.TickOutcome(ok=True, verified=True, submitted=True))
+    r = asyncio.run(
+        bp.execute_tick(bp.load_plan("f1"), run=runner, unattended=False, granted_rung="")
+    )
+    assert r.refused is False and r.advanced is True and runner.calls == ["f1"]
+
+
 # ── a deleted plan is not resurrected by a cursor write ─────────────────────────
 
 
