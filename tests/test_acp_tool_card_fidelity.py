@@ -442,3 +442,115 @@ class TestDeclaredRiskNeedsNoPlumbing:
             "a core tool dict now declares an explicit risk_level; the ACP path passes "
             f"declared='' and would show the INFERRED level instead: {offenders}"
         )
+
+
+# ── gap 8: WHICH tools clause 3 can be about, and the no-downgrade rail ──────
+#
+# Both rails below exist because clause 3 ("the approval card for a personalclaw-core
+# destructive tool shows its declared risk chip, not the heuristic one") has twice been
+# adjudicated against tool names that cannot reach an ACP card, and a `resolve_effective_risk`
+# call is happy to answer for a name nobody can send. The resolver arithmetic was right both
+# times; the tool UNIVERSE was wrong. So the universe is pinned here, executably, instead of
+# being restated in prose that the next audit re-derives from scratch.
+
+#: The native runtime's workspace tools. They are native-ONLY by construction, and
+#: ``builtin_tools.py``'s own header says why: "In the ACP architecture the file/edit/shell
+#: tools were the external CLI's own built-ins (claude-code provides Read/Write/Bash);
+#: ``personalclaw-core`` only layered orchestration (spawn/memory/artifact) on top." The
+#: provider exists *because* the native loop has no CLI to supply them.
+_PLATFORM_ONLY_TOOLS = ("bash", "read_file", "write_file", "edit_file", "list_dir")
+
+#: Ascending risk, local on purpose: ``task_modes._RISK_ORDER`` is private, and a rail that
+#: imported it could not fail if that mapping were the thing that broke.
+_ASCENDING = ("safe", "caution", "destructive")
+
+
+def _acp_core_surface() -> list[dict]:
+    """The tool dicts an ACP CLI actually sees through the ``personalclaw-core`` server.
+
+    ``mcp_core._aggregated_list_tools`` is the listing the stdio server answers
+    ``tools/list`` with (``run_mcp_core_server``), so it is the only set a CLI can name in a
+    ``tool_call`` frame. Listing only — no call, no write, no home touched.
+    """
+    from personalclaw.mcp_core import _aggregated_list_tools
+
+    return list(_aggregated_list_tools())
+
+
+class TestClauseThreeCanOnlyBeAboutTheAcpSurface:
+    def test_the_platform_shell_and_file_tools_are_not_on_the_acp_surface(self):
+        """``mcp__personalclaw-core__bash`` is not a name any ACP frame can carry.
+
+        This rail is the one that would have failed the two adjudications: both reasoned
+        about ``bash`` (declared ``RiskLevel.DESTRUCTIVE`` at ``builtin_tools.py:581``) and
+        ``read_file`` (declared SAFE) as though they were core tools an ACP CLI calls. They
+        are not exposed on that server at all, so a downgrade measured on those names is a
+        fact about the resolver, not about any reachable approval card.
+        """
+        names = {t["name"] for t in _acp_core_surface()}
+        # Vacuity floor + positive control: an empty or mistyped surface must not pass. The
+        # absences asserted below are only meaningful because this set is real and populated.
+        assert len(names) >= 50, f"ACP core surface implausibly small: {len(names)}"
+        assert (
+            "artifact_delete" in names
+        ), "positive control missing — probe is not reading the surface"
+        present = [n for n in _PLATFORM_ONLY_TOOLS if n in names]
+        assert present == [], (
+            "a native-only workspace tool is now on the personalclaw-core ACP surface: "
+            f"{present}. These DO declare explicit risk levels, so clause 3's plumbing "
+            "question becomes live the moment one of them is reachable over ACP."
+        )
+
+    def test_no_tool_on_the_acp_surface_is_labelled_LOWER_than_its_native_answer(self):
+        """The clause's observable, over the real surface and every dialect.
+
+        For each tool an ACP CLI can actually name, compare the level the ACP path produces
+        (``declared=''``, which is what ``AcpEvent`` carries) against the level the native
+        path produces (the tool's own declared-or-inferred level). A DOWNGRADE — the ACP card
+        showing less risk than the native card for the same tool — is what clause 3 forbids,
+        and it is what the plumbing would fix. An UPGRADE is permitted and does occur: a core
+        read floors at ``caution`` over ACP where native says ``safe``, which is friction, not
+        a security hole, and relaxing it means trusting an unauthenticated wire name.
+        """
+        surface = _acp_core_surface()
+        assert len(surface) >= 50, f"vacuity floor: {len(surface)}"
+        downgrades = []
+        compared = 0
+        for tool in surface:
+            bare = tool["name"]
+            # The native answer uses the tool's own declaration when it has one, and the
+            # inference the in-process provider applies when it does not — i.e. exactly what
+            # `InProcessMcpToolProvider` hands the native gate.
+            native_declared = tool.get("risk_level") or infer_risk_from_name(bare)
+            for dialect in _DIALECTS:
+                wire = dialect.format(name=bare)
+                acp = resolve_effective_risk("", wire, "other", "")
+                native = resolve_effective_risk(native_declared, wire, "other", "")
+                compared += 1
+                if _ASCENDING.index(acp) < _ASCENDING.index(native):
+                    downgrades.append(f"{wire}: acp={acp} < native={native}")
+        assert compared >= 150, f"vacuity floor: only {compared} comparisons"
+        assert downgrades == [], (
+            "the ACP approval card now under-states risk for a reachable core tool — this is "
+            "clause 3's defect and the declared level must be carried onto AcpEvent: "
+            f"{downgrades}"
+        )
+
+    def test_that_no_downgrade_rail_can_actually_fail(self):
+        """The failable control for the rail above — its green is otherwise unfalsifiable.
+
+        Today no surface tool declares a level its name does not imply (the census rail
+        above), so the comparison is green because the two answers are ONE function. Prove
+        the comparison detects a real divergence by synthesising the tool clause 3 is about:
+        a core tool declaring DESTRUCTIVE behind a read-verb name. This is the shape whose
+        arrival makes the plumbing necessary.
+        """
+        bare, declared = "knowledge_search", "destructive"
+        assert infer_risk_from_name(bare) == "safe", "premise: the name implies a read"
+        for dialect in _DIALECTS:
+            wire = dialect.format(name=bare)
+            acp = resolve_effective_risk("", wire, "other", "")
+            native = resolve_effective_risk(declared, wire, "other", "")
+            assert _ASCENDING.index(acp) < _ASCENDING.index(
+                native
+            ), f"{wire}: expected a detectable downgrade, got acp={acp} native={native}"
