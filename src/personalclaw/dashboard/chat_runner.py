@@ -1662,6 +1662,38 @@ def _report_ungated_tool_call(
     return abort
 
 
+async def _abort_acp_turn(client: object, why: str) -> None:
+    """Cancel the ACP CLI's in-flight turn — the ONE seam that actually stops it.
+
+    ``client`` here is the pooled provider (an ``AcpAgentProvider``), not the inner
+    ``AcpClient``. Those two spell cancellation differently: the provider implements
+    the project-wide ``AgentProvider.cancel(*, wait_ack_timeout)`` seam that
+    ``SessionManager.cancel_current`` (a user-pressed Stop) drives, while
+    ``cancel_session`` exists ONLY on the inner ``AcpClient``. Both ACP abort sites
+    used to reach for ``cancel_session`` on the provider, so ``getattr`` returned
+    ``None``, the call was skipped, and nothing logged the miss: the host announced
+    the abort to the user and wrote a SEL row saying ``aborted_turn: true`` while the
+    CLI ran every remaining tool call and finished the turn normally. Measured on a
+    live ``acp:claude-code`` session — the breaker tripped at the configured ceiling,
+    rendered its message, and the turn still completed with 6 tool calls.
+
+    A provider exposing no cancel at all is logged rather than passed over, because a
+    silently-skipped abort is exactly the failure this function replaces.
+    """
+    _cancel = getattr(client, "cancel", None)
+    if not callable(_cancel):
+        logger.warning(
+            "ACP abort (%s) could not cancel the turn: provider %s exposes no cancel() seam",
+            why,
+            type(client).__name__,
+        )
+        return
+    try:
+        await _cancel(wait_ack_timeout=0.0)
+    except Exception:
+        logger.warning("ACP cancel after %s failed", why, exc_info=True)
+
+
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -3265,14 +3297,7 @@ async def run_chat(
                         request_id=event.tool_call_id,
                     )
                     if _abort:
-                        try:
-                            _cancel = getattr(client, "cancel_session", None)
-                            if _cancel is not None:
-                                await _cancel()
-                        except Exception:
-                            logger.warning(
-                                "ACP cancel after ungated tool call failed", exc_info=True
-                            )
+                        await _abort_acp_turn(client, "ungated tool call")
                 # ── Loop breaker for the ACP turn (§2.3 gap 5) ──────────────────
                 # The native runtime counts failures inside its own dispatch loop and
                 # can refuse the NEXT identical call before it runs. Out here the CLI
@@ -3345,14 +3370,7 @@ async def run_chat(
                             # close, persistence) runs exactly as it does for a
                             # user-pressed Stop. Breaking here would abandon the
                             # generator mid-turn and skip all of it.
-                            try:
-                                _cancel = getattr(client, "cancel_session", None)
-                                if _cancel is not None:
-                                    await _cancel()
-                            except Exception:
-                                logger.warning(
-                                    "ACP cancel after breaker trip failed", exc_info=True
-                                )
+                            await _abort_acp_turn(client, "breaker trip")
                     else:
                         # Structural (no-progress / ping-pong) detection over
                         # SUCCESSFUL calls — nothing failed, so the failure path is
