@@ -219,7 +219,12 @@ desktop: pyinstaller
 	cp -R $(PYI_BUNDLE_DIR) $(DESKTOP_DIR)/backend-dist/
 	npm ci  # workspace root install (see web-build note); covers the desktop member
 
-## desktop-dist: build a signed .dmg in desktop/dist/
+## desktop-dist: build the UNSIGNED macOS .dmg in desktop/dist/.
+## Run on macOS — release.yml's `desktop-mac` job is the canonical caller.
+## No signing step by design (owner ruling 2026-09-22: producing the installer does
+## not require signing, and signing needs a paid Apple Developer account). Unlike
+## Linux, Gatekeeper DOES consume a signature, so a user must approve the app once
+## under System Settings -> Privacy & Security — see docs/guides/desktop.md.
 desktop-dist: desktop
 	cd $(DESKTOP_DIR) && npm run dist
 

@@ -257,8 +257,33 @@ bug in the rule.
 
 ## Platforms
 
-The shell ships for **macOS** and **Linux x86-64**. There is no Windows build — see
-below for exactly why and what would change that.
+The shell ships for **macOS (Apple silicon)** and **Linux x86-64**. There is no Windows
+build — see below for exactly why and what would change that.
+
+### macOS — .dmg, unsigned, and one approval on first launch
+
+Every release attaches `PersonalClaw-<version>.dmg`, built by CI on a macOS runner from
+the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
+
+**It is not code-signed or notarized, and unlike Linux that costs you one step.**
+Gatekeeper *does* consume a signature on macOS, so the first launch will not work by
+double-click — macOS will say the app "cannot be opened because the developer cannot be
+verified". To approve it once:
+
+1. Try to open the app (double-click). Let macOS refuse.
+2. Open **System Settings → Privacy & Security**, scroll to the message about
+   PersonalClaw, and click **Open Anyway**.
+3. Confirm. macOS remembers the decision — you will not be asked again for this build.
+
+That is the whole cost of an unsigned build, and it recurs once per installed version.
+Signing it away would require a paid Apple Developer account for notarization; the
+project has deliberately not taken that on, so *where you downloaded it* is the integrity
+story — get the dmg from the GitHub Release page only.
+
+**Apple silicon only.** The dmg carries a PyInstaller-bundled backend, and a frozen
+Python binary cannot be cross-compiled, so the artifact matches the CI runner's
+architecture (arm64). There is no Intel build: it would need its own x86_64 runner, and
+nothing here claims Intel support until a job proves it.
 
 ### Linux — AppImage and .deb, unsigned
 
