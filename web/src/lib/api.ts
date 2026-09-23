@@ -4959,6 +4959,30 @@ export interface GrillPhaseStep {
 export interface GrillPhase { title: string; description: string; steps: GrillPhaseStep[] }
 export interface GrillTreeResult { phases: GrillPhase[]; memory_hits: number }
 
+/** What `POST /api/loops` answers for a kind that has been PORTED onto the workflows
+ *  engine (PP-16): the create STARTED a run, so there is no loop row — nothing to fetch
+ *  by id, nothing to `start`, and `#/loops/<id>` would render a not-found cockpit. The
+ *  run cockpit (`#/workflows/runs/<run_id>`) is the surface that can show it.
+ *
+ *  Deliberately NOT shaped like `Loop`. A run-backed create cannot honestly answer a loop
+ *  view: a loop view describes a `ready` row with ~30 fields the caller then starts, and a
+ *  run has neither the row nor the `ready` state — it is already driving. */
+export interface CreatedLoopRun {
+  run_id: string
+  /** The run's status as the service reported it — `running` on a launched run. */
+  status: string
+  blocking: boolean
+  kind: LoopKind
+}
+export type LoopCreateResult = Loop | CreatedLoopRun
+/** Narrow a create response by its BODY, never by the kind that was requested. Which kinds
+ *  are run-backed is the backend's `PORTED_LOOP_KINDS` to decide and it grows one kind at a
+ *  time; a call site that branched on `kind === 'general'` would break silently the day the
+ *  next kind is ported, which is exactly the coupling the frozenset exists to avoid. */
+export function isCreatedLoopRun(created: LoopCreateResult): created is CreatedLoopRun {
+  return 'run_id' in created
+}
+
 // The stepwise SDLC planning walkthrough — an ordered list of steps the planner
 // designs for the target; each produces an artifact the user approves or comments on.
 export type PlanStepStatus = 'pending' | 'running' | 'awaiting_review' | 'approved'

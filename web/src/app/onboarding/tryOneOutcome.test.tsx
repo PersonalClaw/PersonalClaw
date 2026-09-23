@@ -27,7 +27,11 @@ const notifications = vi.fn()
 const createULoop = vi.fn()
 const uLoopAction = vi.fn()
 
-vi.mock('../../lib/api', () => ({
+// Spread the real module: `isCreatedLoopRun` is the predicate the loop flow narrows its create
+// response with, and stubbing it here would make these tests agree with a test double about
+// which shape is run-backed rather than with the client the product ships.
+vi.mock('../../lib/api', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   api: {
     createKnowledgeItem: (...a: unknown[]) => createKnowledgeItem(...a),
     knowledgeSearchForContext: (...a: unknown[]) => knowledgeSearchForContext(...a),
@@ -81,7 +85,10 @@ function happy() {
     notifications: [{ kind: 'success', title: REMINDER_SEED.title, body: REMINDER_SEED.body }],
     unread: 0,
   })
-  createULoop.mockResolvedValue({ id: 'lp-1', status: 'ready', task: LOOP_SEED.task, max_cycles: 1 })
+  // The happy path for a PORTED kind (PP-16): `POST /api/loops` answers a run that is already
+  // running, so there is no `ready` row and no second start call. `uLoopAction` stays wired so
+  // the tests below can assert it is NOT reached.
+  createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
 }
 
@@ -192,30 +199,51 @@ describe('reminder card — creates it, fires it, and reads the notification bac
   })
 })
 
-describe('loop card — creates and STARTS a real loop', () => {
-  it('creates a one-cycle general loop and starts it', async () => {
+describe('loop card — creates a general loop, which STARTS A RUN', () => {
+  it('creates the loop and does NOT try to start it a second time', async () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
-    await waitFor(() => expect(uLoopAction).toHaveBeenCalled())
-    expect(createULoop).toHaveBeenCalledWith({ kind: 'general', task: LOOP_SEED.task, max_cycles: 1 })
-    expect(uLoopAction).toHaveBeenCalledWith('lp-1', 'start')
+    await waitFor(() => expect(createULoop).toHaveBeenCalled())
+    // No `max_cycles`: the field had no home on the run path, so sending it would have been a
+    // budget the card asked for and the engine ignored.
+    expect(createULoop).toHaveBeenCalledWith({ kind: 'general', task: LOOP_SEED.task })
+    // The load-bearing half. `general` is PORTED (PP-16): the create already STARTED the run, so
+    // the old `PATCH /api/loops/<id> {action:"start"}` would fire against an id the loop store
+    // has never seen — a guaranteed failure the user would read as "my first loop broke".
+    expect(uLoopAction).not.toHaveBeenCalled()
   })
 
-  it('renders the status the START response reported', async () => {
+  it('renders the status the CREATE response reported', async () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect(await screen.findByText('running')).toBeTruthy()
-    expect(screen.getByText(/1 cycle — it stops on its own/)).toBeTruthy()
+    // "It stops on its own" is in the headline now, not in a fact row: a run create reports no
+    // budget, and the row used to print `max_cycles` read off a loop view.
+    expect(screen.getByText(/it stops on its own/)).toBeTruthy()
+    expect(screen.queryByText(/1 cycle/)).toBeNull()
   })
 
-  it('a loop that is created but never leaves `ready` is a failure', async () => {
-    // Create-only is the whole trap: `POST /api/loops` answers 201 with `status: "ready"`, so a
-    // card that stopped there would show a green tick for a loop that never ran.
-    uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'ready', task: LOOP_SEED.task, max_cycles: 1 })
+  it('a run that is created but never reaches `running` is a failure', async () => {
+    // Create-without-launch is the whole trap, and it survived the port: `start_kind_run` writes
+    // the run as a DRAFT and only then hands it to the supervisor, so a card that trusted the
+    // 202 alone would show a green tick for a run that never left draft.
+    createULoop.mockResolvedValue({ run_id: 'run-1', status: 'draft', blocking: false, kind: 'general' })
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect(await screen.findByRole('alert')).toBeTruthy()
-    expect(screen.getByText(/did not start — it is "ready"/)).toBeTruthy()
+    expect(screen.getByText(/did not start — it is "draft"/)).toBeTruthy()
+  })
+
+  it('a loops row for a ported kind is reported, not rendered as a success', async () => {
+    // The FE/BE skew case: a dashboard that knows `general` is ported against a gateway that
+    // does not. Every fact the card shows would describe a run that does not exist, so the flow
+    // says the two are out of step instead of printing them.
+    createULoop.mockResolvedValue({ id: 'lp-9', status: 'ready', task: LOOP_SEED.task, max_cycles: 1 })
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText(/out of step/)).toBeTruthy()
+    expect(uLoopAction).not.toHaveBeenCalled()
   })
 })
 

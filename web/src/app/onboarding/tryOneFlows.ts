@@ -1,4 +1,4 @@
-import { api } from '../../lib/api'
+import { api, isCreatedLoopRun } from '../../lib/api'
 
 /** ONBOARDING-UX S1 T1.3 (OU-3) — the three first-success "try one" flows.
  *
@@ -23,10 +23,18 @@ import { api } from '../../lib/api'
  *   · reminder — the `notify` action provider calls `state.notify(...)` and
  *     nothing else, so creating the trigger and firing it once produces a real
  *     dashboard notification with no model in the path.
- *   · loop — `manager.start` writes `status: running` BEFORE any agent work and
- *     only arms a timer; the first model turn fires after `idle_secs`. So the
- *     card's own outcome ("it is running") costs nothing, and the loop is capped
- *     at ONE cycle so the work it goes on to do is bounded.
+ *   · loop — the card's own outcome ("it is running") is read straight out of the
+ *     create response, so showing it still needs no completion call.
+ *
+ *     🔴 THE BOUND CHANGED AND THE CARD HAD TO STOP PROMISING THE OLD ONE. `general`
+ *     is now PORTED onto the workflows engine (PP-16), so `POST /api/loops` STARTS A
+ *     RUN rather than writing a `ready` loop row. Two consequences this flow used to
+ *     rely on are gone: the run begins its first node at launch instead of arming an
+ *     `idle_secs` timer, and its cycle budget is the template's own loop node — the
+ *     `max_cycles` this flow used to send has no home on the run path at all, so it
+ *     was dropped rather than sent and ignored. The work is still BOUNDED (the
+ *     template's loop node caps its iterations), which is what "it stops on its own"
+ *     claims; it is no longer bounded at ONE, and the card no longer says it is.
  *
  *  Flows live here, apart from the card chrome, so the executed behaviour is
  *  testable without rendering the step — and so a reader can check what each card
@@ -239,28 +247,41 @@ export async function runReminderFlow(): Promise<TryOneOutcome> {
   }
 }
 
-/** Create and start a real loop. `status` is the outcome: `manager.start` writes it
- *  before any agent work, so "running" is a fact about the system and not a hope.
- *  Capped at one cycle — a first run should show the machinery, not open an
- *  unbounded spend. */
+/** Create and start a real loop. `status` is the outcome, read off the create response, so
+ *  "running" is a fact about the system and not a hope.
+ *
+ *  ONE arm, not two. `general` is ported (PP-16), so this create always STARTS A RUN, and the
+ *  second call this flow used to make — `PATCH /api/loops/<id> {action:"start"}` — has nothing
+ *  to act on: the run is already driving and the loop store has never seen the id. Keeping a
+ *  loops-row arm "just in case" would be an unreachable second path for the one kind this
+ *  flow ever creates, so the other shape is reported as the disagreement it would be rather
+ *  than handled as an alternative. */
 export async function runLoopFlow(): Promise<TryOneOutcome> {
-  const loop = await api.createULoop({
-    kind: LOOP_SEED.kind,
-    task: LOOP_SEED.task,
-    max_cycles: 1,
-  })
-  const started = await api.uLoopAction(loop.id, 'start')
-  if (started.status !== 'running') {
-    throw new Error(`The loop was created but did not start — it is "${started.status}".`)
+  const created = await api.createULoop({ kind: LOOP_SEED.kind, task: LOOP_SEED.task })
+  if (!isCreatedLoopRun(created)) {
+    // Reachable for one real reason: a dashboard built against a gateway that has not ported
+    // this kind (a stale SPA, or a stale gateway behind a fresh one). Worth saying out loud —
+    // every fact below would otherwise describe a run that does not exist.
+    throw new Error(
+      `A "${LOOP_SEED.kind}" loop should start a run, but the server created a loop row instead` +
+        ' — the dashboard and the gateway are out of step.',
+    )
+  }
+  if (created.status !== 'running') {
+    throw new Error(`The loop was created but did not start — it is "${created.status}".`)
   }
   return {
-    headline: 'Your first loop is running.',
+    // "It stops on its own" moved from a FACT row into the headline, because it is no longer
+    // read back from anything: the old row printed `started.max_cycles` off a loop view, and a
+    // run create reports no budget. It is still true (the template's loop node caps its
+    // iterations) — but a claim this file cannot read out of a response does not get to sit in
+    // a column that promises it did.
+    headline: 'Your first loop is running — and it stops on its own.',
     facts: [
-      { label: 'Working on', value: started.task || LOOP_SEED.task },
-      { label: 'Status', value: started.status },
-      { label: 'Budget', value: `${started.max_cycles} cycle — it stops on its own` },
+      { label: 'Status', value: created.status },
+      { label: 'Run', value: created.run_id },
     ],
-    href: `loops/${started.id}`,
+    href: `workflows/runs/${created.run_id}`,
     linkLabel: 'Watch it work',
   }
 }

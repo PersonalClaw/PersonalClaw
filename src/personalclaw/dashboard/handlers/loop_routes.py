@@ -429,8 +429,101 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 # ── CRUD ──
 
 
+async def _create_ported_kind_as_run(
+    request: web.Request, kind: str, task: str, body: dict
+) -> web.Response:
+    """Start a PORTED loop kind as a ``WorkflowRun`` (PP-16) instead of writing a loops row.
+
+    ``workflows.service.start_kind_run`` shipped with ZERO callers anywhere in the package — the
+    kind resolved to its template and nothing launched it — so the atom's "a Loop becomes a
+    WorkflowRun" clause had no reachable path from the product at all. This is the door it was
+    missing, and ``PORTED_LOOP_KINDS`` is read from the module that DECLARES it so the route and
+    the service cannot disagree about which kinds have arrived.
+
+    **Guarded by ``workflow_run_start`` and audited**, exactly like ``POST /api/workflows/runs``,
+    for the reason ``api_run_start_draft`` records: a second door to starting a run must carry the
+    same permission as the first, or a session that may not start a workflow starts one through
+    here — and it spends exactly the same money. The four un-ported kinds keep this family's
+    (unguarded) create untouched, because they still only write a row and start nothing.
+
+    **The refusal envelope is the workflows family's own ``_reply``**, not a second dialect: its
+    ``_STATUS_MAP`` is the one translator from the ``WF_*`` service vocabulary to wire codes
+    (:mod:`personalclaw.http_errors`' docstring names it as such). Neither of
+    ``start_kind_run``'s own two refusals is reachable from here — the caller already established
+    membership in ``PORTED_LOOP_KINDS``, which is a superset test of "resolves" — so this adds no
+    rows to that map.
+
+    🔴 **The response is NOT a loop view, and it cannot be.** A loops-row create answered 201 + the
+    thirty-odd fields of ``store.get_redacted``, describing a row in status ``ready`` that the
+    caller then starts. A run-backed create has no row, and the run is ALREADY DRIVING, so a loop
+    view here would describe state that does not exist. It answers 202 + the run's identity,
+    matching the non-blocking arm of ``POST /api/workflows/runs``.
+
+    The narrowing that comes with that, stated rather than hidden: of the five per-instance knobs
+    a create body carries and ``supervisor_policy.OVERRIDABLE_POLICY_KEYS`` names, only
+    ``success_criteria`` has a home on the run path (as the template's declared
+    ``exit_condition``). ``max_cycles`` in particular does NOT bound a run: the iteration cap is
+    the loop node's own ``max_iterations`` (``tick.py`` reads it off ``node.config``), which
+    ``general-project`` declares as a literal 6, and ``SupervisorPolicy.budget_max_cycles`` only
+    reaches ``convergence.evaluate`` on a tripped breaker — where ``_convergence_state`` leaves the
+    cycle count it passes at 0, so its budget branch is vacuous. Giving those knobs a home is the
+    next unit's work, not a thing to fake here.
+    (That cycle-count field is DESCRIBED here rather than spelled, and the omission is deliberate.
+    PP-16 seam 4a retired the name, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
+    fires on any string constant carrying the name near ``set ``/``update ``/…, and a docstring IS a
+    string constant — the word "superset" four paragraphs up satisfies the marker. The rail's own
+    docstring says prose mentions must never red it, so the cheap honest move is to not reprint a
+    retired identifier in a module that has no business holding one. Grep its retirement rail under
+    ``tests/`` for the spelling.)
+    """
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+    from personalclaw.workflows.models import OriginKind
+
+    denied = _guard(request, "workflow_run_start")
+    if denied is not None:
+        return denied
+    result = await workflows.start_kind_run(
+        kind,
+        task=task,
+        # The loop's `success_criteria` under the name the template declares for it — the same
+        # concept ("what done means"), per `start_kind_run`'s own docstring. Left blank, the
+        # template's declared default applies, so an omitted criterion is not an empty one.
+        exit_condition=str(body.get("success_criteria") or "").strip(),
+        supervisor=_supervisor(request),
+        # `API`, matching the sibling route on the same surface (`api_run_start`): this is an HTTP
+        # caller either way, and an origin that disagreed between the two doors would make the
+        # run's own provenance depend on which door the UI happened to use.
+        origin_kind=OriginKind.API,
+        # Carries the launching session's memory posture down into the run (WORK-CONTAINERS §5.1)
+        # — an incognito chat's loop must not write memories through its run.
+        session_key=request.headers.get("X-Session-Key", "") or "",
+        project_id=str(body.get("project_id", "") or ""),
+    )
+    # Audited under the operation that GUARDED it, so a denial and a failure land in the same
+    # SEL series as the sibling route's — an audit split across two operation names would make
+    # "who started runs" unanswerable from the log.
+    _audit(
+        request,
+        "workflow_run_start",
+        "success" if result.get("ok") else "failure",
+        f"loop-kind:{kind}",
+    )
+    if not result.get("ok"):
+        return _reply(result)
+    return _reply({**result, "kind": kind}, status=202)
+
+
 async def api_loop_create(request: web.Request) -> web.Response:
-    """POST /api/loops {kind, task|goal, …} — create a READY loop of any kind."""
+    """POST /api/loops {kind, task|goal, …} — create a READY loop, or START a run for a ported kind.
+
+    A kind in :data:`~personalclaw.workflows.service.PORTED_LOOP_KINDS` is no longer a loops row:
+    it starts as a ``WorkflowRun`` on the template that replaced it. See
+    :func:`_create_ported_kind_as_run` for what that changes about the response, and why the four
+    un-ported kinds keep this path unchanged rather than being routed through a stub.
+    """
+    from personalclaw.workflows.service import PORTED_LOOP_KINDS
+
     body = await json_object_body(request)
     kind = str(body.get("kind", "goal")).strip().lower() or "goal"
     if kind not in KINDS:
@@ -444,9 +537,15 @@ async def api_loop_create(request: web.Request) -> web.Response:
     # command (rm -rf /, …) from ever landing in the store where the watchdog would
     # auto-run it unattended. Workspace-binding is a warning here (picked later, then
     # the launch action re-validates via launch_blocker), so a draft still creates.
+    #
+    # Run-backed kinds are validated by the SAME gate, before the branch: a ported kind gets the
+    # identical 400 for the identical bad body, so porting a kind never quietly widens what the
+    # route accepts.
     v = validation.validate(body, agent_exists=_agent_exists(body))
     if not v.can_start:
         return web.json_response({"error": "Validation failed", **v.to_dict()}, status=400)
+    if kind in PORTED_LOOP_KINDS:
+        return await _create_ported_kind_as_run(request, kind, task, body)
     loop = _build_loop_from_body(body)
     created = store.create(loop)
     return web.json_response(_loop_view(created.id), status=201)

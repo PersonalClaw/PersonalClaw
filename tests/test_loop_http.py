@@ -254,15 +254,19 @@ class TestCreate:
     @pytest.mark.parametrize(
         "kind,kc_key",
         [
-            ("general", "verify_command"),
             ("goal", "goal_type"),
             ("code", "entry_stage"),
             ("design", "token_overrides"),
         ],
     )
-    def test_create_every_kind_seeds_its_default_kind_config(self, state, kind, kc_key):
-        # All four registered kinds must create via the route + come back with their
-        # kind's default kind_config (general/design are the under-tested new kinds).
+    def test_create_every_unported_kind_seeds_its_default_kind_config(self, state, kind, kc_key):
+        # Every kind that still creates a LOOP ROW must come back with its kind's default
+        # kind_config. `general` is no longer one of them: PP-16 routes it through
+        # `service.start_kind_run`, so it answers 202 + a run identity and seeds no
+        # kind_config at all — the run's behaviour lives in the `general-project` template.
+        # That claim is asserted in `test_pp16_loop_route_starts_a_run.py`; the row was
+        # dropped here rather than relaxed, because a 201-and-kind_config assertion for a
+        # run-backed kind has nothing left to be true about.
         r = _run(
             H.api_loop_create(
                 _req(

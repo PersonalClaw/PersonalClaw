@@ -58,7 +58,9 @@ beforeEach(() => {
   createSchedule.mockResolvedValue({ ok: true, trigger: { raw_id: 'r', schedule: 'At 09:00 AM', next_run_ts: 1 } })
   runSchedule.mockResolvedValue({ ok: true, result: 'ran' })
   notifications.mockResolvedValue({ notifications: [], unread: 0 })
-  createULoop.mockResolvedValue({ id: 'lp-1', status: 'ready', task: LOOP_SEED.task, max_cycles: 1 })
+  // `general` is a PORTED kind (PP-16), so `POST /api/loops` answers a STARTED RUN and never a
+  // `ready` loop row. `uLoopAction` stays wired so a test can assert it is NOT called.
+  createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
 })
 
@@ -163,8 +165,7 @@ describe('a real call refused after a passing Test', () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     const retry = await screen.findByRole('button', { name: 'Try again' })
-    createULoop.mockResolvedValue({ id: 'lp-2', status: 'ready', task: LOOP_SEED.task, max_cycles: 1 })
-    uLoopAction.mockResolvedValue({ id: 'lp-2', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
+    createULoop.mockResolvedValue({ run_id: 'run-2', status: 'running', blocking: false, kind: 'general' })
     fireEvent.click(retry)
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ first_success: { loop: true } }))
     expect(screen.queryByRole('alert')).toBeNull()
