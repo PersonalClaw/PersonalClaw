@@ -237,3 +237,83 @@ def test_the_guide_does_not_promise_setup_collects_a_provider_credential() -> No
     assert "name + first model provider" not in installer
     # And the correction is present, not merely the claim removed.
     assert "does **not** ask for a model provider credential" in guide
+
+
+# ── DIST-17: one acquisition step, stated identically on every Docker surface ──
+
+#: Every surface that hands a reader a checkout-free way to acquire PersonalClaw. Four
+#: places tell that story, and before DIST-17 only two of them told it: `grep -c
+#: 'ghcr.io/personalclaw'` was 1 in the README and 3 in the container guide, but **0** in
+#: both the getting-started guide and the website installer's `--container` output. A
+#: newcomer who landed on either of those two was sent to a Compose path that begins "from
+#: a checkout" — which is precisely the step the single-container image exists to remove.
+_DOCKER_SURFACES = (
+    "README.md",
+    "docs/guides/getting-started.md",
+    "docs/guides/containers.md",
+    "deploy/website/install.sh",
+)
+
+#: The published gateway image. Four surfaces agreeing on a command that pulls the wrong
+#: image would satisfy agreement and fail the reader, so the floor below names it.
+_GATEWAY_IMAGE = "ghcr.io/personalclaw/personalclaw-gateway:"
+
+
+def _docker_run_command(path: Path) -> str:
+    """The `docker run` line *path* hands a reader, however that file is formatted.
+
+    One extraction rule for all four surfaces — three markdown files and a POSIX shell
+    script — because an agreement test that reads each surface its own way can only compare
+    what its own parsers happen to agree on. A line is the command iff its stripped form
+    begins ``docker run ``: that reaches inside a markdown fence and inside the installer's
+    ``print_container`` heredoc alike, while skipping the prose mentions (README's
+    "``docker rm``/``docker run``" sentence starts with a backtick, not the command).
+
+    Deliberately NOT ``tools.docker_single_container_smoke.readme_docker_run``: that one
+    returns a whole fenced block, and `containers.md` puts `docker run` and `docker exec`
+    in one fence, so it cannot compare the *command* across these four.
+    """
+    text = path.read_text(encoding="utf-8")
+    joined = re.sub(r"\s*\\\n\s*", " ", text)  # a backslash-continued command is one line
+    found = [ln.strip() for ln in joined.splitlines() if ln.strip().startswith("docker run ")]
+
+    assert found, (
+        f"{path.relative_to(REPO_ROOT)} states no `docker run ` command, so a reader there "
+        "is never told the checkout-free path exists (DIST-17)."
+    )
+    assert len(found) == 1, (
+        f"{path.relative_to(REPO_ROOT)} states {len(found)} different `docker run` commands "
+        f"— a reader has to guess which one to copy: {found!r}"
+    )
+    return found[0]
+
+
+def test_every_docker_surface_states_the_acquisition_command() -> None:
+    """The half that was 2/4: all four surfaces must carry the command at all."""
+    for name in _DOCKER_SURFACES:
+        command = _docker_run_command(REPO_ROOT / name)
+        assert _GATEWAY_IMAGE in command, (
+            f"{name}'s command does not run the published gateway image "
+            f"({_GATEWAY_IMAGE}…): {command!r}"
+        )
+
+
+def test_the_four_docker_surfaces_cannot_drift_apart() -> None:
+    """The drift half of DIST-17's clause: the four copies must be the SAME command.
+
+    `tests/test_docker_single_container.py` already proves the README's command publishes
+    its port, persists state and does not disable auth. Nothing made those properties true
+    of the *other three* copies — so this asserts byte-equality, which is what makes that
+    suite's guarantees transitive to every surface a reader might actually land on. The
+    alternative to four identical copies is one copy plus three links, and DIST-15 chose
+    copies on purpose: a reader is handed the command where they already are.
+    """
+    commands = {name: _docker_run_command(REPO_ROOT / name) for name in _DOCKER_SURFACES}
+
+    # Vacuity floor: comparing fewer than four surfaces would agree trivially.
+    assert len(commands) == 4, f"the surface list collapsed to {sorted(commands)}"
+
+    distinct = sorted(set(commands.values()))
+    assert len(distinct) == 1, "the Docker acquisition command has drifted:\n" + "\n".join(
+        f"  {name}: {cmd}" for name, cmd in sorted(commands.items())
+    )
