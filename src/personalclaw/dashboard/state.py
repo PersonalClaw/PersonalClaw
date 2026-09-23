@@ -476,8 +476,8 @@ class _ChatSession:
         self._declared_file_change_idx: dict[str, int] = {}
         # The ACP loop breaker, kept for the SESSION rather than the turn
         # (ACP-AGENT-PARITY §2.3, `G155`). `LoopBreaker` defines its own ceiling as
-        # "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`), and for an ACP session
-        # the host-side analogue of a native run is the session's sequence of turns —
+        # "this RUN's total failures" (default 30, `guardrails.loop_breaker`), and for an
+        # ACP session the host-side analogue of a native run is its sequence of turns —
         # a fresh breaker per turn reset the counter every turn, so an unattended loop
         # repeating a failing tool for twenty turns could never reach thirty and the
         # circuit rung was unreachable by construction. Per-key streaks persist for the

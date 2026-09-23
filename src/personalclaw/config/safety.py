@@ -1,8 +1,10 @@
 """Config sections for the safety and trust surface: what the system may do unattended.
 
-One domain, eight sections, and they are grouped because they are read together: an
-autonomy decision consults its guardrails, a guardrail consults its budget and its breaker,
-and the egress/auth/sandbox trio decides what the process may reach at all.
+One domain, nine sections, and they are grouped because they are read together: an
+autonomy decision consults its guardrails, a guardrail consults its budget and its breakers
+(there are two, and they break different things — see :class:`BreakerConfig` vs
+:class:`LoopBreakerConfig`), and the egress/auth/sandbox trio decides what the process may
+reach at all.
 
 Fail-safe polarity is the invariant this file exists to keep visible — guard-class flags
 resolve through ``_guard_flag`` (ambiguity ⇒ enabled) and exposure-class flags through
@@ -108,10 +110,14 @@ class BudgetConfig:
 
 @dataclass
 class BreakerConfig:
-    """Per-provider circuit-breaker tuning (AUTONOMY-GUARDRAILS §2.3).
+    """Per-**provider** circuit-breaker tuning (AUTONOMY-GUARDRAILS §2.3).
 
     Consumed by the model-call chokepoint's breaker registry. Defaults match the
     breaker module's built-ins; a value here overrides them for every provider.
+
+    NOT the tool-loop breaker — that is :class:`LoopBreakerConfig`. This one counts
+    *provider* failures and fails a provider fast during an outage; that one counts
+    *tool* failures inside one run and aborts the run.
     """
 
     failure_threshold: int = field(
@@ -127,6 +133,35 @@ class BreakerConfig:
         metadata=_meta(
             "Breaker Recovery Seconds",
             "How long an OPEN breaker waits before allowing one HALF_OPEN probe.",
+        ),
+    )
+
+
+@dataclass
+class LoopBreakerConfig:
+    """Tuning for the runtime-agnostic **tool-loop** breaker (ACP-AGENT-PARITY §2.3).
+
+    ``guardrails/loop_breaker.py`` counts a run's tool failures and, past a ceiling,
+    aborts the run rather than let it burn the rest of its budget. That ceiling was a
+    bare module constant, which made the rung unreachable in practice: proving it
+    required more than thirty genuine tool failures in one run and there was no way to
+    ask for a lower bar. So the seam is here, and the module constant is now only the
+    *default* the field falls back to.
+
+    Not guard-class: the ceiling is an abort, so a lower value is strictly safer and a
+    higher one only spends more of a budget the budget guard is already metering. The
+    floor of 1 is the one real invariant — at 0 the comparison is ``> 0``, which would
+    abort a run on its FIRST failed tool call and make ordinary retry impossible.
+    """
+
+    circuit_threshold: int = field(
+        default=30,
+        metadata=_meta(
+            "Tool-Loop Abort Threshold",
+            "How many tool failures one run may accumulate before the loop breaker "
+            "aborts it. Counts every failing tool call in the run, not just repeats of "
+            "the same one, and applies to both runtimes (in-process tools and an ACP "
+            "CLI's). Lower it to cut a wedged unattended run short sooner.",
         ),
     )
 
@@ -205,6 +240,14 @@ class GuardrailsConfig:
     breaker: BreakerConfig = field(
         default_factory=BreakerConfig,
         metadata=_meta("Circuit Breaker", "Per-provider model-call breaker tuning."),
+    )
+    loop_breaker: LoopBreakerConfig = field(
+        default_factory=LoopBreakerConfig,
+        metadata=_meta(
+            "Tool-Loop Breaker",
+            "When a run drowning in tool failures is aborted. Separate from `breaker`, "
+            "which fails a model PROVIDER fast during an outage.",
+        ),
     )
     autonomy: AutonomyConfig = field(
         default_factory=AutonomyConfig,

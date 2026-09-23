@@ -690,6 +690,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.budgets.max_dollars_per_day": {"type": "float", "min": 0.0, "max": 100_000.0},
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
+    # The TOOL-loop breaker's abort ceiling (ACP-AGENT-PARITY §2.3) — a different breaker
+    # from the two rows above, which fail a model PROVIDER fast. `min: 1` mirrors
+    # `load()`'s floor: at 0 the `>` comparison aborts a run on its first failed call.
+    "guardrails.loop_breaker.circuit_threshold": {"type": "int", "min": 1, "max": 1000},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
     # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
     # subset: the master switch plus the tuning numbers a user reaches for after watching

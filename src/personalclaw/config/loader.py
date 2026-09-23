@@ -73,6 +73,7 @@ from personalclaw.config.safety import (
     BudgetConfig,
     EgressConfig,
     GuardrailsConfig,
+    LoopBreakerConfig,
     SandboxConfig,
     SecurityConfig,
 )
@@ -3503,6 +3504,9 @@ class AppConfig:
         breaker_data = guardrails_data.get("breaker", {})
         if not isinstance(breaker_data, dict):
             breaker_data = {}
+        loop_breaker_data = guardrails_data.get("loop_breaker", {})
+        if not isinstance(loop_breaker_data, dict):
+            loop_breaker_data = {}
         autonomy_data = guardrails_data.get("autonomy", {})
         if not isinstance(autonomy_data, dict):
             autonomy_data = {}
@@ -4320,6 +4324,15 @@ class AppConfig:
                 breaker=BreakerConfig(
                     failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
                     recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
+                ),
+                # Floored at 1, not 0: the breaker compares `total_failures >
+                # circuit_threshold`, so 0 would abort a run on its first failed tool
+                # call. `_safe_int` so a typo falls back to the shipped 30 rather than
+                # raising out of `load()`.
+                loop_breaker=LoopBreakerConfig(
+                    circuit_threshold=max(
+                        1, _safe_int(loop_breaker_data.get("circuit_threshold", 30), 30)
+                    ),
                 ),
                 # §5 rung-ladder thresholds. `_safe_int` + a floor on each, so a typo
                 # cannot produce a bar of zero approvals (which would offer a promotion

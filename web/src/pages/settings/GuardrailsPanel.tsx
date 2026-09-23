@@ -9,14 +9,21 @@ import { RungChip } from '../../ui/RungChip'
 import { rungMeta } from '../../lib/rungs'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
-/** Guardrails — the personal safety floor (AUTONOMY-GUARDRAILS). Four groups:
+/** Guardrails — the personal safety floor (AUTONOMY-GUARDRAILS). Five groups:
  *  the incident kill switch, daily spend budgets, the outbound secret/PII scan mode,
- *  and the per-provider circuit-breaker tuning — plus a derived provider-health view.
- *  Budget/scan/breaker controls PATCH allowlisted guardrails.* config paths; incident
- *  is its own endpoint (not config). */
+ *  the per-provider circuit-breaker tuning, and the tool-loop breaker's abort ceiling
+ *  — plus a derived provider-health view. Budget/scan/breaker controls PATCH allowlisted
+ *  guardrails.* config paths; incident is its own endpoint (not config).
+ *
+ *  🪤 TWO THINGS ARE CALLED A BREAKER HERE and they break different things: `breaker`
+ *  fails a model PROVIDER fast during an outage, `loop_breaker` aborts one RUN that is
+ *  drowning in tool failures. They are separate sections with separate titles because
+ *  one section called "Circuit breaker" holding both would make the provider knobs read
+ *  as if they governed tool retries. */
 type GuardrailsCfg = {
   budgets?: { max_tokens_per_run?: number; max_tokens_per_day?: number; max_dollars_per_day?: number }
   breaker?: { failure_threshold?: number; recovery_secs?: number }
+  loop_breaker?: { circuit_threshold?: number }
   scan_mode?: string
 }
 
@@ -48,7 +55,11 @@ export function GuardrailsPanel() {
 
   return (
     <div>
-      <PanelHeader title="Guardrails" hint="The personal safety floor for unattended work — a daily spend ceiling, an outbound secret scan, provider circuit breakers, and a kill switch. Interactive chat is never affected by these." />
+      {/* 🪤 The blanket "interactive chat is never affected" was true of budgets, the scan and
+          the kill switch — and is NOT true of the tool-loop breaker, which counts tool failures
+          in every run including the one you are typing into. Scoping the claim to the controls
+          it actually holds for beats a reassurance that a new section quietly falsified. */}
+      <PanelHeader title="Guardrails" hint="The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat." />
 
       <IncidentSection />
 
@@ -76,7 +87,7 @@ export function GuardrailsPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Circuit breaker" hint="Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts.">
+      <Section title="Provider circuit breaker" hint="Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts.">
         <RowGroup>
           <NumberRow label="Failure threshold" hint="Consecutive failures before the breaker opens."
             value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1}
@@ -84,6 +95,14 @@ export function GuardrailsPanel() {
           <NumberRow label="Recovery seconds" hint="How long an open breaker waits before a half-open probe."
             value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5}
             onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, recovery_secs: v } })); return patchNum('breaker.recovery_secs', v, 'Recovery seconds') }} />
+        </RowGroup>
+      </Section>
+
+      <Section title="Tool-loop breaker" hint="A run that keeps failing the same tool is told to change approach, then refused, and finally stopped outright. This is that last step — the point where the whole run is abandoned rather than allowed to spend the rest of its budget repeating a failure.">
+        <RowGroup>
+          <NumberRow label="Abort after tool failures" hint="Counts every failing tool call in one run, not just repeats of the same one. Applies to built-in tools and to an external CLI agent's alike."
+            value={cfg.loop_breaker?.circuit_threshold ?? 30} min={1} step={1}
+            onSave={(v) => { setCfg((c) => ({ ...c, loop_breaker: { ...c?.loop_breaker, circuit_threshold: v } })); return patchNum('loop_breaker.circuit_threshold', v, 'Abort after tool failures') }} />
         </RowGroup>
       </Section>
 

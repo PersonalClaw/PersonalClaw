@@ -719,6 +719,12 @@
     "type": "int"
   },
   {
+    "default": 30,
+    "path": "guardrails.loop_breaker.circuit_threshold",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "redact",
     "path": "guardrails.scan_mode",
     "sensitive": false,

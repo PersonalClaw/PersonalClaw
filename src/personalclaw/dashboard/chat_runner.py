@@ -1824,7 +1824,7 @@ async def run_chat(
     # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
     # six consecutive ACP failures producing no warn, block or trip at all).
     # …and it lives on the SESSION, not here (`G155`). `LoopBreaker` calls its own
-    # ceiling "this RUN's total failures" (`CIRCUIT_THRESHOLD = 30`); a fresh instance
+    # ceiling "this RUN's total failures" (default 30, `guardrails.loop_breaker`); a fresh instance
     # per turn reset the count every turn, so an unattended loop repeating a failing
     # tool for twenty turns never reached thirty and the circuit rung was unreachable
     # by construction — proved at the code level in the prior tick and recorded as the
