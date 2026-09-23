@@ -417,6 +417,22 @@ jobs:
           # run) must not turn into a second, misleading red on the upload itself.
           if-no-files-found: ignore
           retention-days: 7
+      # ── The one red the JUnit XML structurally cannot explain ─────────────────────────────
+      # The real-home rail (tests/conftest.py::pytest_sessionfinish) fails a run by setting
+      # `session.exitstatus` — no testcase fails, so the XML above reads `failures=0` and the
+      # shard surfaces as a bare "process completed with exit code 1" naming nothing. MEASURED:
+      # that signature cost three shifts of guessing on one PR, because the offending paths
+      # existed only on STDOUT, where the #2720 truncation class can eat them (#3386).
+      # A SEPARATE artifact rather than a second path on the step above: `path:` there has to
+      # stay a same-line scalar, which is the form tests/test_ci_junit_artifacts.py parses.
+      - name: Upload real-home rail report (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: real-home-rail-shard-${{ matrix.shard }}
+          path: reports/real-home-rail.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
@@ -469,7 +485,10 @@ jobs:
             echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
                  "(expected 'success'). Open the red 'test-shard (N)' job(s) above, or download the" \
                  "JUnit report — \`gh run download <run-id> --name junit-test-shard-N\` — to see WHICH" \
-                 "tests failed without reading the log."
+                 "tests failed without reading the log. If that report names NO failing test" \
+                 "(failures=0), the shard exited nonzero without a test failing: read" \
+                 "\`--name real-home-rail-shard-N\`, which carries the real-home rail's verdict and the" \
+                 "paths it objected to (#3386)."
             exit 1
           fi
           echo "all 4 test shards passed"

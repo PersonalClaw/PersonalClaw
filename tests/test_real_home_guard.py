@@ -11,6 +11,7 @@ import shutil
 import time
 from pathlib import Path
 
+import pytest
 import real_home_guard
 from real_home_guard import HomeChange, format_report, scan_changes
 
@@ -201,3 +202,50 @@ def test_change_renders_with_path_kind_and_size() -> None:
     assert "security_events.jsonl" in rendered
     assert "modified" in rendered
     assert "27318621" in rendered
+
+
+def test_a_red_verdict_is_readable_from_the_persisted_report(tmp_path: Path) -> None:
+    """The offending paths must survive into a file, not only onto STDOUT (#3386).
+
+    A rail failure fails the run without failing a test, so the JUnit XML CI uploads
+    names nothing. This is the artifact that does.
+    """
+    root = _fake_home(tmp_path)
+    since = _armed(root)
+    (root / "sessions" / "leaked.json").write_text("{}\n")
+    changes = scan_changes(root, since)
+    assert changes, "positive control: the leak must be detected before it can be reported"
+
+    rootdir = tmp_path / "rootdir"
+    rootdir.mkdir()  # no reports/ yet — the writer must create it
+    written = real_home_guard.write_report(rootdir, format_report(root, changes))
+
+    assert written == rootdir / real_home_guard.REPORT_RELPATH
+    text = written.read_text()
+    assert "real-home rail FAILED" in text
+    assert "sessions/leaked.json" in text
+
+
+def test_a_quiet_run_still_writes_the_report(tmp_path: Path) -> None:
+    """Presence of the file is itself the evidence the rail ran and saw nothing."""
+    root = _fake_home(tmp_path)
+    since = _armed(root)
+    rootdir = tmp_path / "rootdir"
+    written = real_home_guard.write_report(rootdir, format_report(root, scan_changes(root, since)))
+    assert written is not None
+    assert "unchanged by this run" in written.read_text()
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root ignores the mode bits this test relies on",
+)
+def test_an_unwritable_rootdir_yields_none_rather_than_raising(tmp_path: Path) -> None:
+    """A failed write must not stack a second, misleading red on the one being reported."""
+    rootdir = tmp_path / "readonly"
+    rootdir.mkdir()
+    rootdir.chmod(0o500)
+    try:
+        assert real_home_guard.write_report(rootdir, "real-home rail FAILED: ...") is None
+    finally:
+        rootdir.chmod(0o700)
