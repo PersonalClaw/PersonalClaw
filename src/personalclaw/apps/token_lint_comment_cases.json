@@ -313,6 +313,13 @@
       ],
       "expected": [[], [], [], [], [], []],
       "end_state": "code"
+    },
+    {
+      "name": "gap_a_legal_block_comment_after_an_identifier_is_linted_as_code",
+      "why": "RECORDED COST of decision 4, measured rather than glossed, and the half of its boundary the corpus did not yet carry. `width/*measured on #1783*/` is a LEGAL block comment, and the one-character look-behind that saves `/[/*]/` cannot tell an identifier followed by a real comment from an identifier followed by class content — so this comment is no longer stripped and the issue number inside it reads as a raw hex: #3337's original defect, surviving in one narrow shape. MEASURED at main 5e97b893d through `token_lint_file`, not inferred from the scanner: end_state stays 'code' and BOTH lines report `hex`. Distinct from red_hex_in_a_span_a_stray_block_opener_blanked_and_an_UNRELATED_terminator_closed, whose `3/*off` is JSX TEXT rather than a comment a correct author wrote — the other cases pin what the look-behind BUYS, this one pins what it SPENDS. Kept as a case because the alternative is a reader rediscovering it from a red build. The trade is deliberate and DIRECTIONAL: this failure is LOUD and an author fixes it by adding one space, while the failure it buys out — a stray opener swallowing a raw hex under a green `designSystem: \"v2\"` badge — is silent. Measured over the 1559 host `web/src` sources: 0 stripped-code diffs, so no host line carries this shape today; that is a fact about the HOST tree and says nothing about a third-party bundle, which is this gate's actual subject and why the cost is written down here rather than left to the corpus's silence. A `gap_*` case, so it is excluded from the vacuity floor's intended counts and SHOULD be rewritten to the fixed answer if a real parser ever lands.",
+      "lines": ["const w = width/*measured on #1783*/", "const c = '#abc'"],
+      "expected": [["hex"], ["hex"]],
+      "end_state": "code"
     }
   ]
 }
