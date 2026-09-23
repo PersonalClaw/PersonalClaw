@@ -136,6 +136,13 @@ class StrippedSource(NamedTuple):
     end_state: str
 
 
+#: A ``/*`` whose IMMEDIATELY preceding character matches this does not open a block
+#: comment — see decision 4 in :func:`strip_comments`. ASCII-only on purpose: the TS
+#: twin's character class is ASCII, and a Unicode-aware ``str.isalnum()`` here would be
+#: a silent parity break on the first non-Latin identifier in a bundle.
+_NOT_AN_OPENER_AFTER = re.compile(r"[0-9A-Za-z\[]")
+
+
 def strip_comments(text: str) -> StrippedSource:
     """Split ``text`` into lines and blank out comment text, carrying block-comment state
     across newlines (#3337).
@@ -147,7 +154,7 @@ def strip_comments(text: str) -> StrippedSource:
     in a comment therefore failed the gate. Tightening the pattern does not help: ``#1783``
     is four digits.
 
-    Three scoping decisions, each measured against the host corpus rather than assumed:
+    Four scoping decisions, each measured against the host corpus rather than assumed:
 
     1. STRING-AWARE, and ``//`` beats ``/*``. A ``/*`` inside a string or a line comment
        must not open a block, because a tracker that opens one there leaves state stuck
@@ -173,13 +180,35 @@ def strip_comments(text: str) -> StrippedSource:
        unquoted, so rule 1 cannot help it — no longer truncates the line. Three host lines
        carry this shape today.
 
+    4. A ``/*`` is an OPENER only when what precedes it could not be an operand (#3347).
+       Same one-character look-behind as rule 3: if the immediately preceding character is
+       ASCII-alphanumeric or ``[``, the ``/`` is division, a glob, or a regex character
+       class, not a comment. This is the shape the EOF control cannot see, because it
+       *closes*: a stray ``/*`` in JSX text (``<p>3/*off</p>``) or in a class (``/[/*]/``)
+       used to open a block that the next UNRELATED ``*/`` closed, so ``end_state``
+       returned to ``"code"``, nothing was refused, and every violation inside the blanked
+       span was silently dropped. Measured over the host corpus (1559 ``web/src`` files):
+       0 verdict, 0 ``end_state`` and 0 stripped-code diffs, because all 54 of its 6761
+       alnum/``[``-preceded ``/*`` occurrences are globs inside a string or behind ``//``
+       prose (``/api/*``, ``#/settings/*``, ``image/*``) where rules 1 and 2 already give
+       that answer. A start-of-file ``/*`` still opens, so #3337 stays fixed.
+
+    Still not handled, and the boundary is exactly one character wide: a ``/*`` preceded by
+    a SPACE in JSX text (``<p>use /* as a wildcard</p>``) is indistinguishable from a real
+    opener without parser context, so it still opens a block, still fails STRICT, and is
+    still reported through :attr:`StrippedSource.end_state`. So rule 4 fixes the
+    alnum/``[``-preceded subset, not "a ``/*`` in JSX text" as a category — both halves of
+    that boundary are pinned in ``token_lint_comment_cases.json``.
+
     A line whose first non-space characters are ``//`` is prose in any non-block state,
     which covers the ``//`` comments inside embedded-JS template literals.
 
-    Not handled, deliberately — a ``/*`` in JSX text or in a regex character class. Both
-    need a real parser and neither occurs in the corpus. Both fail STRICT (state opens,
-    code is dropped), which :attr:`StrippedSource.end_state` reports and
-    :func:`token_lint_bundle` refuses on.
+    What :attr:`StrippedSource.end_state` does and does not cover: it reports the state the
+    scanner ENDED in, which is not the claim "the tracker read every line correctly". A
+    block that opens wrongly and then closes ends in ``"code"`` and is invisible to it —
+    that is precisely why rule 4 is a look-behind here rather than a refusal downstream.
+    ``end_state`` catches only the never-closed residue, which :func:`token_lint_bundle`
+    refuses by name.
 
     Behavioural parity with the TS twin is pinned by ``token_lint_comment_cases.json``,
     which both sides' tests read.
@@ -223,6 +252,10 @@ def strip_comments(text: str) -> StrippedSource:
                     continue
                 break  # the rest of the line is a comment
             if c == "/" and nxt == "*":
+                if i and _NOT_AN_OPENER_AFTER.match(line[i - 1]):
+                    kept.append(c)  # `3/*off`, `/[/*]/` — an operator or a class, not a comment
+                    i += 1
+                    continue
                 state = "block"
                 i += 2
                 continue
