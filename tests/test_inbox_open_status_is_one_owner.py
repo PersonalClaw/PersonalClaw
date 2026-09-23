@@ -470,8 +470,11 @@ def test_gate_resolution_still_closes_a_seen_row(tmp_path):
     from personalclaw.workflows import attention
 
     store = InboxStore(path=tmp_path / "inbox.json")
-    for status in (ItemStatus.PENDING, ItemStatus.SEEN, ItemStatus.DISMISSED):
-        it = _item(hash(status) % 1000, status=status, kind="needs_input")
+    # `enumerate`, not `hash(status)`: `PYTHONHASHSEED` is randomised per interpreter, so a
+    # hash-derived id collides mod 1000 in ~0.5% of processes, two rows share a key in the
+    # id-keyed store, one overwrites the other and `closed == 2` fails as `1 == 2` (#3356).
+    for i, status in enumerate((ItemStatus.PENDING, ItemStatus.SEEN, ItemStatus.DISMISSED)):
+        it = _item(i, status=status, kind="needs_input")
         it.refs = {"workflow": "run-1"}
         store.add(it)
     st = SimpleNamespace(_inbox_svc=SimpleNamespace(inbox=store, state=None))
