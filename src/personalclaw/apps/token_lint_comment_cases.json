@@ -27,7 +27,15 @@
     "Both directions are represented on purpose. Cases named `red_*` MUST still be",
     "caught (the rail's value); cases named `clean_*` MUST now pass (the bug fixed).",
     "Do not delete a `red_*` case to make a tracker change green — that is the",
-    "weakening this file exists to block."
+    "weakening this file exists to block.",
+    "",
+    "A third prefix, `end_state_*`, pins a file the tracker CANNOT read to the end.",
+    "Reporting no line violations is correct for those — the text really is commented",
+    "out — so the load-bearing assertion is the 'block' state, which `token_lint_bundle`",
+    "turns into a refusal by name (EOF_UNREADABLE) rather than a silent clean verdict.",
+    "Two of them are a genuinely broken file; two are the shapes `strip_comments`",
+    "documents as deliberately unhandled (a `/*` in a regex character class or in JSX",
+    "text), where failing STRICT is the decision and not an accident."
   ],
   "cases": [
     {
@@ -223,6 +231,25 @@
       "why": "Inside a block, `//` has no meaning. A tracker that honours it there would resume linting mid-comment and re-create the bug one line lower.",
       "lines": ["/* opened", "// still inside the block, citing #1783", "and still inside"],
       "expected": [[], [], []],
+      "end_state": "block"
+    },
+    {
+      "name": "end_state_block_when_a_regex_character_class_opens_one",
+      "why": "#3347's third unmodelled shape, and the first of the TWO the `strip_comments` docstring names as deliberately not handled. Unlike the other `end_state_block` cases nothing here is broken — `/[/*]/` is valid TypeScript a correct author writes — but telling a regex literal from a division needs real parser context, the same limit that makes a backtick a line-local quote, so the `/*` inside the class opens a block. The contract is that this is LOUD, not silent: `end_state` 'block' is what `token_lint_bundle` refuses the bundle on, so a raw hex below the opener names the file instead of earning it a badge. Not covered by `clean_backtick_inside_a_regex_literal_does_not_desync`, which is a backtick desync and not a block opener.",
+      "lines": ["const GLOB = /[/*]/", "const c = '#1a2b3c'"],
+      "expected": [[], []],
+      "end_state": "block"
+    },
+    {
+      "name": "end_state_block_when_jsx_text_contains_a_wildcard",
+      "why": "The docstring's OTHER deliberately-unhandled shape (#3347), pinned separately because it is independently breakable: a tracker taught to skip `/*` inside `[ … ]` would green the case above and leave this one opening a block, and a JSX-text fix would do the reverse. `/*` in JSX text carries no quote, so the string-awareness that saves `'/*EDITMODE-BEGIN*/'` cannot reach it. Same STRICT verdict, same reason — a caller must hear that the scan stopped.",
+      "lines": [
+        "export function Doc() {",
+        "  return <p>Paths use /* as a wildcard in a route glob</p>",
+        "}",
+        "const c = '#1a2b3c'"
+      ],
+      "expected": [[], [], [], []],
       "end_state": "block"
     }
   ]
