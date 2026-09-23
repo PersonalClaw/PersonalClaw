@@ -8,6 +8,119 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.0] — 2026-09-23
+
+The first release since 0.1.3 (2026-07-30). The theme is **surfaces that tell you the
+truth**: controls that now do what their label says, numbers that admit when they were
+never measured rather than showing a confident `0`, and unattended work bounded by
+something you can read and audit.
+
+**Run `personalclaw snapshot` before upgrading.** This is a pre-1.0 clean break — state
+shapes changed with no automatic migration, several defaults flipped, and some routes now
+refuse input they used to accept. The breaking list below is not optional reading.
+
+### Highlights
+
+- **Updates track releases, not `main` — and the update you get is the one you chose.**
+  Pick a channel (`stable`/`beta`/`nightly`), pin an exact version, or roll *backwards* to
+  the release you came from. Unattended auto-update is now opt-in and staged; by default
+  PersonalClaw only tells you an update exists. `personalclaw update` also works on
+  pip/pipx/uv installs for the first time.
+- **Unattended work is read-only by default, and bounded by a ceiling you control.** A
+  governance ceiling at `$PERSONALCLAW_HOME/governance/ceiling.json` can only tighten what
+  a background run may do. Read-only background tasks really are read-only now — 59 of 70
+  shipped tools had been misclassified as harmless, including memory writes, scheduling and
+  webhook registration.
+- **An approval is a brief, not a name and four buttons.** Approval cards say what will
+  run, what it touches, and why it needs you. An action type can earn autonomy one rung at
+  a time — draft only → one tap → run with undo → autonomous — and lose it on a single
+  rejection. Settings → Guardrails shows every governed action and where its rung came from.
+- **Cost and context stop lying to you.** Per-turn, per-conversation and per-account spend
+  in Settings → Usage, a cost chip in the chat header, and cache savings. Anything never
+  measured now reads `not recorded` or `unpriced` instead of `$0.00`, and the context gauge
+  shows nothing rather than a measured-looking `0%`.
+- **Your library is searchable by what is inside documents.** Semantic search matches
+  individual passages and cites the section and line range, scanned PDFs are OCR'd instead
+  of ingesting empty, and an item that landed unsearchable says so with a typed reason. An
+  in-database vector index cut vector work from ~40 ms to ~2 ms.
+- **Scheduled automations fire when you meant.** Timed triggers with no explicit zone now
+  use your local wall-clock time, clock triggers actually execute their action, and "Run
+  now" runs. Workflow templates are checked for ordering and output contracts before you
+  can save a broken one.
+- **Chat craft: Stop stops, and you can branch, plan and rewind.** Stop cancels the
+  in-flight provider request, drops queued tool calls and kills whole process trees.
+  Branch from any message, plan before anything runs, and see whether a turn will fit
+  *before* it runs.
+- **A fresh install boots with a working chat provider.** `ollama-models` ships bundled and
+  first run binds and tests a model in place — previously a fresh install registered zero
+  chat providers and needed network access plus a second repo clone to reach a working agent.
+- **Backups you can step through.** A continuous local git history of the state you and the
+  assistant edit, restorable per file, with "what changed while I slept" and a
+  roll-back-vs-undo-just-this choice. `personalclaw snapshot` now also carries your themes,
+  credentials and the memory vault.
+- **Secrets stay secret.** Credentials can live in your OS keychain; `personalclaw config
+  get` masks them by default; a password inside a URL is redacted everywhere PersonalClaw
+  redacts; and hooks, cron scripts and app backends no longer inherit your environment
+  (measured at ~121 and ~130 variables, including your SSH agent socket and AWS settings).
+- **Apps are honest about what they can reach.** The Store discloses which other apps an
+  app may message, marks network declarations as advisory rather than confinement, and
+  uninstalling or disabling an app now ends its access immediately instead of leaving a
+  token working for up to an hour.
+- **The dashboard stops showing an old number and quietly changing it.** A cached first
+  paint is either fresh or says "Updating…", "couldn't load" no longer renders as "you have
+  nothing", and long lists stay fast (5,000 sessions: 137 ms → 13 ms per keystroke).
+- **Phone, devices and the Linux desktop.** Pair a phone from Settings → Devices, get woken
+  when a run needs your approval, and install the desktop shell on Linux as an AppImage or
+  `.deb`.
+
+### ⚠️ Breaking changes — read before upgrading
+
+This is the short list. Each item is stated in full in the subsections below.
+
+- **Updates.** `auto_update` and `dashboard.update_dev_mode` are retired, along with
+  `POST /api/update/auto` and `POST /api/update/dev-mode`. One legacy mapping applies once
+  on load: `auto_update: true` → `updates.channel=stable` + `updates.auto=staged`;
+  `auto_update: false` → `updates.auto=off`; `update_dev_mode: true` →
+  `updates.channel=nightly`. The four fields to know are `updates.channel`, `updates.pin`,
+  `updates.auto` and `updates.check_enabled`. `git reset --hard` is gone from every apply
+  path.
+- **Timed triggers change the hour they fire.** A trigger with no explicit timezone now
+  uses local wall-clock time, not UTC (measured as a 7-hour shift on an
+  `America/Los_Angeles` host). If you deliberately pinned a schedule to UTC by leaving the
+  field blank, declare `UTC` explicitly to keep it.
+- **Existing automations now honour the action denylist** — scheduled, file-watch, webhook
+  and chained automations never did. Adjust the command rather than the guardrail.
+- **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
+  Use `sandbox.env_passthrough`; credential-shaped names stay refused even if declared.
+- **Python 3.14 is refused at install time** — `requires-python` is now `>=3.12,<3.14`.
+- **Config fields removed** (stored values ignored on load): `workflows.max_active_runs`,
+  `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`,
+  `learning.min_session_score`, `knowledge.idempotent_persist`,
+  `workflows.max_concurrent_nodes`, and `agent.sandbox`.
+- **`inbound` is renamed `external_access`**, the new master switch
+  `external_access.enabled` must also be on, and surface tokens move to the credential
+  store — an existing MCP token needs re-minting with
+  `personalclaw inbound token create mcp`.
+- **API breaks.** `GET /api/inbox/pending` → `GET /api/inbox/open`, and
+  `/api/inbox/status` carries `open_count` instead of `pending_count`. Consent is the JSON
+  literal `true` only, across 24 gates — the string `"true"`, `1` and `yes` are refused.
+  Three destructive routes now require `confirm: true`. A destructive `POST
+  /api/tools/invoke` needs `"confirm_risk": "destructive"`. Six orphaned `/api/memory/*`
+  embedding endpoints are gone. Workflow `rewind`/`run-from` require
+  `confirm_cascade=true`.
+- **State shapes changed with no migration.** `sessions.json` rows in the old shape are
+  discarded on read (costs one `personalclaw token` re-mint); loop rows written before
+  `stop_reason` read as completed; the `runs` table no longer declares `task_list_id`; a
+  knowledge library written earlier reports a re-index is due.
+- **SDK breaks for app authors.** `run_chat` is no longer exported from
+  `personalclaw.sdk.channel` and `register_acp_cli_entry` no longer accepts
+  `agent_config_dir` — both fail at import. The `kiro` runner id is now `kiro-cli`, not
+  aliased. Update installed apps alongside this core upgrade.
+- **Chat's Activity → Index tab is gone** — the Session Map is the session's index. There
+  is no flag to bring it back.
+
 ### Added
 - **A loop kind can now be started as a workflow run: `general` is the first (PP-16 session 1).** A "loop" and a "workflow run" have always been two names for the same thing — one work unit with two implementations — and `workflows/loop_aliases.py` already recorded which bundled template replaced each of the five loop kinds. Nothing acted on that answer: its only caller walked the table forward to name output files, so a `general` loop still became a row in `loops.db` driven by a separate watchdog. There is now a launch path (`workflows.service.start_kind_run`) that takes a legacy kind and starts the template as a real run, and a bundled template can declare its own done-ness rule in a `supervisor.convergence` block that the engine parses into the `SupervisorPolicy` it already resolves per run. `general` is the only kind ported; the other four are **refused by name** (`WF_LOOP_KIND_NOT_PORTED`) rather than silently started on a template that carries none of their behaviour, and an unknown kind is refused without guessing a template. Their existing loop-path behaviour is unchanged. A malformed `convergence` block is an authoring error with a named code (`WF_SUPERVISOR_CONVERGENCE_NOT_OBJECT`, `WF_SUPERVISOR_UNKNOWN_CONVERGENCE_FIELD`, `WF_SUPERVISOR_BAD_DONE_SIGNAL`) — the parser falls back to a default signal on a typo, and a silent change to *how a loop decides it is finished* is the one failure this must not have. Pre-1.0 clean break: no loop state migrates.
 - **Agent Rooms: a shared transcript several bound agents deliberate in.** A room holds a persistent transcript plus a member list, where each member is an ordinary agent binding with a role blurb and a listen policy (`all` / `mention` / `silent`). The defining property is that members do **not** share a context window: each holds its own native or ACP provider session through the ordinary binding path under the key `room:<id>:<member>`, so what a member knows is exactly what the transcript showed it plus its own turns. That key prefix is deliberately absent from every stateless/unattended prefix tuple, which is what makes the human the room's sole approver by construction rather than by a policy branch. The transcript is a `ConversationLog` pointed at `rooms/<id>/transcript.jsonl`, so rotation, archiving and the 7-day retention window are the same code paths a session uses rather than a second policy that can drift; redaction and export call `session_export` by name, and the write path redacts **every** role including the human's own words, because a room transcript is the inter-member wire. Off by default behind `rooms.enabled`, with `rooms.round_budget` and `rooms.max_members` as the two caps. Drivable over `/api/rooms` today; turn-taking and the UI follow.

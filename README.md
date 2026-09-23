@@ -37,7 +37,7 @@ dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 
 ## <a name="-pre-10-heads-up"></a>⚠️ Pre-1.0 — breaking changes expected
 
-PersonalClaw is at **v0.1.3** and moving fast toward a deeper architecture (see the
+PersonalClaw is at **v0.2.0** and moving fast toward a deeper architecture (see the
 roadmap). It follows a **clean-break** engineering doctrine:
 when a design is replaced, the old path is removed in the same change rather than carried
 along behind compatibility shims. The upshot for you as an early user:
