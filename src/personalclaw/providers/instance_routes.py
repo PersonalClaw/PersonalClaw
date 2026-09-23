@@ -65,20 +65,27 @@ def _rebuild_agent_config_safe() -> None:
         logger.warning("rebuild_agent_config failed after instance change", exc_info=True)
 
 
-def _refresh_tool_provider_safe(name: str) -> None:
-    """Re-register a generic multiInstance TOOL provider after its instance set
-    changed, so newly-added/edited/removed instances become live tool providers
-    without a restart. mcp-tools has its own path (live mcp.json registry); this
-    covers the OTHER tool apps (e.g. openai-tools) whose ToolTypeHandler.create
-    rebuilds one provider per enabled instance. disable→enable re-runs create()
-    against the current on-disk instance set (disk = source of truth), then the
-    agent config is rebuilt. Best-effort; never raises."""
+def _refresh_multi_instance_provider_safe(name: str) -> None:
+    """Re-register a generic multiInstance TOOL or MODEL provider after its
+    instance set changed, so newly-added/edited/removed instances become live
+    providers without a restart. mcp-tools has its own path (live mcp.json
+    registry); this covers the other multiInstance apps (e.g. openai-tools,
+    ollama-models) whose type handler rebuilds one provider per enabled
+    instance. disable→enable re-runs create() against the current on-disk
+    instance set (disk = source of truth) — for a model provider that also
+    updates ``local_models.registry``, which is what ``_known_provider_names()``
+    reads to accept a binding. Then the agent config is rebuilt. Best-effort;
+    never raises."""
     try:
         from personalclaw.providers.registry import get_provider_registry
 
         registry = get_provider_registry()
         ext = registry.get(name)
-        if not ext or ext.provider_config.type != "tool" or not ext.provider_config.multiInstance:
+        if (
+            not ext
+            or ext.provider_config.type not in ("tool", "model")
+            or not ext.provider_config.multiInstance
+        ):
             return
         if ext.enabled:
             registry.disable(name)
@@ -86,7 +93,9 @@ def _refresh_tool_provider_safe(name: str) -> None:
         _rebuild_agent_config_safe()
     except Exception:
         logger.warning(
-            "tool-provider refresh failed after instance change for %s", name, exc_info=True
+            "multi-instance provider refresh failed after instance change for %s",
+            name,
+            exc_info=True,
         )
 
 
@@ -213,7 +222,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
     inst = create_instance(name, display_name=display_name, config=config)
-    _refresh_tool_provider_safe(name)
+    _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
 
@@ -314,7 +323,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
     )
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    _refresh_tool_provider_safe(name)
+    _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)})
 
 
@@ -332,7 +341,7 @@ async def handle_delete_instance(request: web.Request) -> web.Response:
     deleted = delete_instance(name, instance_id)
     if not deleted:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    _refresh_tool_provider_safe(name)
+    _refresh_multi_instance_provider_safe(name)
     return web.json_response({"ok": True})
 
 
