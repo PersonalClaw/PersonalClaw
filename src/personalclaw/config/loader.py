@@ -2507,6 +2507,28 @@ class ResolvedBindings:
 
 
 @dataclass
+class RoomsConfig:
+    """Agent Rooms — a shared transcript several bound agents deliberate in."""
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta("Enabled", "Enable Agent Rooms. Off refuses every room route."),
+    )
+    # The default cap a room inherits when its own round_budget is 0. A room is a
+    # multi-agent loop, so an unbounded one spends tokens until the human notices;
+    # the budget is the floor under that, and 6 rounds is enough for a real
+    # exchange while staying cheap to abandon.
+    round_budget: int = field(
+        default=6,
+        metadata=_meta("Round Budget", "Default agent rounds a room may run before pausing."),
+    )
+    max_members: int = field(
+        default=8,
+        metadata=_meta("Max Members", "Most agents one room may hold."),
+    )
+
+
+@dataclass
 class InboxConfig:
     """Inbox — reads your messages, drafts replies, presents for approval."""
 
@@ -3168,6 +3190,10 @@ class AppConfig:
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
     )
+    rooms: RoomsConfig = field(
+        default_factory=RoomsConfig,
+        metadata=_meta("Rooms", "Shared transcripts several bound agents deliberate in."),
+    )
     tools: ToolsConfig = field(
         default_factory=ToolsConfig,
         metadata=_meta("Tools", "Tool-output handling — user-teachable projection rules."),
@@ -3398,6 +3424,9 @@ class AppConfig:
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
+        rooms_data = data.get("rooms", {})
+        if not isinstance(rooms_data, dict):
+            rooms_data = {}
         tools_data = data.get("tools", {})
         if not isinstance(tools_data, dict):
             tools_data = {}
@@ -3972,6 +4001,14 @@ class AppConfig:
                     inbox_data.get("engagement_half_life_days", 0.0) or 0.0
                 ),
             ),
+            rooms=RoomsConfig(
+                enabled=bool(rooms_data.get("enabled", False)),
+                # Clamped, not merely parsed: a 0 here would mean "inherit" to
+                # every room whose own budget is 0 and resolve to an unbounded
+                # loop, so the inheritable default can never itself be 0.
+                round_budget=max(1, _safe_int(rooms_data.get("round_budget"), 6)),
+                max_members=max(1, _safe_int(rooms_data.get("max_members"), 8)),
+            ),
             tools=ToolsConfig(
                 projection_rules=[
                     ProjectionRuleConfig(
@@ -4471,6 +4508,7 @@ class AppConfig:
             "default_agent": self.default_agent,
             "memory_stores": {name: asdict(ms_cfg) for name, ms_cfg in self.memory_stores.items()},
             "inbox": asdict(self.inbox),
+            "rooms": asdict(self.rooms),
             "tools": asdict(self.tools),
             "feedback": asdict(self.feedback),
             "external_access": asdict(self.external_access),

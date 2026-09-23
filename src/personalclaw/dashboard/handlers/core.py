@@ -1016,6 +1016,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # AGENT-ROOMS. Runtime-editable because all three are knobs the human reaches for
+    # while a room is running: killing the feature, or capping a deliberation that is
+    # spending more than it is worth. The budget floor is 1, not 0 — a room reads 0 as
+    # "inherit this default", so a 0 default would resolve to an unbounded loop.
+    "rooms.enabled": {"type": "bool"},
+    "rooms.round_budget": {"type": "int", "min": 1, "max": 100},
+    "rooms.max_members": {"type": "int", "min": 1, "max": 32},
     # WORKFLOWS-V2 Slice 0. Runtime-editable: these are the knobs a user reaches for
     # WHILE something is going wrong — capping concurrency because a fan-out is starving
     # the box, or shortening a stall timeout because a node is wedged. Requiring a

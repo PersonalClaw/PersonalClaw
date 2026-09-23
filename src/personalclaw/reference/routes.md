@@ -646,6 +646,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
+- `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
+- `POST /api/rooms` — {title} — create a room.
+- `GET /api/rooms/{room_id}` — one room, its members, and its transcript.
+- `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
+- `GET /api/rooms/{room_id}/export` — the transcript, redacted.
+- `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?}.
+- `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.
+- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks into the room.
 - `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

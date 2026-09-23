@@ -1,0 +1,459 @@
+"""AR-2/AR-3 — the room HTTP surface (`handlers/rooms.py`).
+
+The store is tested directly in `test_rooms_store.py`; these are the rails for what only
+the HTTP layer can get wrong:
+
+* the `rooms.enabled` kill switch covering the READS too, not just the writes;
+* the stable error envelope, so every refusal the store can raise has a registry row and a
+  sensible status rather than a 500;
+* route ordering, since `/api/rooms/{room_id}` would swallow every sibling sub-path if it
+  were registered first — the same failure `/api/channels/trust` already shipped once;
+* the app-scoped refusal, which is inherited from `APP_SCOPED_PREFIXES` rather than coded
+  here, and is therefore exactly the kind of property that silently stops being true.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import pathlib
+
+import pytest
+from aiohttp.test_utils import make_mocked_request
+
+from personalclaw.dashboard.handlers import rooms as h
+from personalclaw.rooms import store
+
+
+@pytest.fixture(autouse=True)
+def isolated(tmp_path, monkeypatch):
+    """Point config_dir and the home env at tmp_path (the real home is never touched)."""
+    import personalclaw.config.loader as cfg
+
+    monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    yield tmp_path
+
+
+@pytest.fixture
+def cfg(monkeypatch):
+    """A config with rooms ON and two configured agent bindings."""
+    from personalclaw.config.loader import AgentProfile, AppConfig
+
+    conf = AppConfig()
+    conf.rooms.enabled = True
+    conf.agents = {"analyst": AgentProfile(), "skeptic": AgentProfile()}
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls, *a, **k: conf))
+    return conf
+
+
+def _body(response):
+    return json.loads(response.body.decode("utf-8"))
+
+
+def _json_request(method, path, payload=None, **match_info):
+    """A mocked request whose `.json()` returns *payload*.
+
+    `make_mocked_request` gives no body, so `json_object_body` is fed through the payload
+    attribute the aiohttp request reads — the same shape the other handler tests use.
+    """
+    req = make_mocked_request(method, path, match_info=match_info or {})
+
+    async def _json():
+        if payload is None:
+            raise ValueError("no body")
+        return payload
+
+    req.json = _json  # type: ignore[method-assign]
+    return req
+
+
+def _create(title="Pricing debate"):
+    return asyncio.run(h.api_rooms_create(_json_request("POST", "/api/rooms", {"title": title})))
+
+
+def _list(query=""):
+    return asyncio.run(h.api_rooms_list(make_mocked_request("GET", f"/api/rooms{query}")))
+
+
+def _get(room_id):
+    return asyncio.run(
+        h.api_room_get(_json_request("GET", f"/api/rooms/{room_id}", room_id=room_id))
+    )
+
+
+def _add_member(room_id, payload):
+    return asyncio.run(
+        h.api_room_member_add(
+            _json_request("POST", f"/api/rooms/{room_id}/members", payload, room_id=room_id)
+        )
+    )
+
+
+def _post_message(room_id, payload):
+    return asyncio.run(
+        h.api_room_message_post(
+            _json_request("POST", f"/api/rooms/{room_id}/messages", payload, room_id=room_id)
+        )
+    )
+
+
+# ── the kill switch ─────────────────────────────────────────────────────────
+
+
+def test_every_route_refuses_while_rooms_is_disabled(monkeypatch):
+    """`rooms.enabled=false` means OFF, reads included — not "off for writes only"."""
+    from personalclaw.config.loader import AppConfig
+
+    conf = AppConfig()
+    assert conf.rooms.enabled is False, "the shipped default"
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls, *a, **k: conf))
+
+    for response in (
+        _list(),
+        _create(),
+        _get("anything"),
+        _add_member("anything", {"name": "analyst"}),
+        _post_message("anything", {"content": "hi"}),
+        asyncio.run(
+            h.api_room_archive(_json_request("POST", "/api/rooms/x/archive", None, room_id="x"))
+        ),
+        asyncio.run(
+            h.api_room_export(
+                make_mocked_request("GET", "/api/rooms/x/export", match_info={"room_id": "x"})
+            )
+        ),
+    ):
+        assert response.status == 403
+        assert _body(response)["error"]["code"] == "rooms_disabled"
+
+
+def test_a_disabled_feature_writes_nothing_to_disk(tmp_path, monkeypatch):
+    from personalclaw.config.loader import AppConfig
+
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls, *a, **k: AppConfig()))
+    _create()
+    assert not (tmp_path / "rooms").exists()
+
+
+# ── the happy path, drivable before any UI exists ──────────────────────────
+
+
+def test_a_room_is_fully_drivable_over_the_api(cfg, tmp_path):
+    """T1.6's done-when: a room works end to end with nothing but HTTP calls."""
+    created = _create("Pricing debate")
+    assert created.status == 201
+    room_id = _body(created)["room"]["id"]
+
+    listed = _body(_list())["rooms"]
+    assert [r["id"] for r in listed] == [room_id]
+    assert listed[0]["effective_round_budget"] == 6, "the resolved budget, not the declared 0"
+
+    assert _add_member(room_id, {"name": "analyst", "role_blurb": "numbers"}).status == 201
+    assert _add_member(room_id, {"name": "skeptic", "listen_policy": "mention"}).status == 201
+
+    posted = _post_message(room_id, {"content": "what should we charge?"})
+    assert posted.status == 201
+    assert _body(posted)["messages"][0]["content"] == "what should we charge?"
+
+    fetched = _body(_get(room_id))
+    assert [m["name"] for m in fetched["room"]["members"]] == ["analyst", "skeptic"]
+    assert [m["listen_policy"] for m in fetched["room"]["members"]] == ["all", "mention"]
+    assert len(fetched["messages"]) == 1
+
+    # And it is on disk under the home, at the path AR-2 names.
+    assert (tmp_path / "rooms" / room_id / "transcript.jsonl").exists()
+
+    removed = asyncio.run(
+        h.api_room_member_remove(
+            make_mocked_request(
+                "DELETE",
+                f"/api/rooms/{room_id}/members/skeptic",
+                match_info={"room_id": room_id, "name": "skeptic"},
+            )
+        )
+    )
+    assert [m["name"] for m in _body(removed)["room"]["members"]] == ["analyst"]
+
+    archived = asyncio.run(
+        h.api_room_archive(
+            _json_request("POST", f"/api/rooms/{room_id}/archive", None, room_id=room_id)
+        )
+    )
+    assert _body(archived)["room"]["archived"] is True
+    assert _body(_list())["rooms"] == []
+    assert [r["id"] for r in _body(_list("?archived=1"))["rooms"]] == [room_id]
+
+
+def test_export_answers_both_formats_and_refuses_a_third(cfg):
+    room_id = _body(_create("Exportable"))["room"]["id"]
+    _post_message(room_id, {"content": "hello room"})
+
+    def _export(fmt):
+        return asyncio.run(
+            h.api_room_export(
+                make_mocked_request(
+                    "GET",
+                    f"/api/rooms/{room_id}/export?format={fmt}",
+                    match_info={"room_id": room_id},
+                )
+            )
+        )
+
+    md = _export("md")
+    assert md.status == 200 and md.content_type == "text/markdown"
+    assert "hello room" in md.text
+
+    as_json = _export("json")
+    assert as_json.content_type == "application/json"
+    assert json.loads(as_json.text)["messages"][0]["content"] == "hello room"
+
+    bad = _export("pdf")
+    assert bad.status == 400
+    assert _body(bad)["error"]["code"] == "room_export_format_invalid"
+
+
+# ── refusals: the envelope and the status ──────────────────────────────────
+
+
+def test_an_unknown_room_is_a_404_in_the_stable_envelope(cfg):
+    response = _get("no-such-room")
+    assert response.status == 404
+    assert _body(response)["error"]["code"] == "room_not_found"
+    assert _body(response)["error"]["message"]
+
+
+def test_a_ghost_room_cannot_export_as_an_empty_transcript(cfg):
+    """A sub-resource read on a non-existent parent must 404, not render nothing.
+
+    This is the ghost-parent/real-empty ambiguity `test_subresource_read_census.py` exists
+    to catch, and the reason `/api/rooms/{room_id}/export` is carried there as an
+    exclusion rather than needing its own pair in the parent-validation suite: the claim is
+    that `require_room` resolves the parent first, and this is that claim asserted.
+    """
+    response = asyncio.run(
+        h.api_room_export(
+            make_mocked_request("GET", "/api/rooms/ghost/export", match_info={"room_id": "ghost"})
+        )
+    )
+    assert response.status == 404
+    assert _body(response)["error"]["code"] == "room_not_found"
+
+
+def test_a_member_naming_an_unconfigured_binding_is_refused(cfg):
+    room_id = _body(_create("Closed door"))["room"]["id"]
+    response = _add_member(room_id, {"name": "nobody"})
+    assert response.status == 400
+    assert _body(response)["error"]["code"] == "room_member_unknown_agent"
+    assert _body(_get(room_id))["room"]["members"] == []
+
+
+def test_a_bad_listen_policy_is_refused(cfg):
+    room_id = _body(_create("Policy"))["room"]["id"]
+    response = _add_member(room_id, {"name": "analyst", "listen_policy": "whisper"})
+    assert response.status == 400
+    assert _body(response)["error"]["code"] == "room_invalid_listen_policy"
+
+
+def test_a_duplicate_member_is_a_conflict(cfg):
+    room_id = _body(_create("Dupe"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    response = _add_member(room_id, {"name": "analyst"})
+    assert response.status == 409
+    assert _body(response)["error"]["code"] == "room_member_exists"
+
+
+def test_a_missing_title_is_refused_by_the_shared_validator(cfg):
+    response = asyncio.run(h.api_rooms_create(_json_request("POST", "/api/rooms", {})))
+    assert response.status == 400
+    assert "error" in _body(response)
+
+
+def test_an_unreadable_index_is_a_503_not_a_500(cfg, tmp_path):
+    """Fail closed with a real code: the state is unavailable, not the request invalid."""
+    rooms_dir = tmp_path / "rooms"
+    rooms_dir.mkdir(parents=True, exist_ok=True)
+    (rooms_dir / "index.json").write_text("{ broken", encoding="utf-8")
+
+    response = _get("anything")
+    assert response.status == 503
+    assert _body(response)["error"]["code"] == "room_state_unreadable"
+
+
+def test_the_human_cannot_forge_a_members_words(cfg):
+    """The message route takes no speaker, so a caller cannot author as a member.
+
+    The transcript is what every other member reads as that member's position, so a
+    forgeable speaker would be a trust failure rather than a data-quality one.
+    """
+    from personalclaw.history import speaker_of
+
+    room_id = _body(_create("Forgery"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _post_message(room_id, {"content": "I am the analyst", "speaker": "analyst"})
+
+    messages = store.read_messages(room_id)
+    assert [speaker_of(m) for m in messages] == [""], "the extra field is ignored, not honoured"
+
+
+# ── the inherited properties, asserted rather than re-implemented ──────────
+
+
+#: The modules that can raise a ``RoomError``. Enumerated so a new one is a deliberate
+#: edit here rather than a code the rails below silently stop covering — `turn.py` was
+#: already outside the first version of this census.
+_RAISING_MODULES = ("personalclaw.rooms.store", "personalclaw.rooms.turn", h.__name__)
+
+
+def _raised_room_error_codes() -> set[str]:
+    """Every wire code a ``RoomError`` is raised with, read from the source by AST.
+
+    AST rather than a regex: the raises are split across one, two and three lines, and the
+    regex this replaced matched only the first two shapes — so it read a smaller set than
+    the code raises and every "missing row" check below would have been quietly narrower
+    than it claimed.
+    """
+    import ast
+    import importlib
+
+    codes: set[str] = set()
+    for name in _RAISING_MODULES:
+        mod = importlib.import_module(name)
+        tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            func = node.func
+            named = (isinstance(func, ast.Name) and func.id == "RoomError") or (
+                isinstance(func, ast.Attribute) and func.attr == "RoomError"
+            )
+            if not named:
+                continue
+            first = node.args[0]
+            assert isinstance(first, ast.Constant) and isinstance(first.value, str), (
+                f"{name}: a RoomError is raised with a computed code "
+                f"({type(first).__name__} at line {node.lineno}) — the wire code would then "
+                f"be unknowable to every rail below. Raise a literal."
+            )
+            codes.add(first.value)
+    assert len(codes) >= 12, f"the AST census read only {sorted(codes)} — it lost its root"
+    return codes
+
+
+def test_every_room_error_code_has_a_registry_row():
+    """The append-only wire registry is the contract; a missing row is a bare code on the
+    wire with no documented sentence."""
+    from personalclaw.http_errors import HTTP_ERROR_CODES
+
+    missing = sorted(c for c in _raised_room_error_codes() if c not in HTTP_ERROR_CODES)
+    assert missing == [], f"room error codes with no registry row: {missing}"
+
+
+def test_the_refusal_table_is_exhaustive_over_every_raised_room_error():
+    """``_REFUSALS`` answering every raise is what makes its fallback unreachable.
+
+    The handler no longer forwards ``exc.code``, so a raise with no row here would answer
+    ``bad_request`` and drop the code the caller was meant to branch on. That degradation
+    is deliberate (better than a 500) but it must never actually ship, and this is the rail
+    that says so — not the fallback's own docstring.
+    """
+    unmapped = sorted(c for c in _raised_room_error_codes() if c not in h._REFUSALS)
+    assert unmapped == [], (
+        f"these RoomError codes have no _REFUSALS row in handlers/rooms.py, so they would "
+        f"reach the caller as bad_request: {unmapped}"
+    )
+    unraised = sorted(c for c in h._REFUSALS if c not in _raised_room_error_codes())
+    assert unraised == [], (
+        f"these _REFUSALS rows answer a code nothing raises any more — delete them rather "
+        f"than leaving a wire code no route can produce: {unraised}"
+    )
+
+
+def test_every_refusal_row_emits_the_code_it_is_keyed_on():
+    """The price of naming each code as a literal is that it appears twice per row.
+
+    A row keyed ``room_archived`` that emits ``room_not_found`` would be invisible to the
+    append-only rail (both codes are registered literals) and to the exhaustiveness rail
+    above (the key is right), and would simply put the wrong code on the wire. This is the
+    check that makes the duplication safe rather than merely explicit.
+    """
+    import ast
+
+    tree = ast.parse(pathlib.Path(h.__file__).read_text(encoding="utf-8"))
+    table = next(
+        (
+            node.value
+            for node in tree.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "_REFUSALS"
+        ),
+        None,
+    )
+    assert isinstance(table, ast.Dict), "_REFUSALS is no longer a module-level dict literal"
+    assert len(table.keys) == len(h._REFUSALS), "the parsed table and the live one disagree"
+    for key, value in zip(table.keys, table.values):
+        assert isinstance(key, ast.Constant) and isinstance(key.value, str), ast.dump(key)
+        emitted = [
+            call.args[0].value
+            for call in ast.walk(value)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "json_error"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+        ]
+        assert emitted == [key.value], (
+            f"the _REFUSALS row keyed {key.value!r} emits {emitted} — a row must emit its "
+            f"own code, as a literal, exactly once"
+        )
+
+
+def test_the_room_surface_emits_no_computed_wire_code():
+    """The rail this module's shape exists for, asserted where it can be read.
+
+    ``tests/test_http_error_codes_append_only.py`` holds a tree-wide CEILING on
+    ``json_error`` sites whose code is computed, because an expression in the code slot is
+    the one way an unregistered wire code enters unseen. Eight such sites arrived with this
+    surface — every route's ``except RoomError`` — and raising that ceiling would have been
+    the re-baselined-ratchet move: the number goes green and the check it was protecting
+    stops policing the sites it was raised for. Pinned per-module here so a future route
+    reverting to ``json_error(exc.code, ...)`` reds beside the code instead of only in a
+    tree-wide count somebody else has to attribute.
+    """
+    from test_wire_error_envelope_census import Census, scan_source
+
+    census = Census()
+    rel = "src/personalclaw/dashboard/handlers/rooms.py"
+    scan_source(pathlib.Path(h.__file__).read_text(encoding="utf-8"), rel, census)
+    assert census.emitter_sites, "the census read no json_error site at all — it is broken"
+    assert census.emitter_dynamic_sites == [], (
+        f"these json_error sites on the room surface compute their code, so the "
+        f"append-only registry check cannot see it: {census.emitter_dynamic_sites}"
+    )
+    resolved = {code for _f, _ln, code in census.emitter_literal_codes}
+    assert set(h._REFUSALS) <= resolved, sorted(set(h._REFUSALS) - resolved)
+
+
+def test_room_routes_sit_under_the_app_scoped_prefixes():
+    """An installed app cannot reach a room route unless it declares the permission.
+
+    Inherited, not coded in `handlers/rooms.py`: `/api/rooms` is under
+    `APP_SCOPED_PREFIXES` and `app_request_denial` fails closed. Asserted here because an
+    inherited property is exactly the kind that silently stops holding.
+    """
+    from personalclaw.apps.permissions import APP_SCOPED_PREFIXES
+
+    assert any("/api/rooms".startswith(p) for p in APP_SCOPED_PREFIXES)
+
+
+def test_the_room_id_route_is_registered_after_its_siblings():
+    """`/api/rooms/{room_id}` would swallow `/archive`, `/members`, `/messages`, `/export`
+    if it came first — aiohttp resolves in registration order, and this is the failure
+    `/api/channels/trust` already shipped once."""
+    from personalclaw.dashboard import server
+
+    source = open(server.__file__, encoding="utf-8").read()
+    catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
+    for sibling in ("/archive", "/members", "/messages", "/export"):
+        assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling
