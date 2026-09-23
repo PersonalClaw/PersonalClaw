@@ -543,6 +543,18 @@ def test_a_PORTABILITY_export_excludes_worktrees(tmp_path: Path, monkeypatch: py
         ("Round Trip", "personalclaw-project-Round-Trip.zip"),
         ("../../etc", "personalclaw-project-etc.zip"),
         ("", "personalclaw-project-p-1.zip"),
+        # RETARGETED. The three rows above are the whole of what this test used to check, under a
+        # name claiming the output is "SAFE" — so it was green for the entire life of a leak it
+        # never looked at: the name went into a `Content-Disposition` header with no redaction,
+        # and a credential typed into a project name reached proxy logs and browser download
+        # history verbatim. Traversal safety is not filename safety. The two rows below are the
+        # part the name always implied.
+        (
+            "deploy with sk-notarealfixture0123456789abcdefghij",
+            "personalclaw-project-deploy-with-REDACTED-credential.zip",
+        ),
+        # Non-ASCII is CARRIED, not folded away: the route emits RFC 6266's `filename*=UTF-8''`.
+        ("Café", "personalclaw-project-Café.zip"),
     ],
 )
 def test_the_download_name_is_filesystem_SAFE(name: str, expected: str):

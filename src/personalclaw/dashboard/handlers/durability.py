@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query
@@ -244,7 +245,7 @@ async def api_durability_export(request: web.Request) -> web.Response:
         body=zip_bytes,
         content_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="personalclaw-export{tag}-{stamp}.zip"',
+            "Content-Disposition": attachment_disposition(f"personalclaw-export{tag}-{stamp}.zip"),
             "Content-Length": str(len(zip_bytes)),
         },
     )
