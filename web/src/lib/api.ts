@@ -841,6 +841,17 @@ export interface AppCatalogEntry {
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
   quality?: AppQualityWire
+  /** ET-5 — what the REGISTRY INDEX claims about this listing, as opposed to what the app's
+   *  manifest claims about itself. Present only on a card built from an index
+   *  (`apps/catalog.py: _pointer_to_entry`); absent on every bundled/local/scanned card, which
+   *  is what keeps the provenance line off them without any consumer-side test for card kind.
+   *
+   *  🔴 NONE of these is PersonalClaw's assessment, and `lastScanVerdict` in particular is NOT
+   *  the install gate — the scanner still runs on the real bytes at install. Render them only
+   *  through `lib/provenance.registryListing`, which owns the wording that says so. */
+  maintainer?: string
+  lastValidated?: string
+  lastScanVerdict?: string
 }
 /** The `/api/apps/catalog` payload. Spelled ONCE — the shape used to be written out inline at
  *  three call sites, which is how a new field (`networkSources`) reaches one consumer and not

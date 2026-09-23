@@ -39,7 +39,8 @@ import {
   type GuardedResult, type GuardedInstall,
 } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
-import { provenance } from '../../lib/provenance'
+import { provenance, registryListing } from '../../lib/provenance'
+import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
 import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
@@ -1284,6 +1285,23 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
   // the detail panel, and repeating it in the Library's card row would be noise.
   const origin = item.installed ? null : provenance({ sourceKind: item.sourceKind })
 
+  // ET-5. `origin` above says "git" — the bytes came over the network. It cannot say WHO listed
+  // them or whether anyone has looked, which is the question a community listing actually raises.
+  // The index publishes three fields that answer it and the catalog used to drop all three.
+  //
+  // Pre-install only, for the same reason as `origin`: once installed, the app's real scan
+  // verdict is on the record and a listing's month-old claim would be the weaker of two facts
+  // sitting next to each other. And `null` for a card that is not registry-sourced comes from
+  // the data, not from a test here — only `_pointer_to_entry` fills these fields in.
+  const listing = item.installed
+    ? null
+    : registryListing({
+        maintainer: item.maintainer,
+        lastValidated: item.lastValidated,
+        lastScanVerdict: item.lastScanVerdict,
+        day: dayStamp,
+      })
+
   return (
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
@@ -1372,6 +1390,26 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
         {/* APE-4: the app's DECLARED quality bar. Renders nothing at all when the app
             declared no block — an unbadged app and a failing app are different states. */}
         <QualityBadges quality={item.quality} />
+
+        {/* ET-5 — a registry listing's own provenance. Two lines, and the ORDER is the control:
+            the non-endorsement is the first thing read, the facts second. Reversing them would
+            put "clean" above "community-listed" and turn a stale third-party check into what
+            looks like our verdict. All wording comes from `lib/provenance` — the one owner — so
+            it cannot be softened per-card. */}
+        {listing && (
+          <div data-testid="store-card-listing" title={listing.title} className="flex flex-col gap-0.5">
+            <span data-testid="store-card-listing-headline" data-type="label-s"
+              className={listing.clean ? 'text-on-surface-var' : 'text-warn'}>
+              {listing.headline}
+            </span>
+            {/* The verdict-bearing line. A non-clean check does NOT get the same low-emphasis ink
+                as a clean one — a grey "flagged" where a grey "clean" sat reads as equally fine. */}
+            <span data-testid="store-card-listing-detail" data-type="label-s"
+              className={listing.clean ? 'text-on-surface-low' : 'text-warn'}>
+              {listing.detail}
+            </span>
+          </div>
+        )}
 
         {/* footer: tags + the state-appropriate PRIMARY action */}
         <div className="flex items-center gap-2">

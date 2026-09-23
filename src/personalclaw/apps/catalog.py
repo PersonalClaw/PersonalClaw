@@ -224,6 +224,29 @@ class CatalogEntry:
     # ``required`` means the app declared no floor. Empty ``{}`` for a registry-index
     # pointer card, whose manifest has not been fetched yet — same as ``permissions``.
     coreCompatibility: dict[str, Any] = field(default_factory=dict)  # noqa: N815
+    # ET-5 registry provenance — what the REGISTRY INDEX claims about a listing, as opposed
+    # to what the app's own manifest claims about itself. Three fields, and the distinction
+    # is the whole point of carrying them separately from ``author``/``quality``:
+    #
+    #   * ``maintainer``      — who LISTED the app in the index. Not necessarily its author,
+    #                           and explicitly not a PersonalClaw endorsement of either.
+    #   * ``lastValidated``   — when the registry last checked the listing (ISO-8601).
+    #   * ``lastScanVerdict`` — the verdict THAT check recorded (``clean`` | anything else).
+    #
+    # 🔴 ALL THREE ARE THE LISTING'S OWN CLAIM, fetched over the network from the index, and
+    # none of them is the install-time scan gate. The gate still runs at install, unchanged
+    # (``app_manager.install``) — so the surface rendering these must say so, or a "clean"
+    # from a month-old registry check reads as "PersonalClaw scanned this for you". That
+    # trust-washing risk is why the copy lives in ONE place (``web/src/lib/provenance.ts``)
+    # and is pinned by ``storeCardRegistryProvenance.test.tsx`` rather than typed per-card.
+    #
+    # Empty on every non-registry entry — a bundled/local/first-party card has no index
+    # listing behind it, so it renders no provenance line at all. That is a DONE-WHEN
+    # clause, not an incidental: ``test_a_dirscanned_card_carries_no_registry_provenance`` reds if a
+    # scan path starts populating these.
+    maintainer: str = ""
+    lastValidated: str = ""  # noqa: N815
+    lastScanVerdict: str = ""  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -479,6 +502,17 @@ class RegistryPointer:
     icon: str = ""
     author: str = ""
     tags: list[str] = field(default_factory=list)
+    # ET-5: the index's own provenance claims about this listing. snake_case here because
+    # that is what the published ``app-registry.json`` spells (measured against
+    # ``PersonalClaw/registry`` @ c0b35b6c8: 4/4 listings carry all three) — the camelCase
+    # rename to the wire happens once, in :func:`_pointer_to_entry`.
+    #
+    # ``maintainer`` is deliberately NOT folded into ``author``. They answer different
+    # questions ("who wrote this" vs "who listed it here"), and collapsing them would let a
+    # listing assert authorship it never claimed.
+    maintainer: str = ""
+    last_validated: str = ""
+    last_scan_verdict: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "RegistryPointer | None":
@@ -496,6 +530,9 @@ class RegistryPointer:
             icon=str(d.get("icon", "")).strip(),
             author=str(d.get("author", "")).strip(),
             tags=[str(t) for t in (d.get("tags") or []) if str(t).strip()],
+            maintainer=str(d.get("maintainer", "")).strip(),
+            last_validated=str(d.get("last_validated", "")).strip(),
+            last_scan_verdict=str(d.get("last_scan_verdict", "")).strip(),
         )
 
 
@@ -617,6 +654,13 @@ def _pointer_to_entry(source: str, p: RegistryPointer, *, is_git: bool) -> Catal
         sourceKind="git" if is_git else "local",
         tags=list(p.tags),
         pointer=pointer,
+        # ET-5: the index's provenance claims, renamed to the wire's camelCase HERE and only
+        # here. Populated on a registry card and nowhere else — this function is the single
+        # registry→card constructor, which is what makes "local/first-party cards unchanged"
+        # a property of the code rather than a promise.
+        maintainer=p.maintainer,
+        lastValidated=p.last_validated,
+        lastScanVerdict=p.last_scan_verdict,
     )
 
 
