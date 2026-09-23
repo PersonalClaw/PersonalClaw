@@ -187,9 +187,6 @@ def strip_comments(text: str) -> StrippedSource:
     state = "code"
     code: list[str] = []
     for line in text.split("\n"):
-        if state != "block" and line.strip().startswith("//"):
-            code.append("")
-            continue
         kept: list[str] = []
         quote = ""  # "" | "'" | '"' | "`" — line-local by construction
         i = 0

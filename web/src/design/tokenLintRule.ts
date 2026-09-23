@@ -109,7 +109,6 @@ export function stripComments(text: string): StrippedSource {
   let state: SourceState = 'code'
   const code: string[] = []
   for (const line of text.split('\n')) {
-    if (state !== 'block' && line.trim().startsWith('//')) { code.push(''); continue }
     const kept: string[] = []
     let quote = '' // '' | "'" | '"' | '`' — line-local by construction
     let i = 0
