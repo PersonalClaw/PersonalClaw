@@ -5,10 +5,28 @@ every other install path — the gateway image bundles the wheel (with the
 prebuilt dashboard) and the web image bundles the SPA behind an nginx TLS proxy.
 There are no per-channel special builds.
 
-This guide covers a self-hosted Docker Compose deployment: ports, volumes, the
-`.env` pattern, backups, and updates.
+This guide covers self-hosted Docker deployments: ports, volumes, the `.env`
+pattern, backups, and updates.
 
-## Quick start
+## One container
+
+The gateway image bundles the dashboard, so a single container is a complete
+install — no checkout, no compose file, no `.env`:
+
+```bash
+docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+docker exec personalclaw personalclaw token          # prints the dashboard URL
+```
+
+`PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets the published port reach the gateway
+*inside* the container — its own default is loopback, which a container cannot
+publish. Compose sets it for the same reason.
+
+Take the two-service deployment below instead when you want the nginx TLS/HTTP2
+proxy in front (self-signed out of the box), a Slack worker, or `.env`-driven
+configuration.
+
+## Quick start (compose)
 
 From a checkout:
 
