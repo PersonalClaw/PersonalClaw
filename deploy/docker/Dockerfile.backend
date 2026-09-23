@@ -29,11 +29,56 @@ RUN mkdir -p src/personalclaw && \
     /opt/venv/bin/pip uninstall -y personalclaw && \
     rm -rf src/ build/ *.egg-info
 
+# ── Stage 1b: build the SPA ──────────────────────────────────────────────────
+# The gateway serves its dashboard from the INSTALLED package's static/dist, and
+# setup.py's BuildWithWeb grafts web/dist in during `pip install` — but only if
+# web/dist is present in the build tree. It never was here: .dockerignore excludes
+# it as a host build artifact and nothing built it in-image, so this image answered
+# /api/healthz 200 while serving NO dashboard (DIST-15). Bundling it is what makes
+# the single-container `docker run` in README.md reach a usable dashboard, and what
+# makes docs/guides/containers.md's "the gateway image bundles the wheel (with the
+# prebuilt dashboard)" true.
+#
+# Byte-identical to Dockerfile.web's builder stage on purpose: one SPA build recipe,
+# two images. Keep them in step — see the workspace-install and heap notes there.
+FROM mirror.gcr.io/library/node:20-alpine AS web
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY web/package.json web/
+
+# Both COPYs below exist because `npm ci` and `npm run build` reach OUTSIDE `web/`,
+# and without them this stage cannot be built at all — see #3362, which found the
+# same two holes in Dockerfile.web by building it rather than pulling it.
+#
+# `package.json` declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci`
+# invokes it and dies with `exit code 2` on the missing file. The script already exits
+# 0 in a build context (`.git` is dockerignored), so copying it is the fix rather than
+# `--ignore-scripts`, which would also suppress the dependency postinstalls the SPA
+# build needs (esbuild's).
+COPY scripts/install_git_hooks.sh scripts/
+
+RUN npm ci --workspace=web --prefer-offline
+
+# `web/src/lib/scanFindings.ts:1` imports '../../../src/personalclaw/scan_rule_gloss.json',
+# which resolves to /app/src/personalclaw/… from WORKDIR /app — so without it `tsc --noEmit`
+# fails TS2307 and `npm run build` never reaches vite.
+COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+
+COPY web/ web/
+
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
+
 # ── Stage 2: install package with full source ───────────────────────────────
 FROM deps AS builder
 
 COPY src/ ./src/
 COPY pyproject.toml setup.py ./
+# At the FIRST path setup.py's BuildWithWeb._find_web_dist looks in (<root>/web/dist),
+# and before the install below — build_py copies it into the installed package as
+# personalclaw/static/dist, which is where frontend.py resolves the SPA from.
+COPY --from=web /app/web/dist ./web/dist
 RUN rm -rf build/ *.egg-info && \
     /opt/venv/bin/pip install --no-cache-dir --no-deps --no-build-isolation .
 
