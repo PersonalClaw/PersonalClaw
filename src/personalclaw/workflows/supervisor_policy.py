@@ -93,6 +93,10 @@ POLICY_FIELDS: frozenset[str] = frozenset(
         "write_scope",
         "budget",
         "hitl_posture",
+        # PP-16 (the general-kind bridgehead): the done-ness half became DECLARABLE. It was
+        # deliberately absent here through seam 3 — see :class:`ConvergenceSpec` below for why
+        # the KIND table remains the loop watchdog's source and what this field adds beside it.
+        "convergence",
     }
 )
 
@@ -209,6 +213,13 @@ class ConvergenceSpec:
     done_check_optional: bool = False
 
 
+#: The closed field set of a ``supervisor.convergence`` block, closed for the same reason
+#: :data:`POLICY_FIELDS` is: an author's typo must surface as a named authoring error rather than
+#: as a key that parses to a default and quietly changes how the loop completes. DERIVED from the
+#: dataclass, so a new field cannot be added above and left unaccepted by the validator.
+CONVERGENCE_FIELDS: frozenset[str] = frozenset(f.name for f in fields(ConvergenceSpec))
+
+
 @dataclass(frozen=True)
 class SupervisorPolicy:
     """The full convergence policy a loop node declares — parsed, not yet wired.
@@ -266,10 +277,25 @@ class SupervisorPolicy:
     idle_secs: int = 120
     # ── PP-16 seam 3: the done-ness half ──
     #
-    #: HOW this loop's done-ness is produced. Set by :func:`policy_for_kind` from the declared
-    #: table below, read by ``loop.supervisor`` — the ONE evaluator. Not part of
-    #: :data:`POLICY_FIELDS`: like the five AG-13 knobs above it, this field is DERIVED, not
-    #: parsed out of a template's ``supervisor:`` block, so no authoring surface changes.
+    #: HOW this loop's done-ness is produced, read by ``loop.supervisor`` — the ONE evaluator.
+    #:
+    #: TWO sources fill it, for two different execution paths, and that split is deliberate
+    #: (PP-16, the general-kind bridgehead):
+    #:
+    #: * the LOOP path — :func:`policy_for_kind` sets it from the declared
+    #:   :data:`KIND_CONVERGENCE` table. Seam 3 chose a table over template JSON because the
+    #:   loop watchdog resolves a policy on EVERY poll, so a template read makes a missing file
+    #:   silently remove a loop's supervisor. A declared table cannot go missing. That reason is
+    #:   unchanged and the table stays the loop path's source.
+    #: * the RUN path — :func:`parse_supervisor_policy` reads a ``loop`` node's
+    #:   ``supervisor.convergence`` block. Here the template is the RIGHT home and carries no such
+    #:   risk: ``RunController`` already resolves the spec once per run by design, so there is no
+    #:   per-poll read to lose. This is what lets a kind run as a ``WorkflowRun`` at all — without
+    #:   it a ported kind's done-ness would have to stay behind in Python.
+    #:
+    #: While both paths exist the two must agree, and they are railed equal per ported kind by
+    #: ``tests/test_pp16_general_kind_as_run.py`` rather than trusted to stay in step. The table
+    #: is retired WITH the loop path at the end of the port, not before it.
     convergence: ConvergenceSpec = field(default_factory=ConvergenceSpec)
 
 
@@ -391,6 +417,47 @@ def parse_supervisor_policy(raw: Any) -> SupervisorPolicy:
         write_scope=_parse_write_scope(raw.get("write_scope")),
         budget_max_cycles=_parse_budget(raw.get("budget")),
         hitl_posture=hitl,
+        convergence=_parse_convergence(raw.get("convergence")),
+    )
+
+
+def _parse_convergence(raw: Any) -> ConvergenceSpec:
+    """Parse a ``supervisor.convergence`` block into a :class:`ConvergenceSpec` (PP-16).
+
+    Tolerant on the same terms as every parser above it — a malformed block never raises, and an
+    absent one yields the default spec, whose ``ORCHESTRATED`` signal means "no point-in-time
+    check". That default matters: it is exactly what a template declaring nothing got before this
+    field was parseable, so adding the field changed no existing template's behaviour.
+
+    An UNKNOWN ``signal`` falls back to the default rather than being carried through. Carrying it
+    would push the typo down to ``loop.supervisor.done_signal``, which raises on anything outside
+    :data:`DONE_SIGNALS` — turning an authoring mistake into a runtime failure one layer away from
+    where it was made. The authoring-time validator is what reports it, with the spelling in hand.
+    """
+    if not isinstance(raw, dict):
+        return ConvergenceSpec()
+
+    signal = str(raw.get("signal") or DONE_ORCHESTRATED)
+    if signal not in DONE_SIGNALS:
+        logger.debug("unknown convergence signal %r; using %r", signal, DONE_ORCHESTRATED)
+        signal = DONE_ORCHESTRATED
+
+    defaults = ConvergenceSpec()
+
+    def _flag(key: str) -> bool:
+        """A missing flag keeps the dataclass default — which is not always ``False``
+        (``stagnation_enabled`` defaults True), so this cannot be a bare ``bool(raw.get(...))``.
+        """
+        return getattr(defaults, key) if raw.get(key) is None else bool(raw.get(key))
+
+    return ConvergenceSpec(
+        signal=signal,
+        command_key=str(raw.get("command_key") or ""),
+        criteria_key=str(raw.get("criteria_key") or ""),
+        ground_truth_deliverable=str(raw.get("ground_truth_deliverable") or ""),
+        budget_stop_is_genuine=_flag("budget_stop_is_genuine"),
+        stagnation_enabled=_flag("stagnation_enabled"),
+        done_check_optional=_flag("done_check_optional"),
     )
 
 

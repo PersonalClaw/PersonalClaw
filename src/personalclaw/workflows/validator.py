@@ -479,6 +479,8 @@ def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
     # Local import: keeps the declaration module (and its transitive loop/judge imports) off
     # `validator`'s import path, matching the lazy-import pattern already used for PIPES below.
     from personalclaw.workflows.supervisor_policy import (
+        CONVERGENCE_FIELDS,
+        DONE_SIGNALS,
         FAILURE_CLASS_VALUES,
         HITL_POSTURE_VALUES,
         LADDER_RUNG_VALUES,
@@ -518,6 +520,50 @@ def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
     hitl = raw.get("hitl_posture")
     if hitl is not None and str(hitl) not in HITL_POSTURE_VALUES:
         _add(res, "WF_SUPERVISOR_BAD_HITL", f"hitl_posture {hitl!r} must be afk|hitl", path)
+    # PP-16: the done-ness block. Checked here and not only in the parser because the parser is
+    # deliberately tolerant — it falls back to the default signal, which means a mistyped
+    # `signal` would otherwise ship as "this loop has no point-in-time done check" with nothing
+    # said. That is the one failure this block must not have: silent, and about completion.
+    if "convergence" in raw:
+        _validate_convergence(res, path, raw.get("convergence"), CONVERGENCE_FIELDS, DONE_SIGNALS)
+
+
+def _validate_convergence(
+    res: ValidationResult,
+    path: str,
+    raw: Any,
+    convergence_fields: frozenset[str],
+    done_signals: frozenset[str],
+) -> None:
+    """Authoring-time validation of a ``supervisor.convergence`` block (PP-16).
+
+    The vocabularies are passed in rather than imported again: ``_validate_supervisor`` already
+    paid the lazy import, and re-importing here would be a second copy of the same contract.
+    """
+    if not isinstance(raw, dict):
+        _add(
+            res,
+            "WF_SUPERVISOR_CONVERGENCE_NOT_OBJECT",
+            "supervisor.convergence must be an object",
+            path,
+        )
+        return
+    for key in raw:
+        if key not in convergence_fields:
+            _add(
+                res,
+                "WF_SUPERVISOR_UNKNOWN_CONVERGENCE_FIELD",
+                f"unknown supervisor.convergence field {key!r}",
+                path,
+            )
+    signal = raw.get("signal")
+    if signal is not None and str(signal) not in done_signals:
+        _add(
+            res,
+            "WF_SUPERVISOR_BAD_DONE_SIGNAL",
+            (f"convergence signal {signal!r} must be one of " f"{'|'.join(sorted(done_signals))}"),
+            path,
+        )
 
 
 def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: bool) -> None:
