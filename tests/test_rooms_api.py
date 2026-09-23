@@ -457,3 +457,96 @@ def test_the_room_id_route_is_registered_after_its_siblings():
     catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
     for sibling in ("/archive", "/members", "/messages", "/export"):
         assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling
+
+
+# ── the turn the message route now starts (AR-3) ───────────────────────────
+
+
+class _RecordingRoomTurn:
+    """Captures the ``(room_id, content)`` the route hands to ``rooms.turn``.
+
+    The turn itself is exercised against real providers in `test_rooms_store.py`; what only
+    the HTTP layer can get wrong is WHETHER it hands the round over, with which arguments,
+    and whether the task outlives the request — which is what this records.
+    """
+
+    def __init__(self) -> None:
+        self.rounds: list[tuple[str, str]] = []
+
+    async def __call__(self, sessions, room_id, content):
+        self.rounds.append((room_id, content))
+        return []
+
+
+class _FakeState:
+    """The two attributes the route touches on the dashboard state, and nothing else."""
+
+    def __init__(self) -> None:
+        self.sessions = object()
+        self._background_tasks: set = set()
+
+
+def _post_message_with_state(room_id, payload, state):
+    req = _json_request("POST", f"/api/rooms/{room_id}/messages", payload, room_id=room_id)
+    req.app["state"] = state
+
+    async def drive():
+        response = await h.api_room_message_post(req)
+        # Let the background round run before the loop closes; a task the route forgot to
+        # keep a reference to would be collectable here instead.
+        await asyncio.gather(*list(state._background_tasks))
+        return response
+
+    return asyncio.run(drive())
+
+
+def test_posting_a_message_starts_the_round_for_the_listening_members(cfg, monkeypatch):
+    """AR-3's residual, at the route: the human's line is what puts members on a session."""
+    recorder = _RecordingRoomTurn()
+    monkeypatch.setattr(h.turn, "run_human_message_round", recorder)
+
+    room_id = _body(_create("Round"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic", "listen_policy": "mention"})
+    state = _FakeState()
+
+    response = _post_message_with_state(room_id, {"content": "what should we charge?"}, state)
+
+    assert response.status == 201
+    assert _body(response)["speaking"] == ["analyst"], "the mention-only member was not named"
+    assert recorder.rounds == [(room_id, "what should we charge?")]
+    assert state._background_tasks == set(), "the finished task is discarded, not retained"
+
+
+def test_a_room_with_no_listening_member_starts_no_round(cfg, monkeypatch):
+    """A room of observers costs nothing: no provider is opened and no task is created."""
+    recorder = _RecordingRoomTurn()
+    monkeypatch.setattr(h.turn, "run_human_message_round", recorder)
+
+    room_id = _body(_create("Observers"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst", "listen_policy": "silent"})
+    state = _FakeState()
+
+    response = _post_message_with_state(room_id, {"content": "anyone?"}, state)
+
+    assert _body(response)["speaking"] == []
+    assert recorder.rounds == [], "nobody was listening, so nothing was started"
+
+
+def test_the_humans_message_is_durable_even_when_no_session_manager_exists(
+    cfg, monkeypatch, caplog
+):
+    """The human's words are the part they cannot re-derive, so the 201 does not depend on
+    the round being startable — but the dropped round is logged at ERROR, never swallowed."""
+    import logging
+
+    monkeypatch.setattr(h.turn, "run_human_message_round", _RecordingRoomTurn())
+    room_id = _body(_create("No manager"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+
+    with caplog.at_level(logging.ERROR, logger="personalclaw.dashboard.handlers.rooms"):
+        response = _post_message(room_id, {"content": "still recorded"})
+
+    assert response.status == 201
+    assert store.read_messages(room_id)[0]["content"] == "still recorded"
+    assert "takes no turn" in caplog.text
