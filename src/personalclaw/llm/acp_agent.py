@@ -51,6 +51,21 @@ logger = logging.getLogger(__name__)
 # activation). There is deliberately no fabricated default agent name.
 
 
+def options_sandbox_mode(options: dict) -> str:
+    """The OS path-sandbox mode an ``acp:<cli>`` entry declares (default ``auto``).
+
+    Every path that spawns the CLI from an entry's ``options`` must read the mode
+    through here. Three of them exist — the readiness probe, agent discovery and
+    the runtime factory — and each used to decide for itself, so only the factory
+    honoured a declared mode. That is not a cosmetic split: a bundle that declares
+    ``self_sandboxing`` (``sandbox_mode="off"``, because the CLI applies its own OS
+    sandbox and the host's cannot nest inside it) got the wrap anyway on the two
+    reader-less paths, so the provider card reported a dead runtime that in fact
+    worked the moment a real turn went through the factory.
+    """
+    return str(options.get("sandbox_mode") or "auto")
+
+
 class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
@@ -191,6 +206,11 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
             # different one (e.g. claude/codex int protocolVersion) rejects it
             # with -32602, masking a perfectly-installed CLI as "error".
             dialect=options.get("dialect"),
+            # The probe spawns the real CLI, so it must honour the entry's declared
+            # sandbox mode. Omitting it defaulted to ``auto`` and wrapped a
+            # self-sandboxing CLI the host cannot nest around — the probe then
+            # reported a runtime as dead that the factory would have started fine.
+            sandbox_mode=options_sandbox_mode(options),
         )
         # A cold start can be slow on desktop: claude-code-acp runs via an
         # ``npx`` fetch on first use, and a version-manager-shimmed CLI has its
@@ -209,6 +229,12 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                 detail=f"initialize OK (caps: {', '.join(caps) or 'none'})",
             )
         except Exception as exc:  # noqa: BLE001 - probe summarizes any failure
+            # Read the child's stderr tail BEFORE shutting down: ``teardown()`` clears
+            # the deque, so capturing it after the shutdown below always yields "".
+            try:
+                stderr_tail = provider.client.stderr_tail()
+            except Exception:  # noqa: BLE001 - diagnostics must never mask the failure
+                stderr_tail = ""
             try:
                 await provider.shutdown()
             except Exception:
@@ -258,7 +284,17 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                     ),
                     login_command=login_cmd,
                 )
-            return ReadinessStatus(ready=False, state="error", detail=f"handshake failed: {exc}")
+            # A child that dies during startup writes its cause to STDERR and nothing
+            # to stdout, so ``exc`` names no cause either way: an ``AcpProcessDied``
+            # broken pipe if the child is already gone when ``initialize`` writes to
+            # its stdin, or a bare ``ACP stdout EOF`` if the read that follows is what
+            # first observes the death. The transport already keeps a redacted stderr
+            # tail for exactly this moment and nothing had ever read it; quote it here
+            # so the failure explains itself regardless of which shape ``exc`` took.
+            detail = f"handshake failed: {exc}"
+            if stderr_tail:
+                detail = f"{detail} — agent stderr: {stderr_tail}"
+            return ReadinessStatus(ready=False, state="error", detail=detail)
 
     @classmethod
     async def discover_agents(cls, options: dict) -> list["DiscoveredAgent"]:
@@ -328,6 +364,10 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                     work_dir=work_dir,
                     dialect=dialect,
                     extra_env=options.get("env") or {},
+                    # Same reason as the readiness probe: discovery spawns the CLI
+                    # for real, so a declared mode has to reach this spawn too or a
+                    # self-sandboxing runtime discovers zero agents.
+                    sandbox_mode=options_sandbox_mode(options),
                 ),
                 timeout=timeout,
             )
@@ -938,7 +978,7 @@ def _factory(
         else {}
     )
 
-    sandbox_mode = str(options.get("sandbox_mode") or "auto")
+    sandbox_mode = options_sandbox_mode(options)
 
     # Sandbox PROVIDER (EI-1), distinct from sandbox_MODE above: the mode is the OS path-sandbox
     # level; the provider is the isolation backend (``none`` builtin, or an installed container

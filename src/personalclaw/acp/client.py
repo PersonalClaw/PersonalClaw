@@ -199,6 +199,12 @@ class AcpClient:
         self._session_new_snapshot: dict[str, object] = {}
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
+        # First non-empty stderr tail seen across ``ensure_ready``'s two attempts
+        # (§ retry teardown, below). ``_teardown()`` clears the transport's live
+        # deque on EVERY attempt, including the one whose failure is what a caller
+        # actually wants explained, so the tail has to be pulled off before that
+        # teardown runs and held here rather than re-read from the transport later.
+        self._retained_stderr_tail: str = ""
         # Mid-turn steer drain source (PR2-10). Held HERE and re-applied to the bound
         # session on every turn, because ``ensure_ready`` / ``start_fresh_turn_session`` /
         # ``_teardown`` each replace ``self._session`` — a seam wired onto a discarded
@@ -275,6 +281,25 @@ class AcpClient:
     @property
     def _stderr_lines(self) -> "deque[str]":
         return self._transport._stderr_lines
+
+    def stderr_tail(self) -> str:
+        """Redacted tail of the child's recent stderr (death diagnostics).
+
+        Public passthrough so a caller that only holds the client — the readiness
+        probe, which reports the handshake failure a user actually sees — can quote
+        what the process said before it died. A child that dies during startup often
+        writes its whole cause to stderr and nothing to stdout, in which case the
+        protocol-level symptom names no cause: a write to its stdin during
+        ``initialize`` fails as ``AcpProcessDied`` (broken pipe) once the child has
+        already exited, or — if the child instead lingers just long enough for that
+        write to succeed — the read that follows sees a bare ``ACP stdout EOF``.
+
+        Prefers the tail :meth:`ensure_ready` retained across its retry: by the time
+        a caller reaches this after a failed handshake, ``_teardown()`` has already
+        cleared the live transport deque, so the retained copy is what carries the
+        cause.
+        """
+        return self._retained_stderr_tail or self._transport.stderr_tail()
 
     @property
     def _start_time(self) -> int | None:
@@ -486,6 +511,7 @@ class AcpClient:
         self._work_dir.mkdir(parents=True, exist_ok=True)
         if self._connection is not None and self._transport.is_alive() and self._session_id:
             return
+        self._retained_stderr_tail = ""
 
         for attempt in range(2):
             try:
@@ -505,6 +531,14 @@ class AcpClient:
             except (AcpTimeoutError, AcpError) as exc:
                 if attempt == 0:
                     logger.warning("ACP init failed (%s), retrying with fresh process...", exc)
+                # Pull the tail off BEFORE teardown, on every attempt — teardown clears
+                # the transport's live deque unconditionally, so attempt 0's diagnostic
+                # (often the only one that explains the failure; attempt 1 usually dies
+                # the same way) would otherwise be gone by the time a caller reads it
+                # off the re-raised exception. Keep the first non-empty value: it is the
+                # earliest and therefore most complete telling of the cause.
+                if not self._retained_stderr_tail:
+                    self._retained_stderr_tail = self._transport.stderr_tail()
                 await self._teardown()
                 if attempt == 1:
                     raise
