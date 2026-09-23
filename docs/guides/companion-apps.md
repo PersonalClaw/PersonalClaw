@@ -247,7 +247,7 @@ origin.** This is not a preference. The served dashboard is structurally incapab
 it:
 
 - **The dashboard is per-gateway by construction.** A shell loads the SPA *from* a gateway:
-  `desktop/main.js:1254` is a bare `wc.loadURL(localGatewayUrl)`, and `navigateToEndpoint` does the
+  `desktop/main.js:1260` is a bare `wc.loadURL(localGatewayUrl)`, and `navigateToEndpoint` does the
   same with a paired gateway's origin. One shell window is looking at one gateway at a time,
   always. (`localGatewayUrl` is resolved from the spawned gateway's READY line at
   `desktop/main.js:201`; `activeUrl` is what the WebView is currently pointed at. They are separate

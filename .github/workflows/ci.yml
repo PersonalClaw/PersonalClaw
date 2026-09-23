@@ -503,16 +503,23 @@ jobs:
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
         # above already installed it — this step costs ~0.2s and needs no extra runner.
-        # 347 cases / 73 suites over the pure shell-side modules (capabilities, pushToTalk,
+        # 366 cases / 77 suites over the pure shell-side modules (capabilities, pushToTalk,
         # context-menu, find-bin, and CA-8's gatewayUrl / endpointRegistry / connectMode /
         # connectDialog) plus packaging.test.js, which asserts electron-builder's `build.files`
         # still lists every local require() in main.js AND every sibling file loaded by
         # `path.join(__dirname, …)` — a stale entry there ships a dmg that crashes on launch, or a
         # switcher window that loads nothing. Two legs here open real sockets on loopback: the
         # reconnect leg kills a listener and rebinds it, and the store leg writes real files into a
-        # temp dir. Still headless — every case injects its own platform/fs/os, none reads
-        # process.platform and none launches electron, so an `electron .` smoke test would need a
-        # display and deliberately is NOT here.
+        # temp dir.
+        #
+        # `bridgeLoads.test.js` is the one case that is NOT source text (#3348). Tier 1 executes
+        # `preload.js` in Node under a `require` shaped like the sandboxed renderer's, so "the
+        # preload throws at load" and "the preload reaches for a module the sandbox withholds" —
+        # the two mutations that left the old suite at 359 pass / 0 fail over a DEAD bridge — red
+        # here, headless, on this runner. Tier 2 confirms that model against a real Electron
+        # renderer and SKIPS on this job, by design and out loud: `npm ci` does not run electron's
+        # download lifecycle script, so there is no binary, and Linux would want a display besides.
+        # Tier 2 is a local/maintainer rail; tier 1 is the one that guards CI.
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
