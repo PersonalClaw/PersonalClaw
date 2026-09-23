@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,10 +12,13 @@ from personalclaw.sandbox import (
     _CC_FILES,
     _SENSITIVE_ENV_PREFIXES,
     _STRICT_DIRS,
+    SandboxEnforcementUnavailable,
     _build_launcher_script,
     _build_seatbelt_profile,
+    _resolve_enforcement_bin,
     _resolve_real_agent_bin,
     _ssh_supports_accept_new,
+    _system_utility_path,
     detect_backend,
     namespace_argv,
     reset_backend,
@@ -164,15 +168,27 @@ class TestBuildLauncherScript:
 
 
 class TestSandboxExecArgv:
+    # `sandbox_exec_argv` is the macOS backend, and it now REFUSES to build an argv whose own
+    # enforcement binaries it cannot resolve, so a direct call on a Linux host (where
+    # `sandbox-exec` does not exist) raises rather than returning a wrap that cannot enforce.
+    # The cases below are about the argv it COMPOSES — the `env -u` scrub, the profile file —
+    # which is platform-independent and worth running on every CI leg, so they stub the
+    # resolution to fixed absolute paths and assert those literally. The real resolution is
+    # measured separately, and only where it can be, by
+    # `test_the_wrappers_own_binaries_are_absolute_not_bare_names`.
+
+    @patch(
+        "personalclaw.sandbox._resolve_enforcement_bin", side_effect=lambda name: f"/usr/bin/{name}"
+    )
     @patch.dict(os.environ, {"AWS_SECRET_ACCESS_KEY": "fake", "SSH_AUTH_SOCK": "/tmp/ssh"})
-    def test_includes_env_unset_flags(self):
+    def test_includes_env_unset_flags(self, _stub_bins):
         argv, profile_path = sandbox_exec_argv(["personalclaw", "acp"], "strict")
         try:
-            assert "env" == argv[0]
+            assert argv[0] == "/usr/bin/env"
             assert "-u" in argv
             assert "AWS_SECRET_ACCESS_KEY" in argv
             assert "SSH_AUTH_SOCK" in argv
-            assert "sandbox-exec" in argv
+            assert "/usr/bin/sandbox-exec" in argv
             assert "-f" in argv
             assert profile_path is not None
             assert os.path.exists(profile_path)
@@ -180,7 +196,95 @@ class TestSandboxExecArgv:
             if profile_path:
                 os.unlink(profile_path)
 
-    def test_creates_temp_profile(self):
+    def test_the_wrappers_own_binaries_are_absolute_not_bare_names(self):
+        """Regression: both of the wrapper's own binaries were emitted as BARE NAMES.
+
+        The process that resolves them is the ceiling shim's ``os.execvp`` running in the
+        CHILD, so the wrapper was resolving its own enforcement binaries through the
+        environment of the process it was about to confine. A child with a narrowed PATH
+        therefore died at exec (``_spawn_exec_shim: cannot exec 'env'``) *before* any
+        enforcement applied — and a PATH an agent could influence could shadow either
+        binary and defeat the confinement outright.
+
+        Asserting ``isabs`` alone would pass on a hardcoded path that does not exist, so
+        this also asserts both resolve to real files on the system utility path.
+
+        Gated on the CAPABILITY, not on ``sys.platform``: a darwin host that genuinely has no
+        ``sandbox-exec`` has nothing to measure here, and the platform string does not say so.
+        """
+        for name in ("env", "sandbox-exec"):
+            if _resolve_enforcement_bin(name) is None:
+                pytest.skip(f"host has no {name} on the system utility path — nothing to resolve")
+        argv, profile_path = sandbox_exec_argv(["/bin/echo", "hi"], "strict")
+        try:
+            wrapper_bins = [argv[0], argv[argv.index("-f") - 1]]
+            assert [os.path.basename(b) for b in wrapper_bins] == ["env", "sandbox-exec"]
+            for b in wrapper_bins:
+                assert os.path.isabs(b), f"{b!r} is a bare name the child's PATH would resolve"
+                assert os.path.exists(b), f"{b!r} does not exist on this host"
+                assert b.startswith(tuple(_system_utility_path().split(os.pathsep)))
+        finally:
+            if profile_path:
+                os.unlink(profile_path)
+
+    def test_an_unresolvable_enforcement_binary_refuses_before_writing_a_profile(self):
+        """A wrap that cannot enforce refuses, and leaves no temp profile behind.
+
+        The alternative — emitting an argv naming a binary that is not there — is what made
+        the original defect illegible: from the child's side a wrap that dies at ``exec`` is
+        indistinguishable from one that never confined anything.
+
+        Measured on what ``sandbox_exec_argv`` ITSELF did, by recording every profile path the
+        module's own ``mkstemp`` hands out. A before/after census of ``gettempdir()`` cannot
+        make this claim: that directory is shared with every co-scheduled xdist worker and
+        with any gateway running on the host, so it cannot tell this function's leak from
+        somebody else's file — it reds on a profile this code provably never created (the
+        refusal happens before ``mkstemp``). Filtering on the prefix narrows it further, to
+        profile creations only.
+
+        Carries its own positive control: an instrument that records nothing on a SUCCESSFUL
+        wrap would make the refusal assertion vacuous, so the successful case must be seen
+        first.
+        """
+        handed_out: list[str] = []
+        real_mkstemp = tempfile.mkstemp
+
+        def spy_mkstemp(*args, **kwargs):
+            fd, path = real_mkstemp(*args, **kwargs)
+            if kwargs.get("prefix") == "personalclaw_sandbox_":
+                handed_out.append(path)
+            return fd, path
+
+        with patch("personalclaw.sandbox.tempfile.mkstemp", spy_mkstemp):
+            # Positive control for the instrument: a wrap that DOES build records its profile.
+            with patch(
+                "personalclaw.sandbox._resolve_enforcement_bin",
+                side_effect=lambda name: f"/usr/bin/{name}",
+            ):
+                _argv, built = sandbox_exec_argv(["/bin/echo", "hi"], "strict")
+            assert handed_out == [built], (
+                "the mkstemp spy cannot see a profile being created, so it cannot witness a "
+                f"leak either: recorded {handed_out}, built {built!r}"
+            )
+            os.unlink(built)
+            handed_out.clear()
+
+            # The measurement: the refusal must return before any profile exists.
+            with patch("personalclaw.sandbox._resolve_enforcement_bin", return_value=None):
+                with pytest.raises(SandboxEnforcementUnavailable) as exc:
+                    sandbox_exec_argv(["/bin/echo", "hi"], "strict")
+
+        assert "env" in str(exc.value) and "sandbox-exec" in str(exc.value)
+        assert handed_out == [], (
+            "the refusal reached mkstemp — it must resolve its binaries first: "
+            f"created {handed_out}, of which these survive: "
+            f"{[p for p in handed_out if os.path.exists(p)]}"
+        )
+
+    @patch(
+        "personalclaw.sandbox._resolve_enforcement_bin", side_effect=lambda name: f"/usr/bin/{name}"
+    )
+    def test_creates_temp_profile(self, _stub_bins):
         argv, profile_path = sandbox_exec_argv(["echo", "hi"], "strict")
         try:
             assert profile_path is not None

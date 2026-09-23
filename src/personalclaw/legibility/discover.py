@@ -377,7 +377,10 @@ def load_dismissed() -> set[str]:
     """
     from personalclaw.providers.entity_routes import _load_entity_settings
 
-    raw = _load_entity_settings(_ENTITY)
+    # Fail-OPEN on a discarded read (`or {}`): a store we cannot read means nothing is
+    # dismissed, so the tips come back. Re-showing a tip is the cheapest failure on this
+    # surface — there is nothing here to destroy.
+    raw = _load_entity_settings(_ENTITY) or {}
     ids = raw.get(_DISMISSED_FIELD, [])
     if not isinstance(ids, list):
         return set()
@@ -405,7 +408,10 @@ def dismiss(tip_id: str) -> set[str]:
     if tip_id not in TIP_IDS:
         raise UnknownTipError(tip_id)
 
-    current = _load_entity_settings(_ENTITY)
+    # Fail-OPEN on a discarded read (`or {}`): the user clicked the X, so the dismissal has to
+    # persist, and an unreadable store has no dismissals left to preserve. The write replaces
+    # the unusable file with a valid one, which is a repair rather than a loss.
+    current = _load_entity_settings(_ENTITY) or {}
     existing = current.get(_DISMISSED_FIELD, [])
     stored = {str(x) for x in existing} if isinstance(existing, list) else set()
     ids = (stored | {tip_id}) & TIP_IDS
@@ -438,7 +444,10 @@ def clear_dismissed() -> int:
         _save_entity_settings,
     )
 
-    current = _load_entity_settings(_ENTITY)
+    # Fail-OPEN on a discarded read (`or {}`): an unreadable store reports nothing stored and
+    # therefore writes nothing at all (the early return below), so this cannot overwrite a file
+    # it could not read.
+    current = _load_entity_settings(_ENTITY) or {}
     existing = current.get(_DISMISSED_FIELD, [])
     removed = len(existing) if isinstance(existing, list) else 0
     if not removed:

@@ -1100,6 +1100,18 @@ class EntitySeamHandler(_TypeHandler):
 _registry: ProviderRegistry | None = None
 
 
+def _fallback_instance_id(ext: RegisteredProvider, provider: Any) -> str:
+    """A distinct instance id for a provider that carries no ``instance_id`` tag.
+
+    ``create()`` stamps every instance it builds, so this only fires for a provider list
+    handed to ``register``/``deregister`` directly. Keyed on object identity rather than
+    on list position: ``deregister`` receives the very objects ``register`` was given, so
+    the two agree, and two untagged providers can never collapse onto one member the way
+    a shared name did.
+    """
+    return f"{ext.name}#{id(provider):x}"
+
+
 class ModelTypeHandler(_TypeHandler):
     """Handler for model-type extensions (LLM, embedding, STT, TTS).
 
@@ -1130,10 +1142,17 @@ class ModelTypeHandler(_TypeHandler):
                     provider = factory(inst.config)
                     if not hasattr(provider, "name"):
                         provider.name = f"{ext.name}:{inst.id}"
-                    if not hasattr(provider, "instance_id"):
-                        provider.instance_id = inst.id
                     if not hasattr(provider, "display_name"):
                         provider.display_name = inst.display_name or inst.id
+                    # Stamped UNCONDITIONALLY, unlike the two above. These two are CORE's
+                    # bookkeeping, not the provider's own identity — and the ``hasattr``
+                    # guard is precisely why the per-instance tag above has never applied
+                    # to the real Ollama app, whose ``name``/``display_name`` are read-only
+                    # properties answering the SAME string for every instance (#3410).
+                    # Registry identity must not depend on whether a provider happened to
+                    # leave an attribute writable.
+                    provider.instance_id = inst.id
+                    provider.instance_label = inst.display_name or inst.id
                     providers.append(provider)
                 except Exception:
                     logger.warning(
@@ -1145,24 +1164,92 @@ class ModelTypeHandler(_TypeHandler):
         provider = factory(config)
         return provider
 
+    @staticmethod
+    def _register_local(ext: RegisteredProvider, providers: list[Any], caps: list[str]) -> None:
+        """Put the app's ONE local-model entry in place, over all of its instances.
+
+        A singleton app registers its provider directly. A ``multiInstance`` app registers
+        a :class:`~personalclaw.local_models.multi_instance.MultiInstanceLocalProvider`
+        over every instance ``create()`` built, in ``list_instances`` order — so nothing
+        overwrites anything, and every app-level answer (availability, catalog, search,
+        download, delete) is a function of the whole instance set rather than of whichever
+        instance happened to register last.
+
+        A list is NOT by itself evidence of instances: a singleton app's factory may return
+        several providers for several capabilities (a multi-usecase Bedrock instance →
+        ``[chat, embedding, image, video, stt]``). ``multiInstance`` is the only thing that
+        says "these are instances", which is why it gates the branch.
+        """
+        from personalclaw.local_models.multi_instance import (
+            MultiInstanceLocalProvider,
+            instance_identity,
+        )
+        from personalclaw.local_models.registry import is_local_model_provider
+        from personalclaw.local_models.registry import register_provider as reg_local
+
+        locals_ = [p for p in providers if is_local_model_provider(p, capabilities=caps)]
+        if not locals_:
+            return
+        # Read as an OPTIONAL flag: only ``create()`` has ever required the field, and
+        # ``register``/``deregister`` are called directly with duck-typed configs. Absent
+        # means "not multi-instance", which is the correct reading either way.
+        if not getattr(ext.provider_config, "multiInstance", False):
+            # A singleton app contributes at most one management surface; if its factory
+            # returned several local-capable providers they are capability facets of the
+            # SAME instance, so one entry is correct and the last is as good as the first.
+            reg_local(locals_[-1], capabilities=caps, name=ext.name)
+            return
+        members = [
+            (*instance_identity(p, fallback=_fallback_instance_id(ext, p)), p) for p in locals_
+        ]
+        reg_local(MultiInstanceLocalProvider(ext.name, members), capabilities=caps, name=ext.name)
+
+    @staticmethod
+    def _deregister_local(ext: RegisteredProvider, providers: list[Any]) -> None:
+        """Drop the instances in ``providers`` from the app's local-model entry.
+
+        The app leaves the registry only when no instance remains. For a singleton app
+        that is the first and only call; for a ``multiInstance`` app it is what keeps a
+        teardown of one instance from stranding its siblings.
+        """
+        from personalclaw.local_models.multi_instance import (
+            MultiInstanceLocalProvider,
+            instance_identity,
+        )
+        from personalclaw.local_models.registry import capabilities_for, get_provider
+        from personalclaw.local_models.registry import register_provider as reg_local
+        from personalclaw.local_models.registry import unregister_provider as unreg_local
+
+        entry = get_provider(ext.name)
+        if not isinstance(entry, MultiInstanceLocalProvider):
+            unreg_local(ext.name)
+            return
+        going = {instance_identity(p, fallback=_fallback_instance_id(ext, p))[0] for p in providers}
+        remaining = entry.without(going)
+        if remaining is None:
+            unreg_local(ext.name)
+        else:
+            reg_local(remaining, capabilities=capabilities_for(ext.name), name=ext.name)
+
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         caps = ext.provider_config.capabilities
         providers = instance if isinstance(instance, list) else [instance]
+        # Management axis (uniform): any model provider that owns local downloadable
+        # models joins the one local-model registry that drives the download surface
+        # + availability. Duck-typed — core knows no concrete provider. Orthogonal to
+        # the per-capability inference registration below.
+        #
+        # ONE registration for the app, OUTSIDE the per-provider loop. It used to be
+        # inside it, keyed by ``ext.name`` for every provider in the list, so a
+        # multiInstance app — whose ``create()`` returns one provider PER ENABLED
+        # INSTANCE — had its instances overwrite each other and the LAST one silently
+        # won (#3410). Keying by the app name is still right: it is a path segment on
+        # the ``/api/models/local/{provider}/…`` routes and the provider half of every
+        # ``provider:model`` binding ref, so lengthening it would make
+        # ``_prune_removed_providers`` delete the user's bindings. What changes is that
+        # the app's ONE entry now answers for ALL its instances.
+        self._register_local(ext, providers, list(caps))
         for provider in providers:
-            # Management axis (uniform): any model provider that owns local downloadable
-            # models joins the one local-model registry that drives the download surface
-            # + availability. Duck-typed — core knows no concrete provider. Orthogonal to
-            # the per-capability inference registration below.
-            from personalclaw.local_models.registry import (
-                is_local_model_provider,
-            )
-            from personalclaw.local_models.registry import register_provider as reg_local
-
-            if is_local_model_provider(provider, capabilities=list(caps)):
-                # Key by the APP name (ext.name) — matches the Providers UI + the
-                # existing ``provider:model`` binding refs, even when the provider's
-                # internal .name differs (faster_whisper / native / piper).
-                reg_local(provider, capabilities=list(caps), name=ext.name)
             # Each capability registers ONLY the provider that implements its
             # interface. An app whose factory returns SEVERAL providers (e.g. a
             # multi-usecase Bedrock instance → [chat, embedding, image, video, stt])
@@ -1216,12 +1303,16 @@ class ModelTypeHandler(_TypeHandler):
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         caps = ext.provider_config.capabilities
         providers = instance if isinstance(instance, list) else [instance]
+        # Local-model registry is keyed by the APP name (see register()). ONE call for
+        # the app, outside the loop, and it removes only the instances it was handed:
+        # this used to be ``unreg_local(ext.name)`` once per provider in the list, so
+        # tearing down ONE instance of two EMPTIED the app's entry and left the
+        # surviving, still-enabled instance unreachable on the download, health and
+        # binding surfaces (#3410) — the mirror of the register-side collapse, and the
+        # half that reads to a user as "my models disappeared".
+        self._deregister_local(ext, providers)
         for provider in providers:
             provider_name = getattr(provider, "name", ext.name)
-            # Local-model registry is keyed by the APP name (see register()).
-            from personalclaw.local_models.registry import unregister_provider as unreg_local
-
-            unreg_local(ext.name)
             if "embedding" in caps:
                 from personalclaw.embedding_providers.registry import (
                     unregister_provider as unreg_emb,

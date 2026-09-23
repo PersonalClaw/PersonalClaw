@@ -21,6 +21,11 @@
         "canonical": "src/personalclaw/atomic_write.py",
         "name": "durable-write",
         "rationale": "DAS-9: a handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the history seam — the write landed on disk and no post-write hook ever fired, which is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` is the ONE implementation that keeps that seam (and fsync durability) intact. Five functions across four files still pair a temp-file creation with a rename themselves. Thin wrappers that DELEGATE to ``atomic_write`` are deliberately not counted — three exist and they are the shape we want, not a re-derivation."
+      },
+      {
+        "canonical": "src/personalclaw/http_download.py",
+        "name": "content-disposition-header",
+        "rationale": "FIVE download routes each composed their own ``Content-Disposition`` value in THREE incompatible conventions, and the difference between them was a security bug rather than a style one: ``session_export`` redacted the user's text and folded it to ASCII, ``handlers/files.py`` used RFC 6266's ``filename*=UTF-8''`` and redacted nothing, and ``project_archive``'s name went into the plain quoted form with NEITHER — so a credential typed into a project name reached proxy logs and browser download history verbatim while the twin thirty lines away was clean. A per-site fix would have left two conventions and let the sixth route pick whichever neighbour it read first. ``http_download.py`` is the ONE emitter: it redacts, it emits both parameter forms, and it closes header injection by rebuilding the ASCII fallback from an allowlist. Measured at 0 sites outside it, so unlike the three families above this one is a floor rather than a backlog — a new hand-rolled site raises a file from absent to 1 and reds the ratchet. The fix for a sixth download is to CALL ``attachment_disposition``, never to format the header again."
       }
     ],
     "per_file": {
@@ -198,6 +203,7 @@
     },
     "totals": {
       "by_family": {
+        "content-disposition-header": 0,
         "durable-write": 5,
         "http-error-envelope-helper": 3,
         "verdict-type": 23

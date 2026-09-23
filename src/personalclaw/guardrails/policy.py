@@ -45,6 +45,12 @@ TOOL_READ = "read"
 TOOL_READ_WRITE = "read_write"
 TOOL_CUSTOM = "custom"
 
+#: Every tier the grant algebra recognises, in widening order. Here rather than in a caller
+#: because :func:`tool_grant_denial` reads an UNRECOGNISED tier as ``read`` (fail closed) —
+#: so a surface that lets a human NAME a tier has to refuse a typo before that clamp grants
+#: less than was written, and it must not carry its own copy of this list to do it.
+TOOL_TIERS: tuple[str, ...] = (TOOL_READ, TOOL_CUSTOM, TOOL_READ_WRITE)
+
 
 @dataclass(frozen=True)
 class SafetyProfile:

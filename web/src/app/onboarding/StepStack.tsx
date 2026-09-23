@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useEffect, useRef } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check } from 'lucide-react'
@@ -27,6 +27,29 @@ export const StepRow = forwardRef<HTMLLIElement, {
   // renders as, below. Previously this predicate only chose an `onClick`.
   const revisitable = !active && done && !!onActivate
   const Header = revisitable ? motion.button : motion.div
+
+  // 🔴 ADVANCING A STEP USED TO DROP FOCUS ON THE FLOOR, on the first screen of the product. The
+  // control that had it — the name field, or its Continue arrow — lives in the step BODY, and the
+  // body unmounts as the step collapses. Focus then falls to `<body>`, so a keyboard user's next Tab
+  // starts from the top of the document and a screen-reader user is told nothing about where they
+  // now are: `Onboarding`'s live region announces the step, but an announcement is not a position.
+  // WCAG 2.4.3.
+  //
+  // So the newly-active step takes focus, on its HEADING — the destination the user was moved to,
+  // which is also what puts the new step on screen (`focus()` scrolls its scroller).
+  //
+  // 🪤 ONLY ON THE TRANSITION, never on mount. Step 1 is active from the first render and its name
+  // field carries `autoFocus`; focusing the heading unconditionally would race that and land the
+  // user on a heading instead of the field they have to type in. Comparing against the PREVIOUS
+  // value is what distinguishes "became active" from "was rendered active", and an initial-value
+  // ref makes the first pass a no-op by construction rather than by a flag someone can forget to
+  // clear.
+  const heading = useRef<HTMLHeadingElement>(null)
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) heading.current?.focus()
+    wasActive.current = active
+  }, [active])
 
   return (
     <motion.li
@@ -107,7 +130,28 @@ export const StepRow = forwardRef<HTMLLIElement, {
         {/* title / summary */}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-s">
-            <span className="text-on-surface" style={withWeight({ fontSize: active ? '1.0625rem' : '0.9375rem' }, 600)}>{title}</span>
+            {/* 🔑 THE CURRENT STEP'S TITLE IS A REAL HEADING, and it is the only one. First run had
+                exactly one `<h1>` ("Welcome to …") and no `<h2>` at all, so the five steps were
+                invisible to heading navigation — on the screen whose complaint was that it is hard
+                to navigate. It is also the focus destination the effect above needs, which is why
+                the two arrived together: a heading nobody can move to is half the fix.
+                🪤 ONE at a time, on the ACTIVE row, deliberately — not five. The active row's header
+                is a `<div>`, so an `<h2>` nests validly; a DONE row's header is a `<button>`, and
+                `<h2>` inside `<button>` is invalid content (a button takes phrasing content, a
+                heading is flow content). Five headings would therefore need the APG accordion shape
+                (`<h2><button>`), whose accessible name is then the whole row — title, step number
+                AND subtitle — which trades a missing heading for an unreadable one. The set
+                semantics the five rows need is already carried properly: a real `<ol>` of `<li>`s
+                with `aria-current="step"`, plus the live region that speaks "Step N of M".
+                `tabIndex={-1}` makes it a programmatic focus target WITHOUT adding a tab stop: the
+                heading is a destination, not a control, so it must not join the tab ring.
+                `-outline-offset-2` for the same reason the header below carries it — the `<li>` is
+                `overflow-hidden`, so an outward-drawn focus ring is clipped away entirely and the
+                user is moved somewhere with no sign they were moved. */}
+            {active
+              ? <h2 ref={heading} tabIndex={-1} className="text-on-surface focus-visible:-outline-offset-2"
+                  style={withWeight({ fontSize: '1.0625rem' }, 600)}>{title}</h2>
+              : <span className="text-on-surface" style={withWeight({ fontSize: '0.9375rem' }, 600)}>{title}</span>}
             {/* 🔑 UNGATED ON PURPOSE — `!active &&` hid the number on exactly the row the user is
                 standing on, so the visible numbering always had a hole where the answer mattered
                 most: first load read "Your name · Step 2 · Step 3 · Step 4 · Step 5", and at step 3
@@ -139,7 +183,15 @@ export const StepRow = forwardRef<HTMLLIElement, {
             exit={{ height: 0, opacity: 0 }}
             transition={{ height: spring.spatialDefault, opacity: { duration: 0.18 } }}
           >
-            <div className="px-l pb-l pl-[4.75rem]">{children}</div>
+            {/* 🔑 THE HANGING INDENT IS A DESKTOP AFFORDANCE AND A PHONE TAX. 4.75rem lines the step
+                body up under its title, past the 36px status node — worth it at 1024px and up, and
+                76px of a 342px card at 390px, i.e. 22% of the screen spent on alignment. Measured at
+                390×844, `pl-[4.75rem]` → `pl-l`: the step body's content box goes 264px → 324px, the
+                name field 204px → 264px, and the handle hint wraps over 4 lines instead of 5. Below
+                `sm` the body takes the card's own inset instead; the title is still directly above
+                it, so nothing becomes ambiguous — it just stops paying for a rule the screen has no
+                room for. */}
+            <div className="px-l pb-l pl-l sm:pl-[4.75rem]">{children}</div>
           </motion.div>
         )}
       </AnimatePresence>

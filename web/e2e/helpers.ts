@@ -715,10 +715,30 @@ export async function assertPristineFlywheel(page: Page): Promise<void> {
  *  the preconditions those specs need: this helper does not re-assert chat.spec.ts's clause.
  *
  *  `turns` sends the same prompt N times. The script fixture's `on_exhausted: repeat_last` means
- *  every turn gets the same reply, which is what makes a transcript long enough to SCROLL. */
+ *  every turn gets the same reply, which is what makes a transcript long enough to SCROLL.
+ *
+ *  🔑 AND `turns` IS NOW A GUARANTEE RATHER THAN AN INTENTION. Callers index the session by prompt
+ *  number and by mark order, so "6 sends produced 5 turns" is not a degraded start — it silently
+ *  re-numbers every turn after the loss and turns the caller's next assertion into a claim about a
+ *  session that does not exist. The loop therefore asserts the transcript's own per-turn row counts
+ *  after every send (see the 🪤 inside), and reds at the send that was lost. `chat.spec.ts` states
+ *  the discipline this restores: composer state and transcript state are two INDEPENDENT readings
+ *  of "finished", and both belong inside the loop. */
 export async function driveScriptedTurns(page: Page, prompt: string, turns = 1): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message input' })
   await expect(composer).toBeVisible({ timeout: 15_000 })
+  // ── THE TWO TRANSCRIPT READINGS THIS HELPER IS COUNTED BY ──────────────────────────────────
+  // One row per USER turn: `ChatPage.tsx:3282` renders it as `{!streaming && <UserActions …/>}`,
+  // so the count is "how many turns have landed" AND "nothing is streaming" in one reading.
+  // One row per ASSISTANT turn: `actions={!(isLast && streaming) && <AssistantActions …/>}`
+  // (`ChatPage.tsx:3288`), and `Speak` is the one control unconditional inside it — so the newest
+  // turn joins this count only once it has STOPPED streaming. `exact` on both, and for the assistant
+  // row it is load-bearing: a turn whose audio is playing re-labels that same button to 'Stop'
+  // (`MessageActions.tsx:71`), which would then collide with the composer's own Stop. Nothing in
+  // this harness speaks, so the count is whole; if something ever does, it undercounts and reds
+  // rather than passing on the wrong control.
+  const userTurnRows = page.getByRole('button', { name: 'Edit & resend', exact: true })
+  const assistantTurnRows = page.getByRole('button', { name: 'Speak', exact: true })
   for (let n = 0; n < turns; n++) {
     await composer.click()
     await composer.pressSequentially(`${prompt} (${n + 1})`, { delay: 3 })
@@ -728,12 +748,42 @@ export async function driveScriptedTurns(page: Page, prompt: string, turns = 1):
       'the composer refused the draft — send stayed aria-disabled, so no turn was ever started',
     ).not.toHaveAttribute('aria-disabled', 'true')
     await send.click()
-    // The turn must END before the next one is typed, or the composer is mid-stream and the
-    // second prompt lands in a disabled box. Two independent readings, same as chat.spec.ts.
+    // 🪤 THE BARRIER IS A POSITIVE COUNT, AND THE ABSENCE CHECK IT REPLACES WAS SATISFIED BEFORE
+    // THE TURN BEGAN — measured, not reasoned. This loop used to wait on
+    // `expect(Stop).toHaveCount(0)`, which is true both AFTER a turn ends and BEFORE it starts:
+    // the composer's action button only morphs to Stop once the stream is live. In run
+    // 35949502119 (`e2e-a11y`, `sessionMap.spec.ts`) turn 1's wait returned in 386 ms while turn
+    // 1's stream was still to come, and turn 2's wait then absorbed 5594 ms of it — i.e. turn 2
+    // was TYPED AND SENT into a live run. That send was swallowed: the session ended with FIVE
+    // user turns for six sends (`[data-session-mark][data-kind="user"]` counted 5 in the trace),
+    // prompt `(2)` was absent from the transcript, and the red landed 300 lines later in
+    // sessionMap.spec.ts as "the rail tick did not bring its turn on screen" — blaming the rail
+    // for a turn that was never sent.
+    //
+    // A count cannot be satisfied early, because it is MONOTONE in the thing being waited for:
+    // before this send the assistant rows numbered n, so n+1 can only mean "this turn produced a
+    // reply and that reply finished". And the exact user-row count is what names the loss AT the
+    // send that lost it, which is the whole point — a helper that promises N turns and delivers
+    // N-1 silently is how a functional defect becomes somebody else's flake.
+    await expect
+      .poll(() => assistantTurnRows.count(), {
+        message:
+          `turn ${n + 1} never completed: the transcript still holds ${n} assistant action row(s), so the\n` +
+          `reply either never arrived or is still streaming. The scripted provider answers every turn, so\n` +
+          `this is the gateway or the socket, not the fixture.`,
+        timeout: 90_000,
+      })
+      .toBeGreaterThanOrEqual(n + 1)
     await expect(
-      page.getByRole('button', { name: 'Stop', exact: true }),
-      `turn ${n + 1} never finished streaming — the composer is still showing Stop`,
-    ).toHaveCount(0, { timeout: 90_000 })
+      userTurnRows,
+      `SEND ${n + 1} OF ${turns} DID NOT BECOME A TURN. The transcript carries a different number of user\n` +
+        `turns than this helper has sent, so every later assertion that assumes "the Nth turn is prompt\n` +
+        `(N)" is now measuring a session that does not exist. A send issued while the previous run is\n` +
+        `still live is absorbed rather than queued, and the composer looks idle in that window — so this\n` +
+        `is the barrier above having let the loop type too early, or the product's send guard.`,
+    ).toHaveCount(n + 1, { timeout: 30_000 })
+    // The composer's own idle reading, independent of the two transcript ones (chat.spec.ts's
+    // point: a half-finished turn fails one of them).
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible({ timeout: 30_000 })
   }
   await expect(

@@ -105,10 +105,29 @@ class TestPackagedSource:
 
     def test_both_packaging_surfaces_declare_the_data_file(self):
         """A data file must reach the wheel AND the frozen binary — PyInstaller's import
-        analysis cannot see one, so the spec needs it spelled out separately."""
+        analysis cannot see one, and ``security.py`` raises at import without it, so the
+        frozen binary would refuse to start rather than run with a shorter denylist.
+
+        The two surfaces now share ONE declaration: the spec derives its ``datas`` from this
+        very pyproject block (``scripts/backend_bundle_manifest.py``), so the assertion is on
+        the derived payload rather than on a second literal the spec used to carry — a literal
+        beside a growing list is what let eleven other globs drift out of the bundle.
+        ``tests/test_backend_bundle_manifest.py`` owns the general rail; this is the SH-6
+        file's own named one.
+        """
+        import importlib.util
+
         assert '"baseline_denylist.json"' in (REPO_ROOT / "pyproject.toml").read_text()
-        spec = (REPO_ROOT / "personalclaw-backend.spec").read_text()
-        assert '("src/personalclaw/baseline_denylist.json", "personalclaw")' in spec
+        spec = importlib.util.spec_from_file_location(
+            "backend_bundle_manifest", REPO_ROOT / "scripts" / "backend_bundle_manifest.py"
+        )
+        assert spec is not None and spec.loader is not None
+        manifest = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(manifest)
+        assert (
+            "src/personalclaw/baseline_denylist.json",
+            "personalclaw",
+        ) in manifest.package_data_datas(REPO_ROOT)
 
 
 def _reader_returning(raw: str):

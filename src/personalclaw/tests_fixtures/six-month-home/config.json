@@ -132,7 +132,7 @@
     "auto_refine_on_deviation": false,
     "auto_min_tool_calls": 5,
     "auto_similarity_threshold": 0.85,
-    "progressive_disclosure_threshold": 8
+    "progressive_disclosure_threshold": 2
   },
   "workflows": {
     "enabled": true,

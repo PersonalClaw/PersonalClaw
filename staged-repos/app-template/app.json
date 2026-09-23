@@ -1,0 +1,36 @@
+{
+  "name": "app-template",
+  "version": "0.1.0",
+  "displayName": "App Template",
+  "description": "The PersonalClaw app template: clone it, rename it, ship it.",
+  "icon": "Blocks",
+  "license": "MIT",
+  "tags": [
+    "tool"
+  ],
+  "cli": {
+    "setup": "app_cli:setup",
+    "doctor": "app_cli:doctor"
+  },
+  "loggerRoots": [
+    "app_template"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "provider:create_provider",
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "timeout_secs": {
+          "type": "integer",
+          "default": 20,
+          "x-meta": {
+            "label": "Request timeout",
+            "help": "Seconds this provider waits before giving up."
+          }
+        }
+      }
+    }
+  },
+  "author": "PersonalClaw contributors"
+}

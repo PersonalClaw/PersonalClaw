@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 from personalclaw.apps.secret_fields import (
     mask_bearing_paths,
@@ -74,6 +75,27 @@ def _report_withheld(masked_paths: list[str], key: str | None) -> None:
         "for a file you intend to `config set --file` back.",
         file=sys.stderr,
     )
+
+
+def _refuse(operation: str, resources: str, message: str, outcome: str = "error") -> NoReturn:
+    """Print *message*, audit the refusal, and exit 1 — the shape every refusal here shares.
+
+    Written once because the print/audit/exit triple was copied at five sites and the audit row is
+    the part a sixth would forget: an unaudited silent refusal is indistinguishable from a working
+    write, which is the defect family this whole module is scar tissue from. `NoReturn` so a caller
+    cannot read the line after it as reachable.
+    """
+    print(message, file=sys.stderr)
+    sel().log_api_access(
+        caller="cli",
+        operation=operation,
+        outcome=outcome,
+        source="cli",
+        # The KEY or the path, never a value. An audit row that quoted the credential it was
+        # written to watch over is the leak it is auditing.
+        resources=resources,
+    )
+    sys.exit(1)
 
 
 def _config_cmd(args: argparse.Namespace) -> None:
@@ -147,15 +169,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
             except config_loader.ConfigPreserveError as exc:
                 # Refusing beats writing blind: a config whose content cannot be read is exactly
                 # the case where we cannot know what the write would destroy.
-                print(f"❌ {exc}", file=sys.stderr)
-                sel().log_api_access(
-                    caller="cli",
-                    operation="config_set_file",
-                    outcome="error",
-                    source="cli",
-                    resources=str(fp),
-                )
-                sys.exit(1)
+                _refuse("config_set_file", str(fp), f"❌ {exc}")
             # 🔴 THE OTHER HALF OF MASKING, and the reason masking the read alone would have been
             # worse than the leak. `config get > f.json` → edit → `config set --file f.json` is a
             # documented loop, so the file arriving here is usually one `config get` printed — and
@@ -170,31 +184,46 @@ def _config_cmd(args: argparse.Namespace) -> None:
                 # Fail CLOSED. A mask we cannot resolve to a stored value would otherwise be
                 # written as the credential itself. `--reveal` is the round-trip source that has
                 # no masks to resolve.
-                print(
+                _refuse(
+                    "config_set_file",
+                    str(fp),
                     "❌ refusing to write config: "
                     f"{len(unresolved)} masked credential field(s) could not be matched to a "
                     f"value in {p.name}, and writing the mask would destroy them: "
-                    + ", ".join(unresolved),
-                    file=sys.stderr,
-                )
-                print(
-                    "   Use `personalclaw config get --reveal` as the source of a file you "
+                    + ", ".join(unresolved)
+                    + "\n   Use `personalclaw config get --reveal` as the source of a file you "
                     "intend to write back.",
-                    file=sys.stderr,
-                )
-                sel().log_api_access(
-                    caller="cli",
-                    operation="config_set_file",
                     outcome="denied",
-                    source="cli",
-                    resources=str(fp),
                 )
-                sys.exit(1)
-            # Same merge as `set <key> <value>`, for the same reason and then one more: the file
-            # an operator hands back here can be missing a block `config get` did not print.
-            # Replacing the document wholesale would delete `providers[]` by omission on the one
-            # path whose whole purpose is restoring a config the operator believes is complete
-            # (#951).
+            # 🔴 OMISSION CANNOT MEAN REMOVAL HERE, SO IT MUST NOT READ AS SUCCESS. The merge
+            # below copies every top-level block this document does not name forward, which is
+            # what stops a handed-back file deleting `providers[]` by omission (#951) — and is
+            # exactly why a block the operator DELETED on purpose survived at `✅` exit 0 (#3125).
+            # One signal cannot mean both "leave alone" and "delete", so this path keeps
+            # preservation and stops pretending: the write is refused, the blocks it could not
+            # apply are named, and `config unset` is the verb that removes one. Nonzero, because
+            # an operator who removed a credential and was told ✅ still has the secret on disk.
+            #
+            # AFTER the mask check above, deliberately. An unresolvable mask is the fail-closed
+            # case — it would destroy the only copy of a credential — so it earns the more
+            # specific message when a document manages to be wrong in both ways at once.
+            dropped = sorted(k for k in stored if k not in data)
+            if dropped:
+                _refuse(
+                    "config_set_file",
+                    str(fp),
+                    f"❌ refusing to write config: {len(dropped)} top-level block(s) in {p.name} "
+                    f"are missing from {fp.name}, and this path preserves blocks it is not shown "
+                    "rather than deleting them: " + ", ".join(dropped) + "\n   To remove one, run "
+                    f"`personalclaw config unset {dropped[0]}`. To apply the rest of this file, "
+                    "put the block back.",
+                    outcome="denied",
+                )
+            # Belt and braces, kept on purpose rather than deleted as unreachable: the refusal
+            # above makes this a no-op only for as long as its comparison stays exactly as wide as
+            # this merge's. #951 is the bug where that invariant was held in one place and broken
+            # in another, so the guarantee is stated twice and the census in
+            # `test_config_file_roundtrip_preserves_unmodeled_blocks.py` reads this line.
             data = config_loader.merge_unmodeled_top_keys(data, stored)
             atomic_write(p, json.dumps(data, indent=2) + "\n")
             sel().log_api_access(
@@ -278,15 +307,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
             except config_loader.ConfigPreserveError as exc:
                 # Absent is safe to write over, unreadable is not — the rule `AppConfig.save()`
                 # already enforces, now stated once in the loader and shared by all three writes.
-                print(f"❌ {exc}", file=sys.stderr)
-                sel().log_api_access(
-                    caller="cli",
-                    operation="config_set",
-                    outcome="error",
-                    source="cli",
-                    resources=f"{key}={value}",
-                )
-                sys.exit(1)
+                _refuse("config_set", f"{key}={value}", f"❌ {exc}")
             _dict_put(doc, key, parsed)
             atomic_write(p, json.dumps(doc, indent=2) + "\n")
             sel().log_api_access(
@@ -297,6 +318,47 @@ def _config_cmd(args: argparse.Namespace) -> None:
                 resources=f"{key}={json.dumps(parsed)}",
             )
             print(f"✅ {key} = {json.dumps(parsed)}")
+    elif action == "unset":
+
+        # 🔴 THE ESCAPE HATCH REMOVAL NEVER HAD. `config` shipped `{get,set,edit}`, and no spelling
+        # of removal existed anywhere: `unset`, `--replace` and `--remove` all grepped to zero. So
+        # the only documented way to hand back an edited config — `config get > f.json` → edit →
+        # `config set --file f.json` — could not express "delete this", and answered `✅` while a
+        # `bot_token` the operator had removed stayed on disk (#3125).
+        #
+        # Deliberately ONE verb rather than a `--prune` flag on `--file` as well: two spellings of
+        # removal is the shape of bug this file already carries scars from (two config readers that
+        # disagreed on the exit contract). `--file` preserves and refuses; `unset` removes.
+        key = args.key
+        p = config_path()
+        try:
+            doc = config_loader.read_config_for_merge(p)
+        except config_loader.ConfigPreserveError as exc:
+            # Same rule as every other write: unreadable means the damage is unknowable.
+            _refuse("config_unset", key, f"❌ {exc}")
+        # A key that is not in the file is REFUSED, not shrugged off. `config unset slak` answering
+        # success while `slack` survives is the same false-success defect this verb exists to end —
+        # and the one where being wrong leaves a credential on disk.
+        if _dict_pop(doc, key) is _MISSING:
+            _refuse(
+                "config_unset",
+                key,
+                f"❌ Not set in {p.name}: {key}\n"
+                "   `personalclaw config get` shows what the file holds. A modelled key absent "
+                "from the file is already at its default.",
+                outcome="denied",
+            )
+        atomic_write(p, json.dumps(doc, indent=2) + "\n")
+        sel().log_api_access(
+            caller="cli",
+            operation="config_unset",
+            outcome="allowed",
+            source="cli",
+            # The KEY only. An unset whose audit row quoted the credential it removed would
+            # preserve in the log exactly what the operator asked to be rid of.
+            resources=key,
+        )
+        print(f"✅ Removed {key}")
     elif action == "edit":
 
         p = config_path()
@@ -314,7 +376,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
         editor = os.environ.get("EDITOR", "vi")
         os.execvp(editor, [editor, str(p)])
     else:
-        print("Usage: personalclaw config {get,set,edit}", file=sys.stderr)
+        print("Usage: personalclaw config {get,set,unset,edit}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -367,6 +429,30 @@ def _dict_put(d: dict, key: str, value: object) -> None:
             cur[p] = nxt
         cur = nxt
     cur[parts[-1]] = value
+
+
+def _dict_pop(d: dict, key: str) -> object:
+    """Remove the dot-separated *key* from *d*, returning its value or :data:`_MISSING`.
+
+    Reads the RAW config document, not `AppConfig.to_dict()` — the opposite of the Unknown-key
+    check `config set` makes. Every modelled section is materialised in the model dict, so
+    resolving there would report a key as removable that the file has never held, and the write
+    would rewrite the document unchanged at `✅`. "Present in the file" is the only question that
+    has an answer here, because the file is what is being edited.
+
+    Parents are left in place when they empty out. An empty `{}` section is what the loader reads
+    as "every field at its default", which is the state `unset` is asked to produce; pruning the
+    parent as well would turn one removal into a second, unasked-for one.
+    """
+    parts = key.split(".")
+    cur: object = d
+    for p in parts[:-1]:
+        if not isinstance(cur, dict) or p not in cur:
+            return _MISSING
+        cur = cur[p]
+    if not isinstance(cur, dict) or parts[-1] not in cur:
+        return _MISSING
+    return cur.pop(parts[-1])
 
 
 def _parse_value(raw: str) -> object:

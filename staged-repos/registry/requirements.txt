@@ -1,0 +1,8 @@
+# The validator's only dependency is PersonalClaw core itself: it reuses core's
+# manifest parser and its supply-chain scanner rather than reimplementing either, so
+# what the registry checks and what a user's install gate checks can never drift.
+#
+# Pinned, not floated: a scanner rule set that changes under CI without anyone
+# choosing it would silently change what the registry accepts. Bump this
+# deliberately, and expect previously-clean listings to be re-validated when you do.
+personalclaw==0.1.3

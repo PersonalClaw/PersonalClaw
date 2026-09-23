@@ -353,6 +353,63 @@ def _probe_unshare() -> bool:
         return False
 
 
+# ── The wrapper's OWN enforcement binaries ──
+#
+# `sandbox_exec_argv` execs two binaries of its own ahead of the child's argv: `env` (to
+# scrub sensitive vars, which Seatbelt cannot express) and `sandbox-exec` (the enforcement
+# itself). They used to be emitted as BARE NAMES, and the process that actually resolves
+# them is the ceiling shim's `os.execvp` running in the CHILD — so the wrapper was resolving
+# its own enforcement binaries through the environment of the process it was about to
+# confine. That is wrong twice over:
+#
+#   (i) it breaks whenever the child's PATH is narrowed — a legitimate hardening posture —
+#       and the child then dies at exec with ENOENT *before* any enforcement is applied,
+#       reporting a bare `cannot exec 'env'` instead of the real startup cause; and
+#  (ii) a PATH an agent can influence could shadow `env` or `sandbox-exec` and defeat the
+#       confinement outright.
+#
+# So both are resolved HERE, by the wrapper, at argv-build time, against the POSIX system
+# utility path only — never `$PATH`, and never the child's.
+_ENFORCEMENT_PATH_FALLBACK = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+class SandboxEnforcementUnavailable(RuntimeError):
+    """The host lacks a binary :func:`sandbox_exec_argv` needs to enforce anything.
+
+    Raised instead of returning an argv built from a name that will not resolve: from the
+    child's side a wrap that dies at ``exec`` is indistinguishable from a wrap that never
+    confined anything, and the diagnostic it leaves names the shim rather than the cause.
+    :func:`detect_backend` gates this — the capability probe requires *both* binaries — so
+    :func:`wrap_argv` never reaches it; it is the floor for a direct call.
+    """
+
+
+def _system_utility_path() -> str:
+    """The POSIX standard utility path, independent of ``$PATH``.
+
+    ``confstr("CS_PATH")`` is the OS's own answer to where the standard utilities live
+    (``/usr/bin:/bin:/usr/sbin:/sbin`` on macOS). The static fallback is a floor for a
+    platform without confstr, not a hardcoded answer: resolution still runs through
+    ``shutil.which``, so a name absent from the image fails honestly rather than yielding a
+    path that does not exist.
+    """
+    try:
+        path = os.confstr("CS_PATH")
+    except (OSError, ValueError):  # pragma: no cover - confstr is POSIX-universal
+        path = None
+    return path or _ENFORCEMENT_PATH_FALLBACK
+
+
+def _resolve_enforcement_bin(name: str) -> str | None:
+    """Resolve one of the wrapper's own binaries absolutely, or ``None`` if absent.
+
+    Deliberately NOT memoised: this is two ``stat`` calls, not a subprocess like the host
+    probes above, and a cache here would have to be invalidated by ``reset_backend`` to keep
+    the probe tests honest.
+    """
+    return shutil.which(name, path=_system_utility_path())
+
+
 @functools.lru_cache(maxsize=1)
 def _probe_sandbox_exec() -> bool:
     """Return True if macOS ``sandbox-exec`` actually works.
@@ -360,11 +417,27 @@ def _probe_sandbox_exec() -> bool:
     Uses a file-based profile and targets the current Python interpreter so
     the capability check matches the executable class used by real
     ``sandbox_exec_argv()`` invocations.
+
+    Both binaries the wrap execs are resolved through
+    :func:`_resolve_enforcement_bin` — the system utility path, never ``$PATH`` — for the
+    same reason the wrap itself does: an agent-influenceable ``$PATH`` must not be able to
+    point the *capability probe* at a stand-in either.
     """
     if sys.platform != "darwin":
         return False
-    sb = shutil.which("sandbox-exec")
+    sb = _resolve_enforcement_bin("sandbox-exec")
     if sb is None:
+        return False
+    # Capability probes fail CLOSED (AGENTS.md §Shared conventions): the wrap also execs
+    # ``env`` to scrub the child's environment, so a host missing *either* binary cannot be
+    # wrapped at all. Refuse the capability here, with an explicit log, rather than letting
+    # `detect_backend` select a backend whose argv would die at exec.
+    if _resolve_enforcement_bin("env") is None:
+        logger.warning(
+            "sandbox-exec is present but 'env' is not on the system utility path (%s) — "
+            "the seatbelt wrap cannot scrub the child environment, so the backend is refused",
+            _system_utility_path(),
+        )
         return False
     # Probe with a file profile against the same interpreter class real commands use.
     target = sys.executable
@@ -755,9 +828,27 @@ def sandbox_exec_argv(
     Also scrubs sensitive env vars via ``env -u`` since Seatbelt only
     handles file-level deny rules, not environment variables.
 
+    Both of the wrapper's own binaries (``env``, ``sandbox-exec``) are emitted as ABSOLUTE
+    paths resolved by this function against the system utility path — see
+    :func:`_resolve_enforcement_bin`. They must not be left as bare names for the child's
+    ``execvp`` to resolve against the child's own ``$PATH``.
+
     Returns (new_argv, tmp_profile_path).  Caller should delete the
     profile file after the child exits.
+
+    Raises:
+        SandboxEnforcementUnavailable: either binary fails to resolve on the system utility path,
+            so no enforceable argv exists. Resolved BEFORE the profile is written, so the
+            refusal leaves no temp file behind.
     """
+    env_bin = _resolve_enforcement_bin("env")
+    sandbox_bin = _resolve_enforcement_bin("sandbox-exec")
+    if env_bin is None or sandbox_bin is None:
+        missing = [n for n, p in (("env", env_bin), ("sandbox-exec", sandbox_bin)) if p is None]
+        raise SandboxEnforcementUnavailable(
+            f"cannot build a sandbox-exec wrap: {', '.join(missing)} not found on the "
+            f"system utility path ({_system_utility_path()})"
+        )
     profile = _build_seatbelt_profile(sandbox_level)
     fd, path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_sandbox_")
     os.write(fd, profile.encode())
@@ -774,7 +865,7 @@ def sandbox_exec_argv(
             if key.startswith(prefix):
                 unset_args.extend(["-u", key])
                 break
-    return ["env", *unset_args, "sandbox-exec", "-f", path, *argv], path
+    return [env_bin, *unset_args, sandbox_bin, "-f", path, *argv], path
 
 
 # ── Public API ──

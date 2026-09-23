@@ -19,6 +19,7 @@ being true:
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -251,6 +252,13 @@ async def test_export_route_redacts_title_from_filename_and_body(routed, fmt):
     assert FAKE_SK_TOKEN not in disposition
     assert FAKE_SK_TOKEN not in body
     assert "[REDACTED: credential]" in body
+    # The transcript route's half of the ONE download-header convention
+    # (`personalclaw.http_download`): both RFC 6266 parameters, always. Asserted here — at the
+    # route that already drives this header — rather than in a second copy of this fixture chain.
+    assert re.fullmatch(
+        r'attachment; filename="[A-Za-z0-9._-]*"; filename\*=UTF-8\'\'[A-Za-z0-9._%-]*',
+        disposition,
+    ), disposition
 
 
 @pytest.mark.asyncio

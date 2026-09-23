@@ -46,6 +46,12 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
     A `BindingError` becomes a USER failure rather than an exception: the spec is wrong,
     the run should say so precisely, and a traceback in a run log tells a non-developer
     nothing actionable.
+
+    The error's OWN `remediation` wins when it carries one. The fallback below is generic by
+    necessity and was actively misleading on the commonest failure: it asked for a
+    `| default(...)` pipe that six bundled templates already had, on a class of failure no
+    pipe can rescue. Only the raise site knows which mode it is, so that is where the specific
+    advice comes from.
     """
     raw = dict(node.config or {})
     held = {key: raw.pop(key) for key in _condition_keys(node) if key in raw}
@@ -57,10 +63,7 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
         return {}, Failure(
             failure_class=FailureClass.USER,
             cause_plain=f"binding failed: {exc}",
-            remediation=(
-                "check the referenced node id and field exist, or add a `| default(...)` "
-                "pipe if the value is genuinely optional"
-            ),
+            remediation=(exc.remediation or "check the referenced node id and field exist"),
         )
 
 

@@ -257,3 +257,89 @@ def test_the_unreadable_config_arm_no_longer_hardcodes_a_threshold(tmp_path, mon
     assert (
         "INDEX only" in msg
     ), "a failed config load fell back to a threshold the surfaced list can never exceed"
+
+
+# ── the 620-warning first run: a SHIPPED HOME carried the pre-#3328 pair ──────────────────
+#
+# The owner's first run on the installed app logged
+# `progressive_disclosure_threshold 8 is at or above max_triggered 3, so the index branch could
+# never fire; using 2` — 620 times in one session.
+#
+# Determined rather than guessed. The SHIPPED DEFAULT is not the culprit and neither is the
+# comparison: `c58ea7cf6` (#3328) changed `default=8` → `default=2` and added the clamp above, and
+# a gateway booted on an empty `PERSONALCLAW_HOME` writes `progressive_disclosure_threshold: 2`
+# and logs the warning zero times (measured on a fresh home, port 10731). What still shipped the
+# pre-fix pair is a HOME: `tests_fixtures/six-month-home/config.json` is package data
+# (`pyproject.toml`: the `tests_fixtures` tree), it was generated from a 0.1.3 home, and `--seed
+# six-month-home` therefore installs `max_triggered: 3` beside threshold `8` — which reproduces
+# the owner's warning verbatim on every `AppConfig.load()`.
+#
+# Measured, with a control: loading each shipped fixture home through `AppConfig.load()` and
+# capturing `personalclaw.config.loader` warnings gave `empty` → 0, `demo-home` → 0,
+# `six-month-home` → 1, the message above. The two zeroes are what make the one a real reading.
+#
+# So the rail is over the shipped HOMES, not over one knob: a config this project ships must never
+# be one the validator has to rewrite on load. It is stated as "nothing was rewritten" rather than
+# "no warning logged" so it also covers a future validator that clamps quietly.
+
+
+def _shipped_fixture_homes():
+    """Every ``config.json`` under the packaged fixture homes.
+
+    Resolved off ``personalclaw.__file__`` rather than importing ``tests_fixtures``: it is a
+    data directory with no ``__init__.py``, so it imports as a namespace package whose
+    ``__file__`` is ``None``.
+    """
+    import personalclaw
+
+    root = Path(personalclaw.__file__).resolve().parent / "tests_fixtures"
+    return sorted(p for p in root.glob("*/config.json"))
+
+
+def test_shipped_fixture_homes_exist_at_all():
+    """The floor for the test below: a glob that matches nothing passes vacuously."""
+    homes = _shipped_fixture_homes()
+    assert homes, "no shipped fixture config.json found — the rail below would be vacuous"
+    assert {p.parent.name for p in homes} >= {"six-month-home"}
+
+
+def test_no_shipped_home_carries_a_config_the_validator_has_to_rewrite(tmp_path, monkeypatch):
+    """A shipped home must load UNCHANGED — no clamp, no override, no warning.
+
+    Copied to a temp dir first: `AppConfig.load()` is pointed at the copy, so this can never
+    write to the packaged fixture or to a real home.
+    """
+    import json as _json
+    import shutil
+
+    from personalclaw.config import loader as loader_mod
+    from personalclaw.config.loader import AppConfig
+
+    rewritten: list[str] = []
+    for src in _shipped_fixture_homes():
+        home = tmp_path / src.parent.name
+        home.mkdir()
+        shutil.copyfile(src, home / "config.json")
+        on_disk = _json.loads(src.read_text(encoding="utf-8"))
+        monkeypatch.setattr(loader_mod, "config_dir", lambda h=home: h)
+        loaded = AppConfig.load()
+        for section, values in on_disk.items():
+            if not isinstance(values, dict):
+                continue
+            obj = getattr(loaded, section, None)
+            if obj is None:
+                continue
+            for field_name, want in values.items():
+                if not hasattr(obj, field_name):
+                    continue
+                got = getattr(obj, field_name)
+                if isinstance(want, (bool, int, str)) and got != want:
+                    rewritten.append(
+                        f"{src.parent.name}: {section}.{field_name} "
+                        f"on disk {want!r} → loaded {got!r}"
+                    )
+    assert not rewritten, (
+        "a home this project SHIPS carries values the validator overrides on every load, so "
+        "every install seeded from it warns forever about a default nobody chose: "
+        + "; ".join(rewritten)
+    )

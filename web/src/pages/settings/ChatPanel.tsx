@@ -8,6 +8,7 @@ import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToas
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
 import { confirmDelete } from '../../ui/dialog'
 import { Trash2, VolumeX } from 'lucide-react'
@@ -229,7 +230,11 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
  *  all). Rendering the store's own keys is what makes every one of them reachable; filtering to
  *  known agents would silently re-orphan exactly the entries that need this row most. */
 function MutedAgentsField() {
-  const { data, refresh } = useQuery('agents:routing-mutes', () => api.routingStatus())
+  // `error` is BOUND, and the failed branch is distinct from the loading one. Read only `data`
+  // and "Checking…" is terminal: the read is propagating (no `.catch` to swallow it), so a
+  // failure leaves `data` undefined forever and the row sits on a progress word that never
+  // resolves — the same shape as the first-run spinner, one field deep in Settings → Chat.
+  const { data, error: mutesErr, refresh } = useQuery('agents:routing-mutes', () => api.routingStatus())
   const [busy, setBusy] = useState('')
   const muted = data?.muted ?? []
   const unmute = async (agent: string) => {
@@ -243,7 +248,11 @@ function MutedAgentsField() {
   }
   return (
     <Field label="Muted agents" hint="Agents the router has stopped suggesting because you dismissed them three times. Unmuting clears the mute and the dismissal count, so the agent can be suggested again.">
-      {data === undefined ? (
+      {data === undefined && mutesErr ? (
+        <p data-type="body-s" role="alert" className="text-on-surface-low">
+          Couldn&apos;t check which agents are muted. <TextLink size="sm" onClick={refresh}>Retry</TextLink>
+        </p>
+      ) : data === undefined ? (
         <p data-type="body-s" className="text-on-surface-low">Checking…</p>
       ) : muted.length === 0 ? (
         <p data-type="body-s" className="text-on-surface-low">None — no agent is muted.</p>

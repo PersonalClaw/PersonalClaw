@@ -596,6 +596,167 @@ def _build_native_runtime(
     )
 
 
+def _model_app_for_provider_type(provider_type: str) -> tuple[str, bool] | None:
+    """``(app_name, enabled)`` of the INSTALLED model app registering ``provider_type``.
+
+    ``None`` when no installed app claims it — which is the difference between "enable
+    the app you already have" and "install one", and therefore the difference between an
+    actionable fix and a dead end. Mirrors how ``GET /api/model-provider-types`` derives
+    the pair (``providerType``, else the app-name stem), which is the only type→app
+    mapping in the tree.
+    """
+    try:
+        from personalclaw.providers.registry import get_provider_registry
+
+        for ext in get_provider_registry().list_by_type("model"):
+            name = getattr(getattr(ext, "manifest", None), "name", "") or ext.name
+            declared = str(getattr(ext.provider_config, "providerType", "") or "")
+            if (declared or name.replace("-models", "")) == provider_type:
+                return name, bool(getattr(ext, "enabled", False))
+    except Exception:  # noqa: BLE001 — a diagnosis must never raise over the failure it explains
+        logger.debug("could not map provider type %r to an app", provider_type, exc_info=True)
+    return None
+
+
+def _credential_is_missing(name: str) -> bool:
+    """Whether ``name`` names a credential the store cannot produce a secret for."""
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.llm.credentials import CredentialStore
+
+        store = CredentialStore(config_dir())
+        if not store.has(name):
+            return True
+        return str(getattr(store.resolve(name), "source", "") or "none") == "none"
+    except Exception:  # noqa: BLE001 — an unreadable store is not evidence of a missing key
+        return False
+
+
+def _diagnose_unbuildable_ref(
+    provider_name: str, model_id: str, use_case: str, capability: str
+) -> tuple[str, str]:
+    """``(why, fix)`` for an active ref whose provider the config registry could not build.
+
+    ``_resolve_from_config_registry`` returns a bare ``None`` for every cause, and the
+    raise below used to state ONE of them unconditionally — *"absent from config.json (its
+    app isn't installed or configured)"* — including for causes where ``config.json``
+    plainly contains the entry. A missing type factory was reported as a missing app, and
+    the fix told the user to install their own provider ENTRY name in the App Store, which
+    is not a thing that exists there (#3408).
+
+    Each branch below asks a question the next one is allowed to assume, so the answer
+    names the cause that actually fired:
+
+    1. ``config.json`` unreadable — say so rather than guess either way.
+    2. no entry by that name in config.json — the original sentence, now only when true.
+    3. in config.json but not in the live registry — the boot/sync gap.
+    4. its ``type`` has no registered factory — app not installed, or installed but
+       DISABLED, which are different fixes and are distinguished here. Names the **type**,
+       because that is the token the Store and ``POST /api/providers`` speak; the entry
+       name is the user's own label and matches nothing installable.
+    5. entry + factory present, but its declared capabilities do not cover the use case.
+    6. the credential it names has no secret in the credential store.
+    7. anything left — which it states as *unsure*, with the model id to check and the log
+       line to read, rather than asserting a specific wrong cause.
+
+    "The model name is not offered by that provider" is deliberately NOT a branch:
+    resolution passes ``model_override`` through to the factory unvalidated, so a wrong
+    model id does not make this function return ``None``. When a factory rejects it, the
+    build failure lands in branch 7, which is why that branch names the model id.
+    """
+    from personalclaw.providers.use_cases import _known_provider_names
+
+    rebind = f"rebind {use_case!r} to an available model in Settings → Models"
+    target_cap = _capability_enum(capability)
+    if target_cap is None:
+        return (
+            f"use case {use_case!r} maps to no provider capability, so no configured "
+            f"provider can satisfy it",
+            f"{rebind} — and report use case {use_case!r} as unmappable",
+        )
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        registry = get_default_registry()
+        entries = {e.name: e for e in registry.list_entries()}
+    except Exception:  # noqa: BLE001 — never let the diagnosis outrank the failure
+        logger.debug("provider registry unreadable while diagnosing %r", provider_name)
+        return (
+            f"the provider registry could not be read, so why {provider_name!r} cannot be "
+            f"built is unknown",
+            f"check the gateway log, or {rebind}",
+        )
+
+    entry = entries.get(provider_name)
+    if entry is None:
+        configured = _known_provider_names()
+        if configured is None:
+            return (
+                f"config.json could not be read, so whether {provider_name!r} is still "
+                f"configured is unknown",
+                f"repair config.json (see the gateway log), or {rebind}",
+            )
+        if provider_name not in configured:
+            return (
+                f"no provider named {provider_name!r} is in config.json — the entry was "
+                f"renamed or removed, or its app was uninstalled",
+                f"re-add {provider_name!r} in Settings → Providers, or {rebind}",
+            )
+        return (
+            f"provider {provider_name!r} IS in config.json but is not registered in the "
+            f"running gateway, so nothing can build it",
+            f"re-save {provider_name!r} in Settings → Providers to register it now, or "
+            f"restart the gateway to replay config.json",
+        )
+
+    try:
+        type_capabilities = registry.capability_of(entry.type).capabilities
+    except Exception:  # noqa: BLE001 — the documented "is this type registered?" probe
+        app = _model_app_for_provider_type(entry.type)
+        if app is None:
+            return (
+                f"provider {provider_name!r} declares type {entry.type!r}, and no installed "
+                f"app registers that type",
+                f"install an app that provides {entry.type!r} in the App Store, or change "
+                f"{provider_name!r}'s type in Settings → Providers",
+            )
+        app_name, enabled = app
+        if not enabled:
+            return (
+                f"provider {provider_name!r} declares type {entry.type!r}, whose app "
+                f"{app_name!r} is installed but DISABLED, so the type is not registered",
+                f"enable {app_name!r} on the Apps page",
+            )
+        return (
+            f"provider {provider_name!r} declares type {entry.type!r} and its app "
+            f"{app_name!r} is installed and enabled, but the type never registered — the "
+            f"app failed to load",
+            f"check the gateway log for {app_name!r}'s import error, or {rebind}",
+        )
+
+    if target_cap not in (entry.declared_capabilities or type_capabilities):
+        return (
+            f"provider {provider_name!r} (type {entry.type!r}) does not declare the "
+            f"{capability!r} capability that use case {use_case!r} needs",
+            f"{rebind}, or bind {use_case!r} to a provider that declares {capability!r}",
+        )
+
+    credential = str(entry.credential or "")
+    if credential and _credential_is_missing(credential):
+        return (
+            f"provider {provider_name!r} needs credential {credential!r}, which has no "
+            f"secret in the credential store",
+            f"set {credential!r} in Settings → Providers, or {rebind}",
+        )
+
+    return (
+        f"provider {provider_name!r} (type {entry.type!r}) is configured and its type is "
+        f"registered, so the cause is not visible from here — building it failed",
+        f'check the gateway log for "failed to build provider {provider_name}", confirm '
+        f"{model_id!r} is a model {provider_name!r} offers, or {rebind}",
+    )
+
+
 def resolve_provider_for_use_case(
     use_case: str,
     *,
@@ -899,22 +1060,22 @@ def resolve_provider_for_use_case(
         # error instead of the implicit fallback. The user fixes it by installing
         # the provider or picking another in Settings → Models.
         ref, provider_name = _last_dead
+        # The why/fix pair is DERIVED from the cause that actually fired. It used to state
+        # "absent from config.json (its app isn't installed or configured)" for every
+        # cause, so the primary remediation surface for a total chat outage asserted a
+        # wrong cause and offered an unactionable fix (#3408).
+        _why, _fix = _diagnose_unbuildable_ref(
+            provider_name, (split_ref(ref) or (provider_name, ref))[1], use_case, capability
+        )
         raise ProviderResolutionError(
-            f"The model selected for {use_case!r} ({ref!r}) isn't available — its "
-            f"provider {provider_name!r} isn't installed or configured. Install it "
-            f"in the App Store, or pick a different model in Settings → Models.",
+            f"The model selected for {use_case!r} ({ref!r}) isn't available. {_fix}.",
             AgentError(
                 code="ERR_MODEL_UNRESOLVED",
                 what=(f"the model pinned for use case {use_case!r} ({ref!r}) cannot be built"),
                 why=(
-                    f"the active ref names provider {provider_name!r}, which is absent "
-                    f"from config.json (its app isn't installed or configured)"
-                    + (" — every other chain entry was skipped too" if len(_refs) > 1 else "")
+                    _why + (" — every other chain entry was skipped too" if len(_refs) > 1 else "")
                 ),
-                fix=(
-                    f"install {provider_name!r} in the App Store, or rebind {use_case!r} "
-                    f"to an available model in Settings → Models"
-                ),
+                fix=_fix,
             ),
         )
 

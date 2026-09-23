@@ -99,10 +99,14 @@ describe('the onboarding name field is programmatically labelled', () => {
     // Both sides read from the DOM: the step's visible heading, and the input's accessible name.
     // `TITLES.name` is the single source they share, so asserting they are EQUAL covers the
     // literal without repeating it — a rename that reaches only one of the two is a red here.
-    // Scoped to the span because that is what `StepRow` renders the title as — a styled span, not
-    // a heading (the flow announces step changes through a live region instead, which is
-    // `stepProgressAnnounced`'s subject).
-    const title = screen.getByText('Your name', { selector: 'span' })
+    // Scoped to the `h2` because that is what `StepRow` renders the ACTIVE step's title as, and
+    // `name` is the active step on first render. It is a real heading now — the focus destination a
+    // step change moves to, so that advancing does not drop focus on `<body>`; the live region
+    // (`stepProgressAnnounced`) still announces the change, because an announcement and a focus
+    // position are two different things. The selector is a PIN on the title's element, not a claim
+    // that it must not be a heading: this clause is the equality, and narrowing to the heading keeps
+    // it from accidentally matching the collapsed rows' `<span>` titles.
+    const title = screen.getByText('Your name', { selector: 'h2' })
     expect(screen.getByLabelText(title.textContent!).getAttribute('aria-label')).toBe(title.textContent)
   })
 

@@ -179,10 +179,10 @@ def _load_store() -> dict:
     from personalclaw.providers.entity_routes import _load_entity_settings
 
     try:
-        raw = _load_entity_settings(_STORE)
+        # Fail-OPEN on a discarded read (`or {}`) — the choice the block comment above states.
+        return _load_entity_settings(_STORE) or {}
     except Exception:
         return {}
-    return raw if isinstance(raw, dict) else {}
 
 
 def _save_store(store: dict) -> None:

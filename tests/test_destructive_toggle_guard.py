@@ -173,6 +173,9 @@ def observables(home: Path) -> dict[str, Any]:
     entity_settings: dict[str, Any] = {}
     if settings_root.exists():
         for path in sorted(settings_root.glob("*.json")):
+            # The RAW loader return, `None` for an unreadable file included — no `or {}` here.
+            # A toggle that leaves a settings file unparseable is precisely a loss this rail
+            # must be able to see, and normalising the discard away would hide it.
             entity_settings[path.stem] = _load_entity_settings(path.stem)
     out["entity_settings"] = entity_settings
 

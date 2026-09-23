@@ -18,10 +18,20 @@ const NO_MODEL_ENVELOPE = [
 
 // The stale-pin variant: a model WAS chosen and its provider later went missing. A
 // different situation than first-touch setup — it must NOT be reframed as "connect one".
+// The WHY/FIX pair is now DERIVED per cause (`_diagnose_unbuildable_ref`, #3408) rather
+// than being one unconditional sentence, so two of its shapes are pinned here: the
+// entry-really-is-gone case, and the missing-type-factory case, which used to render as
+// the first one and told the user to install their own entry name in the App Store.
 const STALE_PIN_ENVELOPE = [
   "WHAT: the model pinned for use case 'chat' ('Bedrock:global.anthropic.claude-opus-4-8') cannot be built",
-  "WHY: the active ref names provider 'Bedrock', which is absent from config.json (its app isn't installed or configured)",
-  "FIX: install 'Bedrock' in the App Store, or rebind 'chat' to an available model in Settings → Models",
+  "WHY: no provider named 'Bedrock' is in config.json — the entry was renamed or removed, or its app was uninstalled",
+  "FIX: re-add 'Bedrock' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models",
+].join('\n')
+
+const MISSING_TYPE_FACTORY_ENVELOPE = [
+  "WHAT: the model pinned for use case 'chat' ('Ghost Provider:ghost-7b') cannot be built",
+  "WHY: provider 'Ghost Provider' declares type 'vllm', and no installed app registers that type",
+  "FIX: install an app that provides 'vllm' in the App Store, or change 'Ghost Provider's type in Settings → Providers",
 ].join('\n')
 
 describe('isNoModelSetupError', () => {
@@ -32,6 +42,11 @@ describe('isNoModelSetupError', () => {
   it('does NOT match the stale-pin variant (a model was chosen, config.json is mentioned)', () => {
     // Guards against over-matching on "config.json" alone.
     expect(isNoModelSetupError(STALE_PIN_ENVELOPE)).toBe(false)
+  })
+
+  it('does NOT match the missing-type-factory variant either', () => {
+    // A per-cause WHY must not accidentally land inside the first-run matcher.
+    expect(isNoModelSetupError(MISSING_TYPE_FACTORY_ENVELOPE)).toBe(false)
   })
 
   it('does NOT match unrelated turn errors or empty input', () => {

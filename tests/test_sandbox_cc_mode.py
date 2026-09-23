@@ -3,6 +3,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from personalclaw.sandbox import (
     _AGENT_DENIED_ENV_KEYS,
     _CC_DIRS,
@@ -137,6 +139,20 @@ class TestBuildSeatbeltProfileCcMode:
 
 
 class TestWrapArgvCcMode:
+    @pytest.fixture(autouse=True)
+    def _resolvable_enforcement_bins(self):
+        """These cases FORCE the macOS backend on whatever host runs them, and the wrap now
+        refuses to build an argv whose own enforcement binaries it cannot resolve — so on a
+        Linux leg (no ``sandbox-exec``) the forced backend would raise. What they measure is
+        the generated seatbelt PROFILE, which is platform-independent, so the resolution is
+        stubbed to keep them running on every leg rather than narrowed to darwin.
+        """
+        with patch(
+            "personalclaw.sandbox._resolve_enforcement_bin",
+            side_effect=lambda name: f"/usr/bin/{name}",
+        ):
+            yield
+
     @patch("personalclaw.sandbox.detect_backend", return_value="sandbox-exec")
     def test_cc_mode_routes_to_sandbox(self, _mock_backend):
         wrapped, cleanup = wrap_argv(["echo", "hi"], mode="cc")
@@ -207,7 +223,15 @@ class TestAgentDeniedEnvKeys:
         for key in _AGENT_DENIED_ENV_KEYS:
             assert key not in line, f"{key} should NOT be in standard ENV_PREFIXES"
 
-    def test_cc_sandbox_exec_scrubs_agent_creds(self, monkeypatch):
+    # Both cases below call the macOS backend directly, which now REFUSES to build a wrap
+    # whose own enforcement binaries it cannot resolve — so on a Linux leg (no `sandbox-exec`)
+    # the call raises. What they measure is the `env -u` scrub, which is platform-independent,
+    # so the resolution is stubbed to keep them running on every leg. The real resolution is
+    # asserted in `test_sandbox_argv.py::TestSandboxExecArgv`.
+    @patch(
+        "personalclaw.sandbox._resolve_enforcement_bin", side_effect=lambda name: f"/usr/bin/{name}"
+    )
+    def test_cc_sandbox_exec_scrubs_agent_creds(self, _stub_bins, monkeypatch):
         """sandbox-exec (macOS) cc path emits env -u for cred keys present in env."""
         monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-secret")
         monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U123")
@@ -219,7 +243,10 @@ class TestAgentDeniedEnvKeys:
             if cleanup:
                 os.unlink(cleanup)
 
-    def test_standard_sandbox_exec_does_not_scrub_agent_creds(self, monkeypatch):
+    @patch(
+        "personalclaw.sandbox._resolve_enforcement_bin", side_effect=lambda name: f"/usr/bin/{name}"
+    )
+    def test_standard_sandbox_exec_does_not_scrub_agent_creds(self, _stub_bins, monkeypatch):
         monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-secret")
         argv, cleanup = sandbox_exec_argv(["echo", "hi"], sandbox_level="standard")
         try:

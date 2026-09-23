@@ -178,3 +178,36 @@ def format_report(root: Path, changes: list[HomeChange], *, limit: int = 40) -> 
     if len(changes) > limit:
         lines.append(f"  ... and {len(changes) - limit} more")
     return "\n".join(lines)
+
+
+#: Where the rail persists its verdict, relative to the pytest rootdir. Deliberately
+#: the same ``reports/`` directory ``--junitxml`` already writes into, so CI ships it
+#: inside an existing artifact instead of needing a second upload step.
+REPORT_RELPATH = "reports/real-home-rail.txt"
+
+
+def write_report(rootdir: Path, report: str) -> Path | None:
+    """Persist ``report`` under ``rootdir`` so a rail-caused red is attributable.
+
+    Why this exists (#3386): the rail's only output used to be the terminal reporter,
+    i.e. STDOUT. A rail failure sets ``session.exitstatus`` without failing any test,
+    so the JUnit XML CI uploads reads ``failures=0`` and names nothing — the shard
+    surfaces as a bare process-level exit with zero attribution. Recovering the
+    offending paths then means reading the whole shard log, which the #2720
+    truncation class can eat outright. Writing the verdict beside the XML makes the
+    paths readable from ``gh run download`` in seconds.
+
+    Written in every case, not only on failure: the file's presence is itself the
+    evidence the rail ran, and "unchanged" / "root absent" are exactly the two
+    verdicts a reader of a red shard needs ruled out.
+
+    Returns the path written, or ``None`` if the filesystem refused — a failure here
+    must never become a second, misleading red stacked on the one being reported.
+    """
+    path = Path(rootdir) / REPORT_RELPATH
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    return path

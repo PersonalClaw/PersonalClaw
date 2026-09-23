@@ -21,12 +21,15 @@ Two postures worth naming here, because they are invisible in the route bodies:
   permission an app has not declared — so an installed app cannot reach these routes
   unless it declares them. That is asserted in the tests rather than re-implemented.
 
-The human is the only caller that reaches these routes today, which is also why no route
-here runs a member's turn: that is `AR-4`.
+The human is the only caller that reaches these routes. Posting a message is the one route
+that runs anything afterwards: it hands the roster to ``rooms.turn`` (see
+:func:`api_room_message_post`), which is where a member's provider session is actually held.
+The cursors that keep that feed from re-sending what a member has already read are `AR-4`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 
@@ -40,7 +43,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.rooms import store
+from personalclaw.rooms import posture, store, turn
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ def _require_enabled() -> None:
 #: emitter that answers it, status and all.
 #:
 #: A table here rather than a status on ``RoomError`` itself, because the store is also
-#: reachable from a CLI and from the turn loop, neither of which has a status code —
+#: reachable from a CLI and from ``rooms.turn``, neither of which has a status code —
 #: HTTP framing belongs to the HTTP layer.
 #:
 #: **Why each row spells its code out twice.** The first shape was one line repeated in
@@ -105,6 +108,20 @@ _REFUSALS: dict[str, Callable[[str], web.Response]] = {
     "room_member_limit": lambda msg: json_error("room_member_limit", message=msg, status=400),
     "room_invalid_listen_policy": lambda msg: json_error(
         "room_invalid_listen_policy", message=msg, status=400
+    ),
+    # 400 — the member's declared safety posture is unreadable, or reaches past the room's
+    # own. Both are authoring mistakes in a declaration a human wrote, which is why neither
+    # is clamped silently: see ``rooms.posture``.
+    "room_member_posture_invalid": lambda msg: json_error(
+        "room_member_posture_invalid", message=msg, status=400
+    ),
+    "room_member_posture_widens": lambda msg: json_error(
+        "room_member_posture_widens", message=msg, status=400
+    ),
+    # 403 — somebody other than the human tried to approve a member's tool call. A refused
+    # IDENTITY, not a refused request shape, so it is an authorization answer.
+    "room_approver_not_human": lambda msg: json_error(
+        "room_approver_not_human", message=msg, status=403
     ),
 }
 
@@ -167,15 +184,25 @@ async def api_rooms_create(request: web.Request) -> web.Response:
 
 
 async def api_room_get(request: web.Request) -> web.Response:
-    """GET /api/rooms/{room_id} — one room, its members, and its transcript."""
+    """GET /api/rooms/{room_id} — one room, its members, its posture, and its transcript.
+
+    ``member_posture`` is the RESOLVED answer per member — the tier, allowlist and budget each
+    one actually runs under once the restrictive default and the operator ceiling are folded
+    in. The declaration is already on the wire inside each member record; the resolution is
+    the part a reader cannot compute, and without it "this member is read-only" would be a
+    claim the UI had to re-derive. It is the contract `AR-8`'s member chips render from.
+    """
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
         room = store.require_room(room_id)
         messages = store.read_messages(room_id)
+        member_posture = posture.describe_members(room)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room), "messages": messages})
+    return web.json_response(
+        {"room": _room_payload(room), "member_posture": member_posture, "messages": messages}
+    )
 
 
 async def api_room_archive(request: web.Request) -> web.Response:
@@ -190,7 +217,13 @@ async def api_room_archive(request: web.Request) -> web.Response:
 
 
 async def api_room_member_add(request: web.Request) -> web.Response:
-    """POST /api/rooms/{room_id}/members {name, role_blurb?, listen_policy?}."""
+    """POST /api/rooms/{room_id}/members {name, role_blurb?, listen_policy?, profile_narrowing?}.
+
+    ``profile_narrowing`` is the member's own safety posture — the capability axes it may
+    reach, narrowed against the room's. Omitting it is the common case and yields the
+    RESTRICTIVE default (``rooms.posture.DEFAULT_MEMBER_TOOL_GRANTS``), never the room's own
+    reach, so an unconfigured member is the read-only one.
+    """
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
@@ -200,7 +233,16 @@ async def api_room_member_add(request: web.Request) -> web.Response:
         # string_field, not optional_string: both fields are omittable, and an omitted
         # listen policy means the declared default rather than a refusal.
         listen_policy = string_field(body, "listen_policy", default=store.DEFAULT_LISTEN_POLICY)
-        room = store.add_member(room_id, name, role_blurb=role_blurb, listen_policy=listen_policy)
+        # Passed through unvalidated ON PURPOSE: the safety axes and their refusals belong to
+        # ``rooms.posture``, and re-checking the shape here would be a second opinion about
+        # what a posture is. ``add_member`` raises the posture codes this route maps above.
+        room = store.add_member(
+            room_id,
+            name,
+            role_blurb=role_blurb,
+            listen_policy=listen_policy,
+            profile_narrowing=body.get("profile_narrowing"),
+        )
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:
@@ -221,13 +263,21 @@ async def api_room_member_remove(request: web.Request) -> web.Response:
 
 
 async def api_room_message_post(request: web.Request) -> web.Response:
-    """POST /api/rooms/{room_id}/messages {content} — the human speaks into the room.
+    """POST /api/rooms/{room_id}/messages {content} — the human speaks, then the room answers.
 
-    Only the human: the message is written with an empty ``speaker``, which is what
+    Only the human may POST: the message is written with an empty ``speaker``, which is what
     ``history.speaker_of`` reports for the human. A member's message is written by
-    `AR-4`'s turn loop after the provider answers, not by a caller claiming a speaker
-    name here — accepting one would let any caller forge a member's words into the
-    transcript every other member then reads as that member's position.
+    :func:`~personalclaw.rooms.turn.run_member_turn` after that member's provider answers,
+    never by a caller claiming a speaker name here — accepting one would let any caller forge
+    a member's words into the transcript every other member then reads as that member's
+    position.
+
+    The human's line is appended FIRST and synchronously, so a 201 means it is durable even
+    if every member then fails; the round itself runs in the background because N provider
+    turns do not fit in a request. The response carries ``speaking``: the members whose
+    listen policy admits them, which is what lets a caller (and the `AR-8` UI) distinguish
+    "nobody was listening" from "the answers have not landed yet". Poll
+    ``GET /api/rooms/{room_id}`` for the replies.
     """
     room_id = request.match_info["room_id"]
     try:
@@ -236,11 +286,47 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         content = require_string(body, "content")
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
         messages = store.read_messages(room_id)
+        speaking = [m.name for m in turn.speakers_for(store.members_for_turn(room_id), content)]
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"messages": messages}, status=201)
+    if speaking:
+        _start_round(request, room_id, content)
+    return web.json_response({"messages": messages, "speaking": speaking}, status=201)
+
+
+def _start_round(request: web.Request, room_id: str, content: str) -> None:
+    """Fire the roster's turn in the background, holding a reference so it is not GC'd.
+
+    ``state._background_tasks`` is the shipped set every other fire-and-forget handler
+    parks its task in (``dashboard/side.py`` is the closest sibling); an un-referenced
+    ``create_task`` is collectable mid-turn, which would make a member's reply vanish for
+    reasons no log explains.
+
+    A missing ``SessionManager`` is logged at ERROR and drops the round rather than 500-ing a
+    request whose message is already durably on the transcript — the human's words are the
+    part they cannot re-derive, and every member's reply is one more human message away. The
+    log is the point: a dropped round must be findable, not inferred from a quiet room.
+
+    ``app["state"]`` rather than ``app.get("state")``, which is both this surface's idiom and
+    the only one that is honest under ``make_mocked_request``: its app is a ``MagicMock``, so
+    ``.get`` answers a truthy mock for a key nobody set and this guard would wave through a
+    round driven by a mock session manager.
+    """
+    try:
+        state = request.app["state"]
+        sessions = state.sessions
+    except (KeyError, AttributeError):
+        sessions = None
+    if sessions is None:
+        logger.error(
+            "rooms: no SessionManager on the dashboard state — room %s takes no turn", room_id
+        )
+        return
+    task = asyncio.create_task(turn.run_human_message_round(sessions, room_id, content))
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
 
 
 async def api_room_export(request: web.Request) -> web.Response:

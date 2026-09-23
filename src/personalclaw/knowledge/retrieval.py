@@ -118,6 +118,12 @@ _RERANK_USE_CASE = "reasoning"
 #: Default candidate window when `knowledge.rerank_candidates` is unset/unreadable —
 #: mirrors the dataclass default in `config.loader.KnowledgeConfig`.
 _RERANK_DEFAULT_CANDIDATES = 20
+#: How long ONE rerank model call may take before the stage gives up and falls back to the
+#: un-reranked RRF order. Named rather than inlined because it is the whole budget of an
+#: interactive read path: the model bridge's own `_DEFAULT_TIMEOUT_SECS` is 300s, generous on
+#: purpose for a background call and far too generous for a search box. It is enforced in
+#: `_run_rerank_prompt`, on BOTH of that function's branches.
+_RERANK_TIMEOUT_SECS = 90.0
 
 
 class HybridRetriever:
@@ -911,15 +917,31 @@ class HybridRetriever:
 
 
 def _run_rerank_prompt(prompt: str) -> "list | None":
-    """Bridge the async model-use-case seam into this synchronous call path.
+    """Bridge the async model-use-case seam into this synchronous call path, BOUNDED.
 
-    Every :meth:`HybridRetriever.search` caller today is synchronous (dashboard
-    handlers, the ``knowledge_search`` agent tool, action providers) — making
-    ``search`` itself async would ripple into every one of them, well past this
-    atom's scope. Mirrors ``triggers/web_poll.py::_await_maybe``: ``asyncio.run`` when
-    nothing already owns this thread's event loop, else a worker thread, so a caller
-    that DOES hold a running loop (an async test, an async caller added later) can
-    never deadlock on itself.
+    :meth:`HybridRetriever.search` stays synchronous — making it async would ripple into
+    every caller, well past this stage's scope — so the bridge lives here. Both branches
+    below must honour :data:`_RERANK_TIMEOUT_SECS`, and getting that wrong is what made
+    enabling this stage a whole-gateway stall (#3097):
+
+    * ``asyncio.wait_for`` inside ``_call`` bounds the WORK, and is the only thing that
+      bounds the no-running-loop branch at all. That branch is the one every OFF-loop
+      caller takes — the dashboard handlers and both native agent knowledge tools hop
+      ``search`` onto a worker thread — so a bare ``asyncio.run`` there inherited the
+      model bridge's deliberately generous 300s default as the effective budget.
+    * The running-loop branch additionally bounds the CALLER, because its work sits on
+      another thread. It owns its executor and shuts it down ``wait=False``: this is
+      explicitly **not** a ``with`` block, whose ``__exit__`` calls ``shutdown(wait=True)``
+      and JOINS the still-running worker — so ``.result(timeout=…)`` raised on schedule and
+      the caller then blocked for the full model round-trip anyway. Measured on the shipped
+      shape: a 1.0s budget against a 6.0s call returned after 6.00s; owning the pool returns
+      in 1.05s. Same join hazard, same remedy as ``context.py::_memory_block`` and
+      ``context_engine.py``'s recall/push paths. The orphaned worker finishes into a result
+      nobody reads — that is the cost of bounding a sync call, and ``wait_for`` keeps it
+      short.
+
+    Both raise ``TimeoutError`` past the budget, which :meth:`HybridRetriever._rerank_score`
+    already treats as the fail-open fallback to the un-reranked RRF order.
 
     Returns the parsed JSON array, or ``None`` when the response was empty or did not
     parse as one — :func:`personalclaw.llm_helpers.parse_llm_json_list` already treats
@@ -931,7 +953,10 @@ def _run_rerank_prompt(prompt: str) -> "list | None":
     from personalclaw.llm_helpers import one_shot_completion, parse_llm_json_list
 
     async def _call() -> str:
-        return await one_shot_completion(prompt, use_case=_RERANK_USE_CASE, output_type=list)
+        return await asyncio.wait_for(
+            one_shot_completion(prompt, use_case=_RERANK_USE_CASE, output_type=list),
+            _RERANK_TIMEOUT_SECS,
+        )
 
     try:
         asyncio.get_running_loop()
@@ -940,8 +965,13 @@ def _run_rerank_prompt(prompt: str) -> "list | None":
     else:
         import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            text = pool.submit(asyncio.run, _call()).result(timeout=90)
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            text = pool.submit(asyncio.run, _call()).result(timeout=_RERANK_TIMEOUT_SECS)
+        finally:
+            # Never `wait=True`: joining here re-introduces exactly the block the budget
+            # exists to prevent.
+            pool.shutdown(wait=False, cancel_futures=True)
     return parse_llm_json_list(text)
 
 

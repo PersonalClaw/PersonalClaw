@@ -111,9 +111,13 @@ _DEFAULT_PROVIDER = _default_provider()
 def _read_store() -> dict[str, Any]:
     """The whole trust store, or ``{}`` on a corrupt/missing file (warn, never crash).
 
-    Reads the raw path rather than delegating to ``_load_entity_settings`` because that
-    helper swallows a corrupt file silently — and CE-1's contract is *defaults + warn*, so
-    a broken store is visible in the log rather than an invisible reset.
+    Reads the raw path rather than delegating to ``_load_entity_settings``. **The reason
+    originally given here — that the helper swallows a corrupt file silently — is not true:**
+    it warns, and it now returns ``None`` for a discarded read rather than choosing a
+    fallback at all. What keeps this reader separate is that the store is a *trust* surface,
+    so `{}` here is the fail-CLOSED answer (nothing is trusted) and CE-1's contract is
+    defaults + warn. Folding it into the shared helper would be a change to a security
+    control's read path, which is a decision of its own and not a tidy-up.
     """
     from personalclaw.providers.entity_routes import _entity_settings_path
 

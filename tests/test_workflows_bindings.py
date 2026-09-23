@@ -161,6 +161,128 @@ class TestTypedFailures:
             resolve("{{inputs.count.nope}}", ctx)
 
 
+class TestFirstIterationLast:
+    """`{{last.*}}` on a loop's FIRST iteration, railed in both directions.
+
+    Measured at `96691faf8`: six bundled templates (`design-project`, `general-project`,
+    `goal-pursuit-{monitor,open-ended,verifiable}`, `optimize-harness`) read `{{last.…}}` and
+    ZERO read `{{previous.…}}`, so the first-cycle escape that existed rescued a spelling no
+    shipped template used. Every one of the six died on its FIRST node with
+    `unresolved reference at 'last'`, and its `| default(...)` guard could not help: a pipe
+    runs only after the reference resolves.
+
+    The rescue is keyed on a POSITIVE first-iteration signal rather than on the root simply
+    being absent. That distinction is the whole design: the engine does not yet hand a loop
+    BODY its previous iteration at all, so an absence-keyed rescue would render
+    "(this is the first pass)" on iteration 50 — a prompt quietly missing its input while the
+    run reports success, which is worse than the failure it replaced.
+    """
+
+    def test_a_first_iteration_last_resolves_to_its_default(self) -> None:
+        """The documented idiom, executed rather than pattern-matched."""
+        c = BindingContext(iter_index=0)
+        assert resolve('{{last.output.summary | default("(first pass)")}}', c) == "(first pass)"
+
+    def test_a_bare_first_iteration_last_is_a_value_not_a_raise(self) -> None:
+        """Same short-circuit as `previous`: None, which interpolates empty. Templates are
+        held to carrying the default by `test_first_iteration_last_refs_carry_a_default`; the
+        resolver does not additionally require it, or the two rails would disagree."""
+        assert resolve("{{last.output.summary}}", BindingContext(iter_index=0)) is None
+
+    def test_a_later_iteration_with_no_last_still_raises(self) -> None:
+        """`absent-is-not-zero`. Iteration 1 with no `last` is a real gap, and the run must say
+        so instead of telling the model this is the first pass for the rest of the loop."""
+        with pytest.raises(BindingError) as exc:
+            resolve(
+                '{{last.output.summary | default("(first pass)")}}', BindingContext(iter_index=1)
+            )
+        assert "unresolved reference at 'last'" in str(exc.value)
+
+    def test_last_outside_any_loop_still_raises(self) -> None:
+        """No `iter_index` means no enclosing loop, so there is no iteration for `last` to
+        mean — an authoring error, not a first cycle."""
+        with pytest.raises(BindingError):
+            resolve('{{last.output.summary | default("(first pass)")}}', BindingContext())
+
+    def test_a_foreach_item_index_is_not_a_first_iteration(self) -> None:
+        """A `foreach` rebinds `iter_index` to an ITEM index. Item 0 of a fan-out is not
+        iteration 0 of a loop, and reading `last` there is meaningless — `has_item` is what
+        keeps the rescue from firing on the wrong zero."""
+        c = BindingContext(item={"id": 1}, has_item=True, iter_index=0)
+        with pytest.raises(BindingError):
+            resolve('{{last.output.summary | default("(first pass)")}}', c)
+
+    def test_a_supplied_last_still_validates_its_path(self) -> None:
+        """Once `last` IS supplied, a wrong field under it is an authoring error again."""
+        c = BindingContext(iter_index=3, last_output={"summary": "did a thing"}, has_last=True)
+        assert resolve("{{last.output.summary}}", c) == "did a thing"
+        with pytest.raises(BindingError):
+            resolve('{{last.output.typo | default("x")}}', c)
+
+    def test_a_misspelled_root_still_raises(self) -> None:
+        with pytest.raises(BindingError):
+            resolve('{{lastt.output.summary | default("x")}}', BindingContext(iter_index=0))
+
+
+class TestFailureRemediation:
+    """A remediation must not name an act the author already performed.
+
+    The engine answered every one of the six guarded-idiom failures above with "add a
+    `| default(...)` pipe if the value is genuinely optional" — the exact pipe those
+    expressions carried. That is worse than no remediation: it certifies the author's fix as
+    the missing one and hides the real cause, which is that pipes run after resolution.
+    """
+
+    def test_a_root_miss_does_not_ask_for_a_default_pipe(self) -> None:
+        c = BindingContext(iter_index=2)
+        with pytest.raises(BindingError) as exc:
+            resolve('{{last.output.summary | default("(first pass)")}}', c)
+        fix = exc.value.remediation
+        assert fix, "an unresolved root carries no remediation at all"
+        assert "cannot rescue" in fix, fix
+        assert "add a `| default" not in fix, f"still asks for the pipe the expression has: {fix}"
+
+    def test_a_root_miss_says_what_the_root_holds(self, ctx) -> None:
+        """The fix for a missing root is contextual — read it somewhere it exists — so the
+        remediation says what the root is FOR rather than sending the author back to the
+        spelling."""
+        with pytest.raises(BindingError) as exc:
+            resolve("{{item.name}}", ctx)
+        assert "foreach" in exc.value.remediation
+
+    def test_an_unknown_root_points_at_the_vocabulary(self, ctx) -> None:
+        with pytest.raises(BindingError) as exc:
+            resolve("{{nodez.find.output}}", ctx)
+        assert "nodes" in exc.value.remediation and "spelling" in exc.value.remediation
+
+    def test_a_deep_miss_distinguishes_missing_from_null(self, ctx) -> None:
+        """`default` is the right tool for null and the wrong one for absent, and the
+        remediation is the only place a template author learns the difference."""
+        with pytest.raises(BindingError) as exc:
+            resolve("{{nodes.find.output.nope}}", ctx)
+        assert "resolves to null" in exc.value.remediation
+
+    def test_the_dispatcher_surfaces_the_specific_remediation(self) -> None:
+        """The failure a USER reads comes from `resolve_config`, so the specific text has to
+        survive the trip into `Failure.remediation` — a remediation only the exception carries
+        is one nothing renders."""
+        from personalclaw.workflows.engine_support import resolve_config
+        from personalclaw.workflows.models import FailureClass, Node
+
+        node = Node.from_dict(
+            {
+                "kind": "stage",
+                "id": "work",
+                "config": {"prompt": 'x {{last.output.summary | default("(first pass)")}}'},
+            }
+        )
+        resolved, failure = resolve_config(node, BindingContext(iter_index=2))
+        assert resolved == {}
+        assert failure is not None and failure.failure_class is FailureClass.USER
+        assert "cannot rescue" in failure.remediation, failure.remediation
+        assert "genuinely optional" not in failure.remediation, failure.remediation
+
+
 class TestSecrets:
     def test_secret_resolves_through_the_injected_resolver(self) -> None:
         c = BindingContext(secret_resolver=lambda k: "s3cr3t" if k == "API_KEY" else None)

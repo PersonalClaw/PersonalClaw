@@ -77,7 +77,13 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # ── --container: print the compose snippet and exit ──────────────────────────
 print_container() {
     cat <<'EOF'
-Run PersonalClaw with Docker Compose (self-hosters / Windows):
+Run PersonalClaw in one container (nothing to check out, no .env) — from an empty
+directory on a machine with only Docker:
+
+  docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+  docker exec personalclaw personalclaw token   # prints the dashboard URL + token
+
+Or with Docker Compose, which adds a TLS proxy (self-hosters / Windows):
 
   cp .env.example .env        # optional: set provider keys / options
   docker compose -f deploy/compose/compose.yaml up -d

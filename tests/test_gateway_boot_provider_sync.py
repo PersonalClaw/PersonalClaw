@@ -36,12 +36,14 @@ SDK exports), so nothing else was ever going to notice.
 
 What breaks without it, measured against this boot: with a provider in ``config.json``
 and Settings → Models pinning one of its models, ``resolve_provider_for_use_case("chat")``
-raises ``ERR_MODEL_UNRESOLVED`` — and the sentence the user reads says their provider is
-"absent from config.json (its app isn't installed or configured)" and tells them to
-install it from the App Store, while ``config.json`` plainly contains it. So a user
-following the FIX text reinstalls or rebinds and stays stuck. That is why these rails
-boot the real gateway and assert the EFFECT (the pinned model resolves), not that some
-function was called.
+raises ``ERR_MODEL_UNRESOLVED``. The sentence the user read USED to say their provider was
+"absent from config.json (its app isn't installed or configured)" and tell them to install
+it from the App Store, while ``config.json`` plainly contained it — so a user following the
+FIX text reinstalled or rebound and stayed stuck. That wording was unconditional, and
+#3408 replaced it with a per-cause diagnosis: this state now reads "IS in config.json but
+is not registered in the running gateway", with "re-save it, or restart the gateway" as the
+fix. The rails still boot the real gateway and assert the EFFECT (the pinned model
+resolves), not that some function was called.
 
 The config-wire rail is ordering-sensitive on purpose. It samples the registry from the
 FIRST ``on_startup`` hook, so only the call in ``start_dashboard``'s synchronous body can
@@ -242,8 +244,13 @@ async def test_no_other_boot_step_replays_config_providers(boot_home, fresh_regi
     embedding path self-heals by calling the same sync lazily
     (``embedding_providers/registry.py``), and a reader could reasonably assume the boot
     is covered the same way. It is not: on the boot path this one call is the only
-    thing that registers the entries, and the failure the user meets is the misdirecting
-    "isn't installed or configured" sentence.
+    thing that registers the entries, and the failure the user meets now names exactly
+    this gap — config.json HAS the provider, the running gateway does not.
+
+    That sentence used to read "its app isn't installed or configured", the misdirection
+    this file's module docstring documents and #3408 removed. The assertion below is
+    therefore on the PROPERTY, not the old wording: a rail pinning the misdirecting
+    sentence would have to be broken in order to fix the misdirection.
     """
     from personalclaw.llm import registry as llm_registry
 
@@ -258,8 +265,13 @@ async def test_no_other_boot_step_replays_config_providers(boot_home, fresh_regi
             resolve_provider_for_use_case,
         )
 
-        with pytest.raises(ProviderResolutionError, match="isn't installed or configured"):
+        with pytest.raises(ProviderResolutionError) as excinfo:
             resolve_provider_for_use_case("chat")
+        err = excinfo.value.agent_error
+        assert err is not None and err.code == "ERR_MODEL_UNRESOLVED"
+        assert f"provider {PROVIDER!r} IS in config.json" in err.why, err.render()
+        assert "not registered in the running gateway" in err.why, err.render()
+        assert "restart the gateway" in err.fix, err.render()
     finally:
         await runner.cleanup()
 

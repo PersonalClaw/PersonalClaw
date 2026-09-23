@@ -429,7 +429,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/logs/level` — current backend logger level.
 - `POST /api/logs/level` — change the backend logger level at runtime.
 - `GET /api/loops` — loops (redacted), newest first.
-- `POST /api/loops` — {kind, task|goal, …} — create a READY loop of any kind.
+- `POST /api/loops` — {kind, task|goal, …} — create a READY loop, or START a run for a ported kind.
 - `POST /api/loops/classify` — {kind, task|goal} — the kind-aware intake analyze
 - `POST /api/loops/validate` — deterministic pre-flight on a create payload
 - `DELETE /api/loops/{id}` — _(no summary)_
@@ -648,12 +648,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
 - `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
 - `POST /api/rooms` — {title} — create a room.
-- `GET /api/rooms/{room_id}` — one room, its members, and its transcript.
+- `GET /api/rooms/{room_id}` — one room, its members, its posture, and its transcript.
 - `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
 - `GET /api/rooms/{room_id}/export` — the transcript, redacted.
-- `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?}.
+- `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?, profile_narrowing?}.
 - `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.
-- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks into the room.
+- `POST /api/rooms/{room_id}/messages` — {content} — the human speaks, then the room answers.
 - `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

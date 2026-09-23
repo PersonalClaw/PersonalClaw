@@ -23,6 +23,15 @@ construction (``mcp_client.McpServerConn._run``):
 * granted → the callback below is passed, the capability is advertised for that server
   only, and a request becomes an approval card.
 
+**Bounded by the window the answer can be delivered in.** ``mcp_client.call_tool`` abandons a
+tool call after ``_CALL_TIMEOUT_SECS``, while the approval boundary's interactive window is two
+hours (``DashboardState._APPROVAL_TIMEOUT``; ``mcp:<server>`` matches none of its unattended
+markers). Waiting the boundary's window behind the transport's would discard the user's answer
+in silence — the call is already abandoned, the card is still up, and the click delivers
+nothing. So a granted question is bounded by :func:`approval_window_secs`, derived from the
+call ceiling rather than configured, and an unanswered one is withdrawn and answered ``cancel``
+while the server is still listening.
+
 **Why the answer is a confirmation and not a form.** The boundary we reuse yields one bit:
 the user allowed it or did not. That bit can truthfully fill a confirmation-shaped form
 (no properties, or boolean properties) and nothing else. A schema asking for a *string*
@@ -38,6 +47,7 @@ and that note stands.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -56,10 +66,17 @@ __all__ = [
     "APPROVAL_TOOL_PREFIX",
     "FORM_UNSUPPORTED_MESSAGE",
     "URL_MODE_UNSUPPORTED_MESSAGE",
+    "approval_window_secs",
     "confirmation_content",
     "elicitation_callback_for",
     "elicitation_granted",
 ]
+
+#: Head-room reserved out of the tool-call ceiling for delivering the answer: the
+#: `ElicitResult` still has to be serialised back and the server still has to finish the
+#: tool call it asked from. An elicitation allowed to consume the whole ceiling would time
+#: the call out at the instant it was answered.
+_ANSWER_DELIVERY_MARGIN_SECS = 15.0
 
 #: The ``tool`` name the approval record carries, suffixed with the server name. This is
 #: what ``web/src/pages/chat/ApprovalCard.tsx`` renders as the subject of the card and
@@ -102,6 +119,20 @@ def elicitation_granted(server: str) -> bool:
     except Exception:
         logger.debug("MCP elicitation grant lookup failed for %r", server, exc_info=True)
         return False
+
+
+def approval_window_secs() -> float:
+    """How long a granted question may hold the user's attention.
+
+    Derived from the tool-call ceiling and deliberately NOT a config field: the constraint
+    is structural rather than a preference. The answer is only worth collecting while the
+    call that asked for it is still alive, so a knob permitted to exceed that ceiling would
+    restore the silent discard this bound exists to prevent. Read lazily because
+    ``mcp_client`` imports this module.
+    """
+    from personalclaw.mcp_client import _CALL_TIMEOUT_SECS
+
+    return max(5.0, float(_CALL_TIMEOUT_SECS) - _ANSWER_DELIVERY_MARGIN_SECS)
 
 
 def confirmation_content(schema: Any) -> dict[str, Any] | None:
@@ -186,13 +217,33 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
         # redaction on that field (`redact_exfiltration_urls` + `redact_credentials`).
         # This text is written by a third party, so passing it through the sanitiser the
         # approval store already applies is the point, not a side effect.
-        approved = await state.request_approval(
-            approval_id,
-            f"mcp:{server}",
-            f"{APPROVAL_TOOL_PREFIX}{server}",
-            tool_input=_schema_summary(schema),
-            tool_purpose=message,
-        )
+        try:
+            approved = await asyncio.wait_for(
+                state.request_approval(
+                    approval_id,
+                    f"mcp:{server}",
+                    f"{APPROVAL_TOOL_PREFIX}{server}",
+                    tool_input=_schema_summary(schema),
+                    tool_purpose=message,
+                ),
+                timeout=approval_window_secs(),
+            )
+        except asyncio.TimeoutError:
+            # The call that asked this question is about to be abandoned, so the answer has
+            # nowhere left to go. Cancelling the wait runs `request_approval`'s own `finally`,
+            # which drops the pending row; the broadcast below takes the card out of the UI's
+            # actionable state so nobody clicks a button that can no longer deliver anything.
+            #
+            # `cancel` and not `decline`: the spec's `decline` is an explicit refusal, and the
+            # user made no choice here. Reporting one they did not make would misstate their
+            # intent to the server — the same distinction the no-UI branch above draws.
+            _withdraw(state, approval_id)
+            logger.info(
+                "MCP server %r asked a question nobody answered within %.0fs; cancelled",
+                server,
+                approval_window_secs(),
+            )
+            return mcp_types.ElicitResult(action="cancel")
         if not approved:
             return mcp_types.ElicitResult(action="decline")
         return mcp_types.ElicitResult(action="accept", content=content)
@@ -201,6 +252,21 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
         return mcp_types.ErrorData(
             code=mcp_types.INTERNAL_ERROR, message="elicitation could not be delivered"
         )
+
+
+def _withdraw(state: Any, approval_id: str) -> None:
+    """Take a card the user can no longer usefully answer out of the UI.
+
+    Reuses the existing ``approval_resolved`` event rather than minting a third resolution
+    state: that is the vocabulary every approval surface already consumes, and a new event
+    kind would be a second way to say "this card is finished". ``approved: False`` is the
+    truthful effect — the boundary fails closed on an unanswered prompt, as
+    ``request_approval`` does for every other origin.
+    """
+    try:
+        state.broadcast_ws("approval_resolved", {"id": approval_id, "approved": False})
+    except Exception:
+        logger.debug("could not withdraw elicitation approval %s", approval_id, exc_info=True)
 
 
 def _live_state() -> Any:

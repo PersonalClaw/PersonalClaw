@@ -22,6 +22,7 @@ from personalclaw.artifacts import registry
 from personalclaw.dashboard import session_export, session_share, session_templates
 from personalclaw.dashboard.chat_utils import _history_key_for, resolve_history_key
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
 
@@ -168,7 +169,7 @@ async def api_session_export(request: web.Request) -> web.Response:
         content_type=content_type,
         charset="utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": attachment_disposition(filename),
             "Content-Length": str(len(body)),
             # A transcript is user content being served back; keep sniffing off.
             "X-Content-Type-Options": "nosniff",

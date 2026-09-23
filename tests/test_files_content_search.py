@@ -229,6 +229,100 @@ def test_handler_invalid_dir_400(monkeypatch):
     assert status == 400
 
 
+# ── An IN-THREAD deadline win owes the user the same three things (#3399) ──
+#
+# The worker thread's own ``deadline`` is computed BEFORE ``asyncio.wait_for`` starts its
+# clock, so the in-thread rail can win the race. When it did, ``except TimeoutError`` alone
+# did not name ``_ContentSearchTimedOut`` and the exception escaped the handler — costing all
+# three consequences at once: the 504, the SEL ``outcome="error"`` row, and the sentence that
+# tells the user to narrow the search. Raising synchronously makes that ordering deterministic
+# rather than a wall-clock coin flip.
+
+
+def _in_thread_deadline_win(monkeypatch):
+    def instant_in_thread_timeout(*_a, **_kw):
+        raise F._ContentSearchTimedOut
+
+    monkeypatch.setattr(F, "_content_search_python", instant_in_thread_timeout)
+
+
+@pytest.fixture
+def real_sel_root(tmp_path, monkeypatch):
+    """A search root whose ``_sel()`` is the REAL log, writing under an isolated home.
+
+    Deliberately NOT ``search_root``: that fixture swaps ``_sel`` for a ``MagicMock``,
+    which can record a call but can never show the row reaching the read surface.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.txt").write_text("needle_here\n")
+    monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Root", str(root))])
+    monkeypatch.setattr(
+        F,
+        "_validate_dashboard_path",
+        lambda raw, allowed_roots=None: raw if str(raw).startswith(str(root)) else None,
+    )
+    monkeypatch.setattr(F, "_has_rg", lambda: False)
+    return root
+
+
+async def _acall(path: str, q: str) -> tuple[int, dict]:
+    """``_call`` for an async test — ``asyncio.run`` cannot nest inside a running loop."""
+    from urllib.parse import urlencode
+
+    qs = urlencode({"path": path, "q": q, "include": ""})
+    resp = await F.api_file_content_search(
+        make_mocked_request("GET", f"/api/file-content-search?{qs}")
+    )
+    return resp.status, json.loads(resp.body.decode())
+
+
+@pytest.mark.asyncio
+async def test_in_thread_deadline_win_answers_504_logs_sel_and_says_narrow(
+    real_sel_root, monkeypatch
+):
+    """All three consequences, in one drive. Any one of them alone passes on the bug."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
+
+    _in_thread_deadline_win(monkeypatch)
+    status, body = await _acall(str(real_sel_root), "needle_here")
+
+    # (1) the 504, and (2) the message that tells the user what to change.
+    assert status == 504
+    assert body == {
+        "error": {
+            "code": "file_content_search_timeout",
+            "message": (
+                "File content search exceeded its time limit. "
+                "Narrow the directory or include glob and try again."
+            ),
+        }
+    }
+    assert "Narrow the directory" in body["error"]["message"]
+
+    # (3) the audit row, read back through the REAL surface: ``/api/security/audit``
+    # (not ``/api/sel/events``), whose ``limit`` ceiling is 200.
+    app = web.Application()
+    register_security_audit_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/api/security/audit?limit=200")
+        assert resp.status == 200
+        page = await resp.json()
+    rows = [
+        e
+        for e in page["events"]
+        if e.get("operation") == "file_content_search" and e.get("outcome") == "error"
+    ]
+    assert len(rows) == 1, page["events"]
+    assert "timeout" in rows[0]["resources"]
+
+
 def test_handler_redacts_secrets_in_preview(tmp_path, monkeypatch):
     (tmp_path / "leak.txt").write_text(
         "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEKEY1234567890abcd needle\n"

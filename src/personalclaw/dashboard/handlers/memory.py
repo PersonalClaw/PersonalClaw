@@ -11,6 +11,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
@@ -1437,7 +1438,7 @@ async def api_memory_graph_export(request: web.Request) -> web.Response:
         text=document,
         content_type="text/html",
         charset="utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": attachment_disposition(filename)},
     )
 
 

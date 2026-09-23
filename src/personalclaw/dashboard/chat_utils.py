@@ -24,6 +24,7 @@ from personalclaw.dashboard.state import (
     DashboardState,
     _ChatSession,
     parse_cls_meta,
+    tool_input_to_str,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
@@ -364,27 +365,6 @@ _LEADING_STATUS_EMOJI_RE = re.compile(r"^[\U0001F000-\U0001FAFF☀-➿️⬀-⯿
 def strip_status_sentinel(content: str) -> str:
     """Remove a legacy leading status-emoji sentinel from persisted turn content."""
     return _LEADING_STATUS_EMOJI_RE.sub("", content).strip() if content else content
-
-
-def tool_input_to_str(value: object) -> str:
-    """Coerce an event's ``tool_input`` to a display string.
-
-    ``AgentEvent.tool_input`` is typed ``Any``: ACP agents pass the raw JSON
-    argument *string*, the native loop passes the parsed *dict*, and other
-    providers may pass anything. Display/redaction code slices the result
-    (``[:4000]``), so it must be a string: dicts/lists are JSON-encoded,
-    ``None`` becomes ``""``, everything else is ``str()``.
-    """
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (dict, list)):
-        try:
-            return json.dumps(value, default=str)
-        except (TypeError, ValueError):
-            return str(value)
-    return str(value)
 
 
 def _broadcast_auto_tool(state: DashboardState, session: _ChatSession, event: "LLMEvent") -> str:

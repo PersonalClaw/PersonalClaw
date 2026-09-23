@@ -282,7 +282,13 @@ async def execute_tick(
     from personalclaw.guardrails.autonomy import rung_rank
 
     ts = time.time() if now is None else now
-    if unattended and rung_rank(granted_rung) < rung_rank(plan.floor()):
+    # The floor means two different things, so one comparison cannot express both. A
+    # SUBMIT-bearing plan must be PROMOTED *above* draft_only to run unattended, so a grant of
+    # exactly its own floor is not a promoting grant and is refused; a read-only plan is admitted
+    # *at* one_tap and graduates upward from there. Equality therefore admits the reader and
+    # refuses the submitter — which is why this is `plan.submits`-aware rather than one operator.
+    required_rank = rung_rank(plan.floor()) + (1 if plan.submits else 0)
+    if unattended and rung_rank(granted_rung) < required_rank:
         return TickResult(
             plan_id=plan.id,
             ok=False,

@@ -299,11 +299,22 @@ class TestCommentState:
         """Vacuity floor, twice over. An empty ``cases`` list would make every
         parametrised test below vanish and the suite would still be green; a file with
         only ``clean_*`` cases would green a tracker that stopped catching raw hexes
-        ENTIRELY, which is the whole risk of tracking comment state."""
+        ENTIRELY, which is the whole risk of tracking comment state.
+
+        The counts run over INTENDED cases only. A ``gap_*`` case declares what the
+        tracker does where that is a known hole — it reports no violations, so counting
+        it as a negative control would let a recorded hole pad the very floor it is
+        invisible to. An unknown prefix is refused rather than silently swept into the
+        clean count, which is how that padding would arrive by accident.
+        """
         cases = _comment_cases()
         assert len(cases) >= 10, COMMENT_CASES_PATH
-        reds = [c for c in cases if any(c["expected"])]
-        cleans = [c for c in cases if not any(c["expected"])]
+        prefixes = ("clean_", "red_", "end_state_", "gap_")
+        for c in cases:
+            assert c["name"].startswith(prefixes), f"{c['name']}: unknown prefix {prefixes}"
+        intended = [c for c in cases if not c["name"].startswith("gap_")]
+        reds = [c for c in intended if any(c["expected"])]
+        cleans = [c for c in intended if not any(c["expected"])]
         assert len(reds) >= 5, "no positive controls — a no-op tracker would pass"
         assert len(cleans) >= 5, "no negative controls — the bug would not be covered"
         for c in cases:

@@ -16,6 +16,14 @@ its ``TOOL_META`` / route entry drifts the reference and reddens the build, the
 same drift discipline as the live manifest. Regenerate with
 ``python -m personalclaw.manifest_reference``.
 
+**The route census has a second, PUBLISHED rendering.** ``docs/`` is in no wheel and
+``personalclaw/reference/`` is in no docs sync, so the website cannot publish the file
+above; :func:`render_published_route_reference` renders the same
+:func:`_routes_from_ast` census into :data:`PUBLISHED_ROUTE_REFERENCE` for the docs
+tree, written by ``scripts/generate_api_route_reference.py`` and guarded by
+``tests/test_docs_api_reference.py``. Change a route docstring and BOTH need
+regenerating; each has its own byte-compare, so forgetting one reds CI.
+
 **Routes resolve from the AST, not a running app** (the design rule
 :mod:`personalclaw.manifest` states): booting the dashboard has security-critical
 startup side effects (extension load, binding migration), so route paths +
@@ -52,6 +60,19 @@ _VERB_PATH_ARG = {
 }
 
 _REFERENCE_PKG = "personalclaw.reference"
+
+#: Repo-relative path of the PUBLISHED route reference — the docs-tree rendering of the
+#: same census this module already renders into the wheel.
+#:
+#: Two renderings of one census, and deliberately not one file. ``reference/routes.md``
+#: is wheel PACKAGE DATA an offline agent locates through ``doctor --paths``; ``docs/``
+#: ships in no wheel, and the website's docs sync reads core's ``docs/`` tree and nothing
+#: else — so a route list living only under ``personalclaw/reference/`` is unpublishable,
+#: and one living only under ``docs/`` is invisible to an installed binary. What the
+#: clean-break tenet forbids is a second *hand-maintained description* of the API; both
+#: files are :func:`_routes_from_ast` output byte-compared against a fresh render by
+#: their own drift guards, so neither can drift from the code or from the other.
+PUBLISHED_ROUTE_REFERENCE = "docs/reference/api-routes.md"
 
 # Many handler docstrings open by restating the route signature
 # (``GET /api/foo — does X`` or ``GET/PUT /api/foo — does X``). The reference
@@ -286,6 +307,151 @@ def _render_routes(routes: list[dict[str, Any]]) -> str:
         summary = r["summary"] or "_(no summary)_"
         lines.append(f"- `{r['method']} {r['path']}` — {summary}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+# ── The published rendering (docs/, synced to the website) ───────────────────
+
+
+def _route_family(path: str) -> str:
+    """The route's family — ``/api/<head>`` under ``/api``, else ``/<head>``.
+
+    The grouping the family index counts by. Two segments for ``/api/*`` because one
+    (``/api``) is the whole surface and three splits families that read as one
+    (``/api/chat/sessions`` belongs with ``/api/chat``).
+    """
+    segments = [s for s in path.split("/") if s]
+    if not segments:
+        return "/"
+    if segments[0] == "api":
+        return "/" + "/".join(segments[:2])
+    return "/" + segments[0]
+
+
+def _cell(summary: str) -> str:
+    """One docstring summary, safe inside a markdown table cell.
+
+    An unescaped ``|`` in a docstring would silently split the row into extra columns —
+    the rendered page would still look plausible, which is the worst failure shape for a
+    reference. Absence is rendered honestly rather than left blank.
+    """
+    if not summary:
+        return "_(no summary)_"
+    return summary.replace("|", "\\|")
+
+
+def _render_published_routes(routes: list[dict[str, Any]]) -> str:
+    """Render the docs-tree route reference from an already-computed census.
+
+    Takes the census rather than recomputing it so a caller that also needs the raw
+    rows (the drift guard) pays for one AST walk, not two.
+
+    Differs from :func:`_render_routes` in shape, not in content: a family index with
+    counts, then tables instead of bullets. That is a real difference of job — the wheel
+    copy is grepped by an agent that knows what it is looking for, this one is read by a
+    human who does not yet — and rendering both from this one census is what keeps the
+    difference from becoming a divergence.
+    """
+    agent = [r for r in routes if r["agent_callable"]]
+    other = [r for r in routes if not r["agent_callable"]]
+    paths = {r["path"] for r in routes}
+
+    families: dict[str, list[dict[str, Any]]] = {}
+    for r in routes:
+        families.setdefault(_route_family(r["path"]), []).append(r)
+
+    lines = [
+        "# HTTP route reference",
+        "",
+        "<!-- GENERATED FILE — DO NOT EDIT BY HAND.",
+        "     Rendered by scripts/generate_api_route_reference.py from the gateway's own",
+        "     route registrations, and byte-compared against a fresh render by",
+        "     tests/test_docs_api_reference.py. Hand edits are reverted by the next",
+        "     regeneration and red CI in the meantime. -->",
+        "",
+        f"Every HTTP route the gateway registers: **{len(routes)} registrations** over "
+        f"**{len(paths)} distinct paths** — {len(agent)} agent-callable (`/api/*`, "
+        f"non-websocket) and {len(other)} websocket or internal.",
+        "",
+        "**This list is generated, not maintained.** It is rendered from the route "
+        "registrations in the source tree — the same census that produces the offline "
+        "reference shipped inside the package and the live `GET /api/manifest` — so a "
+        "route added to the code without a row here reds CI rather than quietly becoming "
+        "an undocumented surface. The count above is therefore the real count, not an "
+        "aspiration.",
+        "",
+        "Read [the API overview](api-overview.md) first for the things every route shares: "
+        "base URL, auth, the error envelope, and the conventions below. This page is the "
+        "exhaustive index, and nothing else.",
+        "",
+        "## How to read a row",
+        "",
+        "- **Method** — `*` means the route is registered for every HTTP method (a mount "
+        "or bridge, not a single verb).",
+        "- **Path** — `{name}` is a path parameter. Paths are shown in aiohttp's canonical "
+        "form, so a segment declared with a regex (`{tail:.*}`) appears without it.",
+        "- **Summary** — the first line of the handler's own docstring, verbatim. Where a "
+        "handler has none, the cell says so rather than inventing one; where the first "
+        "line runs on, it is shown cut off rather than paraphrased. The docstring in the "
+        "source is the authoritative per-route contract.",
+        "",
+        "## Route families",
+        "",
+        f"The {len(families)} families the surface divides into, largest first.",
+        "",
+        "| Family | Registrations | Distinct paths |",
+        "|---|---|---|",
+    ]
+    for family in sorted(families, key=lambda f: (-len(families[f]), f)):
+        members = families[family]
+        lines.append(f"| `{family}` | {len(members)} | {len({m['path'] for m in members})} |")
+
+    lines.extend(
+        [
+            "",
+            "## Agent-callable routes",
+            "",
+            f"The {len(agent)} routes an agent drives directly. After any mutating call "
+            "(POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.",
+            "",
+            "| Method | Path | Summary |",
+            "|---|---|---|",
+        ]
+    )
+    for r in agent:
+        lines.append(f"| `{r['method']}` | `{r['path']}` | {_cell(r['summary'])} |")
+
+    lines.extend(
+        [
+            "",
+            "## Websocket and internal routes",
+            "",
+            f"The remaining {len(other)} registrations: real-time transport and the "
+            "loopback control bridge. They are part of the surface and listed for "
+            "completeness, but they are not agent-callable HTTP endpoints — the manifest "
+            "does not mark them so, and neither should you treat them so.",
+            "",
+            "| Method | Path | Summary |",
+            "|---|---|---|",
+        ]
+    )
+    for r in other:
+        lines.append(f"| `{r['method']}` | `{r['path']}` | {_cell(r['summary'])} |")
+
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "See also: [API overview](api-overview.md) · "
+            "[Configuration reference](configuration.md) · [CLI reference](cli.md)",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_published_route_reference() -> str:
+    """The markdown for :data:`PUBLISHED_ROUTE_REFERENCE`, from a fresh census."""
+    return _render_published_routes(_routes_from_ast())
 
 
 def _render_providers(providers: dict[str, Any]) -> str:

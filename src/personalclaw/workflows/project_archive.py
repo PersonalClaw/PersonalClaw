@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from personalclaw.http_download import safe_download_stem
 from personalclaw.workflows.project_export import (
     MANIFEST_SCHEMA,
     PORTABLE_DIRS,
@@ -647,13 +648,13 @@ def archive_filename(project_name: str, project_id: str, *, encrypted: bool = Fa
     Derived from the NAME when it yields anything usable and from the id otherwise: a project called
     `../../etc` must not name a file, and a project called `Q3 Planning` should not download as
     `p-1a2b3c4d.zip` when the user has to find it again in a downloads folder.
+
+    The stem comes from `http_download.safe_download_stem`, which REDACTS before it sanitises. This
+    function used to sanitise only, so a credential typed into a project name arrived intact in the
+    `Content-Disposition` header — a leak into proxy logs and browser download history that no
+    later deletion reaches. The archive BODY still carries secrets on purpose; the header does not.
     """
-    stem = "".join(c if (c.isalnum() or c in "-_") else "-" for c in (project_name or "")).strip(
-        "-"
-    )
-    stem = "-".join(p for p in stem.split("-") if p)[:60]
-    if not stem:
-        stem = str(project_id or "project")
+    stem = safe_download_stem(project_name, fallback=project_id) or "project"
     suffix = ".zip.enc" if encrypted else ".zip"
     return f"personalclaw-project-{stem}{suffix}"
 

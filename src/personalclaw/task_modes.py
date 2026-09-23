@@ -182,6 +182,36 @@ def read_only_command(title: str, tool_kind: str, tool_input: object) -> bool | 
     return is_read_only_bash(cmd)
 
 
+def tool_input_to_str(value: object) -> str:
+    """Coerce an event's ``tool_input`` to a display string.
+
+    ``AgentEvent.tool_input`` is typed ``Any``: ACP agents pass the raw JSON argument
+    *string*, the native loop passes the parsed *dict*, and other providers may pass
+    anything. Display and REDACTION code needs a ``str``: dicts/lists are JSON-encoded,
+    ``None`` becomes ``""``, everything else is ``str()``.
+
+    🔴 LIVES HERE, BESIDE :func:`extract_bash_command`, BECAUSE THE APPROVAL STORE NEEDS IT.
+    It used to live in ``dashboard/chat_utils.py``, which imports ``dashboard/state.py`` at
+    module level — so ``state.py`` could not reach it, and ``DashboardState.request_approval``
+    declared ``tool_input: str`` while the gateway handed it ``event.tool_input`` (``Any``).
+    A native-loop dict therefore reached ``security.scan_exfiltration_urls``, whose
+    ``_URL_RE.finditer(text)`` raised ``TypeError: expected string or bytes-like object, got
+    'dict'`` from inside the approval path and killed the whole subagent. This module already
+    owns the "``tool_input`` is ``Any``" problem for the screening half and imports nothing but
+    ``json``/``re``, so it is the neutral home both callers can share.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
 def extract_bash_command(tool_input: object) -> str:
     """Extract the command string from an execute_bash tool input.
 

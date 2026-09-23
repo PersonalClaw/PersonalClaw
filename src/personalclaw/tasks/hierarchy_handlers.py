@@ -9,6 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import (
     MISSING,
     json_object_body,
@@ -1015,7 +1016,7 @@ async def api_projects_export(request: web.Request) -> web.Response:
         body=raw,
         content_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": attachment_disposition(filename),
             "Content-Length": str(len(raw)),
             # The two decisions a user must act on, in headers a download can carry.
             "X-PersonalClaw-Entities": str(len(plan.entries)),

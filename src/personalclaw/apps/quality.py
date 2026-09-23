@@ -195,10 +195,19 @@ def strip_comments(text: str) -> StrippedSource:
 
     Still not handled, and the boundary is exactly one character wide: a ``/*`` preceded by
     a SPACE in JSX text (``<p>use /* as a wildcard</p>``) is indistinguishable from a real
-    opener without parser context, so it still opens a block, still fails STRICT, and is
-    still reported through :attr:`StrippedSource.end_state`. So rule 4 fixes the
+    opener without parser context, so it still opens a block. So rule 4 fixes the
     alnum/``[``-preceded subset, not "a ``/*`` in JSX text" as a category — both halves of
     that boundary are pinned in ``token_lint_comment_cases.json``.
+
+    What that residue costs is CONDITIONAL, and the condition is the load-bearing half:
+    with nothing lower down to close the span the scan ends in ``"block"``, which
+    :func:`token_lint_bundle` refuses by name — loud. But an ordinary block comment lower
+    down CLOSES it, so ``end_state`` returns to ``"code"`` and the same bundle comes back
+    ``{}``: a clean verdict keeping ``designSystem: "v2"`` while every violation in the
+    blanked span is dropped in silence. Measured both ways through
+    :func:`token_lint_bundle` and recorded as the one ``gap_*`` case in
+    ``token_lint_comment_cases.json`` — a hole in the corpus is cheaper than the same hole
+    found in a badged bundle.
 
     A line whose first non-space characters are ``//`` is prose in any non-block state,
     which covers the ``//`` comments inside embedded-JS template literals.

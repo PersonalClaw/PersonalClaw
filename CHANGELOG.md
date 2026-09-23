@@ -9,8 +9,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **Browse can now click a `<canvas>`: an opt-in vision-grounding fallback, using a vision model you pull yourself.**
 - **A loop kind can now be started as a workflow run: `general` is the first.**
 - **Agent Rooms: a shared transcript several bound agents deliberate in.**
+- **Agent Rooms: every member now carries its own tool reach, and the human is the only one who can approve a tool call.**
 - **The tool-loop breaker's abort ceiling is now tunable: `guardrails.loop_breaker.circuit_threshold`.**
 - **A fresh install now ships a working model provider: `ollama-models` is bundled.**
 - **`StructuredOutput` is exported from `personalclaw.sdk.model`.**
@@ -37,7 +39,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The dashboard gains a **Desktop live view** widget: the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land.
 - The desktop app now ships for **Linux x86-64**: every release attaches an AppImage and a `.deb`, built and smoke-tested by CI from the release tag.
 - Durable tmux-backed run workers gain their **spawn** half.
+- **An MCP server can now ask *you* a question mid-tool-call, through the approval card PersonalClaw already had**
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
+- **The published HTTP route reference is now generated, and its count is measured rather than asserted**
 
 ### Changed
 - **The five Settings switches that relax a security or safety default now confirm before they take effect.**
@@ -67,6 +71,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **A browse run that got stuck or was refused by the egress policy now explains itself in a sentence instead of printing a reason code.**
+- **A credential typed into a project name no longer reaches the download filename, and download filenames now carry non-ASCII names instead of dropping them.**
+- **`personalclaw config --help` no longer advertises a key the command refuses, and a rail now holds every key it advertises to that standard.**
+- **`personalclaw config set --file` no longer reports `✅` for a deletion it did not apply, and `config unset` gives removal a path at all.**
+- **The packaged desktop app carries its data files, its `sdk.*` submodules and its own `personalclaw-core` MCP server.**
+- **"Check for updates" no longer runs `git fetch` inside an app bundle.**
+- **The config is validated once per file content instead of once per request, and three retired keys are consumed instead of reported.**
+- **Inbox, Apps and Settings reach a terminal state on a first run instead of spinning forever; the onboarding page scrolls; and a structured tool argument no longer kills a subagent from inside the approval path.**
+- **Prompt-cache savings are now reported on OpenAI-family models, which had silently reported a flat zero on every cached turn.**
+- **A loop template's first iteration no longer dies on its own `{{last.… | default(…)}}` guard.**
+- **A binding failure no longer tells you to add the `| default(...)` pipe your expression already has.**
+- **A fan-out's `[i/total]` marker reports the item count on both surfaces that render it.**
+- **Your local models no longer disappear when you delete one of two endpoints of the same model provider, and a healthy endpoint no longer reports itself as "not available on this machine".**
+- **`ERR_MODEL_UNRESOLVED` now states the cause that actually fired instead of asserting one cause for all of them.**
+- **A scheduled script can finally read a tool refusal instead of crashing on it.**
+- **A content search that hits its deadline inside the worker thread now answers 504 with guidance and records the audit row, instead of letting the exception escape the handler.**
+- **The macOS sandbox wrap no longer resolves its own enforcement binaries through the PATH of the child it is about to confine.**
+- **An unreadable `entity_settings/inbox.json` no longer ENABLES retention cleanup and deletes the items you told it to keep.**
 - **`personalclaw doctor` no longer loads `torch` to answer a yes/no question, which is what aborted macOS verification runs inside `faiss`.**
 - **The desktop app's dashboard window runs inside the Chromium process sandbox again, and a test can now see whether its bridge actually loaded.**
 - **Uninstalling an app while keeping its data, or updating an app, no longer refuses because the app's own background process touched a file.**
@@ -252,6 +274,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Loops:**
 - **Security (egress guard):**
 - **Three views that show less than they were given now say so, and the numbers they state are the numbers they honour.**
+- **The API reference no longer claims to be complete when it is not.**
+- **Advancing an onboarding step no longer drops focus on the floor, the step you are on is a real heading, and the step body stops spending a fifth of a phone screen on alignment.**
 
 ### Added
 
@@ -627,6 +651,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Discover's "see goal loops" tip opened a blank new-loop form instead of your loops.**
 - **Changing your embedding model silently stopped the assistant remembering anything.**
 - **A task comment could be signed as anyone, and never taken back.**
+- **`personalclaw app new` no longer names your app as its own copyright holder, and every licence file in the tree is now held to the real MIT grant.**
 
 ## [0.1.3] — 2026-07-30
 

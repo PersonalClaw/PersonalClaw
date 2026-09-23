@@ -320,11 +320,21 @@ def test_the_host_profile_forbids_a_nested_sandbox(tmp_path):
     profile: ``sandbox_apply`` returns ``Operation not permitted`` and the child dies
     with an empty stdout, which is all the ACP reader can see (hence ``stdout EOF``).
 
-    The narrower claim matters. macOS does NOT refuse nesting in general — nesting a
+    The narrower claim matters. A normal macOS host does NOT refuse nesting — nesting a
     bare ``(allow default)`` profile inside another succeeds, and this test asserts
     that as its own control. It is the host profile's ``deny`` rules that make the
     inner ``sandbox_apply`` fail, which is why the fix is an opt-out for runtimes
     that sandbox themselves rather than a tweak to the profile.
+
+    That control is also a *capability precondition*, not merely a nicety: "not in general"
+    is a claim about the host, and it is FALSE on some images. State the narrow fact, because
+    the obvious wrong reading costs a whole CI cycle: GitHub's ``macos-14`` runner does NOT
+    deny ``sandbox_apply`` outright. It PERMITS a single-level application — which is exactly
+    why ``detect_backend``'s own probe (one profile, one child) passes there and the skip
+    above does not fire — and refuses only a NESTED one, with rc 71. So the precondition has
+    to probe *nesting*; a single-level probe would answer "capable" and the leg would stay
+    red. On such a host this test's attribution cannot be established at all, so it skips on
+    the measured refusal rather than reporting a pass it did not earn. See the branch below.
     """
     import subprocess
 
@@ -350,6 +360,30 @@ def test_the_host_profile_forbids_a_nested_sandbox(tmp_path):
         text=True,
         timeout=30,
     )
+    if control.returncode != 0 and "sandbox_apply: Operation not permitted" in control.stderr:
+        # A MEASURED capability precondition, narrower than the backend check above and
+        # deliberately not a platform/image string: `sandbox-exec` being present (and
+        # applying ONE profile, which `detect_backend`'s own probe just proved) does not
+        # imply a NESTED `sandbox_apply` is permitted. GitHub's `macos-14` image permits the
+        # single level and refuses only the nested one — it does NOT deny `sandbox_apply`
+        # outright, which is why this has to probe nesting rather than availability, and why
+        # `detect_backend` above answers "capable" there. On such a host the claim does not exist
+        # to be measured: the claim is the NARROW one — that the host profile's *deny rules*
+        # are what refuse the inner `sandbox_apply` — and a blanket refusal of nesting is
+        # indistinguishable from a profile-attributable one. The assertions below would
+        # still pass there, for the wrong reason, which is exactly what must not be
+        # reported as this test passing.
+        #
+        # Scope: fires only on the observed rc + `sandbox_apply` refusal, both quoted into
+        # the skip so CI names the cause rather than a bare "skipped". Any OTHER control
+        # failure falls through to the hard assertion below and still reds.
+        reset_backend()
+        pytest.skip(
+            "host PERMITS a single-level sandbox_apply (the backend probe above passed) but "
+            "REFUSES a nested one, so a nesting-specific refusal is indistinguishable from a "
+            "blanket one and this test's host-profile attribution is unmeasurable here: "
+            f"rc={control.returncode} stderr={control.stderr.strip()!r}"
+        )
     assert control.returncode == 0, f"nesting is not refused per se: {control.stderr}"
     assert "started" in control.stdout
 

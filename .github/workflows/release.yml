@@ -297,6 +297,14 @@ jobs:
         # on this OS/arch — a bundle that packages but cannot start must fail the release.
         # Locally built files carry no com.apple.quarantine xattr, so Gatekeeper does not
         # block this exec; that is why the smoke can run at all on an unsigned build.
+        #
+        # 🔴 `"$BACKEND" --version` USED TO BE THE WHOLE EXECUTION ASSERTION, and argparse's
+        # `--version` prints and exits before the runner catalogue is read, before any
+        # `personalclaw.sdk.*` submodule is imported, and before an MCP server command is
+        # resolved. So the 2026-09-23 dmg passed this step while being unable to enable a
+        # single extension. `scripts/smoke_backend_bundle.sh` boots the packaged gateway and
+        # drives the surfaces that force those reads; it is a script, not inline shell,
+        # because `desktop-linux` needs the identical assertion and two copies drift.
         run: |
           set -euo pipefail
           cd desktop/dist
@@ -312,7 +320,7 @@ jobs:
           test -f "$APP/Contents/Resources/app.asar"
           BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
           test -x "$BACKEND"
-          "$BACKEND" --version
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
           # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
           echo "built arch: $(uname -m)"
       - uses: actions/upload-artifact@v7
@@ -360,6 +368,11 @@ jobs:
         # needed) and execute the frozen personalclaw-backend on this OS/arch —
         # a bundle that packages but cannot start must fail the release, same
         # rationale as the images job's per-arch smoke.
+        #
+        # 🔴 Same hole as `desktop-mac` had, and closed the same way: `--version` is
+        # argparse, so it exits before the runner catalogue, any `personalclaw.sdk.*`
+        # import, or an MCP server resolution. `scripts/smoke_backend_bundle.sh` boots the
+        # packaged gateway and drives those reads. ONE script for both jobs on purpose.
         run: |
           set -euo pipefail
           cd desktop/dist
@@ -369,7 +382,7 @@ jobs:
           test -f squashfs-root/resources/app.asar
           BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
           test -x "$BACKEND"
-          "$BACKEND" --version
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
           # deb: correct package name + the same two load-bearing paths present.
           dpkg-deb --info personalclaw-desktop_*.deb | grep -q "Package: personalclaw-desktop"
           dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "resources/app.asar"

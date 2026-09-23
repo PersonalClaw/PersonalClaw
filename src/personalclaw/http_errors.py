@@ -175,6 +175,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "room_member_not_found": "That agent is not a member of this room.",
     "room_member_limit": "This room already holds the configured maximum number of members.",
     "room_invalid_listen_policy": "A listen policy must be all, mention, or silent.",
+    "room_member_posture_invalid": "That member's safety posture could not be read.",
+    "room_member_posture_widens": "A member may only narrow the room's safety posture.",
+    "room_approver_not_human": "Only the human may approve a room member's tool call.",
     "room_export_format_invalid": "A room export format must be md or json.",
     # ── push subscriptions (handlers/push.py) ──
     "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",

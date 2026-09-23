@@ -23,6 +23,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.http_download import safe_download_stem
 from personalclaw.security import redact_field
 
 logger = logging.getLogger(__name__)
@@ -121,17 +122,14 @@ def render(fmt: str, *, title: str, key: str, meta: dict, messages: list[dict]) 
 
 
 def export_filename(title: str, key: str, fmt: str) -> str:
-    """A filesystem-safe, ASCII-only download name.
+    """A filesystem-safe download name for one transcript.
 
-    ASCII specifically, not just "safe": the route emits the plain
-    ``Content-Disposition: attachment; filename="…"`` form, which cannot carry non-ASCII
-    bytes. ``str.isalnum()`` is True for CJK and accented letters, so filtering on it
-    alone produced names that broke the header for anyone whose chat titles aren't
-    Latin — the fallback keeps the download working instead of failing on their locale.
+    Redaction and sanitisation both live in
+    :func:`~personalclaw.http_download.safe_download_stem`; only the ``<stem>.<fmt>`` shape is
+    this function's own. It used to fold the name to ASCII because the route emitted the plain
+    ``filename="…"`` form, which cannot carry anything else — so a chat titled ``日本語のチャット``
+    downloaded as ``chat.json`` and lost its name entirely. The route now emits RFC 6266's
+    ``filename*=UTF-8''`` alongside an ASCII fallback, so the fold is no longer needed and the
+    user's own characters survive.
     """
-    # Redact before replacing punctuation: sanitising first can break a credential shape
-    # into something the redactor no longer recognises while leaving it identifiable.
-    source = redact_field(title or key or "chat")
-    stem = "".join(ch if (ch.isascii() and ch.isalnum()) or ch in "-_" else "-" for ch in source)
-    stem = "-".join(p for p in stem.split("-") if p)[:60].strip("-")
-    return f"{(stem or 'chat').lower()}.{fmt}"
+    return f"{safe_download_stem(title, fallback=key) or 'chat'}.{fmt}"

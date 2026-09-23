@@ -178,6 +178,46 @@ def test_config_get_withholds_every_credential_in_the_whole_document(tmp_path, m
     assert dumped["providers"][0]["type"] == "openai_compatible"
 
 
+def test_config_get_masks_a_credential_no_list_anywhere_names(tmp_path, monkeypatch, capsys):
+    """MASKED BY DERIVATION, NOT BY ENUMERATION — the property, not today's two field names.
+
+    Every other case here drives `api_key` or `bot_token`, so all of them would still pass
+    against a hard-coded pair of names. The blocks that carry credentials are exactly the ones
+    core does NOT model (`merge_unmodeled_top_keys` exists because that set grows), so the next
+    secret to reach `config get` will arrive under a block and a field name that no list in this
+    repo has ever heard of. That case is the one worth pinning: if masking were enumerated, the
+    field below would print in the clear and every test above would stay green.
+
+    Anti-vacuity: a non-secret sibling in the SAME unknown block must survive in the clear. A
+    boundary that masked every string would satisfy the assertion above and destroy the dump.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    doc = json.loads(cfg.read_text(encoding="utf-8"))
+    doc["some_unheard_of_app"] = {
+        "my_brand_new_thing_secret": "SENTINEL-NOBODY-ENUMERATED-THIS",
+        "endpoint": "https://example.invalid/v1",
+        "retries": 3,
+    }
+    cfg.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("get", key=None))
+    captured = capsys.readouterr()
+
+    assert "SENTINEL-NOBODY-ENUMERATED-THIS" not in captured.out, (
+        "a credential-shaped field in a block no list names printed in the clear — masking is "
+        "enumerated, so every future secret leaks until someone extends a list"
+    )
+    dumped = json.loads(captured.out)
+    assert dumped["some_unheard_of_app"]["my_brand_new_thing_secret"] == SECRET_MASK
+    assert dumped["some_unheard_of_app"]["endpoint"] == "https://example.invalid/v1"
+    assert dumped["some_unheard_of_app"]["retries"] == 3
+    # The operator is TOLD, by path, or a redaction is indistinguishable from "no secrets here".
+    assert "some_unheard_of_app.my_brand_new_thing_secret" in captured.err
+
+
 def test_config_get_with_no_key_dumps_the_unmodeled_blocks(tmp_path, monkeypatch, capsys):
     """The dump is the INPUT to `config set --file`, so a gap here is a gap there."""
     from personalclaw import cli_config
@@ -342,21 +382,143 @@ def test_set_key_refuses_the_mask_as_a_value(tmp_path, monkeypatch, capsys):
     assert cfg.read_bytes() == before
 
 
-def test_a_file_that_omits_a_block_does_not_delete_it(tmp_path, monkeypatch, capsys):
-    """Deleting by OMISSION is the failure mode: the path whose purpose is restoring a config the
-    operator believes is complete must not treat a missing key as "remove this"."""
+def test_a_file_that_omits_a_block_is_refused_rather_than_silently_merged(
+    tmp_path, monkeypatch, capsys
+):
+    """Deleting by OMISSION is one failure mode; reporting `✅` for it is the other (#3125).
+
+    This path preserves top-level blocks it is not shown, which is what stops a handed-back
+    document deleting `providers[]` (#951). The cost of that rule is that omission cannot also
+    mean "remove this" — so an operator who deleted the `slack` block on purpose was told
+    `✅ Config loaded` at exit 0 while `bot_token` stayed on disk. One signal cannot mean both
+    "leave alone" and "delete", so this refuses and names the blocks instead of guessing.
+
+    DEVIATION from the contract this test previously pinned: a PARTIAL document used to apply
+    its own keys and silently keep the rest. That overlay behaviour is retired — it is the
+    ambiguity itself, and `config set <key> <value>` already covers changing one key with
+    validation this path does not run.
+    """
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+    before = cfg.read_bytes()
+
+    partial = tmp_path / "partial.json"
+    partial.write_text(json.dumps({"agent": {"log_level": "DEBUG"}}), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli_config._config_cmd(_args("set", file=str(partial)))
+
+    assert exc.value.code == 1, "a write that could not be applied as given must exit nonzero"
+    err = capsys.readouterr().err
+    assert "refusing to write config" in err
+    # Every block it could not apply is NAMED — a refusal that does not say what it choked on
+    # sends the operator back to guessing.
+    for block in ("providers", "slack", "use_cases", "meta", "some_future_app_block"):
+        assert block in err, f"the refusal did not name the dropped block {block!r}"
+    assert "config unset" in err, "the refusal must point at the verb that does remove a block"
+    assert cfg.read_bytes() == before, "the refusal must leave config.json byte-identical"
+
+
+def test_the_intact_roundtrip_is_still_accepted(tmp_path, monkeypatch, capsys):
+    """The positive half of the refusal above, and the reason it is safe.
+
+    `config get` prints the MERGED view, so a document it produced names every top-level key on
+    disk and the dropped-block check cannot fire on the documented loop. Without this, the
+    refusal could be tightened into one that rejects the round-trip it exists to protect and
+    nothing would notice.
+    """
     from personalclaw import cli_config
 
     cfg = _seed(tmp_path / "home")
     _pin(monkeypatch, cfg)
 
-    partial = tmp_path / "partial.json"
-    partial.write_text(json.dumps({"agent": {"log_level": "DEBUG"}}), encoding="utf-8")
-    cli_config._config_cmd(_args("set", file=str(partial)))
+    cli_config._config_cmd(_args("get", reveal=True))
+    handed_back = tmp_path / "f.json"
+    handed_back.write_text(capsys.readouterr().out, encoding="utf-8")
 
+    cli_config._config_cmd(_args("set", file=str(handed_back)))
+
+    assert "✅" in capsys.readouterr().out
     after = json.loads(cfg.read_text(encoding="utf-8"))
     assert after["providers"][0]["api_key"] == _REAL_KEY
-    assert after["agent"]["log_level"] == "DEBUG", "the file's own content must still apply"
+    assert after["slack"]["bot_token"] == "xoxb-REAL"
+
+
+# ── `config unset` — the removal path that did not exist ──────────────────────────────────────
+
+
+def test_unset_actually_removes_the_credential_block_from_disk(tmp_path, monkeypatch, capsys):
+    """THE SECURITY CASE. `unset`, `--replace` and `--remove` all grepped to zero, so a user who
+    wanted a stored `bot_token` gone had no supported way to remove it (#3125)."""
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("unset", key="slack"))
+
+    assert "✅" in capsys.readouterr().out
+    after = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "slack" not in after, "the block the operator removed is still on disk"
+    assert "xoxb-REAL" not in cfg.read_text(encoding="utf-8"), "the token survived its own removal"
+    # Removal is SURGICAL: the sibling unmodeled blocks are the ones #951 destroyed.
+    assert after["providers"][0]["api_key"] == _REAL_KEY
+    assert after["some_future_app_block"] == {"opaque": True}
+
+
+def test_unset_refuses_a_key_that_is_not_in_the_file(tmp_path, monkeypatch, capsys):
+    """A typo must not report success. `config unset slak` answering `✅` while `slack` survives
+    is the same false-success defect this verb was added to end, with the same consequence."""
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    _pin(monkeypatch, cfg)
+    before = cfg.read_bytes()
+
+    with pytest.raises(SystemExit) as exc:
+        cli_config._config_cmd(_args("unset", key="slak"))
+
+    assert exc.value.code == 1
+    assert "slak" in capsys.readouterr().err
+    assert cfg.read_bytes() == before, "a refused unset must not rewrite the file"
+
+
+def test_unset_removes_a_nested_leaf_and_leaves_its_siblings(tmp_path, monkeypatch, capsys):
+    """A dotted key removes one leaf, not its parent — the parent emptying out is the loader's
+    "every field at its default", which is the state being asked for."""
+    from personalclaw import cli_config
+
+    cfg = _seed(tmp_path / "home")
+    cfg.write_text(
+        json.dumps({"agent": {"log_level": "DEBUG", "max_subagents": 4}}, indent=2),
+        encoding="utf-8",
+    )
+    _pin(monkeypatch, cfg)
+
+    cli_config._config_cmd(_args("unset", key="agent.log_level"))
+
+    after = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "log_level" not in after["agent"]
+    assert after["agent"]["max_subagents"] == 4, "the sibling leaf was taken with it"
+
+
+def test_unset_refuses_a_config_it_could_not_read(tmp_path, monkeypatch, capsys):
+    """Same rule as every other write: unreadable means the damage is unknowable."""
+    from personalclaw import cli_config
+
+    cfg = tmp_path / "home" / "config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("{not json", encoding="utf-8")
+    _pin(monkeypatch, cfg)
+    before = cfg.read_bytes()
+
+    with pytest.raises(SystemExit) as exc:
+        cli_config._config_cmd(_args("unset", key="slack"))
+
+    assert exc.value.code == 1
+    assert "refusing to write config" in capsys.readouterr().err
+    assert cfg.read_bytes() == before
 
 
 def test_set_file_refuses_rather_than_overwriting_an_unreadable_config(tmp_path, monkeypatch):

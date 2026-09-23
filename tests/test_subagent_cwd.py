@@ -10,7 +10,9 @@ Covers:
   stored on ``SubagentInfo`` so downstream factories can pick it up.
 """
 
+import contextlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -165,6 +167,32 @@ def _mock_ctx_builder_auto_spawn() -> MagicMock:
     return ctx
 
 
+@contextlib.contextmanager
+def _only_the_cwd_gate_can_fire() -> Iterator[None]:
+    """Neutralise every refusal gate ``spawn`` consults BEFORE the cwd check.
+
+    The memory, incident and budget gates each return a done ``SubagentInfo``
+    whose ``error`` begins ``"spawn refused: "``, leave ``_running_count``
+    untouched, and log a *different* SEL outcome. So a cwd test that identifies
+    its subject by that shared prefix cannot tell which gate answered, and an
+    ambient incident flag or an exhausted day budget makes it report a missing
+    ``rejected_invalid_cwd`` row for a refusal that never reached the cwd check —
+    a failure indistinguishable from "the guard refuses but stopped auditing".
+    Making the precondition explicit is what keeps the subject unambiguous, and
+    it holds if a fourth gate is ever added ahead of the cwd check.
+    """
+    from personalclaw.guardrails.budgets import Budget
+
+    with (
+        patch("personalclaw.subagent.check_memory_available", return_value=(True, 1024.0)),
+        patch("personalclaw.guardrails.incident.incident_active", return_value=False),
+        # Unlimited short-circuits the gate before it meters spend, so this also
+        # keeps the test off the real home's ``spend.json``.
+        patch("personalclaw.guardrails.budgets.budget_from_config", return_value=Budget()),
+    ):
+        yield
+
+
 class TestSpawnCwd:
     """``SubagentManager.spawn`` correctly validates and stores cwd."""
 
@@ -216,37 +244,95 @@ class TestSpawnCwd:
 
         The rejection happens before the running count is incremented, so
         running_count is unchanged.
+
+        Identified by the gate's own outcome and its own reason text, never by the
+        ``"spawn refused: "`` prefix three earlier gates share — see
+        ``_only_the_cwd_gate_can_fire``.
         """
         manager = SubagentManager(
             sessions=_mock_sessions(),
             ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         running_before = manager._running_count
+        allowed_roots = [str(tmp_path / "allowed")]
         mock_cfg = MagicMock()
-        mock_cfg.agent.spawn_min_memory_gb = 0
-        mock_cfg.agent.subagent_cwd_allowed_roots = [str(tmp_path / "allowed")]
+        # A real float so a lapse in the helper reds on the memory gate's own message
+        # rather than on formatting a MagicMock.
+        mock_cfg.agent.spawn_min_memory_gb = 4.0
+        mock_cfg.agent.subagent_cwd_allowed_roots = allowed_roots
         (tmp_path / "allowed").mkdir()
 
         sel_mock = MagicMock()
         with (
+            _only_the_cwd_gate_can_fire(),
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel", return_value=sel_mock),
             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
         ):
             info = manager.spawn("t", cwd="/etc")
 
+        # The SEL outcome IS the subject: one row, and the cwd gate's row. Asserting
+        # the whole list rather than a filtered count means an earlier gate answering
+        # reds by naming itself instead of reporting a missing audit row.
+        assert [c.kwargs.get("outcome") for c in sel_mock.log_tool_invocation.call_args_list] == [
+            "rejected_invalid_cwd"
+        ]
+        assert "cwd" in sel_mock.log_tool_invocation.call_args_list[0].kwargs["metadata"]
         assert info is not None
         assert info.done is True
-        assert "spawn refused" in info.error
+        assert info.error == f"spawn refused: cwd is not under any allowed root: {allowed_roots}"
         assert manager._running_count == running_before
-        # SEL audit trail fired with the right outcome
-        calls = [
-            c
-            for c in sel_mock.log_tool_invocation.call_args_list
-            if c.kwargs.get("outcome") == "rejected_invalid_cwd"
+
+    @pytest.mark.asyncio
+    async def test_cwd_refusal_survives_every_hostile_earlier_gate(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Negative control for the test above (#3425).
+
+        Makes all three earlier gates hostile at the ambient layer — low memory,
+        incident mode active, day budget exceeded — which is the state that used to
+        make the cwd test red with ``assert 0 == 1`` for a missing audit row. The
+        precondition helper must still leave the cwd gate as the only one that can
+        answer; if it stops neutralising any one of the three, this reds and the
+        outcome list names the gate that answered instead.
+        """
+        from personalclaw.guardrails.budgets import Budget, BudgetVerdict
+
+        hostile_meter = MagicMock()
+        hostile_meter.check_day = MagicMock(
+            return_value=(BudgetVerdict.EXCEEDED, "day token budget exceeded (9/1)")
+        )
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
+        )
+        mock_cfg = MagicMock()
+        mock_cfg.agent.spawn_min_memory_gb = 4.0
+        mock_cfg.agent.subagent_cwd_allowed_roots = [str(tmp_path / "allowed")]
+        (tmp_path / "allowed").mkdir()
+
+        sel_mock = MagicMock()
+        with (
+            patch("personalclaw.subagent.check_memory_available", return_value=(False, 0.1)),
+            patch("personalclaw.guardrails.incident.incident_active", return_value=True),
+            patch(
+                "personalclaw.guardrails.budgets.budget_from_config",
+                return_value=Budget(max_tokens=1),
+            ),
+            patch("personalclaw.guardrails.budgets.get_meter", return_value=hostile_meter),
+            _only_the_cwd_gate_can_fire(),
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel", return_value=sel_mock),
+            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+        ):
+            info = manager.spawn("t", cwd="/etc")
+
+        assert [c.kwargs.get("outcome") for c in sel_mock.log_tool_invocation.call_args_list] == [
+            "rejected_invalid_cwd"
         ]
-        assert len(calls) == 1
-        assert "cwd" in calls[0].kwargs.get("metadata", {})
+        assert info is not None
+        assert info.error.startswith("spawn refused: cwd is not under any allowed root")
 
     @pytest.mark.asyncio
     async def test_spawn_cwd_disabled_when_allowlist_empty(

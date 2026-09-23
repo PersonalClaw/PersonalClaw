@@ -120,11 +120,90 @@ describe('the stepper is a set, so aria-current has something to be current with
   })
 
   it('🪤 the live region no longer justifies itself with a claim that is now false', () => {
-    // It used to read "The rows are not focusable" — true before this change, false after, and never
-    // the actual reason: advancing a step does not move focus. A stale justification is how a
-    // still-necessary region gets deleted by a later reader.
+    // TWO justifications have died here, both by being true when written. "The rows are not
+    // focusable" went false when a completed row's header became a real button. "A step CHANGE is not
+    // a focus change" went false when the new step's heading started taking focus — and that one had
+    // been promoted to "the real reason" by this very test, which is how a rail can pin a claim into
+    // place after the code has moved out from under it.
+    //
+    // The reason that survives is about what the region SAYS rather than how focus behaves: the
+    // heading focus lands on is named for the step ("Bring your setup over"), never for its position,
+    // so this region is the only place "Step 2 of 5" is spoken. That does not become false when focus
+    // handling changes again.
     const src = onboarding()
-    expect(src, 'the false clause is gone').not.toMatch(/rows are not focusable and the step\s*\n?\s*\/?\/?\s*title is not in any focused control/)
-    expect(src, 'and the real reason is stated').toMatch(/a step CHANGE is not a focus change/)
+    expect(src, 'the first dead clause is gone').not.toMatch(/rows are not focusable and the step\s*\n?\s*\/?\/?\s*title is not in any focused control/)
+    // 🪤 The second clause SURVIVES, quoted and immediately called false — the graveyard is the
+    // useful part, and deleting it is how the same wrong reason gets rediscovered. What must not
+    // exist is the clause doing WORK, i.e. followed by the "so without this…" that made it a reason.
+    // A bare `not.toMatch` on the sentence would red on its own epitaph, which is why this one is
+    // anchored on the comma.
+    expect(src, 'the second dead clause is not carrying any argument').not.toMatch(/a step CHANGE is not a focus change, so/)
+    expect(src, 'and it is recorded as dead rather than deleted').toMatch(/"a step CHANGE is not a focus change" — false/)
+    expect(src, 'and a reason that outlives the focus behaviour is stated')
+      .toMatch(/named for the step, not for its\s*\n?\s*\/?\/?\s*position/)
+  })
+})
+
+describe('advancing a step moves focus to the new step instead of dropping it', () => {
+  // 🔴 THE DEFECT: the control that had focus — the name field or its Continue arrow — lives in the
+  // step BODY, which unmounts as the step collapses. Focus fell to `<body>`, so a keyboard user's
+  // next Tab restarted from the top of the document and a screen-reader user had a position with no
+  // way to find it (WCAG 2.4.3). Measured in the browser rail too
+  // (`web/e2e/onboardingGeometry.spec.ts`), which is what proves the heading is also scrolled into
+  // view; this is the fast half — jsdom can observe focus and semantics, just not layout.
+
+  it('the ACTIVE step title is a real heading, and a programmatic focus target', () => {
+    render(<ol><StepRow index={1} icon={User} title="Bring your setup over" state="active" /></ol>)
+    const h = screen.getByRole('heading', { name: 'Bring your setup over' })
+    expect(h.tagName).toBe('H2')
+    // -1, not 0: the heading is a destination, not a control. A tab stop here would add a stop that
+    // does nothing between the row and its own fields.
+    expect(h.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('a NON-active step title is not a heading — one heading at a time, on the step you are on', () => {
+    // Five headings would need the APG `<h2><button>` accordion shape (a done row's header IS a
+    // button, and `<h2>` inside `<button>` is invalid content), whose accessible name is then the
+    // whole row — title, step number and subtitle. The set semantics live on the `<ol>`/`<li>` +
+    // `aria-current` instead.
+    render(
+      <ol>
+        <StepRow index={0} icon={User} title="Your name" state="done" doneSummary="Keyur" onActivate={() => {}} />
+        <StepRow index={3} icon={User} title="Try one" state="upcoming" />
+      </ol>,
+    )
+    expect(screen.queryByRole('heading')).toBeNull()
+  })
+
+  it('🔴 becoming active takes focus', () => {
+    const { rerender } = render(<ol><StepRow index={1} icon={User} title="Bring your setup over" state="upcoming" /></ol>)
+    expect(document.activeElement, 'nothing focused while the step is still upcoming').toBe(document.body)
+    rerender(<ol><StepRow index={1} icon={User} title="Bring your setup over" state="active" /></ol>)
+    expect(
+      document.activeElement,
+      'the step became active and focus stayed on <body> — a keyboard user has to Tab from the top of\n' +
+        'the document to find the step they were just moved to',
+    ).toBe(screen.getByRole('heading', { name: 'Bring your setup over' }))
+  })
+
+  it('🪤 mounting ALREADY active does NOT take focus', () => {
+    // Step 1 is active from the first render and its name field carries `autoFocus`. An
+    // unconditional focus would race that and land the user on a heading instead of the field they
+    // have to type in — so the effect compares against the PREVIOUS state, not the current one.
+    render(
+      <ol>
+        <StepRow index={0} icon={User} title="Your name" state="active">
+          <input autoFocus aria-label="Your name" />
+        </StepRow>
+      </ol>,
+    )
+    expect(document.activeElement, 'the step body keeps the focus it asked for').toBe(screen.getByLabelText('Your name'))
+  })
+
+  it('the focus ring is drawn INSIDE the row, or it is not drawn at all', () => {
+    // The `<li>` is `overflow-hidden` and the global `:focus-visible` rule draws outward, so an
+    // outline on a child that fills the row is clipped away entirely — the trap the header's own
+    // comment records. A heading focus with no visible ring moves the user silently.
+    expect(stepStack()).toMatch(/<h2 ref=\{heading\} tabIndex=\{-1\}[^>]*focus-visible:-outline-offset-2/)
   })
 })

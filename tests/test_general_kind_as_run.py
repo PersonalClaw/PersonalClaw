@@ -209,11 +209,15 @@ def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
     read-time alias resolution with no launch — produces no run and therefore no ledger at all,
     so every assertion here reds against it.
 
-    Deliberately NOT asserted: `status is COMPLETE`. The template cannot complete, for a reason
-    that is not this session's to fix and is pinned by
-    :func:`test_the_loop_body_cannot_read_its_previous_iteration` below. Asserting a green here
-    would mean either weakening that blocker or editing the template's prompts to dodge it, and
-    both would report a working port that is not one. What IS asserted is everything the port
+    Deliberately NOT asserted: `status is COMPLETE`. The template still cannot complete, for a
+    reason that is not this session's to fix and is pinned by
+    :func:`test_a_loop_body_still_gets_no_real_previous_iteration` below — a loop BODY receives no
+    `last` at all, so only its FIRST iteration has an honest value to read. (That blocker is the
+    SECOND one this run hit. The first — every body prompt failing to bind on
+    `{{last.… | default(…)}}`, so the run died at its first node — is fixed, and
+    :func:`test_the_loop_bodys_first_iteration_binds` now holds it that way.) Asserting a green
+    here would mean either weakening that blocker or editing the template's prompts to dodge it,
+    and both would report a working port that is not one. What IS asserted is everything the port
     genuinely delivers: the template's own nodes are reached, a real stage dispatches a real
     subagent, and the run writes its own ledger.
     """
@@ -247,54 +251,96 @@ def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
     assert J.journal_records(run_id, kinds={"run_finished"}), "no run_finished"
 
 
-def test_the_loop_body_cannot_read_its_previous_iteration() -> None:
-    """The BLOCKER this session stops at, pinned so it cannot be quietly forgotten.
+def test_the_loop_bodys_first_iteration_binds() -> None:
+    """The guarded `{{last.… | default(…)}}` idiom works, verified by EXECUTION not by text.
 
-    **A fix for this already landed and does not work.** `test_workflows_loop_templates.py`'s
-    `test_first_iteration_last_refs_carry_a_default` records the same symptom measured live on
-    2026-09-18 — "`general-project` failed its very first iteration with `binding failed:
-    unresolved reference at 'last'` … the template could never run ANY iteration on ANY home" —
-    and its stated fix was to add a ``| default(…)`` pipe to every bare ``{{last.*}}``. That
-    landed: `general-project`'s work prompt carries the default today, and the rail is green.
-    Driving the template still fails on the same reference.
+    This replaces `test_the_loop_body_cannot_read_its_previous_iteration`, whose claim was "a loop
+    body cannot read ``last`` on ANY iteration". Half of that is now false: `bindings` keys its
+    first-cycle escape on a positive first-iteration signal (`iter_index == 0` with no `foreach`
+    item rebinding it) instead of on the root simply being absent, so iteration 0 resolves the
+    documented default and both body stages run. The half that is still true is narrower and moved
+    to :func:`test_a_loop_body_still_gets_no_real_previous_iteration`.
 
-    The rail is green because `_unguarded_last_refs` scans the template's JSON SOURCE TEXT for an
-    unguarded reference. It never runs the template, so it can only ever confirm the idiom is
-    present — not that the idiom works. And it does not: `_walk_path` raises on the first missing
-    segment BEFORE any pipe runs, which `validator._validate_output_contract` states outright
-    ("a `| default(…)` pipe does NOT rescue it … an unsatisfiable path is a dead run").
+    **Why every assertion here is runtime.** The rail that certified this fixed once
+    (`test_first_iteration_last_refs_carry_a_default`) scanned the template's JSON source text for
+    the pipe and never ran it, so it could only confirm the idiom was PRESENT — and the idiom did
+    not work, because `_walk_path` raised before any pipe. A source-text assertion is exactly what
+    must not be trusted at this seam.
 
-    So the guarded idiom is not a fix, and there is no spelling that is. Measured three ways
-    against a minimal `counted` loop:
-
-    * ``last`` — unresolved. `has_last` is set in exactly one `BindingContext`, the loop's
-      CONTINUE decision (`controller.py:3833`); body nodes never receive it. So this is not a
-      first-iteration edge case: a loop body cannot read ``last`` on ANY iteration.
-    * ``nodes.<id>`` — unresolved. Node outputs are not carried across iterations.
-    * ``previous`` — binds, because `resolve_expr` has an explicit first-cycle escape for it
-      ("`previous` absent is the FIRST cycle/run, which is normal"). But `_previous_output` is
-      scoped to `until_cancelled` loops via `_enclosing_watcher`, so in an `until_dry` loop it is
-      permanently the ``default(…)``. It binds blind, which is worse than failing: the template's
-      whole premise is "start from that critique".
-
-    Carrying a prior iteration into a loop body therefore needs a change to the loop-body binding
-    contract, which SIX of the eight loop-bearing bundled templates read (`general-project`,
-    `design-project`, `goal-pursuit-{monitor,open-ended,verifiable}`, `optimize-harness`). That is
-    a shared contract, not port scaffolding — it is the named next unit, recorded BLOCKED in the
-    plan rather than improvised here. Whatever closes it must be verified by EXECUTION, since a
-    source-text rail has already certified this fixed once.
-
-    This test reds the moment that lands, which is the point: the fix must come with the claim
-    updated, not with this docstring left behind saying it is still broken.
+    **Scoped to ITERATION 0's instances (`root.body@0.…`), deliberately and not for convenience.**
+    A later iteration with no `last` still raises, by design — that is what
+    :func:`test_a_loop_body_still_gets_no_real_previous_iteration` pins and what keeps an absent
+    root from rendering "(this is the first pass)" for the rest of the loop. So a run-wide "no
+    unresolved reference anywhere" assertion would be asserting the OPPOSITE of that design the
+    moment the loop advances past its first iteration, and would red on a change to the scheduler
+    rather than to this seam. The claim here is exactly the one in the name.
     """
-    _, run_id, _ = _drive_the_template()
-    failures = J.journal_records(run_id, kinds={"step_failed"})
-    work = [e for e in failures if str(e.get("node_id") or "") == "work"]
-    assert work, "the work stage no longer fails — the binding gap may be closed; see the docstring"
-    assert all("unresolved reference at 'last'" in str(e.get("error") or "") for e in work), (
-        "the work stage still fails, but no longer on the `last` reference. The blocker changed "
-        f"shape and this rail no longer describes it: {[e.get('error') for e in work]}"
+    _, run_id, fake = _drive_the_template()
+
+    unresolved = [
+        e
+        for e in J.journal_records(run_id, kinds={"step_failed"})
+        if "unresolved reference" in str(e.get("error") or "")
+        and str(e.get("instance_path") or "").startswith("root.body@0.")
+    ]
+    assert (
+        not unresolved
+    ), f"a reference still fails on the FIRST iteration: {[e.get('error') for e in unresolved]}"
+
+    completed = {str(e.get("node_id") or "") for e in J.ledger(run_id, kinds={"step_completed"})}
+    assert {
+        "work",
+        "judge",
+    } <= completed, (
+        f"the first iteration did not run both body stages; completed={sorted(completed)}"
     )
+
+    # The PIPE ran, not merely the reference. "work completed" alone would also pass against a
+    # resolver that rendered a silent empty string for the missing root — the `absent-is-not-zero`
+    # failure — so the default's own text has to be in the prompt the stage dispatched.
+    work = [p for p in fake.prompts if "Do the next meaningful step" in p]
+    assert work, f"the work stage dispatched no prompt: {fake.prompts}"
+    assert "(this is the first pass" in work[0], work[0][:400]
+
+
+def test_a_loop_body_still_gets_no_real_previous_iteration() -> None:
+    """The half of the old blocker that is STILL open, re-pinned at the seam that owns it.
+
+    `RunController._context_for` is the only `BindingContext` a body node receives and it sets no
+    `last_output`/`has_last`. The single site that does is the loop's CONTINUE decision, which is
+    why a loop's own `config.condition` may read `last` (four bundled templates do) and a body
+    prompt may not. So iteration 0's default above is the honest absence of a value, not a carried
+    one, and iteration 1+ still RAISES rather than pretending to be a first pass forever — which is
+    the whole reason the escape is keyed on the iteration index and not on the missing root.
+
+    Closing it needs the loop-body binding contract: what a loop ITERATION's output IS when the
+    body is a container whose children emit different schemas. `general-project` reads `summary`
+    from its worker and `verdict` from its judge, so no single child's output is the answer. That
+    is a shared contract, not port scaffolding, and it stays recorded rather than improvised.
+    """
+    from personalclaw.workflows.bindings import BindingError, resolve
+    from personalclaw.workflows.tick import ReadyNode
+
+    spec = _template_spec()
+    run = store.create(
+        WorkflowRun(id="", workflow_name=TEMPLATE, inputs={"task": "t", "exit_condition": "e"})
+    )
+    store.write_spec(run.id, spec)
+    controller = RunController(run, spec, services=EngineServices(subagents=_FakeSubagents()))
+    body = _loop_node(spec).body
+    assert body is not None and body.children, "the loop body is no longer a container of stages"
+    item = ReadyNode(
+        path="root.body@1.children[0]", node=body.children[0], lane="llm", iter_index=1
+    )
+
+    ctx = controller._context_for(item)
+    assert not ctx.has_last and ctx.last_output is None, (
+        "a body node now receives `last` — the loop-body binding contract may have landed; "
+        "update this claim and the first-iteration escape's docstring with it"
+    )
+    with pytest.raises(BindingError) as exc:
+        resolve('{{last.output.summary | default("(this is the first pass)")}}', ctx)
+    assert "unresolved reference at 'last'" in str(exc.value)
 
 
 @contextlib.contextmanager
