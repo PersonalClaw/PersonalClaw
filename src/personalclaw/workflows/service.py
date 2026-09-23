@@ -731,6 +731,81 @@ async def start_run(
     return _ok(run_id=run.id, status=RunStatus.RUNNING.value, blocking=False)
 
 
+# ── PP-16: a loop KIND starts as a WorkflowRun ──
+#
+# `loop_aliases` already answers "which template replaces this kind", but nothing ever ACTED on
+# that answer: its only non-test caller walks the table forward to build a filename map, so a
+# `general` loop still became a `loops` row driven by `loop/watchdog.py` rather than a run driven
+# by the engine. This is the door that was missing — the kind resolves to its template and then
+# actually starts, through the SAME `start_run` every other launch uses.
+#
+# Ported one kind at a time ON PURPOSE. `loop/kinds/` is 3,534 lines across five modules and each
+# kind's non-supervisor half (intake, worker framing, phasing, its canvases) has to arrive as its
+# template's nodes before that kind can run here. An un-ported kind is REFUSED rather than
+# launched: `loop_aliases` resolves all five, so resolution is NOT evidence that the template
+# carries the kind's behaviour, and launching on resolution alone would silently run a stub.
+
+#: The loop kinds whose behaviour has actually arrived in their bundled template, so a run of that
+#: template IS the loop. Grows by one per port; when it equals `loop_aliases.KIND_TO_TEMPLATE` the
+#: loop path and its `KIND_CONVERGENCE` table retire together.
+PORTED_LOOP_KINDS: frozenset[str] = frozenset({"general"})
+
+
+async def start_kind_run(
+    kind: str,
+    *,
+    task: str,
+    exit_condition: str = "",
+    variant: str = "",
+    has_verify_command: bool = False,
+    **start_kw: Any,
+) -> dict[str, Any]:
+    """Start a legacy loop `kind` as a `WorkflowRun` on the template that replaced it.
+
+    Two refusals, both deliberately BEFORE any run exists:
+
+    * a kind with no alias at all — `loop_aliases` returns "" and this returns that, rather than
+      guessing a template. Its module docstring's reason applies unchanged: "it ran something" is
+      harder to debug than "it ran nothing and said why".
+    * a kind that resolves but is not in :data:`PORTED_LOOP_KINDS`. This is the refusal that
+      matters, because it is the one a caller will not expect: all five kinds RESOLVE today, so
+      without it a `sdlc` loop would start a `code-project` run whose nodes carry none of
+      `sdlc.py`'s 1,788 lines and report success.
+
+    `exit_condition` is the loop's `success_criteria` under the name the template declares for it —
+    the same concept ("what done means"), not a new input. Left blank, the template's own declared
+    default applies via `_with_declared_defaults`.
+    """
+    from personalclaw.workflows import loop_aliases
+
+    template = loop_aliases.resolve_kind(
+        kind, variant=variant, has_verify_command=has_verify_command
+    )
+    if not template:
+        return _service_failure(
+            "WF_LOOP_KIND_UNKNOWN",
+            f"no template replaces loop kind {kind!r}",
+            kind=kind,
+            ported=sorted(PORTED_LOOP_KINDS),
+        )
+    normalized = (kind or "").strip().lower()
+    if normalized not in PORTED_LOOP_KINDS:
+        return _service_failure(
+            "WF_LOOP_KIND_NOT_PORTED",
+            (
+                f"loop kind {normalized!r} resolves to template {template!r}, but its behaviour "
+                "has not been ported to that template yet — it still runs on the loop path"
+            ),
+            kind=normalized,
+            template=template,
+            ported=sorted(PORTED_LOOP_KINDS),
+        )
+    inputs: dict[str, Any] = {"task": task}
+    if exit_condition:
+        inputs["exit_condition"] = exit_condition
+    return await start_run(name=template, inputs=inputs, **start_kw)
+
+
 def status(run_id: str) -> dict[str, Any]:
     """Run status plus node-level progress. Pure read — constructs no controller."""
     run = store.get(run_id)
