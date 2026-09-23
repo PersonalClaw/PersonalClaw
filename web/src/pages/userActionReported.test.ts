@@ -142,7 +142,14 @@ describe('a user-initiated write that fails tells the user', () => {
 
     // no gate at all: launch proceeds, per the composer's own documented decision
     const composer = strip(F('pages/loop/LoopComposer.tsx'))
-    const up = composer.slice(composer.indexOf('api.fileUpload('), composer.indexOf('onCreated(loop.id'))
+    // 🪤 THE WINDOW'S END MARKER IS SOURCE TEXT, so renaming the variable it names silently
+    // widens the window to the whole file instead of failing to find it — `indexOf` answers -1
+    // and `slice` reads to the end. Asserted below so the widening cannot happen unnoticed: the
+    // handoff moved from `onCreated(loop.id, …)` to `onCreated(created, …)` when `POST /api/loops`
+    // gained its run-backed shape (PP-16) and the host started needing the whole response.
+    const handoff = composer.indexOf('onCreated(created')
+    expect(handoff, 'the composer still hands off to its host').toBeGreaterThan(0)
+    const up = composer.slice(composer.indexOf('api.fileUpload('), handoff)
     expect(up, 'a failed upload must not block the launch').not.toMatch(/\breturn\b/)
   })
 

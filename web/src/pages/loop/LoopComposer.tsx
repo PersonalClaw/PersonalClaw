@@ -12,7 +12,7 @@ import { ClawMark } from '../../ui/ClawMark'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { DotGlow } from '../../ui/DotGlow'
 import { spring } from '../../design/motion'
-import { api, type Granularity, type LoopKind } from '../../lib/api'
+import { api, isCreatedLoopRun, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
 import type { ComposerControls } from '../../ui/composer/types'
@@ -69,9 +69,14 @@ function designInputType(name: string): string {
 const DESIGN_ACCEPT = '.png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp,.mp4,.mov,.webm,.m4v,.html,.htm,.jsx,.tsx,.js,.ts,.md'
 
 export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKind, initialWorkspace }: {
-  // Hand the created loop id + its kind to the host, which routes into the kind's
+  // Hand the CREATE RESPONSE + its kind to the host, which routes into the kind's
   // planning walkthrough (non-minimal rigor) or straight to the cockpit.
-  onCreated: (loopId: string, kind: LoopKind, planning: boolean) => void
+  //
+  // The whole response, not an id, because `POST /api/loops` answers two shapes: a ported
+  // kind (PP-16) gets a run that is already driving, and an id alone cannot tell the host
+  // which one it holds — it would start a plan session against a run id and navigate to a
+  // loop cockpit with nothing in it.
+  onCreated: (created: LoopCreateResult, kind: LoopKind, planning: boolean) => void
   onHistory: () => void
   // Optional preselected project + kind + a directly-supplied workspace to reuse
   // (Code's "New target" deep-links here with the source loop's workspace_dir + code
@@ -196,11 +201,16 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       }
       const v = await api.validateULoop(body).catch(() => null)
       if (v && !v.can_start) { setError((v.errors ?? ['Validation failed']).join(' · ')); setBusy(false); return }
-      const loop = await api.createULoop(body)
+      const created = await api.createULoop(body)
       // Upload design attachments into the loop's files dir so the design-pass planner
       // (cwd'd there) can read them. Best-effort: a failed upload shouldn't block launch
       // — the planner still has the URL + prompt + the input list in its brief.
-      const filesDir = loop.files_dir
+      //
+      // A run-backed create has no files dir because it has no loop row; `design` is not a
+      // ported kind, so the narrowing is what proves that rather than an assumption — if
+      // `design` is ported later this reads as "no dir", which is the truth, and the upload
+      // is skipped instead of writing into a path that does not exist.
+      const filesDir = isCreatedLoopRun(created) ? '' : created.files_dir
       if (kind === 'design' && designFiles.length && filesDir) {
         // 🪤 "Best-effort" was right about NOT BLOCKING and wrong about not telling. A failed upload
         // launches the design pass without the reference images the user attached, so the planner
@@ -212,7 +222,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       }
       // Non-minimal rigor → the stepwise planning walkthrough; minimal → straight to
       // the cockpit (the host starts it). The kind drives which screens render.
-      onCreated(loop.id, kind, (cls.intake_rigor ?? 'grill') !== 'minimal')
+      onCreated(created, kind, (cls.intake_rigor ?? 'grill') !== 'minimal')
     } catch (e) {
       setError((e as Error).message || 'Could not create the loop'); setBusy(false)
     }

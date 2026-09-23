@@ -429,7 +429,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/logs/level` — current backend logger level.
 - `POST /api/logs/level` — change the backend logger level at runtime.
 - `GET /api/loops` — loops (redacted), newest first.
-- `POST /api/loops` — {kind, task|goal, …} — create a READY loop of any kind.
+- `POST /api/loops` — {kind, task|goal, …} — create a READY loop, or START a run for a ported kind.
 - `POST /api/loops/classify` — {kind, task|goal} — the kind-aware intake analyze
 - `POST /api/loops/validate` — deterministic pre-flight on a create payload
 - `DELETE /api/loops/{id}` — _(no summary)_
