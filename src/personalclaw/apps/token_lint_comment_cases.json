@@ -33,9 +33,18 @@
     "Reporting no line violations is correct for those — the text really is commented",
     "out — so the load-bearing assertion is the 'block' state, which `token_lint_bundle`",
     "turns into a refusal by name (EOF_UNREADABLE) rather than a silent clean verdict.",
-    "Two of them are a genuinely broken file; two are the shapes `strip_comments`",
-    "documents as deliberately unhandled (a `/*` in a regex character class or in JSX",
-    "text), where failing STRICT is the decision and not an accident."
+    "Two of them are a genuinely broken file; the third is the one shape `strip_comments`",
+    "still documents as deliberately unhandled — a `/*` in JSX text whose preceding",
+    "character is a SPACE — where failing STRICT is the decision and not an accident.",
+    "",
+    "`end_state` is a NARROW control, and #3347 is the proof: it reports the state the",
+    "scan ENDED in, which is not the claim 'the tracker read every line correctly'. A",
+    "block that opens wrongly and then CLOSES — a stray `/*` swallowed by the next",
+    "unrelated `*/` — ends in 'code', is refused by nothing, and silently drops every",
+    "violation in the blanked span. That is why decision 4's look-behind is a fix in the",
+    "tracker rather than one more refusal downstream, and why two `red_*` cases here",
+    "carry a CLOSED bogus block: nothing else in this file can distinguish the guard",
+    "from its absence."
   ],
   "cases": [
     {
@@ -220,6 +229,32 @@
       "end_state": "code"
     },
     {
+      "name": "red_hex_in_a_span_a_stray_block_opener_blanked_and_an_UNRELATED_terminator_closed",
+      "why": "#3347's live shape, and the one no EOF control can see BECAUSE it closes. `3/*off` opened a block in JSX TEXT, the next ordinary `/* … */` closed it, so end_state came back to 'code', nothing was refused, and the hex two lines inside the blanked span was silently dropped. Positive control for the guard itself: delete the stray and line 3 is caught either way, so this case is the ONLY thing distinguishing the look-behind from its absence. A `/*` whose preceding character is ASCII-alphanumeric or `[` is division or a glob, not an opener.",
+      "lines": [
+        "const a = 1",
+        "<p>3/*off the usual scale</p>",
+        "const c = '#abc'",
+        "const d = 2",
+        "/* an ordinary comment, citing #1783 */",
+        "const e = '#def'"
+      ],
+      "expected": [[], [], ["hex"], [], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
+      "name": "red_hex_after_a_block_opener_inside_a_regex_character_class",
+      "why": "The same defect one syntax over, and the reason the look-behind admits `[` as well as alphanumerics: in `/[/*]/` the `/*` is two members of a character class. Unquoted, so the string rule cannot help it. It desyncs the tracker exactly like the case above — a later unrelated `*/` closes the bogus block, end_state reads 'code', and the hex on line 2 is lost. NOT the same as clean_backtick_inside_a_regex_literal_does_not_desync, which is backtick desync and not a block opener at all.",
+      "lines": [
+        "const re = /[/*]/",
+        "const a = '#abc'",
+        "/* ordinary */",
+        "const b = '#def'"
+      ],
+      "expected": [[], ["hex"], [], ["hex"]],
+      "end_state": "code"
+    },
+    {
       "name": "end_state_block_when_a_comment_never_closes",
       "why": "The control's own control. An unterminated `/*` genuinely comments out the rest of the file, so reporting clean lines is CORRECT here — what must not be silent is the state, and `end_state` is how a caller sees it.",
       "lines": ["/* opened and never closed", "const c = '#abc'"],
@@ -234,15 +269,15 @@
       "end_state": "block"
     },
     {
-      "name": "end_state_block_when_a_regex_character_class_opens_one",
-      "why": "#3347's third unmodelled shape, and the first of the TWO the `strip_comments` docstring names as deliberately not handled. Unlike the other `end_state_block` cases nothing here is broken — `/[/*]/` is valid TypeScript a correct author writes — but telling a regex literal from a division needs real parser context, the same limit that makes a backtick a line-local quote, so the `/*` inside the class opens a block. The contract is that this is LOUD, not silent: `end_state` 'block' is what `token_lint_bundle` refuses the bundle on, so a raw hex below the opener names the file instead of earning it a badge. Not covered by `clean_backtick_inside_a_regex_literal_does_not_desync`, which is a backtick desync and not a block opener.",
+      "name": "red_hex_below_a_regex_character_class_that_no_longer_opens_a_block",
+      "why": "REVERSED from `end_state_block_when_a_regex_character_class_opens_one` (#3378) by the look-behind, and reversed in the STRICTLY STRONGER direction — this is not a weakened assertion. That case declared the right verdict for the tracker as it stood: `/[/*]/` opened a block, nothing closed it, and 'block' at least made `token_lint_bundle` refuse the bundle by name instead of awarding it a badge. But the premise it refused on was never true — the file is valid TypeScript with nothing commented out — so the refusal named the wrong defect and the raw hex on line 2 went unreported. Decision 4 admits `[` as a preceding character, so the class member is no longer an opener, the scan reaches EOF in 'code', and the hex is reported as the line violation it actually is. Loud-but-wrong became loud-and-right; the only thing lost is a false refusal. Still not covered by `clean_backtick_inside_a_regex_literal_does_not_desync`, which is a backtick desync and not a block opener.",
       "lines": ["const GLOB = /[/*]/", "const c = '#1a2b3c'"],
-      "expected": [[], []],
-      "end_state": "block"
+      "expected": [[], ["hex"]],
+      "end_state": "code"
     },
     {
       "name": "end_state_block_when_jsx_text_contains_a_wildcard",
-      "why": "The docstring's OTHER deliberately-unhandled shape (#3347), pinned separately because it is independently breakable: a tracker taught to skip `/*` inside `[ … ]` would green the case above and leave this one opening a block, and a JSX-text fix would do the reverse. `/*` in JSX text carries no quote, so the string-awareness that saves `'/*EDITMODE-BEGIN*/'` cannot reach it. Same STRICT verdict, same reason — a caller must hear that the scan stopped.",
+      "why": "The shape that is STILL deliberately unhandled (#3347), and the measurement that bounds decision 4's claim: the look-behind admits only an ASCII-alphanumeric or `[` before the `/*`, and here the preceding character is a SPACE, so the block still opens and the file still fails STRICT. So 'a `/*` in JSX text' is not fixed as a category — `<p>3/*off</p>` is (see red_hex_in_a_span_…), `<p>use /* as a wildcard</p>` is not. Pinned separately from the character-class case for exactly the reason #3378 gave: the two are independently breakable, and the divergence now runs the other way — one is handled and one is not, which is the boundary a future widening must move deliberately rather than by accident. Same STRICT verdict, same reason: a caller must hear that the scan stopped.",
       "lines": [
         "export function Doc() {",
         "  return <p>Paths use /* as a wildcard in a route glob</p>",

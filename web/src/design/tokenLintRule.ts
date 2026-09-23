@@ -45,7 +45,7 @@ export function lineViolations(line: string): ('hex' | 'px')[] {
 // number in a comment, the convention this program runs on, therefore reddened the
 // rail. Tightening HEX to 3/4/6/8 digits does not help: `#1783` is four.
 //
-// So the BLOCK state is tracked across lines instead. Three scoping decisions, each
+// So the BLOCK state is tracked across lines instead. Four scoping decisions, each
 // measured against the real corpus rather than assumed:
 //
 // 1. STRING-AWARE, and `//` beats `/*`. A `/*` inside a string or a line comment must
@@ -77,15 +77,41 @@ export function lineViolations(line: string): ('hex' | 'px')[] {
 //    after it. Three corpus lines carry this shape today (`appSdk.tsx`, `useChatSocket.ts`,
 //    `TerminalView.tsx`).
 //
+// 4. A `/*` is an OPENER only when what precedes it could not be an operand (#3347).
+//    Same one-character look-behind as decision 3: if the immediately preceding character
+//    is ASCII-alphanumeric or `[`, the `/` is division, a glob, or a regex character class.
+//    This is the shape `endState` CANNOT see, because it closes: a stray `/*` in JSX text
+//    (`<p>3/*off</p>`) or in a class (`/[/*]/`) used to open a block that the next
+//    UNRELATED `*/` closed, so `endState` came back to `'code'`, nothing was refused, and
+//    every violation inside the blanked span was silently dropped. Measured over the 1559
+//    `web/src/**/*.{ts,tsx}` files: 0 verdict, 0 `endState` and 0 stripped-code diffs, because
+//    all 54 of the corpus's 6761 alnum/`[`-preceded `/*` occurrences are globs inside a
+//    string or behind `//` prose (`/api/*`, `#/settings/*`, `image/*`) where decisions 1
+//    and 2 already answer "not a comment". A start-of-file `/*` still opens, so #3337 stays
+//    fixed.
+//
+// Still NOT handled, and the boundary is exactly one character wide: a `/*` preceded by a
+// SPACE in JSX text (`<p>use /* as a wildcard</p>`) is indistinguishable from a real opener
+// without parser context, so it still opens a block, still fails STRICT, and is still
+// reported through `endState`. Decision 4 fixes the alnum/`[`-preceded subset, NOT "a `/*`
+// in JSX text" as a category — both halves of that boundary are pinned in
+// token_lint_comment_cases.json.
+//
 // A line whose first non-space characters are `//` is prose in any non-block state.
 // That covers the `//` comments inside the embedded-JS templates of `widgetSrcdoc.ts`
 // and `ToolOutput.tsx`, which is what the old shape-based skip was doing for them.
 //
-// Not handled, deliberately — a `/*` in JSX TEXT (`<p>a /* b</p>`) or in a regex
-// character class (`/[/*]/`). The corpus has neither, both need a real parser, and both
-// fail STRICT (state opens, code is dropped), which `stripComments` reports through
-// `endState` — see the EOF control in tokenLint.test.ts, which asserts that no source
-// file ends outside `code`, and `token_lint_bundle`, which refuses such a file by name.
+// What `endState` does and does not cover: it reports the state the scanner ENDED in, which
+// is NOT the claim "the tracker read every line correctly". A block that opens wrongly and
+// then closes ends in `'code'` and is invisible to it — which is why decision 4 is a
+// look-behind here rather than a refusal downstream. `endState` catches only the
+// never-closed residue; the EOF control in tokenLint.test.ts asserts no source file ends
+// outside `code`, and `token_lint_bundle` refuses such a file by name.
+
+/** A `/*` whose IMMEDIATELY preceding character matches this does not open a block
+ *  comment (decision 4). ASCII-only on purpose — the Python twin's class is ASCII, and a
+ *  Unicode-aware test on either side would be a silent parity break. */
+const NOT_AN_OPENER_AFTER = /[0-9A-Za-z[]/
 
 /** Lexer state that can survive a newline. Single/double-quoted strings cannot (JS
  *  forbids a bare newline inside one); a template literal can, but is deliberately
@@ -130,7 +156,11 @@ export function stripComments(text: string): StrippedSource {
         if (i > 0 && line[i - 1] === ':') { kept.push(c); i += 1; continue } // `https://` — a scheme, not a comment
         break // the rest of the line is a comment
       }
-      if (c === '/' && line[i + 1] === '*') { state = 'block'; i += 2; continue }
+      if (c === '/' && line[i + 1] === '*') {
+        // `3/*off`, `/[/*]/` — an operator or a regex class, not a comment opener (#3347)
+        if (i > 0 && NOT_AN_OPENER_AFTER.test(line[i - 1])) { kept.push(c); i += 1; continue }
+        state = 'block'; i += 2; continue
+      }
       kept.push(c)
       i += 1
     }
