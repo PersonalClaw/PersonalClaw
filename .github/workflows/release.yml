@@ -1,6 +1,6 @@
 # Release — triggered by a version tag (v*). Builds the ONE artifact set every
 # install channel projects from (wheel with prebuilt web/dist + multi-arch images
-# + the unsigned Linux desktop AppImage/deb), publishes to PyPI via Trusted
+# + the unsigned Linux desktop AppImage/deb + the unsigned macOS dmg), publishes to PyPI via Trusted
 # Publishing (no stored tokens), and attaches provenance. Publish jobs sit behind the `release` / `release-client` environments
 # (owner-approved manual gate). Job ids per CI-RELEASE-ENGINEERING C1.
 name: Release
@@ -246,12 +246,87 @@ jobs:
             echo "::endgroup::"
           done
 
+  desktop-mac:
+    # macOS desktop shell — UNSIGNED .dmg (owner ruling 2026-09-22: "We want to generate
+    # an installable app release. We don't need to be able to sign it in order to produce
+    # the installable app. Signing needs apple developer account with an ongoing payment
+    # which we are not ready for right now.")
+    #
+    # SIGNING AND PRODUCING AN INSTALLER ARE ORTHOGONAL, and conflating them is why this
+    # job did not exist. Q26 descoped desktop SIGNING (SH-11/SH-4/DC-1/RUM-12), and that
+    # was read as descoping the mac artifact itself — so `release.yml` mentioned `macos`
+    # zero times while `desktop/package.json` had carried a working `dist` script
+    # (`electron-builder --mac`, target `dmg`) the whole time. Nothing here needs an Apple
+    # Developer account.
+    #
+    # WHAT UNSIGNED COSTS A MAC USER, unlike Linux. Gatekeeper DOES consume a signature,
+    # so an unsigned, un-notarized dmg will not launch by double-click: the user must go
+    # to System Settings → Privacy & Security → "Open Anyway" once. That is a real first-run
+    # step and docs/guides/desktop.md must say so — shipping it silently would be the
+    # dishonest version of this job.
+    #
+    # ARM64 ONLY, and stated rather than implied. `macos-latest` is Apple silicon, and the
+    # bundled backend is a PyInstaller binary, which CANNOT be cross-compiled — so this dmg
+    # runs on Apple silicon only. Intel coverage needs a real x86_64 runner (macos-13) as a
+    # second leg; it is deliberately not claimed here until a job proves it, exactly as
+    # desktop-linux declines to claim arm64.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv + the venv the Makefile's pyinstaller target expects
+        uses: astral-sh/setup-uv@v7
+      - name: Create .venv for the bundled backend build
+        # Same reasoning as desktop-linux: the spec collect_submodules()s
+        # openai/anthropic/slack_sdk, which are extras and must be importable here.
+        run: |
+          uv python install 3.12
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+      - name: Build unsigned dmg
+        # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
+        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
+        # -> electron-builder --mac (dmg per desktop/package.json).
+        run: make desktop-dist
+      - name: Smoke the artifact (release-blocking)
+        # The Electron shell is NOT launched (no display, same call as desktop-linux).
+        # What IS executed for real is the bundled backend, from inside the mounted dmg,
+        # on this OS/arch — a bundle that packages but cannot start must fail the release.
+        # Locally built files carry no com.apple.quarantine xattr, so Gatekeeper does not
+        # block this exec; that is why the smoke can run at all on an unsigned build.
+        run: |
+          set -euo pipefail
+          cd desktop/dist
+          ls -la
+          DMG=$(ls -1 *.dmg | head -1)
+          test -n "$DMG"
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          APP=$(ls -1d "$MNT"/*.app | head -1)
+          test -n "$APP"
+          echo "mounted: $DMG -> $APP"
+          test -f "$APP/Contents/Resources/app.asar"
+          BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
+          test -x "$BACKEND"
+          "$BACKEND" --version
+          # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
+          echo "built arch: $(uname -m)"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-mac
+          path: desktop/dist/*.dmg
+
   desktop-linux:
     # Linux desktop shell — UNSIGNED AppImage + .deb (DC-6, owner ruling 2026-08-27:
     # ship the Linux target now; Windows stays deferred — the native port is a no-go
     # per docs/research/windows-native-audit.md:302 and no Windows signing
-    # secrets exist). Unlike the macOS dmg (DC-1, blocked on Apple Developer secrets)
-    # this target needs no credentials at all: Linux has no OS-level signing gate, so
+    # secrets exist). The macOS dmg is built by `desktop-mac` above and is also
+    # unsigned, by the same owner ruling; the difference is that Gatekeeper consumes a
+    # signature and Linux has no equivalent gate, so here
     # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
     # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
     # not claimed anywhere until a job proves it.
@@ -310,7 +385,7 @@ jobs:
     # GitHub Release with notes drawn from CHANGELOG.md for this version.
     # desktop-linux is in `needs` so its AppImage/deb attach here and a broken
     # Linux desktop build blocks the release (the images-smoke precedent).
-    needs: [build, pypi, images, desktop-linux]
+    needs: [build, pypi, images, desktop-linux, desktop-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -327,8 +402,13 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v8
         with:
-          name: desktop-linux
+          # Pattern, not a literal name: `desktop-linux` AND `desktop-mac` both land here so
+          # the `gh release create ... desktop-dist/*` glob below attaches every desktop
+          # installer. Mirrors the image-sbom step above. A literal name silently cut the
+          # release without the dmg when desktop-mac was added.
+          pattern: desktop-*
           path: desktop-dist/
+          merge-multiple: true
       - name: Extract this version's CHANGELOG section
         # RELEASE_VERSION comes from the one parser (RUM-8) rather than a second
         # in-line `lstrip("v")`: the CHANGELOG heading this looks up and the version
